@@ -248,6 +248,13 @@ impl ProjectStore {
             });
         }
 
+        let database_path = directory.join(DATABASE_FILENAME);
+        if !database_path.is_file() {
+            return Err(PersistenceError::MissingProject {
+                stage: PersistenceStage::Open,
+            });
+        }
+
         let lock_path = directory.join(LOCK_FILENAME);
         let lock = OpenOptions::new()
             .read(true)
@@ -263,13 +270,6 @@ impl ProjectStore {
                 }
             })?;
         acquire_lock(&lock)?;
-
-        let database_path = directory.join(DATABASE_FILENAME);
-        if !database_path.is_file() {
-            return Err(PersistenceError::MissingProject {
-                stage: PersistenceStage::Open,
-            });
-        }
 
         let connection =
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
@@ -939,6 +939,25 @@ mod tests {
             PersistenceErrorCode::DestinationConflict
         );
         assert_eq!(fs::read(&original).unwrap(), b"keep");
+        cleanup(&parent);
+    }
+
+    #[test]
+    fn open_missing_locator_or_database_does_not_create_a_project() {
+        let parent = temporary_directory("missing");
+        let missing = parent.join("missing-project");
+        assert_eq!(
+            ProjectStore::open(&missing).unwrap_err().code(),
+            PersistenceErrorCode::MissingProject
+        );
+
+        let empty = parent.join("empty-project");
+        fs::create_dir(&empty).unwrap();
+        assert_eq!(
+            ProjectStore::open(&empty).unwrap_err().code(),
+            PersistenceErrorCode::MissingProject
+        );
+        assert_eq!(fs::read_dir(&empty).unwrap().count(), 0);
         cleanup(&parent);
     }
 
