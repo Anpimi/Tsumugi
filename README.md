@@ -144,7 +144,7 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-The current shell intentionally contains no project persistence or lifecycle commands yet. It provides the desktop window and an honest empty-workspace state; project behavior is delivered by the following foundation tasks.
+The current shell does not expose lifecycle controls yet. The Tauri host now provides the internal project lifecycle command boundary; user-facing project behavior is delivered by the following foundation tasks.
 
 ## Status
 
