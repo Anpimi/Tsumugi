@@ -1,0 +1,15 @@
+[package]
+name = "tsumugi-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Tsumugi desktop shell"
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+[dependencies]
+tauri = { version = "2.9.1", features = [] }
+tsumugi-core = { path = "../../../crates/core" }

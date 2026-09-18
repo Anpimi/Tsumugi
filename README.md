@@ -131,6 +131,21 @@ Long-running or domain-specific operations can run outside the Core through boun
 
 Public contracts are intended to remain independent from the Rust ABI.
 
+## Development
+
+The first desktop scaffold targets Windows x64 and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime.
+
+From the repository root:
+
+```text
+pnpm install
+pnpm --dir apps/desktop build
+cargo test --workspace
+pnpm --dir apps/desktop tauri dev
+```
+
+The current shell intentionally contains no project persistence or lifecycle commands yet. It provides the desktop window and an honest empty-workspace state; project behavior is delivered by the following foundation tasks.
+
 ## Status
 
 Tsumugi is in early development.

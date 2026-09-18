@@ -172,6 +172,21 @@ Rust Core 负责项目语义、状态约束、持久化、任务编排、结果�
 
 Worker 可以使用适合自身领域的实现技术，公开扩展契约不会绑定 Rust ABI。
 
+## 开发环境
+
+首个桌面脚手架面向 Windows x64，使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
+
+在仓库根目录执行：
+
+```text
+pnpm install
+pnpm --dir apps/desktop build
+cargo test --workspace
+pnpm --dir apps/desktop tauri dev
+```
+
+当前 Shell 有意不包含项目持久化或生命周期命令。它提供桌面窗口和明确的空工作区状态；项目行为将在后续基础任务中实现。
+
 ## 当前状态
 
 Tsumugi 仍处于早期开发阶段。
