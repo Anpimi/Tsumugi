@@ -153,7 +153,7 @@ Tsumugi 因此会区分构建前的项目验证和构建后的实际产物验证
 当前参考实现采用：
 
 ```text
-React + TypeScript
+React + TypeScript + i18next
         │
       Tauri
         │
@@ -185,7 +185,7 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-当前 Shell 有意不包含项目持久化或生命周期命令。它提供桌面窗口和明确的空工作区状态；项目行为将在后续基础任务中实现。
+当前桌面 Shell 已通过 Tauri 命令边界提供项目创建、打开、重命名、添加目标语言、关闭以及结果协调界面。翻译和其余工作台模块将在后续基础任务中实现。
 
 ## 当前状态
 

@@ -112,7 +112,7 @@ A failed build does not become a release, and a failed delivery attempt does not
 The current reference architecture is:
 
 ```text
-React + TypeScript
+React + TypeScript + i18next
         │
       Tauri
         │
@@ -144,7 +144,7 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-The current shell does not expose lifecycle controls yet. The Tauri host now provides the internal project lifecycle command boundary; user-facing project behavior is delivered by the following foundation tasks.
+The desktop shell now exposes project lifecycle controls for creating, opening, renaming, adding target locales, closing, and reconciling local projects through the Tauri command boundary. Translation and the remaining workbench modules are delivered by following foundation tasks.
 
 ## Status
 
