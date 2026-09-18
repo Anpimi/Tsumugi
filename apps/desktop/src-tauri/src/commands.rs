@@ -589,6 +589,7 @@ fn metadata_field_name(field: MetadataField) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_directory(label: &str) -> PathBuf {
@@ -612,6 +613,30 @@ mod tests {
 
     fn cleanup(path: &Path) {
         let _ = fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn dto_serialization_preserves_wire_names_and_rejects_missing_fields() {
+        let request = RenameProjectRequest {
+            session_token: "session-1".to_owned(),
+            expected_revision: u64::MAX.to_string(),
+            display_name: "Literal name".to_owned(),
+        };
+        let wire = serde_json::to_value(&request).unwrap();
+        assert_eq!(wire["sessionToken"], "session-1");
+        assert_eq!(wire["expectedRevision"], u64::MAX.to_string());
+        assert_eq!(wire["displayName"], "Literal name");
+        assert!(wire.get("session_token").is_none());
+        assert_eq!(
+            serde_json::from_value::<RenameProjectRequest>(wire).unwrap(),
+            request
+        );
+
+        let malformed = serde_json::from_value::<RenameProjectRequest>(json!({
+            "sessionToken": "session-1",
+            "displayName": "Literal name"
+        }));
+        assert!(malformed.is_err());
     }
 
     #[test]
