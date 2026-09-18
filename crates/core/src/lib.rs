@@ -1,9 +1,17 @@
-//! Pure Rust foundation for Tsumugi's project semantics.
+//! Pure Rust foundation for Tsumugi's project semantics and local persistence.
 //!
-//! M01 keeps this crate free of desktop, webview, and persistence concerns.
+//! The crate owns metadata rules and the durable project boundary while
+//! remaining independent of the desktop webview.
 
+mod persistence;
 mod project;
 
+pub use persistence::{
+    PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore, Reconciliation,
+};
+
+#[cfg(test)]
+pub use persistence::StorageFault;
 pub use project::{
     ChangeOutcome, Locale, LocaleError, MetadataChange, MetadataError, MetadataField, ProjectId,
     ProjectIdError, ProjectMetadata, ValidationIssue,

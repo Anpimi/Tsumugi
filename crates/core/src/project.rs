@@ -124,6 +124,7 @@ impl std::error::Error for LocaleError {}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MetadataField {
     DisplayName,
+    MetadataRevision,
     SourceLocale,
     TargetLocales,
     TargetLocale,
@@ -138,6 +139,7 @@ pub enum ValidationIssue {
     UnregisteredLocale,
     EmptyTargetSet,
     DuplicateLocale,
+    InvalidRevision,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,6 +258,31 @@ impl ProjectMetadata {
             target_locales,
             metadata_revision: 1,
         })
+    }
+
+    /// Reconstruct validated metadata read from durable storage.
+    pub(crate) fn from_persisted<I, S>(
+        project_id: ProjectId,
+        display_name: &str,
+        source_locale: &str,
+        target_locales: I,
+        metadata_revision: u64,
+    ) -> Result<Self, MetadataError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        if metadata_revision == 0 {
+            return Err(MetadataError::InvalidInput {
+                field: MetadataField::MetadataRevision,
+                reason: ValidationIssue::InvalidRevision,
+            });
+        }
+
+        let mut metadata =
+            Self::create_with_id(project_id, display_name, source_locale, target_locales)?;
+        metadata.metadata_revision = metadata_revision;
+        Ok(metadata)
     }
 
     pub const fn project_id(&self) -> ProjectId {
