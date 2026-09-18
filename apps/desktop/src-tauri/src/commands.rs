@@ -590,16 +590,13 @@ fn metadata_field_name(field: MetadataField) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::TempDir;
 
-    fn temporary_directory(label: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+    fn temporary_directory(label: &str) -> TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("tsumugi-command-{label}-"))
+            .tempdir()
             .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("tsumugi-command-{label}-{suffix}"));
-        fs::create_dir(&path).unwrap();
-        path
     }
 
     fn create_request(path: &Path) -> CreateProjectRequest {
@@ -609,10 +606,6 @@ mod tests {
             source_locale: "en-US".to_owned(),
             target_locales: vec!["zh-CN".to_owned(), "ja".to_owned()],
         }
-    }
-
-    fn cleanup(path: &Path) {
-        let _ = fs::remove_dir_all(path);
     }
 
     #[test]
@@ -640,9 +633,100 @@ mod tests {
     }
 
     #[test]
+    fn shared_typescript_fixture_matches_rust_serialization() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../src/projectCommands.contract.json")).unwrap();
+
+        let requests = &fixture["requests"];
+        assert_eq!(
+            requests["create"],
+            serde_json::to_value(CreateProjectRequest {
+                destination: "C:\\Projects\\demo".to_owned(),
+                display_name: "Literal name".to_owned(),
+                source_locale: "en-US".to_owned(),
+                target_locales: vec!["ja".to_owned(), "zh-CN".to_owned()],
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            requests["open"],
+            serde_json::to_value(OpenProjectRequest {
+                locator: "C:\\Projects\\demo".to_owned(),
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            requests["read"],
+            serde_json::to_value(ReadProjectRequest {
+                session_token: "session-1".to_owned(),
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            requests["rename"],
+            serde_json::to_value(RenameProjectRequest {
+                session_token: "session-1".to_owned(),
+                expected_revision: u64::MAX.to_string(),
+                display_name: "Literal name".to_owned(),
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            requests["addTargetLocale"],
+            serde_json::to_value(AddTargetLocaleRequest {
+                session_token: "session-1".to_owned(),
+                expected_revision: "2".to_owned(),
+                locale: "ko".to_owned(),
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            requests["close"],
+            serde_json::to_value(CloseProjectRequest {
+                session_token: "session-1".to_owned(),
+            })
+            .unwrap()
+        );
+
+        let metadata = ProjectMetadataView {
+            project_id: "123e4567-e89b-42d3-a456-426614174000".to_owned(),
+            display_name: "Literal name".to_owned(),
+            source_locale: "en-US".to_owned(),
+            target_locales: vec!["ja".to_owned(), "zh-CN".to_owned()],
+            metadata_revision: "2".to_owned(),
+        };
+        assert_eq!(
+            fixture["responses"]["projectView"],
+            serde_json::to_value(ProjectView {
+                session_token: "session-1".to_owned(),
+                metadata: metadata.clone(),
+                reconciliation_state: ReconciliationState::Settled,
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            fixture["responses"]["metadataMutation"],
+            serde_json::to_value(MetadataMutationView {
+                session_token: "session-1".to_owned(),
+                metadata,
+                outcome: MetadataChangeOutcome::Changed,
+            })
+            .unwrap()
+        );
+        assert_eq!(
+            fixture["responses"]["close"],
+            serde_json::to_value(CloseProjectView { closed: true }).unwrap()
+        );
+        assert_eq!(
+            fixture["error"],
+            serde_json::to_value(CommandError::unknown(CommandStage::Rename)).unwrap()
+        );
+    }
+
+    #[test]
     fn manager_round_trip_uses_authoritative_core_and_decimal_revisions() {
         let parent = temporary_directory("round-trip");
-        let project = parent.join("project");
+        let project = parent.path().join("project");
         let mut manager = SessionManager::default();
         let created = manager.create(create_request(&project)).unwrap();
         assert_eq!(created.metadata.metadata_revision, "1");
@@ -672,13 +756,12 @@ mod tests {
             })
             .unwrap();
         assert!(closed.closed);
-        cleanup(&parent);
     }
 
     #[test]
     fn rejected_session_and_basis_requests_do_not_write() {
         let parent = temporary_directory("rejection");
-        let project = parent.join("project");
+        let project = parent.path().join("project");
         let mut manager = SessionManager::default();
         let created = manager.create(create_request(&project)).unwrap();
 
@@ -721,14 +804,13 @@ mod tests {
                 session_token: created.session_token,
             })
             .unwrap();
-        cleanup(&parent);
     }
 
     #[test]
     fn same_active_open_reuses_session_and_failed_switch_preserves_it() {
         let parent = temporary_directory("switch");
-        let project_a = parent.join("project-a");
-        let project_b = parent.join("project-b");
+        let project_a = parent.path().join("project-a");
+        let project_b = parent.path().join("project-b");
         let mut manager = SessionManager::default();
         let created = manager.create(create_request(&project_a)).unwrap();
 
@@ -762,7 +844,6 @@ mod tests {
                 session_token: created.session_token,
             })
             .unwrap();
-        cleanup(&parent);
     }
 
     #[test]

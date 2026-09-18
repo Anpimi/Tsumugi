@@ -1,7 +1,10 @@
 import i18n from "i18next";
+import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 import { enUS } from "./en-US";
 import { zhCN } from "./zh-CN";
+
+export const UI_LOCALE_STORAGE_KEY = "tsumugi.uiLocale";
 
 export const localeOptions = [
   { value: "en-US", labelKey: "languageEnglish" },
@@ -23,24 +26,24 @@ declare module "i18next" {
   }
 }
 
-function initialLocale(): Locale {
-  try {
-    return window.localStorage.getItem("tsumugi.uiLocale") === "zh-CN" ? "zh-CN" : "en-US";
-  } catch {
-    return "en-US";
-  }
-}
-
 if (!i18n.isInitialized) {
-  void i18n.use(initReactI18next).init({
-    resources,
-    lng: initialLocale(),
-    fallbackLng: "en-US",
-    supportedLngs: localeOptions.map((option) => option.value),
-    defaultNS: "translation",
-    interpolation: { escapeValue: false },
-    returnNull: false,
-  });
+  void i18n
+    .use(LanguageDetector)
+    .use(initReactI18next)
+    .init({
+      resources,
+      detection: {
+        order: ["localStorage", "navigator"],
+        caches: ["localStorage"],
+        lookupLocalStorage: UI_LOCALE_STORAGE_KEY,
+      },
+      fallbackLng: "en-US",
+      supportedLngs: localeOptions.map((option) => option.value),
+      load: "currentOnly",
+      defaultNS: "translation",
+      interpolation: { escapeValue: false },
+      returnNull: false,
+    });
 }
 
 export function isLocale(value: string): value is Locale {

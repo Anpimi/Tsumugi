@@ -1,5 +1,3 @@
-import type { UiMessages } from "./types";
-
 export const enUS = {
     brandDescription: "Localization Workbench",
     nav: {
@@ -24,9 +22,11 @@ export const enUS = {
     create: {
       title: "Create a project",
       intro: "Start a durable local project with its first language scope.",
-      destination: "Project folder",
-      destinationPlaceholder: "C:\\Projects\\my-localization",
-      destinationHelp: "Choose a new folder. Existing folders are refused to protect their contents.",
+      parentDirectory: "Parent folder",
+      parentDirectoryPlaceholder: "C:\\Projects",
+      parentDirectoryHelp: "Choose an existing parent folder. Tsumugi creates only the new child folder below it.",
+      directoryName: "New folder name",
+      directoryNamePlaceholder: "my-localization",
       displayName: "Project name",
       displayNamePlaceholder: "My localization project",
       sourceLocale: "Source locale",
@@ -34,6 +34,7 @@ export const enUS = {
       targetLocales: "Target locales",
       targetLocalesPlaceholder: "zh-CN, ja",
       targetLocalesHelp: "Separate locales with commas. The Core validates and canonicalizes them.",
+      chooseFolder: "Choose folder",
       submit: "Create and open",
     },
     open: {
@@ -42,6 +43,7 @@ export const enUS = {
       destination: "Project folder",
       destinationPlaceholder: "C:\\Projects\\my-localization",
       destinationHelp: "Use the folder that contains the Tsumugi project database.",
+      chooseFolder: "Choose folder",
       submit: "Open project",
     },
     project: {
@@ -119,7 +121,8 @@ export const enUS = {
       busy: "The project is busy with another lifecycle operation. Try again shortly.",
       storageFailed: "The project could not be read or saved. Your current draft is still here.",
       outcomeUnknown: "The save result is uncertain. Re-read the project before trying again.",
+      directoryPickerUnavailable: "The native folder picker is unavailable. Enter the folder path manually or try again in the desktop app.",
       unknown: "Tsumugi could not complete that project action.",
     },
     accessibility: { projectActions: "Project actions", metadata: "Project metadata", feedback: "Project status" },
-  } as const satisfies UiMessages;
+  } as const;

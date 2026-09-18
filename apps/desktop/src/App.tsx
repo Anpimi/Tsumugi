@@ -1,9 +1,38 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import type { FormEvent } from "react";
+import {
+  Dialog as DialogRoot,
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+} from "@radix-ui/react-dialog";
+import { join as joinPath } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
+import {
+  BookOpen,
+  CircleCheck,
+  FileText,
+  Folder,
+  FolderOpen,
+  Plus,
+  RefreshCw,
+  Save,
+  Settings,
+  X,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import {
+  useForm,
+  type FieldErrors,
+  type SubmitHandler,
+} from "react-hook-form";
 import { isLocale, localeOptions, type Locale } from "./i18n";
+import type { TranslationKey } from "./i18n/types";
 import {
   projectCommands,
   type AddTargetLocaleRequest,
@@ -21,57 +50,46 @@ type ClosedPanel = "empty" | "create" | "open";
 type FormKind = "rename" | "target";
 type Operation = "idle" | "opening" | "saving" | "reconciling" | "closing";
 type FeedbackTone = "info" | "success" | "warning" | "error";
+type DirectoryPickerTarget = "create" | "open";
 
-type IconName =
-  | "folder"
-  | "file"
-  | "book"
-  | "check"
-  | "settings"
-  | "folder-open"
-  | "plus"
-  | "save"
-  | "close"
-  | "refresh";
+const iconComponents = {
+  folder: Folder,
+  file: FileText,
+  book: BookOpen,
+  check: CircleCheck,
+  settings: Settings,
+  "folder-open": FolderOpen,
+  plus: Plus,
+  save: Save,
+  close: X,
+  refresh: RefreshCw,
+} satisfies Record<string, LucideIcon>;
 
-const iconPaths: Record<IconName, string> = {
-  folder: "M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2h9A1.5 1.5 0 0 1 21 8.5v9A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5z",
-  "folder-open": "M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2h9A1.5 1.5 0 0 1 21 9.5v.8l-1.5 6.2a1.5 1.5 0 0 1-1.45 1.15H4.5A1.5 1.5 0 0 1 3 16.15z",
-  file: "M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 15.5h6",
-  book: "M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5zM4 5.5v15M8 7h8M8 10.5h8",
-  check: "M12 3.5a8.5 8.5 0 1 0 0 17a8.5 8.5 0 0 0 0-17Zm-3.5 8.7 2.3 2.3 4.8-5",
-  settings: "M12 8.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 0 0 0-7Zm0-5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18.01 5.99l-1.42 1.42M7.41 16.59l-1.42 1.42M18.01 18.01l-1.42-1.42M7.41 7.41 5.99 5.99",
-  plus: "M12 5v14M5 12h14",
-  save: "M5 4h12l2 2v14H5zM8 4v6h8V4M8 20v-6h8v6",
-  close: "M6 6l12 12M18 6 6 18",
-  refresh: "M20 11a8 8 0 1 0 1 4M20 5v6h-6",
-};
+type IconName = keyof typeof iconComponents;
 
 function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  return (
-    <svg
-      aria-hidden="true"
-      className="icon"
-      fill="none"
-      height={size}
-      viewBox="0 0 24 24"
-      width={size}
-    >
-      <path d={iconPaths[name]} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
-    </svg>
-  );
+  const IconComponent = iconComponents[name];
+  return <IconComponent aria-hidden="true" className="icon" size={size} strokeWidth={1.75} />;
 }
 
-interface CreateFormState {
-  destination: string;
+interface CreateFormValues {
+  parentDirectory: string;
+  directoryName: string;
   displayName: string;
   sourceLocale: string;
   targetLocales: string;
 }
 
+interface OpenFormValues {
+  locator: string;
+}
+
+interface EditorFormValues {
+  value: string;
+}
+
 interface ActiveForm {
   kind: FormKind;
-  value: string;
   expectedRevision: string;
 }
 
@@ -83,7 +101,8 @@ type NavigationIntent =
 
 interface Feedback {
   tone: FeedbackTone;
-  message: string;
+  messageKey: TranslationKey;
+  messageValues?: Record<string, string | number>;
   code?: CommandErrorCode;
   field?: string;
   action?: "refresh" | "retry-reconciliation";
@@ -93,6 +112,17 @@ interface SaveResult {
   ok: boolean;
   metadata?: ProjectMetadataView;
 }
+
+const CREATE_DEFAULT_VALUES: CreateFormValues = {
+  parentDirectory: "",
+  directoryName: "",
+  displayName: "",
+  sourceLocale: "en-US",
+  targetLocales: "zh-CN",
+};
+
+const OPEN_DEFAULT_VALUES: OpenFormValues = { locator: "" };
+const EDITOR_DEFAULT_VALUES: EditorFormValues = { value: "" };
 
 const navigation = (t: TFunction) => [
   { label: t("nav.workspace"), icon: "folder" as const, selected: true },
@@ -109,11 +139,6 @@ function parseTargetLocales(raw: string) {
     .filter(Boolean);
 }
 
-function formIsDirty(form: ActiveForm | null, metadata: ProjectMetadataView | undefined) {
-  if (!form || !metadata) return false;
-  return form.kind === "rename" ? form.value !== metadata.displayName : form.value.trim().length > 0;
-}
-
 function asCommandError(value: unknown, stage: CommandStage): CommandError {
   if (typeof value === "object" && value !== null && "code" in value && "stage" in value) {
     return value as CommandError;
@@ -121,51 +146,51 @@ function asCommandError(value: unknown, stage: CommandStage): CommandError {
   return { code: "storage-failed", stage, recoveryRequired: false };
 }
 
-function failureText(t: TFunction, failure: CommandError) {
+function failureMessageKey(failure: CommandError): TranslationKey {
   switch (failure.code) {
     case "invalid-input":
-      return t("errors.invalidInput");
+      return "errors.invalidInput";
     case "destination-conflict":
-      return t("errors.destinationConflict");
+      return "errors.destinationConflict";
     case "missing-project":
-      return t("errors.missingProject");
+      return "errors.missingProject";
     case "permission-denied":
-      return t("errors.permissionDenied");
+      return "errors.permissionDenied";
     case "unsupported-schema":
-      return t("errors.unsupportedSchema");
+      return "errors.unsupportedSchema";
     case "corrupt-project":
-      return t("errors.corruptProject");
+      return "errors.corruptProject";
     case "stale-revision":
-      return t("feedback.stale", { revision: failure.currentRevision ?? "?" });
+      return "feedback.stale";
     case "session-invalid":
-      return t("errors.sessionInvalid");
+      return "errors.sessionInvalid";
     case "project-in-use":
-      return t("errors.projectInUse");
+      return "errors.projectInUse";
     case "busy":
-      return t("errors.busy");
+      return "errors.busy";
     case "storage-failed":
-      return t("errors.storageFailed");
+      return "errors.storageFailed";
     case "outcome-unknown":
-      return t("errors.outcomeUnknown");
+      return "errors.outcomeUnknown";
     default:
-      return t("errors.unknown");
+      return "errors.unknown";
   }
 }
 
-function feedbackFromFailure(t: TFunction, failure: CommandError): Feedback {
+function feedbackFromFailure(failure: CommandError): Feedback {
   const warning = failure.code === "stale-revision" || failure.code === "outcome-unknown";
   return {
     tone: warning ? "warning" : "error",
-    message: failureText(t, failure),
+    messageKey: failureMessageKey(failure),
+    messageValues: failure.code === "stale-revision" ? { revision: failure.currentRevision ?? "?" } : undefined,
     code: failure.code,
     field: failure.field,
     action: failure.code === "outcome-unknown" ? "retry-reconciliation" : undefined,
   };
 }
 
-function localValidation(t: TFunction, field: string, value: string): Feedback | null {
-  if (value.trim().length > 0) return null;
-  return { tone: "error", message: t("errors.invalidInput"), code: "invalid-input", field };
+function localValidation(field: string): Feedback {
+  return { tone: "error", messageKey: "errors.invalidInput", code: "invalid-input", field };
 }
 
 function statusFor(t: TFunction, operation: Operation, dirty: boolean): string {
@@ -181,40 +206,56 @@ function fieldError(feedback: Feedback | null, field: string) {
   return feedback?.code === "invalid-input" && feedback.field === field;
 }
 
+function firstErrorField(errors: FieldErrors<Record<string, unknown>>) {
+  return Object.keys(errors)[0];
+}
+
+function renderFeedbackMessage(t: TFunction, feedback: Feedback) {
+  return t(feedback.messageKey, {
+    ...(feedback.messageValues ?? {}),
+    defaultValue: feedback.messageKey,
+  });
+}
+
 function App() {
   const { t, i18n: translation } = useTranslation();
-  const resolvedLocale = translation.resolvedLanguage ?? "en-US";
-  const locale: Locale = isLocale(resolvedLocale) ? resolvedLocale : "en-US";
+  const resolvedLanguage = translation.resolvedLanguage ?? translation.language ?? "en-US";
+  const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
   const [project, setProject] = useState<ProjectView | null>(null);
   const [operation, setOperation] = useState<Operation>("idle");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [closedPanel, setClosedPanel] = useState<ClosedPanel>("empty");
   const [openPanel, setOpenPanel] = useState(false);
-  const [openLocator, setOpenLocator] = useState("");
-  const [createForm, setCreateForm] = useState<CreateFormState>({
-    destination: "",
-    displayName: "",
-    sourceLocale: "en-US",
-    targetLocales: "zh-CN",
-  });
   const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
   const [navigationIntent, setNavigationIntent] = useState<NavigationIntent | null>(null);
   const allowWindowClose = useRef(false);
-  const dirty = useMemo(() => formIsDirty(activeForm, project?.metadata), [activeForm, project]);
+  const dialogReturnFocus = useRef<HTMLElement | null>(null);
+  const cancelDialogButton = useRef<HTMLButtonElement | null>(null);
+  const createForm = useForm<CreateFormValues>({ defaultValues: CREATE_DEFAULT_VALUES });
+  const openForm = useForm<OpenFormValues>({ defaultValues: OPEN_DEFAULT_VALUES });
+  const editorForm = useForm<EditorFormValues>({ defaultValues: EDITOR_DEFAULT_VALUES });
+  const dirty = Boolean(activeForm && editorForm.formState.isDirty);
   const busy = operation !== "idle";
   const status = statusFor(t, operation, dirty);
 
   useEffect(() => {
-    document.documentElement.lang = locale;
-    try {
-      window.localStorage.setItem("tsumugi.uiLocale", locale);
-    } catch {
-      // The UI still works when the host does not expose local storage.
-    }
-  }, [locale]);
+    document.documentElement.lang = resolvedLanguage;
+  }, [resolvedLanguage]);
 
   function clearFeedback() {
     setFeedback(null);
+  }
+
+  function requestNavigation(intent: NavigationIntent) {
+    const focused = document.activeElement;
+    dialogReturnFocus.current = focused instanceof HTMLElement ? focused : null;
+    setNavigationIntent(intent);
+  }
+
+  function beginEditor(kind: FormKind, metadata: ProjectMetadataView) {
+    editorForm.reset({ value: kind === "rename" ? metadata.displayName : "" });
+    setActiveForm({ kind, expectedRevision: metadata.metadataRevision });
+    clearFeedback();
   }
 
   function startEditor(kind: FormKind, metadata = project?.metadata) {
@@ -222,37 +263,37 @@ function App() {
     if (activeForm) {
       if (activeForm.kind === kind) return;
       if (dirty) {
-        setNavigationIntent({ kind: "form", formKind: kind });
+        requestNavigation({ kind: "form", formKind: kind });
         return;
       }
     }
-    clearFeedback();
-    setActiveForm({
-      kind,
-      value: kind === "rename" ? metadata.displayName : "",
-      expectedRevision: metadata.metadataRevision,
-    });
+    beginEditor(kind, metadata);
   }
 
-  async function executeCreate() {
-    const destinationError = localValidation(t, "destination", createForm.destination);
-    if (destinationError) return setFeedback(destinationError);
-    const displayNameError = localValidation(t, "displayName", createForm.displayName);
-    if (displayNameError) return setFeedback(displayNameError);
-    const sourceError = localValidation(t, "sourceLocale", createForm.sourceLocale);
-    if (sourceError) return setFeedback(sourceError);
-    const targetLocales = parseTargetLocales(createForm.targetLocales);
+  const executeCreate: SubmitHandler<CreateFormValues> = async (values) => {
+    const targetLocales = parseTargetLocales(values.targetLocales);
     if (targetLocales.length === 0) {
-      return setFeedback({ tone: "error", message: t("errors.invalidInput"), code: "invalid-input", field: "targetLocales" });
+      createForm.setError("targetLocales", { type: "required" });
+      setFeedback(localValidation("targetLocales"));
+      return;
     }
 
     setOperation("opening");
-    setFeedback({ tone: "info", message: t("status.opening") });
+    setFeedback({ tone: "info", messageKey: "status.opening" });
+    let destination: string;
+    try {
+      destination = await joinPath(values.parentDirectory, values.directoryName);
+    } catch {
+      setOperation("idle");
+      setFeedback({ tone: "error", messageKey: "errors.directoryPickerUnavailable" });
+      return;
+    }
+
     try {
       const request: CreateProjectRequest = {
-        destination: createForm.destination,
-        displayName: createForm.displayName,
-        sourceLocale: createForm.sourceLocale,
+        destination,
+        displayName: values.displayName,
+        sourceLocale: values.sourceLocale,
         targetLocales,
       };
       const view = await projectCommands.create(request);
@@ -260,35 +301,36 @@ function App() {
       setActiveForm(null);
       setClosedPanel("empty");
       setOperation("idle");
-      setFeedback({ tone: "success", message: t("feedback.created") });
+      createForm.reset(CREATE_DEFAULT_VALUES);
+      setFeedback({ tone: "success", messageKey: "feedback.created" });
     } catch (value) {
       setOperation("idle");
-      setFeedback(feedbackFromFailure(t, asCommandError(value, "create")));
+      setFeedback(feedbackFromFailure(asCommandError(value, "create")));
     }
-  }
+  };
 
   async function executeOpen(locator: string) {
-    const locatorError = localValidation(t, "locator", locator);
-    if (locatorError) {
-      setFeedback(locatorError);
+    if (!locator.trim()) {
+      setFeedback(localValidation("locator"));
       return false;
     }
 
     setOperation("opening");
-    setFeedback({ tone: "info", message: t("status.opening") });
+    setFeedback({ tone: "info", messageKey: "status.opening" });
     try {
       const view = await projectCommands.open({ locator });
       setProject(view);
       setActiveForm(null);
+      editorForm.reset(EDITOR_DEFAULT_VALUES);
       setOpenPanel(false);
-      setOpenLocator("");
+      openForm.reset(OPEN_DEFAULT_VALUES);
       setClosedPanel("empty");
       setOperation("idle");
-      setFeedback({ tone: "success", message: t("feedback.opened") });
+      setFeedback({ tone: "success", messageKey: "feedback.opened" });
       return true;
     } catch (value) {
       setOperation("idle");
-      setFeedback(feedbackFromFailure(t, asCommandError(value, "open")));
+      setFeedback(feedbackFromFailure(asCommandError(value, "open")));
       return false;
     }
   }
@@ -296,20 +338,21 @@ function App() {
   async function executeClose() {
     if (!project || busy) return false;
     setOperation("closing");
-    setFeedback({ tone: "info", message: t("status.closing") });
+    setFeedback({ tone: "info", messageKey: "status.closing" });
     try {
       const result: CloseProjectView = await projectCommands.close({ sessionToken: project.sessionToken });
       if (!result.closed) throw new Error("close-not-confirmed");
       setProject(null);
       setActiveForm(null);
+      editorForm.reset(EDITOR_DEFAULT_VALUES);
       setOpenPanel(false);
       setClosedPanel("empty");
       setOperation("idle");
-      setFeedback({ tone: "success", message: t("feedback.closed") });
+      setFeedback({ tone: "success", messageKey: "feedback.closed" });
       return true;
     } catch (value) {
       setOperation("idle");
-      setFeedback(feedbackFromFailure(t, asCommandError(value, "close")));
+      setFeedback(feedbackFromFailure(asCommandError(value, "close")));
       return false;
     }
   }
@@ -337,12 +380,13 @@ function App() {
       setOperation("idle");
       setFeedback({
         tone: "warning",
-        message: t("feedback.stale", { revision: failure.currentRevision ?? view.metadata.metadataRevision }),
+        messageKey: "feedback.stale",
+        messageValues: { revision: failure.currentRevision ?? view.metadata.metadataRevision },
         code: "stale-revision",
       });
     } catch {
       setOperation("idle");
-      setFeedback({ tone: "error", message: t("feedback.staleRefreshFailed"), code: "storage-failed", action: "refresh" });
+      setFeedback({ tone: "error", messageKey: "feedback.staleRefreshFailed", code: "storage-failed", action: "refresh" });
     }
     return { ok: false };
   }
@@ -350,7 +394,7 @@ function App() {
   async function reconcileUnknown(form: ActiveForm): Promise<SaveResult> {
     if (!project) return { ok: false };
     setOperation("reconciling");
-    setFeedback({ tone: "warning", message: t("feedback.unknown"), code: "outcome-unknown", action: "retry-reconciliation" });
+    setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
     try {
       const view = await projectCommands.read({ sessionToken: project.sessionToken });
       setProject(view);
@@ -358,59 +402,55 @@ function App() {
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
       if (view.reconciliationState === "committed") {
+        editorForm.reset(EDITOR_DEFAULT_VALUES);
         setActiveForm(null);
         setOperation("idle");
-        setFeedback({ tone: "success", message: t("feedback.committed") });
+        setFeedback({ tone: "success", messageKey: "feedback.committed" });
         return { ok: true, metadata: view.metadata };
       }
-      if (view.reconciliationState === "previous" || view.reconciliationState === "settled") {
-        setOperation("idle");
-        setFeedback({ tone: "warning", message: t("feedback.previous"), code: "outcome-unknown" });
-        return { ok: false, metadata: view.metadata };
-      }
+      setOperation("idle");
+      setFeedback({ tone: "warning", messageKey: "feedback.previous", code: "outcome-unknown" });
+      return { ok: false, metadata: view.metadata };
     } catch {
       setOperation("reconciling");
-      setFeedback({ tone: "error", message: t("feedback.reconcileFailed"), code: "outcome-unknown", action: "retry-reconciliation" });
+      setFeedback({ tone: "error", messageKey: "feedback.reconcileFailed", code: "outcome-unknown", action: "retry-reconciliation" });
     }
     return { ok: false };
   }
 
-  async function saveForm(form: ActiveForm): Promise<SaveResult> {
+  async function saveForm(form: ActiveForm, value = editorForm.getValues("value")): Promise<SaveResult> {
     if (!project || operation !== "idle") return { ok: false };
-    if (!formIsDirty(form, project.metadata)) {
+    if (!editorForm.formState.isDirty) {
       setActiveForm(null);
       return { ok: true, metadata: project.metadata };
     }
 
     setOperation("saving");
-    setFeedback({ tone: "info", message: t("status.saving") });
+    setFeedback({ tone: "info", messageKey: "status.saving" });
     try {
       let result: MetadataMutationView;
       if (form.kind === "rename") {
         result = await projectCommands.rename({
           sessionToken: project.sessionToken,
           expectedRevision: form.expectedRevision,
-          displayName: form.value,
+          displayName: value,
         });
       } else {
         const request: AddTargetLocaleRequest = {
           sessionToken: project.sessionToken,
           expectedRevision: form.expectedRevision,
-          locale: form.value,
+          locale: value,
         };
         result = await projectCommands.addTargetLocale(request);
       }
       setProject((current) => (current ? { ...current, metadata: result.metadata, reconciliationState: "settled" } : current));
+      editorForm.reset(EDITOR_DEFAULT_VALUES);
       setActiveForm(null);
       setOperation("idle");
       setFeedback({
         tone: "success",
-        message:
-          result.outcome === "unchanged"
-            ? t("feedback.unchanged")
-            : t(form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded", {
-                revision: result.metadata.metadataRevision,
-              }),
+        messageKey: result.outcome === "unchanged" ? "feedback.unchanged" : form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded",
+        messageValues: result.outcome === "changed" ? { revision: result.metadata.metadataRevision } : undefined,
       });
       return { ok: true, metadata: result.metadata };
     } catch (value) {
@@ -418,7 +458,7 @@ function App() {
       if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
       if (failure.code === "outcome-unknown") return reconcileUnknown(form);
       setOperation("idle");
-      setFeedback(feedbackFromFailure(t, failure));
+      setFeedback(feedbackFromFailure(failure));
       return { ok: false };
     }
   }
@@ -436,7 +476,8 @@ function App() {
       await executeOpen(intent.locator);
       return;
     }
-    startEditor(intent.formKind, metadata);
+    const nextMetadata = metadata ?? project?.metadata;
+    if (nextMetadata) beginEditor(intent.formKind, nextMetadata);
   }
 
   async function resolveNavigation(choice: "save" | "discard" | "cancel") {
@@ -447,6 +488,7 @@ function App() {
     }
     const intent = navigationIntent;
     if (choice === "discard") {
+      editorForm.reset(EDITOR_DEFAULT_VALUES);
       setActiveForm(null);
       setNavigationIntent(null);
       await continueNavigation(intent);
@@ -457,17 +499,17 @@ function App() {
       await continueNavigation(intent);
       return;
     }
-    const result = await saveForm(activeForm);
+    const result = await saveForm(activeForm, editorForm.getValues("value"));
     if (!result.ok) return;
     setNavigationIntent(null);
-    setFeedback({ tone: "success", message: t("feedback.savedBeforeContinue") });
+    setFeedback({ tone: "success", messageKey: "feedback.savedBeforeContinue" });
     await continueNavigation(intent, result.metadata);
   }
 
   function handleCloseRequest() {
     if (!project || busy) return;
     if (dirty) {
-      setNavigationIntent({ kind: "close" });
+      requestNavigation({ kind: "close" });
       return;
     }
     void executeClose();
@@ -476,21 +518,17 @@ function App() {
   function handleOpenSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
-    const locator = openLocator;
-    const locatorError = localValidation(t, "locator", locator);
-    if (locatorError) {
-      setFeedback(locatorError);
-      return;
-    }
-    if (dirty) {
-      setNavigationIntent({ kind: "open", locator });
-      return;
-    }
-    void executeOpen(locator);
+    void openForm.handleSubmit(({ locator }) => {
+      if (dirty) {
+        requestNavigation({ kind: "open", locator });
+        return;
+      }
+      void executeOpen(locator);
+    }, () => setFeedback(localValidation("locator")))();
   }
 
-  function handleSave() {
-    if (activeForm && !busy) void saveForm(activeForm);
+  function handleSave(value = editorForm.getValues("value")) {
+    if (activeForm && !busy) void saveForm(activeForm, value);
   }
 
   function handleRefresh() {
@@ -502,16 +540,39 @@ function App() {
         setProject(view);
         setActiveForm((current) => (current ? { ...current, expectedRevision: view.metadata.metadataRevision } : current));
         setOperation("idle");
-        setFeedback({ tone: "info", message: t("feedback.opened") });
+        setFeedback({ tone: "info", messageKey: "feedback.opened" });
       })
       .catch((value) => {
         setOperation("idle");
-        setFeedback(feedbackFromFailure(t, asCommandError(value, "read")));
+        setFeedback(feedbackFromFailure(asCommandError(value, "read")));
       });
   }
 
   function handleRetryReconciliation() {
     if (activeForm && project && operation === "reconciling") void reconcileUnknown(activeForm);
+  }
+
+  async function chooseDirectory(target: DirectoryPickerTarget) {
+    if (busy) return;
+    try {
+      const selected = await pickDirectory({ directory: true, multiple: false });
+      if (typeof selected !== "string") return;
+      if (target === "create") {
+        createForm.setValue("parentDirectory", selected, { shouldDirty: true, shouldValidate: true });
+      } else {
+        openForm.setValue("locator", selected, { shouldDirty: true, shouldValidate: true });
+      }
+    } catch {
+      setFeedback({ tone: "error", messageKey: "errors.directoryPickerUnavailable" });
+    }
+  }
+
+  function handleCreateInvalid(errors: FieldErrors<CreateFormValues>) {
+    setFeedback(localValidation(firstErrorField(errors as FieldErrors<Record<string, unknown>>) ?? "parentDirectory"));
+  }
+
+  function handleEditorInvalid() {
+    setFeedback(localValidation(activeForm?.kind === "rename" ? "displayName" : "locale"));
   }
 
   useEffect(() => {
@@ -535,7 +596,7 @@ function App() {
           event.preventDefault();
           if (disposed) return;
           if (busy) {
-            setFeedback({ tone: "warning", message: t("status.reconciling") });
+            setFeedback({ tone: "warning", messageKey: "status.reconciling" });
             return;
           }
           if (!project) {
@@ -544,7 +605,7 @@ function App() {
             return;
           }
           if (dirty) {
-            setNavigationIntent({ kind: "window-close" });
+            requestNavigation({ kind: "window-close" });
             return;
           }
           await executeWindowClose();
@@ -563,14 +624,14 @@ function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [busy, dirty, project, locale]);
+  }, [busy, dirty, project, resolvedLanguage]);
 
   const navItems = navigation(t);
   const renderFeedback = feedback ? (
     <div className={`feedback feedback-${feedback.tone}`} aria-live="polite" role={feedback.tone === "error" ? "alert" : "status"}>
       <div className="feedback-copy">
         <strong>{feedback.tone === "success" ? "✓" : feedback.tone === "warning" ? "!" : "·"}</strong>
-        <span>{feedback.message}</span>
+        <span>{renderFeedbackMessage(t, feedback)}</span>
       </div>
       <div className="feedback-actions">
         {feedback.action === "refresh" ? (
@@ -667,10 +728,7 @@ function App() {
               <section className="closed-state" aria-live="polite">
                 {closedPanel === "empty" ? (
                   <>
-                    <div className="empty-state-icon" aria-hidden="true">
-                      <Icon name="folder-open" size={54} />
-                    </div>
-                    <p className="eyebrow">Tsumugi</p>
+                    <p className="eyebrow">{t("empty.title")}</p>
                     <h1>{t("empty.title")}</h1>
                     <p className="empty-lede">{t("empty.body")}</p>
                     <p className="empty-detail">{t("empty.detail")}</p>
@@ -686,50 +744,64 @@ function App() {
                     </div>
                   </>
                 ) : closedPanel === "create" ? (
-                  <form className="form-card" onSubmit={(event) => { event.preventDefault(); void executeCreate(); }}>
+                  <form className="form-card" onSubmit={createForm.handleSubmit(executeCreate, handleCreateInvalid)}>
                     <div className="form-heading">
                       <p className="eyebrow">{t("empty.create")}</p>
                       <h1>{t("create.title")}</h1>
                       <p>{t("create.intro")}</p>
                     </div>
                     <div className="form-fields">
-                      <label className="field">
-                        <span>{t("create.destination")}</span>
-                        <input
-                          aria-invalid={fieldError(feedback, "destination")}
-                          autoFocus
-                          placeholder={t("create.destinationPlaceholder")}
-                          value={createForm.destination}
-                          onChange={(event) => setCreateForm((current) => ({ ...current, destination: event.target.value }))}
-                        />
-                        <small>{t("create.destinationHelp")}</small>
+                      <label className="field" htmlFor="create-parent-directory">
+                        <span>{t("create.parentDirectory")}</span>
+                        <div className="field-picker">
+                          <input
+                            id="create-parent-directory"
+                            aria-invalid={Boolean(createForm.formState.errors.parentDirectory || fieldError(feedback, "parentDirectory"))}
+                            placeholder={t("create.parentDirectoryPlaceholder")}
+                            {...createForm.register("parentDirectory", { required: true })}
+                          />
+                          <button className="secondary-button" type="button" onClick={() => void chooseDirectory("create")} disabled={busy}>
+                            <Icon name="folder-open" size={16} />
+                            {t("create.chooseFolder")}
+                          </button>
+                        </div>
+                        <small>{t("create.parentDirectoryHelp")}</small>
                       </label>
-                      <label className="field">
+                      <label className="field" htmlFor="create-directory-name">
+                        <span>{t("create.directoryName")}</span>
+                        <input
+                          id="create-directory-name"
+                          aria-invalid={Boolean(createForm.formState.errors.directoryName || fieldError(feedback, "directoryName"))}
+                          placeholder={t("create.directoryNamePlaceholder")}
+                          {...createForm.register("directoryName", { required: true })}
+                        />
+                      </label>
+                      <label className="field" htmlFor="create-display-name">
                         <span>{t("create.displayName")}</span>
                         <input
-                          aria-invalid={fieldError(feedback, "displayName")}
+                          id="create-display-name"
+                          aria-invalid={Boolean(createForm.formState.errors.displayName || fieldError(feedback, "displayName"))}
                           placeholder={t("create.displayNamePlaceholder")}
-                          value={createForm.displayName}
-                          onChange={(event) => setCreateForm((current) => ({ ...current, displayName: event.target.value }))}
+                          {...createForm.register("displayName", { required: true })}
                         />
                       </label>
                       <div className="field-grid">
-                        <label className="field">
+                        <label className="field" htmlFor="create-source-locale">
                           <span>{t("create.sourceLocale")}</span>
                           <input
-                            aria-invalid={fieldError(feedback, "sourceLocale")}
+                            id="create-source-locale"
+                            aria-invalid={Boolean(createForm.formState.errors.sourceLocale || fieldError(feedback, "sourceLocale"))}
                             placeholder={t("create.sourceLocalePlaceholder")}
-                            value={createForm.sourceLocale}
-                            onChange={(event) => setCreateForm((current) => ({ ...current, sourceLocale: event.target.value }))}
+                            {...createForm.register("sourceLocale", { required: true })}
                           />
                         </label>
-                        <label className="field">
+                        <label className="field" htmlFor="create-target-locales">
                           <span>{t("create.targetLocales")}</span>
                           <input
-                            aria-invalid={fieldError(feedback, "targetLocales")}
+                            id="create-target-locales"
+                            aria-invalid={Boolean(createForm.formState.errors.targetLocales || fieldError(feedback, "targetLocales"))}
                             placeholder={t("create.targetLocalesPlaceholder")}
-                            value={createForm.targetLocales}
-                            onChange={(event) => setCreateForm((current) => ({ ...current, targetLocales: event.target.value }))}
+                            {...createForm.register("targetLocales", { required: true })}
                           />
                         </label>
                       </div>
@@ -752,15 +824,20 @@ function App() {
                       <h1>{t("open.title")}</h1>
                       <p>{t("open.intro")}</p>
                     </div>
-                    <label className="field">
+                    <label className="field" htmlFor="open-locator">
                       <span>{t("open.destination")}</span>
-                      <input
-                        aria-invalid={fieldError(feedback, "locator")}
-                        autoFocus
-                        placeholder={t("open.destinationPlaceholder")}
-                        value={openLocator}
-                        onChange={(event) => setOpenLocator(event.target.value)}
-                      />
+                      <div className="field-picker">
+                        <input
+                          id="open-locator"
+                          aria-invalid={Boolean(openForm.formState.errors.locator || fieldError(feedback, "locator"))}
+                          placeholder={t("open.destinationPlaceholder")}
+                          {...openForm.register("locator", { required: true })}
+                        />
+                        <button className="secondary-button" type="button" onClick={() => void chooseDirectory("open")} disabled={busy}>
+                          <Icon name="folder-open" size={16} />
+                          {t("open.chooseFolder")}
+                        </button>
+                      </div>
                       <small>{t("open.destinationHelp")}</small>
                     </label>
                     <div className="form-actions">
@@ -831,15 +908,21 @@ function App() {
                       <p>{t("project.showOpen")}</p>
                     </div>
                     <div className="inline-form-row">
-                      <label className="field field-grow">
+                      <label className="field field-grow" htmlFor="open-locator-inline">
                         <span>{t("open.destination")}</span>
-                        <input
-                          aria-invalid={fieldError(feedback, "locator")}
-                          autoFocus
-                          placeholder={t("open.destinationPlaceholder")}
-                          value={openLocator}
-                          onChange={(event) => setOpenLocator(event.target.value)}
-                        />
+                        <div className="field-picker">
+                          <input
+                            id="open-locator-inline"
+                            aria-invalid={Boolean(openForm.formState.errors.locator || fieldError(feedback, "locator"))}
+                            autoFocus
+                            placeholder={t("open.destinationPlaceholder")}
+                            {...openForm.register("locator", { required: true })}
+                          />
+                          <button className="secondary-button" type="button" onClick={() => void chooseDirectory("open")} disabled={busy}>
+                            <Icon name="folder-open" size={16} />
+                            {t("open.chooseFolder")}
+                          </button>
+                        </div>
                       </label>
                       <button className="primary-button" type="submit" disabled={busy}>{t("open.submit")}</button>
                       <button className="secondary-button" type="button" onClick={() => setOpenPanel(false)} disabled={busy}>{t("action.cancel")}</button>
@@ -848,7 +931,7 @@ function App() {
                 ) : null}
 
                 {activeForm ? (
-                  <form className="editor-card" onSubmit={(event) => { event.preventDefault(); handleSave(); }}>
+                  <form className="editor-card" onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
                     <div className="editor-heading">
                       <div>
                         <p className="eyebrow">{activeForm.kind === "rename" ? t("project.rename") : t("project.addTarget")}</p>
@@ -856,18 +939,18 @@ function App() {
                       </div>
                       <span className="basis-label">{t("editor.basis", { revision: activeForm.expectedRevision })}</span>
                     </div>
-                    <label className="field">
+                    <label className="field" htmlFor="editor-value">
                       <span>{activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}</span>
                       <input
-                        aria-invalid={fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale")}
+                        id="editor-value"
+                        aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale"))}
                         autoFocus
-                        value={activeForm.value}
-                        onChange={(event) => setActiveForm((current) => current ? { ...current, value: event.target.value } : current)}
+                        {...editorForm.register("value", { required: true })}
                       />
                       <small>{activeForm.kind === "rename" ? t("editor.renameHelp") : t("editor.targetHelp")}</small>
                     </label>
                     <div className="form-actions">
-                      <button className="secondary-button" type="button" onClick={() => { setActiveForm(null); clearFeedback(); }} disabled={busy}>{t("editor.cancel")}</button>
+                      <button className="secondary-button" type="button" onClick={() => { editorForm.reset(EDITOR_DEFAULT_VALUES); setActiveForm(null); clearFeedback(); }} disabled={busy}>{t("editor.cancel")}</button>
                       <button className="primary-button" type="submit" disabled={busy || !dirty}>
                         <Icon name="save" size={17} />
                         {busy ? t("status.saving") : t("editor.save")}
@@ -880,21 +963,51 @@ function App() {
           </div>
         </div>
 
-        {navigationIntent ? (
-          <div className="dialog-backdrop">
-            <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="unsaved-dialog-title">
+        <DialogRoot
+          open={Boolean(navigationIntent)}
+          onOpenChange={(open) => {
+            if (!open && !busy) setNavigationIntent(null);
+          }}
+        >
+          <DialogPortal>
+            <DialogOverlay className="dialog-backdrop" />
+            <DialogContent
+              className="confirm-dialog"
+              onEscapeKeyDown={(event) => {
+                if (busy) event.preventDefault();
+              }}
+              onInteractOutside={(event) => {
+                if (busy) event.preventDefault();
+              }}
+              onOpenAutoFocus={(event) => {
+                event.preventDefault();
+                cancelDialogButton.current?.focus();
+              }}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                const target = dialogReturnFocus.current;
+                dialogReturnFocus.current = null;
+                if (target?.isConnected) target.focus();
+              }}
+            >
               <p className="eyebrow">{t("status.unsaved")}</p>
-              <h2 id="unsaved-dialog-title">{t("dialog.title")}</h2>
-              <p>{navigationIntent.kind === "close" || navigationIntent.kind === "window-close" ? t("dialog.closeMessage") : navigationIntent.kind === "open" ? t("dialog.openMessage") : t("dialog.formMessage")}</p>
+              <DialogTitle>{t("dialog.title")}</DialogTitle>
+              <DialogDescription>
+                {navigationIntent?.kind === "close" || navigationIntent?.kind === "window-close"
+                  ? t("dialog.closeMessage")
+                  : navigationIntent?.kind === "open"
+                    ? t("dialog.openMessage")
+                    : t("dialog.formMessage")}
+              </DialogDescription>
               <p className="dialog-supporting-copy">{t("dialog.message")}</p>
               <div className="dialog-actions">
-                <button className="secondary-button" type="button" onClick={() => void resolveNavigation("cancel")} disabled={busy}>{t("action.cancel")}</button>
+                <button ref={cancelDialogButton} className="secondary-button" type="button" onClick={() => void resolveNavigation("cancel")} disabled={busy}>{t("action.cancel")}</button>
                 <button className="danger-button" type="button" onClick={() => void resolveNavigation("discard")} disabled={busy}>{t("action.discard")}</button>
                 <button className="primary-button" type="button" onClick={() => void resolveNavigation("save")} disabled={busy}>{t("action.saveAndContinue")}</button>
               </div>
-            </section>
-          </div>
-        ) : null}
+            </DialogContent>
+          </DialogPortal>
+        </DialogRoot>
       </section>
     </main>
   );

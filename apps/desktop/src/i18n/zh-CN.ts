@@ -24,9 +24,11 @@ export const zhCN = {
     create: {
       title: "创建项目",
       intro: "创建一个持久化的本地项目，并设置初始语言范围。",
-      destination: "项目文件夹",
-      destinationPlaceholder: "C:\\Projects\\my-localization",
-      destinationHelp: "请选择新文件夹。已有文件夹会被拒绝，以保护其中内容。",
+      parentDirectory: "父文件夹",
+      parentDirectoryPlaceholder: "C:\\Projects",
+      parentDirectoryHelp: "请选择已有的父文件夹。Tsumugi 只会在其中创建新的子文件夹。",
+      directoryName: "新文件夹名称",
+      directoryNamePlaceholder: "my-localization",
       displayName: "项目名称",
       displayNamePlaceholder: "我的本地化项目",
       sourceLocale: "源语言",
@@ -34,6 +36,7 @@ export const zhCN = {
       targetLocales: "目标语言",
       targetLocalesPlaceholder: "zh-CN, ja",
       targetLocalesHelp: "使用逗号分隔语言。Core 会验证并规范化语言标签。",
+      chooseFolder: "选择文件夹",
       submit: "创建并打开",
     },
     open: {
@@ -42,6 +45,7 @@ export const zhCN = {
       destination: "项目文件夹",
       destinationPlaceholder: "C:\\Projects\\my-localization",
       destinationHelp: "请选择包含 Tsumugi 项目数据库的文件夹。",
+      chooseFolder: "选择文件夹",
       submit: "打开项目",
     },
     project: {
@@ -119,6 +123,7 @@ export const zhCN = {
       busy: "项目正在执行其他生命周期操作，请稍后重试。",
       storageFailed: "项目无法读取或保存。当前草稿仍保留在这里。",
       outcomeUnknown: "保存结果不确定。请重新读取项目后再试。",
+      directoryPickerUnavailable: "原生文件夹选择器不可用。请手动输入路径，或在桌面应用中重试。",
       unknown: "Tsumugi 无法完成该项目操作。",
     },
     accessibility: { projectActions: "项目操作", metadata: "项目元数据", feedback: "项目状态" },

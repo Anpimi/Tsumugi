@@ -615,6 +615,21 @@ button:focus-visible {
   background: #fff9fa;
 }
 
+.field-picker {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.field-picker input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.field-picker .secondary-button {
+  flex: 0 0 auto;
+}
+
 .field small,
 .form-wide-help {
   color: #78869a;
@@ -882,12 +897,19 @@ button:focus-visible {
 }
 
 .confirm-dialog {
+  position: fixed;
+  z-index: 11;
+  top: 50%;
+  left: 50%;
   width: min(470px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
   padding: 26px;
   border: 1px solid #d7e0ef;
   border-radius: 14px;
   background: #fff;
   box-shadow: 0 22px 70px rgb(31 47 82 / 22%);
+  transform: translate(-50%, -50%);
 }
 
 .confirm-dialog > p:not(.eyebrow) {
@@ -968,8 +990,13 @@ button:focus-visible {
   }
 
   .inline-form-row .primary-button,
-  .inline-form-row .secondary-button {
+  .inline-form-row .secondary-button,
+  .field-picker .secondary-button {
     width: 100%;
+  }
+
+  .field-picker {
+    display: grid;
   }
 
   .feedback {

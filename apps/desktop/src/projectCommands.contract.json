@@ -1,0 +1,61 @@
+{
+  "requests": {
+    "create": {
+      "destination": "C:\\Projects\\demo",
+      "displayName": "Literal name",
+      "sourceLocale": "en-US",
+      "targetLocales": ["ja", "zh-CN"]
+    },
+    "open": {
+      "locator": "C:\\Projects\\demo"
+    },
+    "read": {
+      "sessionToken": "session-1"
+    },
+    "rename": {
+      "sessionToken": "session-1",
+      "expectedRevision": "18446744073709551615",
+      "displayName": "Literal name"
+    },
+    "addTargetLocale": {
+      "sessionToken": "session-1",
+      "expectedRevision": "2",
+      "locale": "ko"
+    },
+    "close": {
+      "sessionToken": "session-1"
+    }
+  },
+  "responses": {
+    "projectView": {
+      "sessionToken": "session-1",
+      "metadata": {
+        "projectId": "123e4567-e89b-42d3-a456-426614174000",
+        "displayName": "Literal name",
+        "sourceLocale": "en-US",
+        "targetLocales": ["ja", "zh-CN"],
+        "metadataRevision": "2"
+      },
+      "reconciliationState": "settled"
+    },
+    "metadataMutation": {
+      "sessionToken": "session-1",
+      "metadata": {
+        "projectId": "123e4567-e89b-42d3-a456-426614174000",
+        "displayName": "Literal name",
+        "sourceLocale": "en-US",
+        "targetLocales": ["ja", "zh-CN"],
+        "metadataRevision": "2"
+      },
+      "outcome": "changed"
+    },
+    "close": {
+      "closed": true
+    }
+  },
+  "error": {
+    "code": "outcome-unknown",
+    "stage": "rename",
+    "recoveryRequired": true
+  }
+}

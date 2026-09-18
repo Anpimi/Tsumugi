@@ -4,29 +4,25 @@ mod commands;
 
 fn main() {
     commands::register_commands(tauri::Builder::default())
+        .plugin(tauri_plugin_dialog::init())
         .run(tauri::generate_context!())
         .expect("error while running Tsumugi desktop shell");
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::TempDir;
 
     use crate::commands::{CloseProjectRequest, ProjectView, ReadProjectRequest};
     use serde_json::{Value, json};
     use tauri::ipc::{CallbackFn, InvokeBody};
     use tauri::webview::InvokeRequest;
 
-    fn temporary_directory(label: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+    fn temporary_directory(label: &str) -> TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("tsumugi-desktop-{label}-"))
+            .tempdir()
             .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("tsumugi-desktop-{label}-{suffix}"));
-        fs::create_dir(&path).unwrap();
-        path
     }
 
     fn request(command: &str, body: Value) -> InvokeRequest {
@@ -44,7 +40,7 @@ mod tests {
     #[test]
     fn tauri_invoke_round_trip_reaches_real_core_storage() {
         let parent = temporary_directory("ipc");
-        let destination = parent.join("project");
+        let destination = parent.path().join("project");
         let app = crate::commands::register_commands(tauri::test::mock_builder())
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
@@ -110,6 +106,5 @@ mod tests {
         .unwrap();
         drop(webview);
         drop(app);
-        let _ = fs::remove_dir_all(parent);
     }
 }

@@ -1,3 +1,5 @@
+/// <reference types="vitest/config" />
+
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -6,5 +8,11 @@ export default defineConfig({
   clearScreen: false,
   server: {
     strictPort: true,
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: "./src/test/setup.ts",
+    restoreMocks: true,
+    clearMocks: true,
   },
 });

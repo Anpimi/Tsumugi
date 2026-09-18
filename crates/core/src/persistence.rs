@@ -839,7 +839,7 @@ mod tests {
     use super::*;
     use crate::Locale;
     use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::TempDir;
 
     fn metadata() -> ProjectMetadata {
         ProjectMetadata::create_with_id(
@@ -851,18 +851,11 @@ mod tests {
         .unwrap()
     }
 
-    fn temporary_directory(label: &str) -> PathBuf {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
+    fn temporary_directory(label: &str) -> TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("tsumugi-{label}-"))
+            .tempdir()
             .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("tsumugi-{label}-{suffix}"));
-        fs::create_dir(&path).unwrap();
-        path
-    }
-
-    fn cleanup(path: &Path) {
-        let _ = fs::remove_dir_all(path);
     }
 
     fn run_crash_child(project_path: &Path, hook_path: &Path, mode: &str) {
@@ -885,7 +878,7 @@ mod tests {
     #[test]
     fn create_open_edit_and_close_persist_real_sqlite_state() {
         let parent = temporary_directory("lifecycle");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let mut store = ProjectStore::create(&project_path, metadata()).unwrap();
 
         assert_eq!(store.metadata().unwrap().metadata_revision(), 1);
@@ -915,20 +908,19 @@ mod tests {
             vec!["ja", "zh-CN"]
         );
         reopened.close().unwrap();
-        cleanup(&parent);
     }
 
     #[test]
     fn create_refuses_existing_empty_or_nonempty_destinations() {
         let parent = temporary_directory("conflict");
-        let empty = parent.join("empty");
+        let empty = parent.path().join("empty");
         fs::create_dir(&empty).unwrap();
         assert_eq!(
             ProjectStore::create(&empty, metadata()).unwrap_err().code(),
             PersistenceErrorCode::DestinationConflict
         );
 
-        let nonempty = parent.join("nonempty");
+        let nonempty = parent.path().join("nonempty");
         fs::create_dir(&nonempty).unwrap();
         let original = nonempty.join("keep.txt");
         fs::write(&original, b"keep").unwrap();
@@ -939,32 +931,30 @@ mod tests {
             PersistenceErrorCode::DestinationConflict
         );
         assert_eq!(fs::read(&original).unwrap(), b"keep");
-        cleanup(&parent);
     }
 
     #[test]
     fn open_missing_locator_or_database_does_not_create_a_project() {
         let parent = temporary_directory("missing");
-        let missing = parent.join("missing-project");
+        let missing = parent.path().join("missing-project");
         assert_eq!(
             ProjectStore::open(&missing).unwrap_err().code(),
             PersistenceErrorCode::MissingProject
         );
 
-        let empty = parent.join("empty-project");
+        let empty = parent.path().join("empty-project");
         fs::create_dir(&empty).unwrap();
         assert_eq!(
             ProjectStore::open(&empty).unwrap_err().code(),
             PersistenceErrorCode::MissingProject
         );
         assert_eq!(fs::read_dir(&empty).unwrap().count(), 0);
-        cleanup(&parent);
     }
 
     #[test]
     fn ownership_lock_rejects_second_writer_and_releases_on_close() {
         let parent = temporary_directory("ownership");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let store = ProjectStore::create(&project_path, metadata()).unwrap();
         assert_eq!(
             ProjectStore::open(&project_path).unwrap_err().code(),
@@ -973,13 +963,12 @@ mod tests {
         store.close().unwrap();
         let reopened = ProjectStore::open(&project_path).unwrap();
         reopened.close().unwrap();
-        cleanup(&parent);
     }
 
     #[test]
     fn stale_and_invalid_edits_do_not_write() {
         let parent = temporary_directory("guards");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let mut store = ProjectStore::create(&project_path, metadata()).unwrap();
         assert_eq!(
             store.rename(0, "Wrong").unwrap_err(),
@@ -994,13 +983,12 @@ mod tests {
         );
         assert_eq!(store.metadata().unwrap().display_name(), "Demo");
         store.close().unwrap();
-        cleanup(&parent);
     }
 
     #[test]
     fn open_refuses_unsupported_schema_without_repair() {
         let parent = temporary_directory("schema");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let store = ProjectStore::create(&project_path, metadata()).unwrap();
         store.close().unwrap();
         let database = project_path.join(DATABASE_FILENAME);
@@ -1013,13 +1001,12 @@ mod tests {
         let error = ProjectStore::open(&project_path).unwrap_err();
         assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
         assert_eq!(fs::read(&database).unwrap(), before);
-        cleanup(&parent);
     }
 
     #[test]
     fn open_refuses_corrupt_metadata_without_repair() {
         let parent = temporary_directory("corrupt");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let store = ProjectStore::create(&project_path, metadata()).unwrap();
         store.close().unwrap();
 
@@ -1037,13 +1024,12 @@ mod tests {
         let error = ProjectStore::open(&project_path).unwrap_err();
         assert_eq!(error.code(), PersistenceErrorCode::CorruptProject);
         assert_eq!(fs::read(&database).unwrap(), before);
-        cleanup(&parent);
     }
 
     #[test]
     fn fault_before_commit_preserves_previous_and_after_commit_reconciles() {
         let parent = temporary_directory("faults");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let mut store = ProjectStore::create(&project_path, metadata()).unwrap();
 
         store.inject_fault(StorageFault::BeforeCommit);
@@ -1081,13 +1067,12 @@ mod tests {
         let reopened = ProjectStore::open(&project_path).unwrap();
         assert_eq!(reopened.metadata().unwrap().display_name(), "After");
         reopened.close().unwrap();
-        cleanup(&parent);
     }
 
     #[test]
     fn effective_durability_settings_are_rollback_full() {
         let parent = temporary_directory("pragma");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let store = ProjectStore::create(&project_path, metadata()).unwrap();
         let connection = store.connection().unwrap();
         let journal_mode: String = connection
@@ -1099,7 +1084,6 @@ mod tests {
         assert_eq!(journal_mode.to_ascii_lowercase(), "delete");
         assert_eq!(synchronous, 2);
         store.close().unwrap();
-        cleanup(&parent);
     }
 
     #[test]
@@ -1122,18 +1106,18 @@ mod tests {
     #[test]
     fn subprocess_termination_recovers_before_and_after_commit_boundaries() {
         let parent = temporary_directory("crash-restart");
-        let project_path = parent.join("project");
+        let project_path = parent.path().join("project");
         let store = ProjectStore::create(&project_path, metadata()).unwrap();
         store.close().unwrap();
 
-        let before_hook = parent.join("before-hook.txt");
+        let before_hook = parent.path().join("before-hook.txt");
         run_crash_child(&project_path, &before_hook, "before-commit");
         assert_eq!(fs::read_to_string(&before_hook).unwrap(), "before-commit");
         let reopened = ProjectStore::open(&project_path).unwrap();
         assert_eq!(reopened.metadata().unwrap().display_name(), "Demo");
         reopened.close().unwrap();
 
-        let after_hook = parent.join("after-hook.txt");
+        let after_hook = parent.path().join("after-hook.txt");
         run_crash_child(
             &project_path,
             &after_hook,
@@ -1148,6 +1132,5 @@ mod tests {
         assert_eq!(current.display_name(), "AfterCrash");
         assert_eq!(current.metadata_revision(), 2);
         reopened.close().unwrap();
-        cleanup(&parent);
     }
 }
