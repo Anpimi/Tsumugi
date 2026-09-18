@@ -111,11 +111,52 @@ describe("project lifecycle workbench", () => {
     const closeButton = screen.getByRole("button", { name: "Close project" });
     await user.click(closeButton);
     const dialog = await screen.findByRole("dialog");
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    const cancelButton = within(dialog).getByRole("button", { name: "Cancel" });
+    await waitFor(() => expect(cancelButton).toHaveFocus());
+    await user.tab();
+    expect(within(dialog).getByRole("button", { name: /Discard/ })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(cancelButton).toHaveFocus();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(dialog).not.toBeInTheDocument());
     expect(closeButton).toHaveFocus();
     expect(screen.getByRole("textbox", { name: /Project name/ })).toHaveValue("Demo draft");
+  });
+
+  it("discards a dirty draft before closing when the dialog choice requests it", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.type(screen.getByRole("textbox", { name: /Project name/ }), " draft");
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /Discard/ }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Demo" })).not.toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenCalledWith("close_project", { request: { sessionToken: "session-1" } });
+  });
+
+  it("saves a dirty draft before closing when the dialog choice requests it", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.type(screen.getByRole("textbox", { name: /Project name/ }), " draft");
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "rename_project") {
+        return { sessionToken: "session-1", metadata: metadata("Demo draft", "2"), outcome: "changed" };
+      }
+      if (command === "close_project") return { closed: true };
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Save and continue" }));
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Demo draft" })).not.toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenCalledWith("rename_project", {
+      request: { sessionToken: "session-1", expectedRevision: "1", displayName: "Demo draft" },
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith("close_project", { request: { sessionToken: "session-1" } });
   });
 
   it("reconciles an uncertain save exactly once before clearing the draft", async () => {
