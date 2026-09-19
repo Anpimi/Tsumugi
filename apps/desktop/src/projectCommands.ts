@@ -14,7 +14,7 @@ export type CommandErrorCode =
   | "storage-failed"
   | "outcome-unknown";
 
-export type CommandStage = "create" | "open" | "read" | "rename" | "add-target-locale" | "close";
+export type CommandStage = "create" | "open" | "read" | "rename" | "add-target-locale" | "set-target-locales" | "close";
 
 export interface CommandError {
   code: CommandErrorCode;
@@ -51,6 +51,12 @@ export interface AddTargetLocaleRequest {
   locale: string;
 }
 
+export interface SetTargetLocalesRequest {
+  sessionToken: string;
+  expectedRevision: string;
+  targetLocales: string[];
+}
+
 export interface CloseProjectRequest {
   sessionToken: string;
 }
@@ -85,6 +91,9 @@ export interface CloseProjectView {
 }
 
 export const projectCommands = {
+  setTargetLocales(request: SetTargetLocalesRequest) {
+    return invoke<MetadataMutationView>("set_target_locales", { request });
+  },
   create(request: CreateProjectRequest) {
     return invoke<ProjectView>("create_project", { request });
   },

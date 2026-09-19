@@ -36,6 +36,7 @@ pub enum CommandStage {
     Read,
     Rename,
     AddTargetLocale,
+    SetTargetLocales,
     Close,
 }
 
@@ -136,6 +137,14 @@ pub struct AddTargetLocaleRequest {
     pub session_token: String,
     pub expected_revision: String,
     pub locale: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTargetLocalesRequest {
+    pub session_token: String,
+    pub expected_revision: String,
+    pub target_locales: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -320,6 +329,20 @@ impl SessionManager {
         Ok(metadata_mutation_view(&active.token, &change))
     }
 
+    fn set_target_locales(
+        &mut self,
+        request: SetTargetLocalesRequest,
+    ) -> Result<MetadataMutationView, CommandError> {
+        let stage = CommandStage::SetTargetLocales;
+        let expected_revision = parse_revision(&request.expected_revision, stage)?;
+        let active = self.active_mut(&request.session_token, stage)?;
+        let change = active
+            .store
+            .set_target_locales(expected_revision, &request.target_locales)
+            .map_err(|error| map_persistence_error(error, stage))?;
+        Ok(metadata_mutation_view(&active.token, &change))
+    }
+
     fn close(&mut self, request: CloseProjectRequest) -> Result<CloseProjectView, CommandError> {
         let active = self.active.as_ref().ok_or_else(|| {
             CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Close)
@@ -417,6 +440,15 @@ pub fn add_target_locale(
 }
 
 #[tauri::command]
+pub fn set_target_locales(
+    state: State<'_, AppState>,
+    request: SetTargetLocalesRequest,
+) -> Result<MetadataMutationView, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::SetTargetLocales)?;
+    sessions.set_target_locales(request)
+}
+
+#[tauri::command]
 pub fn close_project(
     state: State<'_, AppState>,
     request: CloseProjectRequest,
@@ -434,6 +466,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
             read_project,
             rename_project,
             add_target_locale,
+            set_target_locales,
             close_project,
         ])
 }
@@ -642,8 +675,10 @@ mod tests {
 
     #[test]
     fn shared_typescript_fixture_matches_rust_serialization() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../test/fixtures/projectCommands.contract.json")).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../test/fixtures/projectCommands.contract.json"
+        ))
+        .unwrap();
 
         let requests = &fixture["requests"];
         assert_eq!(
@@ -765,6 +800,63 @@ mod tests {
             })
             .unwrap();
         assert!(closed.closed);
+    }
+
+    #[test]
+    fn target_scope_edit_validates_atomically_and_survives_reopen() {
+        let parent = temporary_directory("target-edit");
+        let path = parent.path().join("project");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&path)).unwrap();
+        for targets in [vec![], vec!["ssss"], vec!["ssssss"], vec!["en-US", "EN-us"]] {
+            let error = manager
+                .set_target_locales(SetTargetLocalesRequest {
+                    session_token: created.session_token.clone(),
+                    expected_revision: "1".to_owned(),
+                    target_locales: targets.into_iter().map(str::to_owned).collect(),
+                })
+                .unwrap_err();
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+            assert_eq!(error.field.as_deref(), Some("targetLocales"));
+        }
+        let changed = manager
+            .set_target_locales(SetTargetLocalesRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                target_locales: vec!["fr-FR".to_owned()],
+            })
+            .unwrap();
+        assert_eq!(changed.metadata.target_locales, vec!["fr-FR"]);
+        assert_eq!(changed.metadata.metadata_revision, "2");
+        let stale = manager
+            .set_target_locales(SetTargetLocalesRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                target_locales: vec!["ja".to_owned()],
+            })
+            .unwrap_err();
+        assert_eq!(stale.code, CommandErrorCode::StaleRevision);
+        let unchanged = manager
+            .set_target_locales(SetTargetLocalesRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "2".to_owned(),
+                target_locales: vec!["FR-fr".to_owned()],
+            })
+            .unwrap();
+        assert_eq!(unchanged.outcome, MetadataChangeOutcome::Unchanged);
+        assert_eq!(unchanged.metadata.metadata_revision, "2");
+        manager
+            .close(CloseProjectRequest {
+                session_token: created.session_token,
+            })
+            .unwrap();
+        let reopened = manager
+            .open(OpenProjectRequest {
+                locator: path.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        assert_eq!(reopened.metadata.target_locales, vec!["fr-FR"]);
+        assert_eq!(reopened.metadata.metadata_revision, "2");
     }
 
     #[test]

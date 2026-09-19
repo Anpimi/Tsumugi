@@ -41,7 +41,7 @@ import {
 } from "./recentProjects";
 import {
   projectCommands,
-  type AddTargetLocaleRequest,
+  type SetTargetLocalesRequest,
   type CloseProjectView,
   type CommandError,
   type CommandErrorCode,
@@ -372,7 +372,7 @@ function App() {
   }
 
   function beginEditor(kind: FormKind, metadata: ProjectMetadataView) {
-    editorForm.reset({ value: kind === "rename" ? metadata.displayName : "" });
+    editorForm.reset({ value: kind === "rename" ? metadata.displayName : metadata.targetLocales.join(", ") });
     setActiveForm({ kind, expectedRevision: metadata.metadataRevision });
     clearFeedback();
   }
@@ -610,12 +610,12 @@ function App() {
           displayName: value,
         });
       } else {
-        const request: AddTargetLocaleRequest = {
+        const request: SetTargetLocalesRequest = {
           sessionToken: project.sessionToken,
           expectedRevision: form.expectedRevision,
-          locale: value,
+          targetLocales: parseTargetLocales(value),
         };
-        result = await projectCommands.addTargetLocale(request);
+        result = await projectCommands.setTargetLocales(request);
       }
       setProject((current) => (current ? { ...current, metadata: result.metadata, reconciliationState: "settled" } : current));
       editorForm.reset(EDITOR_DEFAULT_VALUES);
@@ -623,12 +623,12 @@ function App() {
       setOperation("idle");
       setFeedback({
         tone: "success",
-        messageKey: result.outcome === "unchanged" ? (form.kind === "target" ? "feedback.duplicateTarget" : "feedback.unchanged") : form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded",
+        messageKey: result.outcome === "unchanged" ? "feedback.unchanged" : form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded",
         messageValues: result.outcome === "changed" ? { revision: result.metadata.metadataRevision } : undefined,
       });
       return { ok: true, metadata: result.metadata };
     } catch (value) {
-      const failure = asCommandError(value, form.kind === "rename" ? "rename" : "add-target-locale");
+      const failure = asCommandError(value, form.kind === "rename" ? "rename" : "set-target-locales");
       if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
       if (failure.code === "outcome-unknown") return reconcileUnknown(form);
       setOperation("idle");
@@ -780,7 +780,12 @@ function App() {
       }
       return;
     }
-    editorForm.setValue("value", value, { shouldDirty: true, shouldValidate: true });
+    const current = parseTargetLocales(editorForm.getValues("value"));
+    if (current.some((locale) => locale.toLowerCase() === value.toLowerCase())) {
+      setFeedback({ tone: "warning", messageKey: "feedback.duplicateTarget" });
+      return;
+    }
+    editorForm.setValue("value", [...current, value].join(", "), { shouldDirty: true, shouldValidate: true });
   }
 
   function handleCreateInvalid(errors: FieldErrors<CreateFormValues>) {
@@ -788,7 +793,7 @@ function App() {
   }
 
   function handleEditorInvalid() {
-    setFeedback(localValidation(activeForm?.kind === "rename" ? "displayName" : "locale"));
+    setFeedback(localValidation(activeForm?.kind === "rename" ? "displayName" : "targetLocales"));
   }
 
   useEffect(() => {
@@ -1251,6 +1256,7 @@ function App() {
                       {activeForm.kind === "target" ? (
                         <select
                           aria-label={t("editor.targetPreset")}
+                          disabled={busy}
                           defaultValue=""
                           onChange={(event) => {
                             addTargetPreset("editor", event.target.value);
@@ -1263,13 +1269,14 @@ function App() {
                       ) : null}
                       <input
                         id="editor-value"
-                        aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale"))}
+                        aria-label={activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}
+                        aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "targetLocales"))}
                         autoFocus
                         disabled={busy}
                         {...editorForm.register("value", { required: true, validate: (value) => Boolean(value.trim()) })}
                       />
                       <small>{activeForm.kind === "rename" ? t("editor.renameHelp") : t("editor.targetHelp")}</small>
-                      {editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale") ? <span className="field-error">{t(activeForm.kind === "rename" ? "errors.displayName" : "errors.locale")}</span> : null}
+                      {editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "targetLocales") ? <span className="field-error">{t(activeForm.kind === "rename" ? "errors.displayName" : "errors.targetLocales")}</span> : null}
                     </label>
                     <div className="form-actions">
                       <button className="secondary-button" type="button" onClick={cancelEditor} disabled={busy}>{t("editor.cancel")}</button>

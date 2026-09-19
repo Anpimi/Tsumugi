@@ -60,6 +60,29 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("edits the complete target scope and retains rejected drafts", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+    const field = screen.getByRole("textbox", { name: "Target locales" });
+    expect(field).toHaveValue("zh-CN");
+    await user.clear(field);
+    await user.type(field, "ssss");
+    mocks.invoke.mockRejectedValueOnce({ code: "invalid-input", stage: "set-target-locales", field: "targetLocales", recoveryRequired: false });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
+    expect(field).toHaveValue("ssss");
+    await user.clear(field);
+    await user.type(field, "fr-FR");
+    mocks.invoke.mockResolvedValueOnce({ sessionToken: "session-1", metadata: { ...metadata("Demo", "2"), targetLocales: ["fr-FR"] }, outcome: "changed" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenLastCalledWith("set_target_locales", { request: { sessionToken: "session-1", expectedRevision: "1", targetLocales: ["fr-FR"] } });
+    await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+    expect(screen.getByRole("textbox", { name: "Target locales" })).toHaveValue("fr-FR");
+  });
+
   it("suggests the project name as the folder until the folder is edited", async () => {
     const user = userEvent.setup();
     await renderApp();
