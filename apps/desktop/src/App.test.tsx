@@ -60,6 +60,44 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("suggests the project name as the folder until the folder is edited", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    const name = screen.getByLabelText(/Project name/);
+    const folder = screen.getByLabelText(/New folder name/);
+    await user.type(name, "Demo 项目");
+    expect(folder).toHaveValue("Demo 项目");
+    expect(name.compareDocumentPosition(folder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.clear(folder);
+    await user.type(folder, "custom-folder");
+    await user.type(name, " renamed");
+    expect(folder).toHaveValue("custom-folder");
+  });
+
+  it("routes Escape through create cancellation and retains the draft when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.type(screen.getByLabelText(/Project name/), "Draft");
+    await user.keyboard("{Escape}");
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByLabelText(/Project name/)).toHaveValue("Draft");
+  });
+
+  it("cancels an editor with Escape without saving its draft", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.type(screen.getByRole("textbox", { name: /Project name/ }), " draft");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: /Project name/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
+  });
   beforeEach(async () => {
     localStorage.clear();
     await i18n.changeLanguage("en-US");

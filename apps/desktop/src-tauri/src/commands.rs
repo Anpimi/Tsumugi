@@ -791,6 +791,16 @@ mod tests {
         assert_eq!(invalid_name.code, CommandErrorCode::InvalidInput);
         assert_eq!(invalid_name.field.as_deref(), Some("displayName"));
 
+        let invalid_locale = manager
+            .add_target_locale(AddTargetLocaleRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                locale: "ssss".to_owned(),
+            })
+            .unwrap_err();
+        assert_eq!(invalid_locale.code, CommandErrorCode::InvalidInput);
+        assert_eq!(invalid_locale.field.as_deref(), Some("locale"));
+
         let stale = manager
             .add_target_locale(AddTargetLocaleRequest {
                 session_token: created.session_token.clone(),

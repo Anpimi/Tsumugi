@@ -118,7 +118,7 @@ interface SaveResult {
 
 const CREATE_DEFAULT_VALUES: CreateFormValues = {
   parentDirectory: "",
-  directoryName: "my-localization",
+  directoryName: "",
   displayName: "",
   sourceLocale: "en-US",
   targetLocales: "zh-Hans",
@@ -289,6 +289,7 @@ function App() {
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
   const [copiedLocator, setCopiedLocator] = useState(false);
   const allowWindowClose = useRef(false);
+  const folderNameEdited = useRef(false);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
   const cancelDialogButton = useRef<HTMLButtonElement | null>(null);
   const createForm = useForm<CreateFormValues>({ defaultValues: CREATE_DEFAULT_VALUES });
@@ -441,6 +442,7 @@ function App() {
       setClosedPanel("empty");
       setOperation("idle");
       createForm.reset(CREATE_DEFAULT_VALUES);
+      folderNameEdited.current = false;
       setFeedback({ tone: "success", messageKey: "feedback.created" });
     } catch (value) {
       setOperation("idle");
@@ -621,7 +623,7 @@ function App() {
       setOperation("idle");
       setFeedback({
         tone: "success",
-        messageKey: result.outcome === "unchanged" ? "feedback.unchanged" : form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded",
+        messageKey: result.outcome === "unchanged" ? (form.kind === "target" ? "feedback.duplicateTarget" : "feedback.unchanged") : form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded",
         messageValues: result.outcome === "changed" ? { revision: result.metadata.metadataRevision } : undefined,
       });
       return { ok: true, metadata: result.metadata };
@@ -651,6 +653,7 @@ function App() {
     if (intent.kind === "panel") {
       setClosedPanel(intent.panel);
       createForm.reset(CREATE_DEFAULT_VALUES);
+      folderNameEdited.current = false;
       openForm.reset(OPEN_DEFAULT_VALUES);
       return;
     }
@@ -668,6 +671,7 @@ function App() {
     if (choice === "discard") {
       if (createDraftDirty) {
         createForm.reset(CREATE_DEFAULT_VALUES);
+        folderNameEdited.current = false;
       } else {
         editorForm.reset(EDITOR_DEFAULT_VALUES);
         setActiveForm(null);
@@ -716,12 +720,19 @@ function App() {
       return;
     }
     createForm.reset(CREATE_DEFAULT_VALUES);
+    folderNameEdited.current = false;
     clearFeedback();
     setClosedPanel("empty");
   }
 
   function handleSave(value = editorForm.getValues("value")) {
     if (activeForm && !busy) void saveForm(activeForm, value);
+  }
+
+  function cancelEditor() {
+    editorForm.reset(EDITOR_DEFAULT_VALUES);
+    setActiveForm(null);
+    clearFeedback();
   }
 
   function handleRefresh() {
@@ -782,6 +793,19 @@ function App() {
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
+      if (event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
+        event.preventDefault();
+        if (openPanel) {
+          setOpenPanel(false);
+        } else if (activeForm) {
+          cancelEditor();
+        } else if (closedPanel === "create") {
+          handleCreateCancel();
+        } else if (closedPanel === "open") {
+          setClosedPanel("empty");
+        }
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && activeForm && dirty && operation === "idle") {
         event.preventDefault();
         handleSave();
@@ -789,7 +813,7 @@ function App() {
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeForm, dirty, operation]);
+  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -975,6 +999,25 @@ function App() {
                       <p>{t("create.intro")}</p>
                     </div>
                     <div className="form-fields">
+                      <label className="field" htmlFor="create-display-name">
+                        <span>{t("create.displayName")}</span>
+                        <input
+                          id="create-display-name"
+                          aria-invalid={Boolean(createForm.formState.errors.displayName || fieldError(feedback, "displayName"))}
+                          placeholder={t("create.displayNamePlaceholder")}
+                          {...createForm.register("displayName", {
+                            required: true,
+                            validate: (value) => Boolean(value.trim()),
+                            onChange: (event) => {
+                              if (!folderNameEdited.current) {
+                                createForm.setValue("directoryName", event.target.value, { shouldValidate: true });
+                              }
+                            },
+                          })}
+                        />
+                        <small>{t("create.displayNameHelp")}</small>
+                        {createForm.formState.errors.displayName || fieldError(feedback, "displayName") ? <span className="field-error">{t("errors.displayName")}</span> : null}
+                      </label>
                       <label className="field" htmlFor="create-parent-directory">
                         <span>{t("create.parentDirectory")}</span>
                         <div className="field-picker">
@@ -998,21 +1041,14 @@ function App() {
                           id="create-directory-name"
                           aria-invalid={Boolean(createForm.formState.errors.directoryName || fieldError(feedback, "directoryName"))}
                           placeholder={t("create.directoryNamePlaceholder")}
-                          {...createForm.register("directoryName", { required: true, validate: isSafeChildDirectoryName })}
+                          {...createForm.register("directoryName", {
+                            required: true,
+                            validate: isSafeChildDirectoryName,
+                            onChange: () => { folderNameEdited.current = true; },
+                          })}
                         />
                         <small>{t("create.directoryNameHelp")}</small>
                         {createForm.formState.errors.directoryName || fieldError(feedback, "directoryName") ? <span className="field-error">{t("errors.directoryName")}</span> : null}
-                      </label>
-                      <label className="field" htmlFor="create-display-name">
-                        <span>{t("create.displayName")}</span>
-                        <input
-                          id="create-display-name"
-                          aria-invalid={Boolean(createForm.formState.errors.displayName || fieldError(feedback, "displayName"))}
-                          placeholder={t("create.displayNamePlaceholder")}
-                          {...createForm.register("displayName", { required: true, validate: (value) => Boolean(value.trim()) })}
-                        />
-                        <small>{t("create.displayNameHelp")}</small>
-                        {createForm.formState.errors.displayName || fieldError(feedback, "displayName") ? <span className="field-error">{t("errors.displayName")}</span> : null}
                       </label>
                       <div className="field-grid">
                         <label className="field" htmlFor="create-source-locale">
@@ -1236,7 +1272,7 @@ function App() {
                       {editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale") ? <span className="field-error">{t(activeForm.kind === "rename" ? "errors.displayName" : "errors.locale")}</span> : null}
                     </label>
                     <div className="form-actions">
-                      <button className="secondary-button" type="button" onClick={() => { editorForm.reset(EDITOR_DEFAULT_VALUES); setActiveForm(null); clearFeedback(); }} disabled={busy}>{t("editor.cancel")}</button>
+                      <button className="secondary-button" type="button" onClick={cancelEditor} disabled={busy}>{t("editor.cancel")}</button>
                       <button className="primary-button" type="submit" disabled={busy || !dirty}>
                         <Icon name="save" size={17} />
                         {busy ? t("status.saving") : t("editor.save")}
@@ -1261,7 +1297,8 @@ function App() {
               className="confirm-dialog"
               aria-busy={busy}
               onEscapeKeyDown={(event) => {
-                if (busy) event.preventDefault();
+                event.preventDefault();
+                if (!busy) void resolveNavigation("cancel");
               }}
               onInteractOutside={(event) => {
                 if (busy) event.preventDefault();

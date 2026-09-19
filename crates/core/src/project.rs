@@ -484,7 +484,7 @@ mod tests {
             Locale::parse("zh-Hans").unwrap()
         );
 
-        for input in ["", "en_US", "en--US", "sl-rozaj-rozaj"] {
+        for input in ["", "ssss", "en_US", "en--US", "sl-rozaj-rozaj"] {
             assert!(Locale::parse(input).is_err(), "{input} should be rejected");
         }
     }
