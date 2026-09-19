@@ -602,6 +602,23 @@ button:focus-visible {
   font-weight: 450;
 }
 
+.field select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #cbd5e4;
+  border-radius: 8px;
+  color: #1d293d;
+  background: #fff;
+  font: inherit;
+  font-weight: 450;
+}
+
+.field select:focus-visible {
+  outline: 3px solid #a9c0ff;
+  outline-offset: 1px;
+}
+
 .field input::placeholder {
   color: #a3adbb;
 }
@@ -613,6 +630,19 @@ button:focus-visible {
 .field input[aria-invalid="true"] {
   border-color: #c66c7a;
   background: #fff9fa;
+}
+
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"] {
+  border-color: #c66c7a;
+  background: #fff9fa;
+}
+
+.field-error {
+  color: #a34c59;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .field-picker {
@@ -640,6 +670,31 @@ button:focus-visible {
 
 .form-wide-help {
   margin-top: -9px;
+}
+
+.locale-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 8px;
+}
+
+.destination-preview {
+  display: grid;
+  gap: 7px;
+  padding: 12px 14px;
+  border: 1px solid #dbe4f2;
+  border-radius: 9px;
+  color: #63738c;
+  background: #f7faff;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.destination-preview code {
+  overflow-wrap: anywhere;
+  color: #2c4268;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
 }
 
 .form-actions {
@@ -720,6 +775,93 @@ button:focus-visible {
   background: #f8dce0;
 }
 
+.recent-projects {
+  width: min(560px, 100%);
+  margin: 34px auto 0;
+  padding-top: 22px;
+  border-top: 1px solid #e5eaf2;
+  text-align: left;
+}
+
+.recent-projects h2 {
+  margin: 0 0 10px;
+  color: #64738b;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.recent-projects ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recent-projects li {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.recent-project,
+.recent-project-remove {
+  border: 1px solid #dce4ef;
+  color: #3157b9;
+  background: #fff;
+  cursor: pointer;
+}
+
+.recent-project {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  text-align: left;
+}
+
+.recent-project:hover:not(:disabled),
+.recent-project-remove:hover:not(:disabled) {
+  border-color: #a9bde9;
+  background: #f6f9ff;
+}
+
+.recent-project-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.recent-project-copy strong {
+  overflow: hidden;
+  color: #2b3d5d;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-project-copy small {
+  overflow: hidden;
+  color: #8490a2;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-project-remove {
+  display: grid;
+  flex: 0 0 38px;
+  place-items: center;
+  border-radius: 9px;
+  color: #738199;
+}
+
 .project-state {
   width: 100%;
 }
@@ -730,6 +872,30 @@ button:focus-visible {
   justify-content: space-between;
   gap: 24px;
   padding: 16px 0 26px;
+}
+
+.project-location {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(680px, 100%);
+  margin-top: 9px;
+  color: #8793a6;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.project-location > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locale-code {
+  color: #8493aa;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .project-identity {
@@ -822,6 +988,52 @@ button:focus-visible {
   background: #f2f6ff;
   font-size: 12px;
   font-weight: 700;
+}
+
+.locale-chip .locale-code {
+  color: #7186b4;
+}
+
+.project-details {
+  margin-top: 16px;
+  color: #65748c;
+  font-size: 12px;
+}
+
+.project-details summary {
+  width: fit-content;
+  color: #315fd5;
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.project-details dl {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid #e0e6ef;
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+
+.project-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.project-details dt {
+  color: #7c899d;
+  font-weight: 650;
+}
+
+.project-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #455570;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
 }
 
 .action-bar {
@@ -925,6 +1137,24 @@ button:focus-visible {
   font-size: 12px;
 }
 
+.dialog-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.restore-location {
+  overflow-wrap: anywhere;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
 .dialog-actions {
   justify-content: flex-end;
   margin-top: 24px;
@@ -970,6 +1200,10 @@ button:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .locale-picker {
+    grid-template-columns: 1fr;
+  }
+
   .metadata-targets {
     grid-column: auto;
   }
@@ -1011,5 +1245,16 @@ button:focus-visible {
 
   .action-bar > button {
     flex: 1 1 auto;
+  }
+
+  .project-location {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .project-details dl > div {
+    grid-template-columns: 1fr;
+    gap: 3px;
   }
 }

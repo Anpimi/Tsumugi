@@ -67,6 +67,7 @@ export type ReconciliationState = "settled" | "committed" | "previous";
 
 export interface ProjectView {
   sessionToken: string;
+  locator: string;
   metadata: ProjectMetadataView;
   reconciliationState: ReconciliationState;
 }

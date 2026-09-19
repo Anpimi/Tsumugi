@@ -14,15 +14,11 @@ import { join as joinPath } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import {
-  BookOpen,
-  CircleCheck,
-  FileText,
   Folder,
   FolderOpen,
   Plus,
   RefreshCw,
   Save,
-  Settings,
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -33,6 +29,16 @@ import {
 } from "react-hook-form";
 import { isLocale, localeOptions, type Locale } from "./i18n";
 import type { TranslationKey } from "./i18n/types";
+import {
+  clearLastOpenProject,
+  normalizeLocator,
+  readLastOpenProject,
+  readRecentProjects,
+  rememberProject,
+  recentProjectName,
+  removeRecentProject,
+  type RecentProject,
+} from "./recentProjects";
 import {
   projectCommands,
   type AddTargetLocaleRequest,
@@ -54,10 +60,6 @@ type DirectoryPickerTarget = "create" | "open";
 
 const iconComponents = {
   folder: Folder,
-  file: FileText,
-  book: BookOpen,
-  check: CircleCheck,
-  settings: Settings,
   "folder-open": FolderOpen,
   plus: Plus,
   save: Save,
@@ -97,7 +99,8 @@ type NavigationIntent =
   | { kind: "close" }
   | { kind: "window-close" }
   | { kind: "open"; locator: string }
-  | { kind: "form"; formKind: FormKind };
+  | { kind: "form"; formKind: FormKind }
+  | { kind: "panel"; panel: ClosedPanel };
 
 interface Feedback {
   tone: FeedbackTone;
@@ -115,22 +118,54 @@ interface SaveResult {
 
 const CREATE_DEFAULT_VALUES: CreateFormValues = {
   parentDirectory: "",
-  directoryName: "",
+  directoryName: "my-localization",
   displayName: "",
   sourceLocale: "en-US",
-  targetLocales: "zh-CN",
+  targetLocales: "zh-Hans",
 };
 
 const OPEN_DEFAULT_VALUES: OpenFormValues = { locator: "" };
 const EDITOR_DEFAULT_VALUES: EditorFormValues = { value: "" };
 
-const navigation = (t: TFunction) => [
-  { label: t("nav.workspace"), icon: "folder" as const, selected: true },
-  { label: t("nav.translations"), icon: "file" as const, selected: false },
-  { label: t("nav.glossary"), icon: "book" as const, selected: false },
-  { label: t("nav.quality"), icon: "check" as const, selected: false },
-  { label: t("nav.settings"), icon: "settings" as const, selected: false },
-];
+const navigation = (t: TFunction) => [{ label: t("nav.workspace"), icon: "folder" as const, selected: true }];
+
+const languagePresets = [
+  { value: "en-US", labelKey: "localeNames.englishUnitedStates" },
+  { value: "zh-Hans", labelKey: "localeNames.simplifiedChinese" },
+  { value: "zh-Hant", labelKey: "localeNames.traditionalChinese" },
+  { value: "ja-JP", labelKey: "localeNames.japaneseJapan" },
+  { value: "ko-KR", labelKey: "localeNames.koreanKorea" },
+  { value: "es-ES", labelKey: "localeNames.spanishSpain" },
+  { value: "fr-FR", labelKey: "localeNames.frenchFrance" },
+  { value: "de-DE", labelKey: "localeNames.germanGermany" },
+  { value: "pt-BR", labelKey: "localeNames.portugueseBrazil" },
+] as const satisfies readonly { value: string; labelKey: TranslationKey }[];
+
+function localeLabel(t: TFunction, value: string): string {
+  const preset = languagePresets.find((candidate) => candidate.value === value);
+  if (preset) return t(preset.labelKey);
+  if (value === "zh-CN") return `${t("localeNames.simplifiedChinese")} (${value})`;
+  if (value === "zh-TW" || value === "zh-HK") return `${t("localeNames.traditionalChinese")} (${value})`;
+  return value;
+}
+
+function isPresetLocale(value: string): boolean {
+  return languagePresets.some((preset) => preset.value === value);
+}
+
+function previewDestination(parentDirectory: string, directoryName: string): string {
+  const parent = parentDirectory.trim().replace(/[\\/]+$/, "");
+  const child = directoryName.trim();
+  if (!parent || !child) return "";
+  return `${parent}\\${child}`;
+}
+
+function isSafeChildDirectoryName(value: string): boolean {
+  const child = value.trim();
+  if (!child || child !== value || child === "." || child === "..") return false;
+  if (/[\\/:*?"<>|\u0000-\u001f]/.test(child) || /[. ]$/.test(child)) return false;
+  return !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(child);
+}
 
 function parseTargetLocales(raw: string) {
   return raw
@@ -181,7 +216,7 @@ function feedbackFromFailure(failure: CommandError): Feedback {
   const warning = failure.code === "stale-revision" || failure.code === "outcome-unknown";
   return {
     tone: warning ? "warning" : "error",
-    messageKey: failureMessageKey(failure),
+    messageKey: failure.code === "invalid-input" ? fieldMessageKey(failure.field) : failureMessageKey(failure),
     messageValues: failure.code === "stale-revision" ? { revision: failure.currentRevision ?? "?" } : undefined,
     code: failure.code,
     field: failure.field,
@@ -190,7 +225,28 @@ function feedbackFromFailure(failure: CommandError): Feedback {
 }
 
 function localValidation(field: string): Feedback {
-  return { tone: "error", messageKey: "errors.invalidInput", code: "invalid-input", field };
+  return { tone: "error", messageKey: fieldMessageKey(field), code: "invalid-input", field };
+}
+
+function fieldMessageKey(field: string | undefined): TranslationKey {
+  switch (field) {
+    case "parentDirectory":
+      return "errors.parentDirectory";
+    case "directoryName":
+      return "errors.directoryName";
+    case "displayName":
+      return "errors.displayName";
+    case "sourceLocale":
+      return "errors.sourceLocale";
+    case "targetLocales":
+      return "errors.targetLocales";
+    case "locator":
+      return "errors.locator";
+    case "locale":
+      return "errors.locale";
+    default:
+      return "errors.invalidInput";
+  }
 }
 
 function statusFor(t: TFunction, operation: Operation, dirty: boolean): string {
@@ -228,22 +284,84 @@ function App() {
   const [openPanel, setOpenPanel] = useState(false);
   const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
   const [navigationIntent, setNavigationIntent] = useState<NavigationIntent | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>(() => readRecentProjects());
+  const [restoreCandidate, setRestoreCandidate] = useState<RecentProject | null>(() => readLastOpenProject());
+  const [restorePromptOpen, setRestorePromptOpen] = useState(false);
+  const [copiedLocator, setCopiedLocator] = useState(false);
   const allowWindowClose = useRef(false);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
   const cancelDialogButton = useRef<HTMLButtonElement | null>(null);
   const createForm = useForm<CreateFormValues>({ defaultValues: CREATE_DEFAULT_VALUES });
   const openForm = useForm<OpenFormValues>({ defaultValues: OPEN_DEFAULT_VALUES });
   const editorForm = useForm<EditorFormValues>({ defaultValues: EDITOR_DEFAULT_VALUES });
-  const dirty = Boolean(activeForm && editorForm.formState.isDirty);
+  const editorDirty = Boolean(activeForm && editorForm.formState.isDirty);
+  const createDraftDirty = closedPanel === "create" && createForm.formState.isDirty;
+  const dirty = editorDirty;
+  const createParentDirectory = createForm.watch("parentDirectory");
+  const createDirectoryName = createForm.watch("directoryName");
+  const createSourceLocale = createForm.watch("sourceLocale");
+  const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
   const busy = operation !== "idle";
-  const status = statusFor(t, operation, dirty);
+  const status = statusFor(t, operation, dirty || createDraftDirty);
 
   useEffect(() => {
     document.documentElement.lang = resolvedLanguage;
   }, [resolvedLanguage]);
 
+  useEffect(() => {
+    if (!project && restoreCandidate) setRestorePromptOpen(true);
+  }, [project, restoreCandidate]);
+
   function clearFeedback() {
     setFeedback(null);
+  }
+
+  function rememberOpenedProject(view: ProjectView) {
+    const recent = rememberProject(view);
+    setRecentProjects(recent);
+    setRestoreCandidate(recent[0] ?? null);
+  }
+
+  function isSameProject(locator: string): boolean {
+    return Boolean(project?.locator) && normalizeLocator(project?.locator ?? "") === normalizeLocator(locator);
+  }
+
+  async function copyProjectLocation() {
+    if (!project?.locator) return;
+    try {
+      await navigator.clipboard.writeText(project.locator);
+      setCopiedLocator(true);
+      setFeedback({ tone: "success", messageKey: "feedback.locationCopied" });
+      window.setTimeout(() => setCopiedLocator(false), 1600);
+    } catch {
+      setFeedback({ tone: "error", messageKey: "errors.copyFailed" });
+    }
+  }
+
+  async function restoreLastProject() {
+    const candidate = restoreCandidate;
+    if (!candidate) return;
+    setRestorePromptOpen(false);
+    const opened = await executeOpen(candidate.locator);
+    if (!opened) {
+      clearLastOpenProject();
+      setRestoreCandidate(null);
+    }
+  }
+
+  function declineRestore() {
+    clearLastOpenProject();
+    setRestoreCandidate(null);
+    setRestorePromptOpen(false);
+  }
+
+  function forgetRecentProject(locator: string) {
+    setRecentProjects(removeRecentProject(locator));
+    if (restoreCandidate && normalizeLocator(restoreCandidate.locator) === normalizeLocator(locator)) {
+      clearLastOpenProject();
+      setRestoreCandidate(null);
+      setRestorePromptOpen(false);
+    }
   }
 
   function requestNavigation(intent: NavigationIntent) {
@@ -271,6 +389,26 @@ function App() {
   }
 
   const executeCreate: SubmitHandler<CreateFormValues> = async (values) => {
+    if (!values.parentDirectory.trim()) {
+      createForm.setError("parentDirectory", { type: "required" });
+      setFeedback(localValidation("parentDirectory"));
+      return;
+    }
+    if (!isSafeChildDirectoryName(values.directoryName)) {
+      createForm.setError("directoryName", { type: "validate" });
+      setFeedback(localValidation("directoryName"));
+      return;
+    }
+    if (!values.displayName.trim()) {
+      createForm.setError("displayName", { type: "required" });
+      setFeedback(localValidation("displayName"));
+      return;
+    }
+    if (!values.sourceLocale.trim()) {
+      createForm.setError("sourceLocale", { type: "required" });
+      setFeedback(localValidation("sourceLocale"));
+      return;
+    }
     const targetLocales = parseTargetLocales(values.targetLocales);
     if (targetLocales.length === 0) {
       createForm.setError("targetLocales", { type: "required" });
@@ -298,6 +436,7 @@ function App() {
       };
       const view = await projectCommands.create(request);
       setProject(view);
+      rememberOpenedProject(view);
       setActiveForm(null);
       setClosedPanel("empty");
       setOperation("idle");
@@ -315,11 +454,30 @@ function App() {
       return false;
     }
 
+    if (isSameProject(locator)) {
+      setOpenPanel(false);
+      openForm.reset(OPEN_DEFAULT_VALUES);
+      setRestorePromptOpen(false);
+      setFeedback({ tone: "info", messageKey: "feedback.alreadyOpen" });
+      if (project) rememberOpenedProject(project);
+      return true;
+    }
+
     setOperation("opening");
     setFeedback({ tone: "info", messageKey: "status.opening" });
     try {
       const view = await projectCommands.open({ locator });
+      const sameSession = project?.sessionToken === view.sessionToken;
       setProject(view);
+      rememberOpenedProject(view);
+      setRestorePromptOpen(false);
+      if (sameSession) {
+        setOpenPanel(false);
+        openForm.reset(OPEN_DEFAULT_VALUES);
+        setOperation("idle");
+        setFeedback({ tone: "info", messageKey: "feedback.alreadyOpen" });
+        return true;
+      }
       setActiveForm(null);
       editorForm.reset(EDITOR_DEFAULT_VALUES);
       setOpenPanel(false);
@@ -343,6 +501,8 @@ function App() {
       const result: CloseProjectView = await projectCommands.close({ sessionToken: project.sessionToken });
       if (!result.closed) throw new Error("close-not-confirmed");
       setProject(null);
+      clearLastOpenProject();
+      setRestoreCandidate(null);
       setActiveForm(null);
       editorForm.reset(EDITOR_DEFAULT_VALUES);
       setOpenPanel(false);
@@ -358,13 +518,25 @@ function App() {
   }
 
   async function executeWindowClose() {
+    if (!project) {
+      try {
+        allowWindowClose.current = true;
+        await getCurrentWindow().close();
+        return true;
+      } catch {
+        allowWindowClose.current = false;
+        return false;
+      }
+    }
     const closed = await executeClose();
-    if (!closed) return;
+    if (!closed) return false;
     try {
       allowWindowClose.current = true;
       await getCurrentWindow().close();
+      return true;
     } catch {
       allowWindowClose.current = false;
+      return false;
     }
   }
 
@@ -409,7 +581,7 @@ function App() {
         return { ok: true, metadata: view.metadata };
       }
       setOperation("idle");
-      setFeedback({ tone: "warning", messageKey: "feedback.previous", code: "outcome-unknown" });
+      setFeedback({ tone: "warning", messageKey: "feedback.previous", code: "outcome-unknown", action: "retry-reconciliation" });
       return { ok: false, metadata: view.metadata };
     } catch {
       setOperation("reconciling");
@@ -476,6 +648,12 @@ function App() {
       await executeOpen(intent.locator);
       return;
     }
+    if (intent.kind === "panel") {
+      setClosedPanel(intent.panel);
+      createForm.reset(CREATE_DEFAULT_VALUES);
+      openForm.reset(OPEN_DEFAULT_VALUES);
+      return;
+    }
     const nextMetadata = metadata ?? project?.metadata;
     if (nextMetadata) beginEditor(intent.formKind, nextMetadata);
   }
@@ -488,8 +666,12 @@ function App() {
     }
     const intent = navigationIntent;
     if (choice === "discard") {
-      editorForm.reset(EDITOR_DEFAULT_VALUES);
-      setActiveForm(null);
+      if (createDraftDirty) {
+        createForm.reset(CREATE_DEFAULT_VALUES);
+      } else {
+        editorForm.reset(EDITOR_DEFAULT_VALUES);
+        setActiveForm(null);
+      }
       setNavigationIntent(null);
       await continueNavigation(intent);
       return;
@@ -519,12 +701,23 @@ function App() {
     event.preventDefault();
     if (busy) return;
     void openForm.handleSubmit(({ locator }) => {
-      if (dirty) {
+      if (dirty && !isSameProject(locator)) {
         requestNavigation({ kind: "open", locator });
         return;
       }
       void executeOpen(locator);
     }, () => setFeedback(localValidation("locator")))();
+  }
+
+  function handleCreateCancel() {
+    if (busy) return;
+    if (createDraftDirty) {
+      requestNavigation({ kind: "panel", panel: "empty" });
+      return;
+    }
+    createForm.reset(CREATE_DEFAULT_VALUES);
+    clearFeedback();
+    setClosedPanel("empty");
   }
 
   function handleSave(value = editorForm.getValues("value")) {
@@ -549,7 +742,7 @@ function App() {
   }
 
   function handleRetryReconciliation() {
-    if (activeForm && project && operation === "reconciling") void reconcileUnknown(activeForm);
+    if (activeForm && project && (operation === "idle" || operation === "reconciling")) void reconcileUnknown(activeForm);
   }
 
   async function chooseDirectory(target: DirectoryPickerTarget) {
@@ -565,6 +758,18 @@ function App() {
     } catch {
       setFeedback({ tone: "error", messageKey: "errors.directoryPickerUnavailable" });
     }
+  }
+
+  function addTargetPreset(form: "create" | "editor", value: string) {
+    if (!value) return;
+    if (form === "create") {
+      const current = parseTargetLocales(createForm.getValues("targetLocales"));
+      if (!current.some((locale) => locale.toLowerCase() === value.toLowerCase())) {
+        createForm.setValue("targetLocales", [...current, value].join(", "), { shouldDirty: true, shouldValidate: true });
+      }
+      return;
+    }
+    editorForm.setValue("value", value, { shouldDirty: true, shouldValidate: true });
   }
 
   function handleCreateInvalid(errors: FieldErrors<CreateFormValues>) {
@@ -599,9 +804,13 @@ function App() {
             setFeedback({ tone: "warning", messageKey: "status.reconciling" });
             return;
           }
-          if (!project) {
-            allowWindowClose.current = true;
-            await getCurrentWindow().close();
+           if (!project && createDraftDirty) {
+             requestNavigation({ kind: "window-close" });
+             return;
+           }
+           if (!project) {
+             allowWindowClose.current = true;
+             await getCurrentWindow().close();
             return;
           }
           if (dirty) {
@@ -624,7 +833,7 @@ function App() {
       disposed = true;
       unlisten?.();
     };
-  }, [busy, dirty, project, resolvedLanguage]);
+  }, [busy, createDraftDirty, dirty, project, resolvedLanguage]);
 
   const navItems = navigation(t);
   const renderFeedback = feedback ? (
@@ -641,7 +850,7 @@ function App() {
           </button>
         ) : null}
         {feedback.action === "retry-reconciliation" ? (
-          <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "reconciling"}>
+          <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "idle" && operation !== "reconciling"}>
             <Icon name="refresh" size={16} />
             {t("action.retry")}
           </button>
@@ -670,15 +879,13 @@ function App() {
         </div>
 
         <nav className="navigation" aria-label={t("nav.workspace")}>
-          {navItems.map((item) => (
-            <button
-              aria-current={item.selected ? "page" : undefined}
-              className={`navigation-item${item.selected ? " is-selected" : ""}`}
-              disabled={!item.selected}
-              key={item.label}
-              title={item.selected ? undefined : t("future", { label: item.label })}
-              type="button"
-            >
+           {navItems.map((item) => (
+             <button
+               aria-current={item.selected ? "page" : undefined}
+               className={`navigation-item${item.selected ? " is-selected" : ""}`}
+               key={item.label}
+               type="button"
+             >
               <Icon name={item.icon} />
               <span>{item.label}</span>
             </button>
@@ -693,13 +900,7 @@ function App() {
 
       <section className="workspace" aria-label={t("nav.workspace")}>
         <header className="topbar">
-          <nav className="menu-bar" aria-label={t("menu.file")}>
-            <button type="button" disabled>{t("menu.file")}</button>
-            <button type="button" disabled>{t("menu.edit")}</button>
-            <button type="button" disabled>{t("menu.view")}</button>
-            <button type="button" disabled>{t("menu.help")}</button>
-          </nav>
-          <div className="topbar-actions">
+           <div className="topbar-actions">
             <label className="language-control">
               <span>{t("language")}</span>
               <select
@@ -713,11 +914,7 @@ function App() {
                 {localeOptions.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
               </select>
             </label>
-            <button className="settings-link" type="button" disabled title={t("future", { label: t("nav.settings") })}>
-              <Icon name="settings" size={18} />
-              <span>{t("nav.settings")}</span>
-            </button>
-          </div>
+           </div>
         </header>
 
         <div className="workspace-body">
@@ -742,6 +939,33 @@ function App() {
                         {t("empty.open")}
                       </button>
                     </div>
+                    {recentProjects.length > 0 ? (
+                      <section className="recent-projects" aria-labelledby="recent-projects-title">
+                        <h2 id="recent-projects-title">{t("recent.title")}</h2>
+                        <ul>
+                          {recentProjects.map((recent) => (
+                            <li key={normalizeLocator(recent.locator)}>
+                              <button className="recent-project" type="button" onClick={() => void executeOpen(recent.locator)} disabled={busy}>
+                                <span className="recent-project-copy">
+                                  <strong>{recentProjectName(recent.locator)}</strong>
+                                  <small>{recent.locator}</small>
+                                </span>
+                                <Icon name="folder-open" size={16} />
+                              </button>
+                              <button
+                                className="recent-project-remove"
+                                type="button"
+                                aria-label={t("recent.remove", { name: recentProjectName(recent.locator) })}
+                                onClick={() => forgetRecentProject(recent.locator)}
+                                disabled={busy}
+                              >
+                                <Icon name="close" size={15} />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ) : null}
                   </>
                 ) : closedPanel === "create" ? (
                   <form className="form-card" onSubmit={createForm.handleSubmit(executeCreate, handleCreateInvalid)}>
@@ -758,7 +982,7 @@ function App() {
                             id="create-parent-directory"
                             aria-invalid={Boolean(createForm.formState.errors.parentDirectory || fieldError(feedback, "parentDirectory"))}
                             placeholder={t("create.parentDirectoryPlaceholder")}
-                            {...createForm.register("parentDirectory", { required: true })}
+                            {...createForm.register("parentDirectory", { required: true, validate: (value) => Boolean(value.trim()) })}
                           />
                           <button className="secondary-button" type="button" onClick={() => void chooseDirectory("create")} disabled={busy}>
                             <Icon name="folder-open" size={16} />
@@ -766,6 +990,7 @@ function App() {
                           </button>
                         </div>
                         <small>{t("create.parentDirectoryHelp")}</small>
+                        {createForm.formState.errors.parentDirectory || fieldError(feedback, "parentDirectory") ? <span className="field-error">{t("errors.parentDirectory")}</span> : null}
                       </label>
                       <label className="field" htmlFor="create-directory-name">
                         <span>{t("create.directoryName")}</span>
@@ -773,8 +998,10 @@ function App() {
                           id="create-directory-name"
                           aria-invalid={Boolean(createForm.formState.errors.directoryName || fieldError(feedback, "directoryName"))}
                           placeholder={t("create.directoryNamePlaceholder")}
-                          {...createForm.register("directoryName", { required: true })}
+                          {...createForm.register("directoryName", { required: true, validate: isSafeChildDirectoryName })}
                         />
+                        <small>{t("create.directoryNameHelp")}</small>
+                        {createForm.formState.errors.directoryName || fieldError(feedback, "directoryName") ? <span className="field-error">{t("errors.directoryName")}</span> : null}
                       </label>
                       <label className="field" htmlFor="create-display-name">
                         <span>{t("create.displayName")}</span>
@@ -782,33 +1009,65 @@ function App() {
                           id="create-display-name"
                           aria-invalid={Boolean(createForm.formState.errors.displayName || fieldError(feedback, "displayName"))}
                           placeholder={t("create.displayNamePlaceholder")}
-                          {...createForm.register("displayName", { required: true })}
+                          {...createForm.register("displayName", { required: true, validate: (value) => Boolean(value.trim()) })}
                         />
+                        <small>{t("create.displayNameHelp")}</small>
+                        {createForm.formState.errors.displayName || fieldError(feedback, "displayName") ? <span className="field-error">{t("errors.displayName")}</span> : null}
                       </label>
                       <div className="field-grid">
                         <label className="field" htmlFor="create-source-locale">
                           <span>{t("create.sourceLocale")}</span>
-                          <input
-                            id="create-source-locale"
-                            aria-invalid={Boolean(createForm.formState.errors.sourceLocale || fieldError(feedback, "sourceLocale"))}
-                            placeholder={t("create.sourceLocalePlaceholder")}
-                            {...createForm.register("sourceLocale", { required: true })}
-                          />
+                          <div className="locale-picker">
+                            <select
+                              aria-label={t("create.sourcePreset")}
+                              value={isPresetLocale(createSourceLocale) ? createSourceLocale : ""}
+                              onChange={(event) => {
+                                if (event.target.value) createForm.setValue("sourceLocale", event.target.value, { shouldDirty: true, shouldValidate: true });
+                              }}
+                            >
+                              <option value="">{t("create.choosePreset")}</option>
+                              {languagePresets.map((preset) => <option key={preset.value} value={preset.value}>{t(preset.labelKey)}</option>)}
+                            </select>
+                            <input
+                              id="create-source-locale"
+                              aria-invalid={Boolean(createForm.formState.errors.sourceLocale || fieldError(feedback, "sourceLocale"))}
+                              placeholder={t("create.sourceLocalePlaceholder")}
+                              {...createForm.register("sourceLocale", { required: true, validate: (value) => Boolean(value.trim()) })}
+                            />
+                          </div>
+                          <small>{t("create.sourceLocaleHelp")}</small>
+                          {createForm.formState.errors.sourceLocale || fieldError(feedback, "sourceLocale") ? <span className="field-error">{t("errors.sourceLocale")}</span> : null}
                         </label>
                         <label className="field" htmlFor="create-target-locales">
                           <span>{t("create.targetLocales")}</span>
+                          <select
+                            aria-label={t("create.targetPreset")}
+                            defaultValue=""
+                            onChange={(event) => {
+                              addTargetPreset("create", event.target.value);
+                              event.currentTarget.value = "";
+                            }}
+                          >
+                            <option value="">{t("create.choosePreset")}</option>
+                            {languagePresets.map((preset) => <option key={preset.value} value={preset.value}>{t(preset.labelKey)}</option>)}
+                          </select>
                           <input
                             id="create-target-locales"
                             aria-invalid={Boolean(createForm.formState.errors.targetLocales || fieldError(feedback, "targetLocales"))}
                             placeholder={t("create.targetLocalesPlaceholder")}
-                            {...createForm.register("targetLocales", { required: true })}
+                            {...createForm.register("targetLocales", { required: true, validate: (value) => parseTargetLocales(value).length > 0 })}
                           />
+                          <small>{t("create.targetLocalesHelp")}</small>
+                          {createForm.formState.errors.targetLocales || fieldError(feedback, "targetLocales") ? <span className="field-error">{t("errors.targetLocales")}</span> : null}
                         </label>
                       </div>
-                      <small className="form-wide-help">{t("create.targetLocalesHelp")}</small>
+                      <div className="destination-preview" aria-live="polite">
+                        <span>{t("create.destinationPreview")}</span>
+                        <code>{destinationPreview || t("create.destinationPreviewEmpty")}</code>
+                      </div>
                     </div>
                     <div className="form-actions">
-                      <button className="secondary-button" type="button" onClick={() => { clearFeedback(); setClosedPanel("empty"); }} disabled={busy}>
+                      <button className="secondary-button" type="button" onClick={handleCreateCancel} disabled={busy}>
                         {t("action.cancel")}
                       </button>
                       <button className="primary-button" type="submit" disabled={busy}>
@@ -839,6 +1098,7 @@ function App() {
                         </button>
                       </div>
                       <small>{t("open.destinationHelp")}</small>
+                      {openForm.formState.errors.locator || fieldError(feedback, "locator") ? <span className="field-error">{t("errors.locator")}</span> : null}
                     </label>
                     <div className="form-actions">
                       <button className="secondary-button" type="button" onClick={() => { clearFeedback(); setClosedPanel("empty"); }} disabled={busy}>
@@ -858,7 +1118,12 @@ function App() {
                   <div>
                     <p className="eyebrow">{t("project.eyebrow")}</p>
                     <h1>{project.metadata.displayName}</h1>
-                    <p className="project-identity">{t("project.identity")}: {project.metadata.projectId}</p>
+                    <div className="project-location">
+                      <span title={project.locator}>{project.locator}</span>
+                      <button className="text-button" type="button" onClick={() => void copyProjectLocation()} disabled={busy}>
+                        {copiedLocator ? t("project.locationCopied") : t("project.copyLocation")}
+                      </button>
+                    </div>
                   </div>
                   <span className={`status-badge status-badge-${operation}`}>
                     <span className="status-dot" aria-hidden="true" />
@@ -869,19 +1134,23 @@ function App() {
                 <dl className="metadata-grid" aria-label={t("accessibility.metadata")}>
                   <div className="metadata-item">
                     <dt>{t("project.source")}</dt>
-                    <dd>{project.metadata.sourceLocale}</dd>
+                    <dd title={project.metadata.sourceLocale}>{localeLabel(t, project.metadata.sourceLocale)} <span className="locale-code">{project.metadata.sourceLocale}</span></dd>
                   </div>
                   <div className="metadata-item metadata-targets">
                     <dt>{t("project.targets")}</dt>
                     <dd>
-                      {project.metadata.targetLocales.length > 0 ? project.metadata.targetLocales.map((target) => <span className="locale-chip" key={target}>{target}</span>) : <span>{t("project.noTargets")}</span>}
+                       {project.metadata.targetLocales.length > 0 ? project.metadata.targetLocales.map((target) => <span className="locale-chip" key={target}><span>{localeLabel(t, target)}</span><span className="locale-code">{target}</span></span>) : <span>{t("project.noTargets")}</span>}
                     </dd>
                   </div>
-                  <div className="metadata-item">
-                    <dt>{t("project.revision")}</dt>
-                    <dd>{project.metadata.metadataRevision}</dd>
-                  </div>
                 </dl>
+
+                <details className="project-details">
+                  <summary>{t("project.showDetails")}</summary>
+                  <dl>
+                    <div><dt>{t("project.identity")}</dt><dd>{project.metadata.projectId}</dd></div>
+                    <div><dt>{t("project.revision")}</dt><dd>{project.metadata.metadataRevision}</dd></div>
+                  </dl>
+                </details>
 
                 <div className="action-bar" aria-label={t("accessibility.projectActions")}>
                   <button className="primary-button" type="button" onClick={() => startEditor("rename")} disabled={busy}>
@@ -923,6 +1192,8 @@ function App() {
                             {t("open.chooseFolder")}
                           </button>
                         </div>
+                        <small>{t("open.destinationHelp")}</small>
+                        {openForm.formState.errors.locator || fieldError(feedback, "locator") ? <span className="field-error">{t("errors.locator")}</span> : null}
                       </label>
                       <button className="primary-button" type="submit" disabled={busy}>{t("open.submit")}</button>
                       <button className="secondary-button" type="button" onClick={() => setOpenPanel(false)} disabled={busy}>{t("action.cancel")}</button>
@@ -941,13 +1212,28 @@ function App() {
                     </div>
                     <label className="field" htmlFor="editor-value">
                       <span>{activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}</span>
+                      {activeForm.kind === "target" ? (
+                        <select
+                          aria-label={t("editor.targetPreset")}
+                          defaultValue=""
+                          onChange={(event) => {
+                            addTargetPreset("editor", event.target.value);
+                            event.currentTarget.value = "";
+                          }}
+                        >
+                          <option value="">{t("create.choosePreset")}</option>
+                          {languagePresets.map((preset) => <option key={preset.value} value={preset.value}>{t(preset.labelKey)}</option>)}
+                        </select>
+                      ) : null}
                       <input
                         id="editor-value"
                         aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale"))}
                         autoFocus
-                        {...editorForm.register("value", { required: true })}
+                        disabled={busy}
+                        {...editorForm.register("value", { required: true, validate: (value) => Boolean(value.trim()) })}
                       />
                       <small>{activeForm.kind === "rename" ? t("editor.renameHelp") : t("editor.targetHelp")}</small>
+                      {editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale") ? <span className="field-error">{t(activeForm.kind === "rename" ? "errors.displayName" : "errors.locale")}</span> : null}
                     </label>
                     <div className="form-actions">
                       <button className="secondary-button" type="button" onClick={() => { editorForm.reset(EDITOR_DEFAULT_VALUES); setActiveForm(null); clearFeedback(); }} disabled={busy}>{t("editor.cancel")}</button>
@@ -973,6 +1259,7 @@ function App() {
             <DialogOverlay className="dialog-backdrop" />
             <DialogContent
               className="confirm-dialog"
+              aria-busy={busy}
               onEscapeKeyDown={(event) => {
                 if (busy) event.preventDefault();
               }}
@@ -990,20 +1277,52 @@ function App() {
                 if (target?.isConnected) target.focus();
               }}
             >
-              <p className="eyebrow">{t("status.unsaved")}</p>
-              <DialogTitle>{t("dialog.title")}</DialogTitle>
+              <p className="eyebrow">{createDraftDirty ? t("empty.create") : t("status.unsaved")}</p>
+              <DialogTitle>{createDraftDirty ? t("dialog.createTitle") : t("dialog.title")}</DialogTitle>
               <DialogDescription>
-                {navigationIntent?.kind === "close" || navigationIntent?.kind === "window-close"
+                {navigationIntent?.kind === "panel"
+                  ? t("dialog.createMessage")
+                  : navigationIntent?.kind === "close" || navigationIntent?.kind === "window-close"
                   ? t("dialog.closeMessage")
                   : navigationIntent?.kind === "open"
                     ? t("dialog.openMessage")
                     : t("dialog.formMessage")}
               </DialogDescription>
-              <p className="dialog-supporting-copy">{t("dialog.message")}</p>
+              <p className="dialog-supporting-copy">{createDraftDirty ? t("dialog.createSupporting") : t("dialog.message")}</p>
+              {feedback && (feedback.tone === "error" || feedback.tone === "warning") ? (
+                <div className={`dialog-feedback feedback-${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>
+                  <span>{renderFeedbackMessage(t, feedback)}</span>
+                  {feedback.action === "refresh" ? <button className="text-button" type="button" onClick={handleRefresh} disabled={busy}>{t("action.refresh")}</button> : null}
+                  {feedback.action === "retry-reconciliation" ? <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "idle" && operation !== "reconciling"}>{t("action.retry")}</button> : null}
+                </div>
+              ) : null}
               <div className="dialog-actions">
-                <button ref={cancelDialogButton} className="secondary-button" type="button" onClick={() => void resolveNavigation("cancel")} disabled={busy}>{t("action.cancel")}</button>
+                <button ref={cancelDialogButton} className="secondary-button" type="button" onClick={() => void resolveNavigation("cancel")} disabled={busy}>{createDraftDirty ? t("action.keepEditing") : t("action.cancel")}</button>
                 <button className="danger-button" type="button" onClick={() => void resolveNavigation("discard")} disabled={busy}>{t("action.discard")}</button>
-                <button className="primary-button" type="button" onClick={() => void resolveNavigation("save")} disabled={busy}>{t("action.saveAndContinue")}</button>
+                {activeForm && !createDraftDirty ? <button className="primary-button" type="button" onClick={() => void resolveNavigation("save")} disabled={busy}>{t("action.saveAndContinue")}</button> : null}
+              </div>
+            </DialogContent>
+          </DialogPortal>
+        </DialogRoot>
+
+        <DialogRoot
+          open={restorePromptOpen && Boolean(restoreCandidate) && !Boolean(navigationIntent) && !project}
+          onOpenChange={(open) => {
+            if (!open) declineRestore();
+          }}
+        >
+          <DialogPortal>
+            <DialogOverlay className="dialog-backdrop" />
+            <DialogContent className="confirm-dialog restore-dialog">
+              <p className="eyebrow">{t("recent.title")}</p>
+              <DialogTitle>{t("restore.title")}</DialogTitle>
+              <DialogDescription>
+                {t("restore.message", { name: restoreCandidate ? recentProjectName(restoreCandidate.locator) : "" })}
+              </DialogDescription>
+              <p className="dialog-supporting-copy restore-location">{restoreCandidate?.locator}</p>
+              <div className="dialog-actions">
+                <button className="secondary-button" type="button" onClick={declineRestore}>{t("restore.startFresh")}</button>
+                <button className="primary-button" type="button" onClick={() => void restoreLastProject()}>{t("restore.open")}</button>
               </div>
             </DialogContent>
           </DialogPortal>

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { i18n } from "./i18n";
+import { LAST_OPEN_PROJECT_STORAGE_KEY } from "./recentProjects";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -36,6 +37,7 @@ const projectView = (
   reconciliationState: "settled" | "committed" | "previous" = "settled",
 ) => ({
   sessionToken: "session-1",
+  locator: "C:\\Projects\\demo",
   metadata: metadata(displayName, revision),
   reconciliationState,
 });
@@ -49,8 +51,10 @@ async function renderApp() {
 async function createProject(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Create project" }));
   await user.type(screen.getByLabelText(/Parent folder/), "C:\\Projects");
-  await user.type(screen.getByLabelText("New folder name"), "demo");
-  await user.type(screen.getByLabelText("Project name"), "Demo");
+  const directoryName = screen.getByLabelText(/New folder name/);
+  await user.clear(directoryName);
+  await user.type(directoryName, "demo");
+  await user.type(screen.getByLabelText(/Project name/), "Demo");
   await user.click(screen.getByRole("button", { name: "Create and open" }));
   await waitFor(() => expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument());
 }
@@ -83,6 +87,67 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Choose folder" }));
     expect(screen.getByLabelText(/Parent folder/)).toHaveValue("C:\\Projects");
     expect(mocks.invoke).not.toHaveBeenCalledWith("create_project", expect.anything());
+  });
+
+  it("shows human-readable locale presets while keeping custom locale tags available", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+
+    const sourcePreset = screen.getByRole("combobox", { name: "Common source languages" });
+    const targetPreset = screen.getByRole("combobox", { name: "Common target languages" });
+    expect(within(sourcePreset).getByRole("option", { name: "Simplified Chinese" })).toBeInTheDocument();
+    expect(within(sourcePreset).getByRole("option", { name: "Traditional Chinese" })).toBeInTheDocument();
+
+    await user.selectOptions(sourcePreset, "zh-Hans");
+    expect(screen.getByRole("textbox", { name: /Source locale/ })).toHaveValue("zh-Hans");
+    await user.selectOptions(targetPreset, "ja-JP");
+    expect(screen.getByRole("textbox", { name: /Target locales/ })).toHaveValue("zh-Hans, ja-JP");
+  });
+
+  it("protects an unfinished create form when the user cancels it", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.type(screen.getByLabelText(/Project name/), "Draft project");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Your new project is not created yet.");
+    expect(within(dialog).getByRole("button", { name: "Keep editing" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByLabelText(/Project name/)).toHaveValue("Draft project");
+  });
+
+  it("treats opening the active project again as a no-op and keeps an editor draft", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const editor = screen.getByRole("textbox", { name: /Project name/ });
+    await user.type(editor, " draft");
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), "C:/Projects/./demo");
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+
+    expect(await screen.findByText("This project is already open.")).toBeInTheDocument();
+    expect(editor).toHaveValue("Demo draft");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("open_project", expect.anything());
+  });
+
+  it("asks before restoring the last project after restart", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(
+      LAST_OPEN_PROJECT_STORAGE_KEY,
+      JSON.stringify({ locator: "C:\\Projects\\demo", lastOpenedAt: 1 }),
+    );
+    await renderApp();
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Open your last project?")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Start without opening" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create project" })).toBeInTheDocument();
   });
 
   it("keeps a failed draft and translates an existing feedback key at render time", async () => {
@@ -175,9 +240,31 @@ describe("project lifecycle workbench", () => {
       return projectView();
     });
     await user.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(screen.getByText("The uncertain save was confirmed in durable storage.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("The change was confirmed.")).toBeInTheDocument());
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_project")).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
+
+  it("keeps uncertain saves recoverable when the first reconciliation sees the previous state", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const nameInput = screen.getByRole("textbox", { name: /Project name/ });
+    await user.clear(nameInput);
+    await user.type(nameInput, "Not committed");
+    mocks.invoke.mockImplementationOnce(async (command: string) => {
+      if (command === "rename_project") throw { code: "outcome-unknown", stage: "rename", recoveryRequired: true };
+      return projectView();
+    }).mockImplementationOnce(async (command: string) => {
+      if (command === "read_project") return projectView("Demo", "1", "previous");
+      return projectView();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText("The uncertain save was not committed. Your draft remains here.")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Retry read" })).toBeEnabled();
+    expect(nameInput).toHaveValue("Not committed");
   });
 });

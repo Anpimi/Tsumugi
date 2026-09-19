@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import contract from "./projectCommands.contract.json";
+import contract from "../test/fixtures/projectCommands.contract.json";
 import type {
   AddTargetLocaleRequest,
   CloseProjectRequest,

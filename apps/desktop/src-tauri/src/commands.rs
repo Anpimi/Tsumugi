@@ -166,6 +166,7 @@ pub enum ReconciliationState {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectView {
     pub session_token: String,
+    pub locator: String,
     pub metadata: ProjectMetadataView,
     pub reconciliation_state: ReconciliationState,
 }
@@ -224,7 +225,7 @@ impl SessionManager {
             .metadata()
             .map_err(|error| map_persistence_error(error, CommandStage::Create))?;
         let token = new_session_token();
-        let view = project_view(&token, &metadata, ReconciliationState::Settled);
+        let view = project_view(&token, &locator, &metadata, ReconciliationState::Settled);
         self.active = Some(ActiveSession {
             token,
             locator,
@@ -251,7 +252,7 @@ impl SessionManager {
             .metadata()
             .map_err(|error| map_persistence_error(error, CommandStage::Open))?;
         let token = new_session_token();
-        let view = project_view(&token, &metadata, ReconciliationState::Settled);
+        let view = project_view(&token, &locator, &metadata, ReconciliationState::Settled);
         self.active = Some(ActiveSession {
             token,
             locator,
@@ -284,7 +285,12 @@ impl SessionManager {
                 ReconciliationState::Settled,
             )
         };
-        Ok(project_view(&active.token, &metadata, reconciliation_state))
+        Ok(project_view(
+            &active.token,
+            &active.locator,
+            &metadata,
+            reconciliation_state,
+        ))
     }
 
     fn rename(
@@ -478,11 +484,13 @@ fn new_session_token() -> String {
 
 fn project_view(
     session_token: &str,
+    locator: &Path,
     metadata: &ProjectMetadata,
     reconciliation_state: ReconciliationState,
 ) -> ProjectView {
     ProjectView {
         session_token: session_token.to_owned(),
+        locator: locator.to_string_lossy().into_owned(),
         metadata: metadata_view(metadata),
         reconciliation_state,
     }
@@ -635,7 +643,7 @@ mod tests {
     #[test]
     fn shared_typescript_fixture_matches_rust_serialization() {
         let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../src/projectCommands.contract.json")).unwrap();
+            serde_json::from_str(include_str!("../../test/fixtures/projectCommands.contract.json")).unwrap();
 
         let requests = &fixture["requests"];
         assert_eq!(
@@ -699,6 +707,7 @@ mod tests {
             fixture["responses"]["projectView"],
             serde_json::to_value(ProjectView {
                 session_token: "session-1".to_owned(),
+                locator: "C:\\Projects\\demo".to_owned(),
                 metadata: metadata.clone(),
                 reconciliation_state: ReconciliationState::Settled,
             })
