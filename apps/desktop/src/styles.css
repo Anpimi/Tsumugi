@@ -668,6 +668,35 @@ button:focus-visible {
   line-height: 1.45;
 }
 
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #33425a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.checkbox-field input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: #536ed3;
+}
+
+.checkbox-field span {
+  display: grid;
+  gap: 4px;
+}
+
+.checkbox-field small {
+  color: #78869a;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.45;
+}
+
 .form-wide-help {
   margin-top: -9px;
 }

@@ -43,6 +43,7 @@ export interface RenameProjectRequest {
   sessionToken: string;
   expectedRevision: string;
   displayName: string;
+  directoryName?: string;
 }
 
 export interface AddTargetLocaleRequest {
@@ -82,8 +83,10 @@ export type MetadataChangeOutcome = "changed" | "unchanged";
 
 export interface MetadataMutationView {
   sessionToken: string;
+  locator: string;
   metadata: ProjectMetadataView;
   outcome: MetadataChangeOutcome;
+  directoryChanged: boolean;
 }
 
 export interface CloseProjectView {

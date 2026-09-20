@@ -89,6 +89,7 @@ interface OpenFormValues {
 
 interface EditorFormValues {
   value: string;
+  syncDirectoryName: boolean;
 }
 
 interface ActiveForm {
@@ -126,7 +127,7 @@ const CREATE_DEFAULT_VALUES: CreateFormValues = {
 };
 
 const OPEN_DEFAULT_VALUES: OpenFormValues = { locator: "" };
-const EDITOR_DEFAULT_VALUES: EditorFormValues = { value: "" };
+const EDITOR_DEFAULT_VALUES: EditorFormValues = { value: "", syncDirectoryName: false };
 
 const navigation = (t: TFunction) => [{ label: t("nav.workspace"), icon: "folder" as const, selected: true }];
 
@@ -300,6 +301,16 @@ function App() {
   const createParentDirectory = createForm.watch("parentDirectory");
   const createDirectoryName = createForm.watch("directoryName");
   const createSourceLocale = createForm.watch("sourceLocale");
+  const editorValue = editorForm.watch("value");
+  const syncDirectoryName = editorForm.watch("syncDirectoryName");
+  const editorDirectoryError = Boolean(
+    activeForm?.kind === "rename" && syncDirectoryName && editorValue.trim() && !isSafeChildDirectoryName(editorValue),
+  );
+  const editorErrorField = activeForm?.kind === "rename" && editorDirectoryError
+    ? "directoryName"
+    : activeForm?.kind === "rename"
+      ? "displayName"
+      : "targetLocales";
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
   const busy = operation !== "idle";
   const status = statusFor(t, operation, dirty || createDraftDirty);
@@ -371,7 +382,10 @@ function App() {
   }
 
   function beginEditor(kind: FormKind, metadata: ProjectMetadataView) {
-    editorForm.reset({ value: kind === "rename" ? metadata.displayName : metadata.targetLocales.join(", ") });
+    editorForm.reset({
+      value: kind === "rename" ? metadata.displayName : metadata.targetLocales.join(", "),
+      syncDirectoryName: false,
+    });
     setActiveForm({ kind, expectedRevision: metadata.metadataRevision });
     clearFeedback();
   }
@@ -546,7 +560,9 @@ function App() {
     setOperation("reconciling");
     try {
       const view = await projectCommands.read({ sessionToken: project.sessionToken });
+      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
       setProject(view);
+      if (locatorChanged) rememberOpenedProject(view);
       setActiveForm((current) =>
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
@@ -570,7 +586,9 @@ function App() {
     setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
     try {
       const view = await projectCommands.read({ sessionToken: project.sessionToken });
+      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
       setProject(view);
+      if (locatorChanged) rememberOpenedProject(view);
       setActiveForm((current) =>
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
@@ -603,10 +621,18 @@ function App() {
     try {
       let result: MetadataMutationView;
       if (form.kind === "rename") {
+        const shouldSyncDirectoryName = editorForm.getValues("syncDirectoryName");
+        if (shouldSyncDirectoryName && !isSafeChildDirectoryName(value)) {
+          editorForm.setError("value", { type: "validate" });
+          setOperation("idle");
+          setFeedback(localValidation(value.trim() ? "directoryName" : "displayName"));
+          return { ok: false };
+        }
         result = await projectCommands.rename({
           sessionToken: project.sessionToken,
           expectedRevision: form.expectedRevision,
           displayName: value,
+          ...(shouldSyncDirectoryName ? { directoryName: value } : {}),
         });
       } else {
         const request: SetTargetLocalesRequest = {
@@ -616,13 +642,30 @@ function App() {
         };
         result = await projectCommands.setTargetLocales(request);
       }
-      setProject((current) => (current ? { ...current, metadata: result.metadata, reconciliationState: "settled" } : current));
+      const nextProject = project
+        ? {
+            ...project,
+            locator: result.locator || project.locator,
+            metadata: result.metadata,
+            reconciliationState: "settled" as const,
+          }
+        : null;
+      setProject(nextProject);
+      if (nextProject && form.kind === "rename" && result.directoryChanged) rememberOpenedProject(nextProject);
       editorForm.reset(EDITOR_DEFAULT_VALUES);
       setActiveForm(null);
       setOperation("idle");
       setFeedback({
         tone: "success",
-        messageKey: result.outcome === "unchanged" ? "feedback.unchanged" : form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded",
+        messageKey: form.kind === "rename"
+          ? result.directoryChanged
+            ? "feedback.renamedWithFolder"
+            : result.outcome === "unchanged"
+              ? "feedback.unchanged"
+              : "feedback.renamed"
+          : result.outcome === "unchanged"
+            ? "feedback.unchanged"
+            : "feedback.targetAdded",
         messageValues: result.outcome === "changed" ? { revision: result.metadata.metadataRevision } : undefined,
       });
       return { ok: true, metadata: result.metadata };
@@ -740,7 +783,9 @@ function App() {
     void projectCommands
       .read({ sessionToken: project.sessionToken })
       .then((view) => {
+        const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
         setProject(view);
+        if (locatorChanged) rememberOpenedProject(view);
         setActiveForm((current) => (current ? { ...current, expectedRevision: view.metadata.metadataRevision } : current));
         setOperation("idle");
         setFeedback({ tone: "info", messageKey: "feedback.opened" });
@@ -792,7 +837,13 @@ function App() {
   }
 
   function handleEditorInvalid() {
-    setFeedback(localValidation(activeForm?.kind === "rename" ? "displayName" : "targetLocales"));
+    const value = editorForm.getValues("value");
+    const field = activeForm?.kind === "rename"
+      ? editorForm.getValues("syncDirectoryName") && value.trim() && !isSafeChildDirectoryName(value)
+        ? "directoryName"
+        : "displayName"
+      : "targetLocales";
+    setFeedback(localValidation(field));
   }
 
   useEffect(() => {
@@ -1269,14 +1320,34 @@ function App() {
                       <input
                         id="editor-value"
                         aria-label={activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}
-                        aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "targetLocales"))}
+                        aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, editorErrorField))}
                         autoFocus
                         disabled={busy}
                         {...editorForm.register("value", { required: true, validate: (value) => Boolean(value.trim()) })}
                       />
                       <small>{activeForm.kind === "rename" ? t("editor.renameHelp") : t("editor.targetHelp")}</small>
-                      {editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "targetLocales") ? <span className="field-error">{t(activeForm.kind === "rename" ? "errors.displayName" : "errors.targetLocales")}</span> : null}
+                      {editorForm.formState.errors.value || fieldError(feedback, editorErrorField) ? (
+                        <span className="field-error">
+                          {activeForm.kind === "rename"
+                            ? t(editorDirectoryError ? "errors.directoryName" : "errors.displayName")
+                            : t("errors.targetLocales")}
+                        </span>
+                      ) : null}
                     </label>
+                    {activeForm.kind === "rename" ? (
+                      <label className="checkbox-field">
+                        <input
+                          type="checkbox"
+                          aria-label={t("editor.syncDirectoryName")}
+                          disabled={busy}
+                          {...editorForm.register("syncDirectoryName")}
+                        />
+                        <span>
+                          <strong>{t("editor.syncDirectoryName")}</strong>
+                          <small>{t("editor.syncDirectoryNameHelp")}</small>
+                        </span>
+                      </label>
+                    ) : null}
                     <div className="form-actions">
                       <button className="secondary-button" type="button" onClick={cancelEditor} disabled={busy}>{t("editor.cancel")}</button>
                       <button className="primary-button" type="submit" disabled={busy || !dirty}>

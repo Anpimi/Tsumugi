@@ -50,10 +50,12 @@ describe("project command wire contract", () => {
       sessionToken: "session-1",
       expectedRevision: "18446744073709551615",
       displayName: "Literal name",
+      directoryName: "renamed-folder",
     });
     expect(responses.projectView.metadata.metadataRevision).toMatch(/^\d+$/);
     expect(responses.projectView.reconciliationState).toBe("settled");
     expect(responses.metadataMutation.outcome).toBe("changed");
+    expect(responses.metadataMutation.directoryChanged).toBe(false);
     expect(responses.close.closed).toBe(true);
     expect(error).toEqual({
       code: "outcome-unknown",

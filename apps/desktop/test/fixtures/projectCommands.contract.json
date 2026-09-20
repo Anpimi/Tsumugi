@@ -15,7 +15,8 @@
     "rename": {
       "sessionToken": "session-1",
       "expectedRevision": "18446744073709551615",
-      "displayName": "Literal name"
+      "displayName": "Literal name",
+      "directoryName": "renamed-folder"
     },
     "addTargetLocale": {
       "sessionToken": "session-1",
@@ -41,6 +42,7 @@
     },
     "metadataMutation": {
       "sessionToken": "session-1",
+      "locator": "C:\\Projects\\demo",
       "metadata": {
         "projectId": "123e4567-e89b-42d3-a456-426614174000",
         "displayName": "Literal name",
@@ -48,7 +50,8 @@
         "targetLocales": ["ja", "zh-CN"],
         "metadataRevision": "2"
       },
-      "outcome": "changed"
+      "outcome": "changed",
+      "directoryChanged": false
     },
     "close": {
       "closed": true

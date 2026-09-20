@@ -133,6 +133,37 @@ describe("project lifecycle workbench", () => {
     expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
     expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
   });
+
+  it("optionally synchronizes the project folder when saving a rename", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const nameInput = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "Renamed project");
+    await user.click(screen.getByRole("checkbox", { name: "Also rename the project folder" }));
+    mocks.invoke.mockResolvedValueOnce({
+      sessionToken: "session-1",
+      locator: "C:\\Projects\\Renamed project",
+      metadata: metadata("Renamed project", "2"),
+      outcome: "changed",
+      directoryChanged: true,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Renamed project" })).toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenCalledWith("rename_project", {
+      request: {
+        sessionToken: "session-1",
+        expectedRevision: "1",
+        displayName: "Renamed project",
+        directoryName: "Renamed project",
+      },
+    });
+    expect(screen.getByText("Project name and folder saved.")).toBeInTheDocument();
+  });
+
   beforeEach(async () => {
     localStorage.clear();
     await i18n.changeLanguage("en-US");
