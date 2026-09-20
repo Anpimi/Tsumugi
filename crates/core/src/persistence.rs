@@ -323,6 +323,16 @@ impl ProjectStore {
         })
     }
 
+    pub fn set_target_locales(
+        &mut self,
+        expected_revision: u64,
+        locales: &[String],
+    ) -> Result<crate::MetadataChange, PersistenceError> {
+        self.apply_change(expected_revision, |metadata| {
+            metadata.set_target_locales(expected_revision, locales)
+        })
+    }
+
     pub fn is_reconciling(&self) -> bool {
         self.pending.is_some()
     }

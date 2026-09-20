@@ -36,6 +36,7 @@ pub enum CommandStage {
     Read,
     Rename,
     AddTargetLocale,
+    SetTargetLocales,
     Close,
 }
 
@@ -128,6 +129,8 @@ pub struct RenameProjectRequest {
     pub session_token: String,
     pub expected_revision: String,
     pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -136,6 +139,14 @@ pub struct AddTargetLocaleRequest {
     pub session_token: String,
     pub expected_revision: String,
     pub locale: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTargetLocalesRequest {
+    pub session_token: String,
+    pub expected_revision: String,
+    pub target_locales: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -182,8 +193,10 @@ pub enum MetadataChangeOutcome {
 #[serde(rename_all = "camelCase")]
 pub struct MetadataMutationView {
     pub session_token: String,
+    pub locator: String,
     pub metadata: ProjectMetadataView,
     pub outcome: MetadataChangeOutcome,
+    pub directory_changed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -297,13 +310,204 @@ impl SessionManager {
         &mut self,
         request: RenameProjectRequest,
     ) -> Result<MetadataMutationView, CommandError> {
+        if request.directory_name.is_none() {
+            let expected_revision =
+                parse_revision(&request.expected_revision, CommandStage::Rename)?;
+            let active = self.active_mut(&request.session_token, CommandStage::Rename)?;
+            let change = active
+                .store
+                .rename(expected_revision, &request.display_name)
+                .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
+            return Ok(metadata_mutation_view(
+                &active.token,
+                &active.locator,
+                &change,
+                false,
+            ));
+        }
+
         let expected_revision = parse_revision(&request.expected_revision, CommandStage::Rename)?;
-        let active = self.active_mut(&request.session_token, CommandStage::Rename)?;
-        let change = active
-            .store
-            .rename(expected_revision, &request.display_name)
-            .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
-        Ok(metadata_mutation_view(&active.token, &change))
+        let directory_name = request.directory_name.expect("checked above");
+        validate_directory_name(&directory_name, CommandStage::Rename)?;
+
+        {
+            let active = self.active.as_ref().ok_or_else(|| {
+                CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Rename)
+            })?;
+            if active.token != request.session_token {
+                return Err(CommandError::simple(
+                    CommandErrorCode::SessionInvalid,
+                    CommandStage::Rename,
+                ));
+            }
+            if active.store.is_reconciling() {
+                return Err(CommandError::unknown(CommandStage::Rename));
+            }
+            let metadata = active
+                .store
+                .metadata()
+                .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
+            metadata
+                .rename(expected_revision, &request.display_name)
+                .map_err(|error| map_metadata_error(error, CommandStage::Rename))?;
+        }
+
+        let active = self.active.take().ok_or_else(|| {
+            CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Rename)
+        })?;
+        if active.token != request.session_token {
+            self.active = Some(active);
+            return Err(CommandError::simple(
+                CommandErrorCode::SessionInvalid,
+                CommandStage::Rename,
+            ));
+        }
+        if active.store.is_reconciling() {
+            self.active = Some(active);
+            return Err(CommandError::unknown(CommandStage::Rename));
+        }
+
+        let old_locator = active.locator.clone();
+        let parent = match old_locator.parent() {
+            Some(parent) => parent,
+            None => {
+                self.active = Some(active);
+                return Err(CommandError::invalid_input(
+                    CommandStage::Rename,
+                    Some("directoryName"),
+                ));
+            }
+        };
+        let new_locator = parent.join(&directory_name);
+        if same_locator(&old_locator, &new_locator) {
+            let mut active = active;
+            let change = active
+                .store
+                .rename(expected_revision, &request.display_name)
+                .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
+            let view = metadata_mutation_view(&active.token, &active.locator, &change, false);
+            self.active = Some(active);
+            return Ok(view);
+        }
+        if new_locator.exists() {
+            self.active = Some(active);
+            return Err(CommandError::simple(
+                CommandErrorCode::DestinationConflict,
+                CommandStage::Rename,
+            ));
+        }
+
+        let ActiveSession {
+            token,
+            locator: old_locator,
+            store,
+        } = active;
+        if let Err(error) = store.close() {
+            return Err(self.restore_session_after_directory_failure(
+                token,
+                old_locator,
+                map_persistence_error(error, CommandStage::Rename),
+            ));
+        }
+
+        if let Err(error) = fs::rename(&old_locator, &new_locator) {
+            return Err(self.restore_session_after_directory_failure(
+                token,
+                old_locator,
+                map_directory_rename_error(error),
+            ));
+        }
+
+        let mut new_store = match ProjectStore::open(&new_locator) {
+            Ok(store) => store,
+            Err(error) => {
+                return Err(self.rollback_directory_rename(
+                    token,
+                    old_locator,
+                    new_locator,
+                    map_persistence_error(error, CommandStage::Rename),
+                ));
+            }
+        };
+        let change = match new_store.rename(expected_revision, &request.display_name) {
+            Ok(change) => change,
+            Err(error) => {
+                if matches!(error, PersistenceError::OutcomeUnknown { .. }) {
+                    self.active = Some(ActiveSession {
+                        token,
+                        locator: new_locator,
+                        store: new_store,
+                    });
+                    return Err(map_persistence_error(error, CommandStage::Rename));
+                }
+                let mapped = map_persistence_error(error, CommandStage::Rename);
+                if new_store.close().is_err() {
+                    if let Ok(store) = ProjectStore::open(&new_locator) {
+                        self.active = Some(ActiveSession {
+                            token,
+                            locator: new_locator,
+                            store,
+                        });
+                    }
+                    return Err(CommandError::unknown(CommandStage::Rename));
+                }
+                return Err(self.rollback_directory_rename(
+                    token,
+                    old_locator,
+                    new_locator,
+                    mapped,
+                ));
+            }
+        };
+        let view = metadata_mutation_view(&token, &new_locator, &change, true);
+        self.active = Some(ActiveSession {
+            token,
+            locator: new_locator,
+            store: new_store,
+        });
+        Ok(view)
+    }
+
+    fn restore_session_after_directory_failure(
+        &mut self,
+        token: String,
+        locator: PathBuf,
+        error: CommandError,
+    ) -> CommandError {
+        match ProjectStore::open(&locator) {
+            Ok(store) => {
+                self.active = Some(ActiveSession {
+                    token,
+                    locator: locator.clone(),
+                    store,
+                });
+                error
+            }
+            Err(_) => CommandError::unknown(CommandStage::Rename),
+        }
+    }
+
+    fn rollback_directory_rename(
+        &mut self,
+        token: String,
+        old_locator: PathBuf,
+        new_locator: PathBuf,
+        error: CommandError,
+    ) -> CommandError {
+        if fs::rename(&new_locator, &old_locator).is_err() {
+            return CommandError::unknown(CommandStage::Rename);
+        }
+        match ProjectStore::open(&old_locator) {
+            Ok(store) => {
+                self.active = Some(ActiveSession {
+                    token,
+                    locator: old_locator,
+                    store,
+                });
+                error
+            }
+            Err(_) => CommandError::unknown(CommandStage::Rename),
+        }
     }
 
     fn add_target_locale(
@@ -317,7 +521,31 @@ impl SessionManager {
             .store
             .add_target_locale(expected_revision, &request.locale)
             .map_err(|error| map_persistence_error(error, CommandStage::AddTargetLocale))?;
-        Ok(metadata_mutation_view(&active.token, &change))
+        Ok(metadata_mutation_view(
+            &active.token,
+            &active.locator,
+            &change,
+            false,
+        ))
+    }
+
+    fn set_target_locales(
+        &mut self,
+        request: SetTargetLocalesRequest,
+    ) -> Result<MetadataMutationView, CommandError> {
+        let stage = CommandStage::SetTargetLocales;
+        let expected_revision = parse_revision(&request.expected_revision, stage)?;
+        let active = self.active_mut(&request.session_token, stage)?;
+        let change = active
+            .store
+            .set_target_locales(expected_revision, &request.target_locales)
+            .map_err(|error| map_persistence_error(error, stage))?;
+        Ok(metadata_mutation_view(
+            &active.token,
+            &active.locator,
+            &change,
+            false,
+        ))
     }
 
     fn close(&mut self, request: CloseProjectRequest) -> Result<CloseProjectView, CommandError> {
@@ -417,6 +645,15 @@ pub fn add_target_locale(
 }
 
 #[tauri::command]
+pub fn set_target_locales(
+    state: State<'_, AppState>,
+    request: SetTargetLocalesRequest,
+) -> Result<MetadataMutationView, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::SetTargetLocales)?;
+    sessions.set_target_locales(request)
+}
+
+#[tauri::command]
 pub fn close_project(
     state: State<'_, AppState>,
     request: CloseProjectRequest,
@@ -434,6 +671,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
             read_project,
             rename_project,
             add_target_locale,
+            set_target_locales,
             close_project,
         ])
 }
@@ -453,6 +691,58 @@ fn validate_locator(raw: &str, stage: CommandStage, field: &str) -> Result<PathB
         return Err(CommandError::invalid_input(stage, Some(field)));
     }
     Ok(PathBuf::from(raw))
+}
+
+fn validate_directory_name(raw: &str, stage: CommandStage) -> Result<(), CommandError> {
+    if raw.is_empty()
+        || raw.trim() != raw
+        || raw == "."
+        || raw == ".."
+        || raw.chars().any(|character| {
+            character.is_control()
+                || matches!(
+                    character,
+                    '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+                )
+        })
+        || raw.ends_with(' ')
+        || raw.ends_with('.')
+        || is_reserved_windows_name(raw)
+    {
+        return Err(CommandError::invalid_input(stage, Some("directoryName")));
+    }
+    Ok(())
+}
+
+fn is_reserved_windows_name(raw: &str) -> bool {
+    let base = raw.split('.').next().unwrap_or(raw).to_ascii_lowercase();
+    matches!(base.as_str(), "con" | "prn" | "aux" | "nul")
+        || (base.len() == 4
+            && (base.starts_with("com") || base.starts_with("lpt"))
+            && base.as_bytes()[3].is_ascii_digit()
+            && base.as_bytes()[3] != b'0')
+}
+
+fn same_locator(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
+}
+
+fn map_directory_rename_error(error: io::Error) -> CommandError {
+    let code = match error.kind() {
+        io::ErrorKind::AlreadyExists => CommandErrorCode::DestinationConflict,
+        io::ErrorKind::NotFound => CommandErrorCode::MissingProject,
+        io::ErrorKind::PermissionDenied => CommandErrorCode::PermissionDenied,
+        _ => CommandErrorCode::StorageFailed,
+    };
+    CommandError::simple(code, CommandStage::Rename)
 }
 
 fn canonicalize_created(path: &Path) -> Result<PathBuf, CommandError> {
@@ -512,15 +802,19 @@ fn metadata_view(metadata: &ProjectMetadata) -> ProjectMetadataView {
 
 fn metadata_mutation_view(
     session_token: &str,
+    locator: &Path,
     change: &tsumugi_core::MetadataChange,
+    directory_changed: bool,
 ) -> MetadataMutationView {
     MetadataMutationView {
         session_token: session_token.to_owned(),
+        locator: locator.to_string_lossy().into_owned(),
         metadata: metadata_view(change.metadata()),
         outcome: match change.outcome() {
             ChangeOutcome::Changed => MetadataChangeOutcome::Changed,
             ChangeOutcome::Unchanged => MetadataChangeOutcome::Unchanged,
         },
+        directory_changed,
     }
 }
 
@@ -622,6 +916,7 @@ mod tests {
             session_token: "session-1".to_owned(),
             expected_revision: u64::MAX.to_string(),
             display_name: "Literal name".to_owned(),
+            directory_name: Some("renamed-folder".to_owned()),
         };
         let wire = serde_json::to_value(&request).unwrap();
         assert_eq!(wire["sessionToken"], "session-1");
@@ -642,8 +937,10 @@ mod tests {
 
     #[test]
     fn shared_typescript_fixture_matches_rust_serialization() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../test/fixtures/projectCommands.contract.json")).unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../test/fixtures/projectCommands.contract.json"
+        ))
+        .unwrap();
 
         let requests = &fixture["requests"];
         assert_eq!(
@@ -676,6 +973,7 @@ mod tests {
                 session_token: "session-1".to_owned(),
                 expected_revision: u64::MAX.to_string(),
                 display_name: "Literal name".to_owned(),
+                directory_name: Some("renamed-folder".to_owned()),
             })
             .unwrap()
         );
@@ -717,8 +1015,10 @@ mod tests {
             fixture["responses"]["metadataMutation"],
             serde_json::to_value(MetadataMutationView {
                 session_token: "session-1".to_owned(),
+                locator: "C:\\Projects\\demo".to_owned(),
                 metadata,
                 outcome: MetadataChangeOutcome::Changed,
+                directory_changed: false,
             })
             .unwrap()
         );
@@ -746,6 +1046,7 @@ mod tests {
                 session_token: created.session_token.clone(),
                 expected_revision: "1".to_owned(),
                 display_name: "Command Demo 2".to_owned(),
+                directory_name: None,
             })
             .unwrap();
         assert_eq!(renamed.outcome, MetadataChangeOutcome::Changed);
@@ -768,6 +1069,162 @@ mod tests {
     }
 
     #[test]
+    fn rename_can_move_directory_and_reopen_at_new_locator() {
+        let parent = temporary_directory("directory-rename");
+        let old_path = parent.path().join("project");
+        let new_path = parent.path().join("renamed-folder");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&old_path)).unwrap();
+
+        let renamed = manager
+            .rename(RenameProjectRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                display_name: "Renamed project".to_owned(),
+                directory_name: Some("renamed-folder".to_owned()),
+            })
+            .unwrap();
+
+        assert!(renamed.directory_changed);
+        assert_eq!(renamed.metadata.display_name, "Renamed project");
+        assert_eq!(renamed.metadata.metadata_revision, "2");
+        assert_eq!(
+            renamed.locator,
+            fs::canonicalize(&new_path).unwrap().to_string_lossy()
+        );
+        assert!(!old_path.exists());
+        assert!(new_path.is_dir());
+
+        let read = manager
+            .read(ReadProjectRequest {
+                session_token: created.session_token.clone(),
+            })
+            .unwrap();
+        assert_eq!(read.locator, renamed.locator);
+        assert_eq!(read.metadata.display_name, "Renamed project");
+
+        manager
+            .close(CloseProjectRequest {
+                session_token: created.session_token,
+            })
+            .unwrap();
+        let reopened = manager
+            .open(OpenProjectRequest {
+                locator: new_path.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        assert_eq!(reopened.locator, renamed.locator);
+        assert_eq!(reopened.metadata.display_name, "Renamed project");
+    }
+
+    #[test]
+    fn directory_rename_rejects_unsafe_names_and_existing_destinations() {
+        let parent = temporary_directory("directory-rename-validation");
+        let old_path = parent.path().join("project");
+        let taken_path = parent.path().join("taken");
+        fs::create_dir(&taken_path).unwrap();
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&old_path)).unwrap();
+
+        let conflict = manager
+            .rename(RenameProjectRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                display_name: "Renamed project".to_owned(),
+                directory_name: Some("taken".to_owned()),
+            })
+            .unwrap_err();
+        assert_eq!(conflict.code, CommandErrorCode::DestinationConflict);
+        assert!(old_path.is_dir());
+
+        for name in ["", ".", "..", "bad/name", "CON", "trailing ", "trailing."] {
+            let error = manager
+                .rename(RenameProjectRequest {
+                    session_token: created.session_token.clone(),
+                    expected_revision: "1".to_owned(),
+                    display_name: "Renamed project".to_owned(),
+                    directory_name: Some(name.to_owned()),
+                })
+                .unwrap_err();
+            assert_eq!(error.code, CommandErrorCode::InvalidInput, "{name:?}");
+            assert_eq!(error.field.as_deref(), Some("directoryName"), "{name:?}");
+        }
+
+        let read = manager
+            .read(ReadProjectRequest {
+                session_token: created.session_token.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            read.locator,
+            fs::canonicalize(&old_path).unwrap().to_string_lossy()
+        );
+        assert_eq!(read.metadata.metadata_revision, "1");
+        manager
+            .close(CloseProjectRequest {
+                session_token: created.session_token,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn target_scope_edit_validates_atomically_and_survives_reopen() {
+        let parent = temporary_directory("target-edit");
+        let path = parent.path().join("project");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&path)).unwrap();
+        for targets in [vec![], vec!["ssss"], vec!["ssssss"], vec!["en-US", "EN-us"]] {
+            let error = manager
+                .set_target_locales(SetTargetLocalesRequest {
+                    session_token: created.session_token.clone(),
+                    expected_revision: "1".to_owned(),
+                    target_locales: targets.into_iter().map(str::to_owned).collect(),
+                })
+                .unwrap_err();
+            assert_eq!(error.code, CommandErrorCode::InvalidInput);
+            assert_eq!(error.field.as_deref(), Some("targetLocales"));
+        }
+        let changed = manager
+            .set_target_locales(SetTargetLocalesRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                target_locales: vec!["fr-FR".to_owned()],
+            })
+            .unwrap();
+        assert_eq!(changed.metadata.target_locales, vec!["fr-FR"]);
+        assert_eq!(changed.metadata.metadata_revision, "2");
+        let stale = manager
+            .set_target_locales(SetTargetLocalesRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                target_locales: vec!["ja".to_owned()],
+            })
+            .unwrap_err();
+        assert_eq!(stale.code, CommandErrorCode::StaleRevision);
+        let unchanged = manager
+            .set_target_locales(SetTargetLocalesRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "2".to_owned(),
+                target_locales: vec!["FR-fr".to_owned()],
+            })
+            .unwrap();
+        assert_eq!(unchanged.outcome, MetadataChangeOutcome::Unchanged);
+        assert_eq!(unchanged.metadata.metadata_revision, "2");
+        manager
+            .close(CloseProjectRequest {
+                session_token: created.session_token,
+            })
+            .unwrap();
+        let reopened = manager
+            .open(OpenProjectRequest {
+                locator: path.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        assert_eq!(reopened.metadata.target_locales, vec!["fr-FR"]);
+        assert_eq!(reopened.metadata.metadata_revision, "2");
+    }
+
+    #[test]
     fn rejected_session_and_basis_requests_do_not_write() {
         let parent = temporary_directory("rejection");
         let project = parent.path().join("project");
@@ -786,10 +1243,21 @@ mod tests {
                 session_token: created.session_token.clone(),
                 expected_revision: "1".to_owned(),
                 display_name: "".to_owned(),
+                directory_name: None,
             })
             .unwrap_err();
         assert_eq!(invalid_name.code, CommandErrorCode::InvalidInput);
         assert_eq!(invalid_name.field.as_deref(), Some("displayName"));
+
+        let invalid_locale = manager
+            .add_target_locale(AddTargetLocaleRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".to_owned(),
+                locale: "ssss".to_owned(),
+            })
+            .unwrap_err();
+        assert_eq!(invalid_locale.code, CommandErrorCode::InvalidInput);
+        assert_eq!(invalid_locale.field.as_deref(), Some("locale"));
 
         let stale = manager
             .add_target_locale(AddTargetLocaleRequest {

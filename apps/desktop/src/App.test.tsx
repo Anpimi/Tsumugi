@@ -60,6 +60,110 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("shows real language names and separates codes without duplicating unnamed tags", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    mocks.invoke.mockResolvedValueOnce({ ...projectView(), metadata: { ...metadata(), targetLocales: ["ss", "sss", "x-example"] } });
+    await createProject(user);
+    expect(screen.getByText("Swati")).toHaveTextContent("Swati (ss)");
+    expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");
+    expect(screen.getByText("x-example")).toHaveTextContent(/^x-example$/);
+    await user.selectOptions(screen.getByRole("combobox", { name: /language/i }), "zh-CN");
+    expect(screen.getByText("斯瓦蒂语")).toHaveTextContent("斯瓦蒂语 (ss)");
+    expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");
+  });
+  it("edits the complete target scope and retains rejected drafts", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+    const field = screen.getByRole("textbox", { name: "Target locales" });
+    expect(field).toHaveValue("zh-CN");
+    await user.clear(field);
+    await user.type(field, "ssss");
+    mocks.invoke.mockRejectedValueOnce({ code: "invalid-input", stage: "set-target-locales", field: "targetLocales", recoveryRequired: false });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
+    expect(field).toHaveValue("ssss");
+    await user.clear(field);
+    await user.type(field, "fr-FR");
+    mocks.invoke.mockResolvedValueOnce({ sessionToken: "session-1", metadata: { ...metadata("Demo", "2"), targetLocales: ["fr-FR"] }, outcome: "changed" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenLastCalledWith("set_target_locales", { request: { sessionToken: "session-1", expectedRevision: "1", targetLocales: ["fr-FR"] } });
+    await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+    expect(screen.getByRole("textbox", { name: "Target locales" })).toHaveValue("fr-FR");
+  });
+
+  it("suggests the project name as the folder until the folder is edited", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    const name = screen.getByLabelText(/Project name/);
+    const folder = screen.getByLabelText(/New folder name/);
+    await user.type(name, "Demo 项目");
+    expect(folder).toHaveValue("Demo 项目");
+    expect(name.compareDocumentPosition(folder) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.clear(folder);
+    await user.type(folder, "custom-folder");
+    await user.type(name, " renamed");
+    expect(folder).toHaveValue("custom-folder");
+  });
+
+  it("routes Escape through create cancellation and retains the draft when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.type(screen.getByLabelText(/Project name/), "Draft");
+    await user.keyboard("{Escape}");
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByLabelText(/Project name/)).toHaveValue("Draft");
+  });
+
+  it("cancels an editor with Escape without saving its draft", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.type(screen.getByRole("textbox", { name: /Project name/ }), " draft");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: /Project name/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
+    expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
+  });
+
+  it("optionally synchronizes the project folder when saving a rename", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const nameInput = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "Renamed project");
+    await user.click(screen.getByRole("checkbox", { name: "Also rename the project folder" }));
+    mocks.invoke.mockResolvedValueOnce({
+      sessionToken: "session-1",
+      locator: "C:\\Projects\\Renamed project",
+      metadata: metadata("Renamed project", "2"),
+      outcome: "changed",
+      directoryChanged: true,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Renamed project" })).toBeInTheDocument());
+    expect(mocks.invoke).toHaveBeenCalledWith("rename_project", {
+      request: {
+        sessionToken: "session-1",
+        expectedRevision: "1",
+        displayName: "Renamed project",
+        directoryName: "Renamed project",
+      },
+    });
+    expect(screen.getByText("Project name and folder saved.")).toBeInTheDocument();
+  });
+
   beforeEach(async () => {
     localStorage.clear();
     await i18n.changeLanguage("en-US");

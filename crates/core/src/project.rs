@@ -348,6 +348,23 @@ impl ProjectMetadata {
         Ok(Self::changed(next))
     }
 
+    /// Replace the target scope atomically, retaining at least one valid target.
+    pub fn set_target_locales(
+        &self,
+        expected_revision: u64,
+        locales: &[String],
+    ) -> Result<MetadataChange, MetadataError> {
+        self.check_revision(expected_revision)?;
+        let targets = canonical_targets(locales)?;
+        if targets == self.target_locales {
+            return Ok(self.unchanged());
+        }
+        let mut next = self.clone();
+        next.target_locales = targets;
+        next.metadata_revision = self.next_revision()?;
+        Ok(Self::changed(next))
+    }
+
     fn check_revision(&self, expected_revision: u64) -> Result<(), MetadataError> {
         if self.metadata_revision == expected_revision {
             Ok(())
@@ -484,7 +501,7 @@ mod tests {
             Locale::parse("zh-Hans").unwrap()
         );
 
-        for input in ["", "en_US", "en--US", "sl-rozaj-rozaj"] {
+        for input in ["", "ssss", "en_US", "en--US", "sl-rozaj-rozaj"] {
             assert!(Locale::parse(input).is_err(), "{input} should be rejected");
         }
     }

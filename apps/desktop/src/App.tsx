@@ -28,6 +28,7 @@ import {
   type SubmitHandler,
 } from "react-hook-form";
 import { isLocale, localeOptions, type Locale } from "./i18n";
+import { languageName } from "./i18n/languageNames";
 import type { TranslationKey } from "./i18n/types";
 import {
   clearLastOpenProject,
@@ -41,7 +42,7 @@ import {
 } from "./recentProjects";
 import {
   projectCommands,
-  type AddTargetLocaleRequest,
+  type SetTargetLocalesRequest,
   type CloseProjectView,
   type CommandError,
   type CommandErrorCode,
@@ -88,6 +89,7 @@ interface OpenFormValues {
 
 interface EditorFormValues {
   value: string;
+  syncDirectoryName: boolean;
 }
 
 interface ActiveForm {
@@ -118,14 +120,14 @@ interface SaveResult {
 
 const CREATE_DEFAULT_VALUES: CreateFormValues = {
   parentDirectory: "",
-  directoryName: "my-localization",
+  directoryName: "",
   displayName: "",
   sourceLocale: "en-US",
   targetLocales: "zh-Hans",
 };
 
 const OPEN_DEFAULT_VALUES: OpenFormValues = { locator: "" };
-const EDITOR_DEFAULT_VALUES: EditorFormValues = { value: "" };
+const EDITOR_DEFAULT_VALUES: EditorFormValues = { value: "", syncDirectoryName: false };
 
 const navigation = (t: TFunction) => [{ label: t("nav.workspace"), icon: "folder" as const, selected: true }];
 
@@ -141,12 +143,10 @@ const languagePresets = [
   { value: "pt-BR", labelKey: "localeNames.portugueseBrazil" },
 ] as const satisfies readonly { value: string; labelKey: TranslationKey }[];
 
-function localeLabel(t: TFunction, value: string): string {
+function localeLabel(t: TFunction, value: string, uiLocale: string) {
   const preset = languagePresets.find((candidate) => candidate.value === value);
-  if (preset) return t(preset.labelKey);
-  if (value === "zh-CN") return `${t("localeNames.simplifiedChinese")} (${value})`;
-  if (value === "zh-TW" || value === "zh-HK") return `${t("localeNames.traditionalChinese")} (${value})`;
-  return value;
+  const name = preset ? t(preset.labelKey) : languageName(value, uiLocale);
+  return <>{name}{name !== value ? <span className="locale-code"> ({value})</span> : null}</>;
 }
 
 function isPresetLocale(value: string): boolean {
@@ -289,6 +289,7 @@ function App() {
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
   const [copiedLocator, setCopiedLocator] = useState(false);
   const allowWindowClose = useRef(false);
+  const folderNameEdited = useRef(false);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
   const cancelDialogButton = useRef<HTMLButtonElement | null>(null);
   const createForm = useForm<CreateFormValues>({ defaultValues: CREATE_DEFAULT_VALUES });
@@ -300,6 +301,16 @@ function App() {
   const createParentDirectory = createForm.watch("parentDirectory");
   const createDirectoryName = createForm.watch("directoryName");
   const createSourceLocale = createForm.watch("sourceLocale");
+  const editorValue = editorForm.watch("value");
+  const syncDirectoryName = editorForm.watch("syncDirectoryName");
+  const editorDirectoryError = Boolean(
+    activeForm?.kind === "rename" && syncDirectoryName && editorValue.trim() && !isSafeChildDirectoryName(editorValue),
+  );
+  const editorErrorField = activeForm?.kind === "rename" && editorDirectoryError
+    ? "directoryName"
+    : activeForm?.kind === "rename"
+      ? "displayName"
+      : "targetLocales";
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
   const busy = operation !== "idle";
   const status = statusFor(t, operation, dirty || createDraftDirty);
@@ -371,7 +382,10 @@ function App() {
   }
 
   function beginEditor(kind: FormKind, metadata: ProjectMetadataView) {
-    editorForm.reset({ value: kind === "rename" ? metadata.displayName : "" });
+    editorForm.reset({
+      value: kind === "rename" ? metadata.displayName : metadata.targetLocales.join(", "),
+      syncDirectoryName: false,
+    });
     setActiveForm({ kind, expectedRevision: metadata.metadataRevision });
     clearFeedback();
   }
@@ -441,6 +455,7 @@ function App() {
       setClosedPanel("empty");
       setOperation("idle");
       createForm.reset(CREATE_DEFAULT_VALUES);
+      folderNameEdited.current = false;
       setFeedback({ tone: "success", messageKey: "feedback.created" });
     } catch (value) {
       setOperation("idle");
@@ -545,7 +560,9 @@ function App() {
     setOperation("reconciling");
     try {
       const view = await projectCommands.read({ sessionToken: project.sessionToken });
+      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
       setProject(view);
+      if (locatorChanged) rememberOpenedProject(view);
       setActiveForm((current) =>
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
@@ -569,7 +586,9 @@ function App() {
     setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
     try {
       const view = await projectCommands.read({ sessionToken: project.sessionToken });
+      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
       setProject(view);
+      if (locatorChanged) rememberOpenedProject(view);
       setActiveForm((current) =>
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
@@ -602,31 +621,56 @@ function App() {
     try {
       let result: MetadataMutationView;
       if (form.kind === "rename") {
+        const shouldSyncDirectoryName = editorForm.getValues("syncDirectoryName");
+        if (shouldSyncDirectoryName && !isSafeChildDirectoryName(value)) {
+          editorForm.setError("value", { type: "validate" });
+          setOperation("idle");
+          setFeedback(localValidation(value.trim() ? "directoryName" : "displayName"));
+          return { ok: false };
+        }
         result = await projectCommands.rename({
           sessionToken: project.sessionToken,
           expectedRevision: form.expectedRevision,
           displayName: value,
+          ...(shouldSyncDirectoryName ? { directoryName: value } : {}),
         });
       } else {
-        const request: AddTargetLocaleRequest = {
+        const request: SetTargetLocalesRequest = {
           sessionToken: project.sessionToken,
           expectedRevision: form.expectedRevision,
-          locale: value,
+          targetLocales: parseTargetLocales(value),
         };
-        result = await projectCommands.addTargetLocale(request);
+        result = await projectCommands.setTargetLocales(request);
       }
-      setProject((current) => (current ? { ...current, metadata: result.metadata, reconciliationState: "settled" } : current));
+      const nextProject = project
+        ? {
+            ...project,
+            locator: result.locator || project.locator,
+            metadata: result.metadata,
+            reconciliationState: "settled" as const,
+          }
+        : null;
+      setProject(nextProject);
+      if (nextProject && form.kind === "rename" && result.directoryChanged) rememberOpenedProject(nextProject);
       editorForm.reset(EDITOR_DEFAULT_VALUES);
       setActiveForm(null);
       setOperation("idle");
       setFeedback({
         tone: "success",
-        messageKey: result.outcome === "unchanged" ? "feedback.unchanged" : form.kind === "rename" ? "feedback.renamed" : "feedback.targetAdded",
+        messageKey: form.kind === "rename"
+          ? result.directoryChanged
+            ? "feedback.renamedWithFolder"
+            : result.outcome === "unchanged"
+              ? "feedback.unchanged"
+              : "feedback.renamed"
+          : result.outcome === "unchanged"
+            ? "feedback.unchanged"
+            : "feedback.targetAdded",
         messageValues: result.outcome === "changed" ? { revision: result.metadata.metadataRevision } : undefined,
       });
       return { ok: true, metadata: result.metadata };
     } catch (value) {
-      const failure = asCommandError(value, form.kind === "rename" ? "rename" : "add-target-locale");
+      const failure = asCommandError(value, form.kind === "rename" ? "rename" : "set-target-locales");
       if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
       if (failure.code === "outcome-unknown") return reconcileUnknown(form);
       setOperation("idle");
@@ -651,6 +695,7 @@ function App() {
     if (intent.kind === "panel") {
       setClosedPanel(intent.panel);
       createForm.reset(CREATE_DEFAULT_VALUES);
+      folderNameEdited.current = false;
       openForm.reset(OPEN_DEFAULT_VALUES);
       return;
     }
@@ -668,6 +713,7 @@ function App() {
     if (choice === "discard") {
       if (createDraftDirty) {
         createForm.reset(CREATE_DEFAULT_VALUES);
+        folderNameEdited.current = false;
       } else {
         editorForm.reset(EDITOR_DEFAULT_VALUES);
         setActiveForm(null);
@@ -716,6 +762,7 @@ function App() {
       return;
     }
     createForm.reset(CREATE_DEFAULT_VALUES);
+    folderNameEdited.current = false;
     clearFeedback();
     setClosedPanel("empty");
   }
@@ -724,13 +771,21 @@ function App() {
     if (activeForm && !busy) void saveForm(activeForm, value);
   }
 
+  function cancelEditor() {
+    editorForm.reset(EDITOR_DEFAULT_VALUES);
+    setActiveForm(null);
+    clearFeedback();
+  }
+
   function handleRefresh() {
     if (!project || busy) return;
     setOperation("reconciling");
     void projectCommands
       .read({ sessionToken: project.sessionToken })
       .then((view) => {
+        const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
         setProject(view);
+        if (locatorChanged) rememberOpenedProject(view);
         setActiveForm((current) => (current ? { ...current, expectedRevision: view.metadata.metadataRevision } : current));
         setOperation("idle");
         setFeedback({ tone: "info", messageKey: "feedback.opened" });
@@ -769,7 +824,12 @@ function App() {
       }
       return;
     }
-    editorForm.setValue("value", value, { shouldDirty: true, shouldValidate: true });
+    const current = parseTargetLocales(editorForm.getValues("value"));
+    if (current.some((locale) => locale.toLowerCase() === value.toLowerCase())) {
+      setFeedback({ tone: "warning", messageKey: "feedback.duplicateTarget" });
+      return;
+    }
+    editorForm.setValue("value", [...current, value].join(", "), { shouldDirty: true, shouldValidate: true });
   }
 
   function handleCreateInvalid(errors: FieldErrors<CreateFormValues>) {
@@ -777,11 +837,30 @@ function App() {
   }
 
   function handleEditorInvalid() {
-    setFeedback(localValidation(activeForm?.kind === "rename" ? "displayName" : "locale"));
+    const value = editorForm.getValues("value");
+    const field = activeForm?.kind === "rename"
+      ? editorForm.getValues("syncDirectoryName") && value.trim() && !isSafeChildDirectoryName(value)
+        ? "directoryName"
+        : "displayName"
+      : "targetLocales";
+    setFeedback(localValidation(field));
   }
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
+      if (event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
+        event.preventDefault();
+        if (openPanel) {
+          setOpenPanel(false);
+        } else if (activeForm) {
+          cancelEditor();
+        } else if (closedPanel === "create") {
+          handleCreateCancel();
+        } else if (closedPanel === "open") {
+          setClosedPanel("empty");
+        }
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && activeForm && dirty && operation === "idle") {
         event.preventDefault();
         handleSave();
@@ -789,7 +868,7 @@ function App() {
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeForm, dirty, operation]);
+  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -975,6 +1054,25 @@ function App() {
                       <p>{t("create.intro")}</p>
                     </div>
                     <div className="form-fields">
+                      <label className="field" htmlFor="create-display-name">
+                        <span>{t("create.displayName")}</span>
+                        <input
+                          id="create-display-name"
+                          aria-invalid={Boolean(createForm.formState.errors.displayName || fieldError(feedback, "displayName"))}
+                          placeholder={t("create.displayNamePlaceholder")}
+                          {...createForm.register("displayName", {
+                            required: true,
+                            validate: (value) => Boolean(value.trim()),
+                            onChange: (event) => {
+                              if (!folderNameEdited.current) {
+                                createForm.setValue("directoryName", event.target.value, { shouldValidate: true });
+                              }
+                            },
+                          })}
+                        />
+                        <small>{t("create.displayNameHelp")}</small>
+                        {createForm.formState.errors.displayName || fieldError(feedback, "displayName") ? <span className="field-error">{t("errors.displayName")}</span> : null}
+                      </label>
                       <label className="field" htmlFor="create-parent-directory">
                         <span>{t("create.parentDirectory")}</span>
                         <div className="field-picker">
@@ -998,21 +1096,14 @@ function App() {
                           id="create-directory-name"
                           aria-invalid={Boolean(createForm.formState.errors.directoryName || fieldError(feedback, "directoryName"))}
                           placeholder={t("create.directoryNamePlaceholder")}
-                          {...createForm.register("directoryName", { required: true, validate: isSafeChildDirectoryName })}
+                          {...createForm.register("directoryName", {
+                            required: true,
+                            validate: isSafeChildDirectoryName,
+                            onChange: () => { folderNameEdited.current = true; },
+                          })}
                         />
                         <small>{t("create.directoryNameHelp")}</small>
                         {createForm.formState.errors.directoryName || fieldError(feedback, "directoryName") ? <span className="field-error">{t("errors.directoryName")}</span> : null}
-                      </label>
-                      <label className="field" htmlFor="create-display-name">
-                        <span>{t("create.displayName")}</span>
-                        <input
-                          id="create-display-name"
-                          aria-invalid={Boolean(createForm.formState.errors.displayName || fieldError(feedback, "displayName"))}
-                          placeholder={t("create.displayNamePlaceholder")}
-                          {...createForm.register("displayName", { required: true, validate: (value) => Boolean(value.trim()) })}
-                        />
-                        <small>{t("create.displayNameHelp")}</small>
-                        {createForm.formState.errors.displayName || fieldError(feedback, "displayName") ? <span className="field-error">{t("errors.displayName")}</span> : null}
                       </label>
                       <div className="field-grid">
                         <label className="field" htmlFor="create-source-locale">
@@ -1134,12 +1225,12 @@ function App() {
                 <dl className="metadata-grid" aria-label={t("accessibility.metadata")}>
                   <div className="metadata-item">
                     <dt>{t("project.source")}</dt>
-                    <dd title={project.metadata.sourceLocale}>{localeLabel(t, project.metadata.sourceLocale)} <span className="locale-code">{project.metadata.sourceLocale}</span></dd>
+                    <dd title={project.metadata.sourceLocale}>{localeLabel(t, project.metadata.sourceLocale, translation.resolvedLanguage ?? "en-US")}</dd>
                   </div>
                   <div className="metadata-item metadata-targets">
                     <dt>{t("project.targets")}</dt>
                     <dd>
-                       {project.metadata.targetLocales.length > 0 ? project.metadata.targetLocales.map((target) => <span className="locale-chip" key={target}><span>{localeLabel(t, target)}</span><span className="locale-code">{target}</span></span>) : <span>{t("project.noTargets")}</span>}
+                       {project.metadata.targetLocales.length > 0 ? project.metadata.targetLocales.map((target) => <span className="locale-chip" key={target}>{localeLabel(t, target, translation.resolvedLanguage ?? "en-US")}</span>) : <span>{t("project.noTargets")}</span>}
                     </dd>
                   </div>
                 </dl>
@@ -1215,6 +1306,7 @@ function App() {
                       {activeForm.kind === "target" ? (
                         <select
                           aria-label={t("editor.targetPreset")}
+                          disabled={busy}
                           defaultValue=""
                           onChange={(event) => {
                             addTargetPreset("editor", event.target.value);
@@ -1227,16 +1319,37 @@ function App() {
                       ) : null}
                       <input
                         id="editor-value"
-                        aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale"))}
+                        aria-label={activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}
+                        aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, editorErrorField))}
                         autoFocus
                         disabled={busy}
                         {...editorForm.register("value", { required: true, validate: (value) => Boolean(value.trim()) })}
                       />
                       <small>{activeForm.kind === "rename" ? t("editor.renameHelp") : t("editor.targetHelp")}</small>
-                      {editorForm.formState.errors.value || fieldError(feedback, activeForm.kind === "rename" ? "displayName" : "locale") ? <span className="field-error">{t(activeForm.kind === "rename" ? "errors.displayName" : "errors.locale")}</span> : null}
+                      {editorForm.formState.errors.value || fieldError(feedback, editorErrorField) ? (
+                        <span className="field-error">
+                          {activeForm.kind === "rename"
+                            ? t(editorDirectoryError ? "errors.directoryName" : "errors.displayName")
+                            : t("errors.targetLocales")}
+                        </span>
+                      ) : null}
                     </label>
+                    {activeForm.kind === "rename" ? (
+                      <label className="checkbox-field">
+                        <input
+                          type="checkbox"
+                          aria-label={t("editor.syncDirectoryName")}
+                          disabled={busy}
+                          {...editorForm.register("syncDirectoryName")}
+                        />
+                        <span>
+                          <strong>{t("editor.syncDirectoryName")}</strong>
+                          <small>{t("editor.syncDirectoryNameHelp")}</small>
+                        </span>
+                      </label>
+                    ) : null}
                     <div className="form-actions">
-                      <button className="secondary-button" type="button" onClick={() => { editorForm.reset(EDITOR_DEFAULT_VALUES); setActiveForm(null); clearFeedback(); }} disabled={busy}>{t("editor.cancel")}</button>
+                      <button className="secondary-button" type="button" onClick={cancelEditor} disabled={busy}>{t("editor.cancel")}</button>
                       <button className="primary-button" type="submit" disabled={busy || !dirty}>
                         <Icon name="save" size={17} />
                         {busy ? t("status.saving") : t("editor.save")}
@@ -1261,7 +1374,8 @@ function App() {
               className="confirm-dialog"
               aria-busy={busy}
               onEscapeKeyDown={(event) => {
-                if (busy) event.preventDefault();
+                event.preventDefault();
+                if (!busy) void resolveNavigation("cancel");
               }}
               onInteractOutside={(event) => {
                 if (busy) event.preventDefault();
