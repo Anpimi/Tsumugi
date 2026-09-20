@@ -28,6 +28,7 @@ import {
   type SubmitHandler,
 } from "react-hook-form";
 import { isLocale, localeOptions, type Locale } from "./i18n";
+import { languageName } from "./i18n/languageNames";
 import type { TranslationKey } from "./i18n/types";
 import {
   clearLastOpenProject,
@@ -141,12 +142,10 @@ const languagePresets = [
   { value: "pt-BR", labelKey: "localeNames.portugueseBrazil" },
 ] as const satisfies readonly { value: string; labelKey: TranslationKey }[];
 
-function localeLabel(t: TFunction, value: string): string {
+function localeLabel(t: TFunction, value: string, uiLocale: string) {
   const preset = languagePresets.find((candidate) => candidate.value === value);
-  if (preset) return t(preset.labelKey);
-  if (value === "zh-CN") return `${t("localeNames.simplifiedChinese")} (${value})`;
-  if (value === "zh-TW" || value === "zh-HK") return `${t("localeNames.traditionalChinese")} (${value})`;
-  return value;
+  const name = preset ? t(preset.labelKey) : languageName(value, uiLocale);
+  return <>{name}{name !== value ? <span className="locale-code"> ({value})</span> : null}</>;
 }
 
 function isPresetLocale(value: string): boolean {
@@ -1175,12 +1174,12 @@ function App() {
                 <dl className="metadata-grid" aria-label={t("accessibility.metadata")}>
                   <div className="metadata-item">
                     <dt>{t("project.source")}</dt>
-                    <dd title={project.metadata.sourceLocale}>{localeLabel(t, project.metadata.sourceLocale)} <span className="locale-code">{project.metadata.sourceLocale}</span></dd>
+                    <dd title={project.metadata.sourceLocale}>{localeLabel(t, project.metadata.sourceLocale, translation.resolvedLanguage ?? "en-US")}</dd>
                   </div>
                   <div className="metadata-item metadata-targets">
                     <dt>{t("project.targets")}</dt>
                     <dd>
-                       {project.metadata.targetLocales.length > 0 ? project.metadata.targetLocales.map((target) => <span className="locale-chip" key={target}><span>{localeLabel(t, target)}</span><span className="locale-code">{target}</span></span>) : <span>{t("project.noTargets")}</span>}
+                       {project.metadata.targetLocales.length > 0 ? project.metadata.targetLocales.map((target) => <span className="locale-chip" key={target}>{localeLabel(t, target, translation.resolvedLanguage ?? "en-US")}</span>) : <span>{t("project.noTargets")}</span>}
                     </dd>
                   </div>
                 </dl>

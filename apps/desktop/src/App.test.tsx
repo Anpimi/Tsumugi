@@ -60,6 +60,18 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("shows real language names and separates codes without duplicating unnamed tags", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    mocks.invoke.mockResolvedValueOnce({ ...projectView(), metadata: { ...metadata(), targetLocales: ["ss", "sss", "x-example"] } });
+    await createProject(user);
+    expect(screen.getByText("Swati")).toHaveTextContent("Swati (ss)");
+    expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");
+    expect(screen.getByText("x-example")).toHaveTextContent(/^x-example$/);
+    await user.selectOptions(screen.getByRole("combobox", { name: /language/i }), "zh-CN");
+    expect(screen.getByText("斯瓦蒂语")).toHaveTextContent("斯瓦蒂语 (ss)");
+    expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");
+  });
   it("edits the complete target scope and retains rejected drafts", async () => {
     const user = userEvent.setup();
     await renderApp();
