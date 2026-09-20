@@ -8,9 +8,7 @@ Tsumugi keeps source content, translations, terminology, review, validation, and
 
 ## Overview
 
-Localization is rarely a one-off task.
-
-Source content changes, translations are revised, terminology evolves, and previously completed work may or may not still apply.
+Source content changes, translations are revised, and terminology evolves. Work that was complete for one version may need attention in the next.
 
 Tsumugi treats these changes as part of the normal project lifecycle:
 
@@ -24,23 +22,15 @@ Import
   → Update
 ```
 
-When new source content is imported, existing work is compared against the new state instead of being discarded by default.
-
-The goal is to preserve what is still applicable, identify what needs attention, and retain enough history to explain why.
+When new source content is imported, Tsumugi keeps existing work by default and compares it against the new source. The goal is to keep what still applies, flag what needs attention, and preserve the history behind those decisions.
 
 ## Project Model
 
-A project is the long-lived unit of localization work.
-
-It contains source revisions, localization units, target-locale work, terminology, review decisions, validation results, and release history.
+A project holds localization work across revisions. It contains source revisions, localization units, target-locale work, terminology, review decisions, validation results, and release history.
 
 Content identity is separate from text equality and physical location. Identical text does not necessarily represent the same content, and content that moves or changes location may still retain its identity across revisions.
 
-Translation state is also kept separate from review, applicability, and validation.
-
-A translation may exist without being reviewed. A reviewed translation may later require reassessment if its relevant source or context changes. Editing a translation does not silently carry forward an earlier approval.
-
-These states remain explicit rather than being compressed into a single status.
+Translation, review, applicability, and validation have separate states. A translation may exist without being reviewed. A reviewed translation may later require reassessment if its relevant source or context changes. Editing a translation does not silently carry forward an earlier approval.
 
 ## Maintenance
 
@@ -53,15 +43,11 @@ Tsumugi can distinguish between work that:
 - requires translation or review
 - cannot be resolved automatically
 
-Previous translations and decisions remain part of project history even when they are no longer current.
-
-Updates therefore build on existing work instead of treating every source revision as a new project.
+Previous translations and decisions remain part of project history even when they are no longer current. Updates build on that history within the same project.
 
 ## Extension Model
 
-Tsumugi separates localization semantics from domain-specific knowledge.
-
-The Core defines project state, lifecycle rules, authoritative decisions, and the boundaries through which additional capabilities participate.
+Tsumugi separates localization semantics from domain-specific knowledge. The Core defines project state, lifecycle rules, authoritative decisions, and the boundaries through which additional capabilities participate.
 
 Extensions provide bounded capabilities through explicit contracts. A single extension may provide several related capabilities, while others may contribute only data or reusable resources.
 
@@ -69,13 +55,11 @@ Extensions do not own the project model. Their results are returned to the Core,
 
 Public extension contracts remain separate from internal storage and implementation details. Executable extensions communicate through language-neutral boundaries and are not tied to the implementation language of the Core.
 
-The goal is to support different localization domains without turning each integration into its own workflow or source of truth.
+This lets different localization domains share a workflow and a single source of truth.
 
 ## AI
 
-AI is optional.
-
-It may produce translation candidates, review signals, comparisons, contextual findings, or other structured results.
+AI is optional. It may produce translation candidates, review signals, comparisons, contextual findings, or other structured results.
 
 Those results use the same project model as manually produced work. AI output does not directly become authoritative project state or human approval.
 
@@ -103,7 +87,7 @@ Release
 Delivery
 ```
 
-Validation therefore applies not only to translation state but also to the artifact that was actually produced.
+Validation checks both translation state and the artifact the build produced.
 
 A failed build does not become a release, and a failed delivery attempt does not erase an already recorded release.
 
@@ -123,13 +107,9 @@ Capability Protocol
 Workers / Data Extensions / External Tools
 ```
 
-The desktop interface requests operations but does not own authoritative state transitions.
+The desktop interface requests operations; the Core controls state transitions. The Core owns project semantics, persistence, orchestration, result adoption, and release state.
 
-The Core owns project semantics, persistence, orchestration, result adoption, and release state.
-
-Long-running or domain-specific operations can run outside the Core through bounded capability contracts.
-
-Public contracts are intended to remain independent from the Rust ABI.
+Long-running or domain-specific operations can run outside the Core through bounded capability contracts. Public contracts are intended to remain independent from the Rust ABI.
 
 ## Development
 
@@ -144,13 +124,11 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-The desktop shell now exposes project lifecycle controls for creating, opening, renaming, adding target locales, closing, and reconciling local projects through the Tauri command boundary. Translation and the remaining workbench modules are delivered by following foundation tasks.
+The desktop shell supports creating, opening, renaming, closing, and reconciling local projects, as well as adding target locales. These operations use Tauri commands. Translation and the remaining workbench modules are planned for later development.
 
 ## Status
 
-Tsumugi is in early development.
-
-Current work is focused on the foundations required for complete localization workflows:
+Tsumugi is in early development. Current work focuses on the foundations for complete localization workflows:
 
 - project and language boundaries
 - content identity and lineage
@@ -161,6 +139,4 @@ Current work is focused on the foundations required for complete localization wo
 - extension contracts
 - persistence and recovery
 
-Detailed APIs, storage schemas, transport protocols, and stable public extension contracts are still under design.
-
-There is no stable plugin API yet.
+Detailed APIs, storage schemas, transport protocols, and public extension contracts are still under design. There is no stable plugin API yet.
