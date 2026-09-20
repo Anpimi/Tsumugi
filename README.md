@@ -2,6 +2,8 @@
 
 **紡ぎ**
 
+[English](README.md) · [简体中文](README.zh-CN.md)
+
 An extensible localization workbench for translating and maintaining evolving content.
 
 Tsumugi keeps source content, translations, terminology, review, validation, and releases in one project, with a focus on preserving useful work as the source changes over time.
