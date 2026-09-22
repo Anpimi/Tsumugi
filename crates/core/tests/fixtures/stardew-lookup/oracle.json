@@ -1,0 +1,2672 @@
+{
+  "upstreamRevision": "76565e83ede4bc8b3c293f1c659032ba9c39c213",
+  "namespace": "Pathoschild.LookupAnything",
+  "sourceLanguage": "en",
+  "languageEvidence": "user-declared-for-fixture",
+  "sourcePath": "i18n/default.json",
+  "count": 532,
+  "unitPolicy": "one independent unit per native key; no inferred sharing",
+  "manifestVersion": "%ProjectVersion%",
+  "occurrences": [
+    {
+      "ordinal": 0,
+      "key": "generic.list-separator",
+      "text": ", "
+    },
+    {
+      "ordinal": 1,
+      "key": "generic.line-wrap-on",
+      "text": ""
+    },
+    {
+      "ordinal": 2,
+      "key": "generic.now",
+      "text": "now"
+    },
+    {
+      "ordinal": 3,
+      "key": "generic.tomorrow",
+      "text": "tomorrow"
+    },
+    {
+      "ordinal": 4,
+      "key": "generic.yesterday",
+      "text": "yesterday"
+    },
+    {
+      "ordinal": 5,
+      "key": "generic.unknown",
+      "text": "unknown"
+    },
+    {
+      "ordinal": 6,
+      "key": "generic.percent",
+      "text": "{{percent}}%"
+    },
+    {
+      "ordinal": 7,
+      "key": "generic.percent-chance-of",
+      "text": "{{percent}}% chance of {{label}}"
+    },
+    {
+      "ordinal": 8,
+      "key": "generic.percent-ratio",
+      "text": "{{percent}}% ({{value}} of {{max}})"
+    },
+    {
+      "ordinal": 9,
+      "key": "generic.ratio",
+      "text": "{{value}} of {{max}}"
+    },
+    {
+      "ordinal": 10,
+      "key": "generic.range",
+      "text": "{{min}} to {{max}}"
+    },
+    {
+      "ordinal": 11,
+      "key": "generic.yes",
+      "text": "yes"
+    },
+    {
+      "ordinal": 12,
+      "key": "generic.no",
+      "text": "no"
+    },
+    {
+      "ordinal": 13,
+      "key": "generic.seconds",
+      "text": "{{count}} seconds"
+    },
+    {
+      "ordinal": 14,
+      "key": "generic.minutes",
+      "text": "{{count}} minutes"
+    },
+    {
+      "ordinal": 15,
+      "key": "generic.hours",
+      "text": "{{count}} hours"
+    },
+    {
+      "ordinal": 16,
+      "key": "generic.days",
+      "text": "{{count}} days"
+    },
+    {
+      "ordinal": 17,
+      "key": "generic.in-x-days",
+      "text": "in {{count}} days"
+    },
+    {
+      "ordinal": 18,
+      "key": "generic.x-days-ago",
+      "text": "{{count}} days ago"
+    },
+    {
+      "ordinal": 19,
+      "key": "generic.price",
+      "text": "{{price}}g"
+    },
+    {
+      "ordinal": 20,
+      "key": "generic.price-for-quality",
+      "text": "{{price}}g ({{quality}})"
+    },
+    {
+      "ordinal": 21,
+      "key": "generic.price-for-stack",
+      "text": "{{price}}g for stack of {{count}}"
+    },
+    {
+      "ordinal": 22,
+      "key": "generic.show-x-results",
+      "text": "show {{count}} results"
+    },
+    {
+      "ordinal": 23,
+      "key": "type.achievement",
+      "text": "Achievement"
+    },
+    {
+      "ordinal": 24,
+      "key": "type.building",
+      "text": "Building"
+    },
+    {
+      "ordinal": 25,
+      "key": "type.bush",
+      "text": "Bush"
+    },
+    {
+      "ordinal": 26,
+      "key": "type.fruit-tree",
+      "text": "Fruit tree"
+    },
+    {
+      "ordinal": 27,
+      "key": "type.monster",
+      "text": "Monster"
+    },
+    {
+      "ordinal": 28,
+      "key": "type.player",
+      "text": "Player"
+    },
+    {
+      "ordinal": 29,
+      "key": "type.tree",
+      "text": "Tree"
+    },
+    {
+      "ordinal": 30,
+      "key": "type.villager",
+      "text": "Villager"
+    },
+    {
+      "ordinal": 31,
+      "key": "type.other",
+      "text": "Other"
+    },
+    {
+      "ordinal": 32,
+      "key": "quality.normal",
+      "text": "normal"
+    },
+    {
+      "ordinal": 33,
+      "key": "quality.silver",
+      "text": "silver"
+    },
+    {
+      "ordinal": 34,
+      "key": "quality.gold",
+      "text": "gold"
+    },
+    {
+      "ordinal": 35,
+      "key": "quality.iridium",
+      "text": "iridium"
+    },
+    {
+      "ordinal": 36,
+      "key": "item.wild-seeds",
+      "text": "Wild Seeds (Any)"
+    },
+    {
+      "ordinal": 37,
+      "key": "friendship-status.friendly",
+      "text": "Friendly"
+    },
+    {
+      "ordinal": 38,
+      "key": "friendship-status.dating",
+      "text": "Dating"
+    },
+    {
+      "ordinal": 39,
+      "key": "friendship-status.engaged",
+      "text": "Engaged"
+    },
+    {
+      "ordinal": 40,
+      "key": "friendship-status.married",
+      "text": "Married"
+    },
+    {
+      "ordinal": 41,
+      "key": "friendship-status.divorced",
+      "text": "Divorced"
+    },
+    {
+      "ordinal": 42,
+      "key": "friendship-status.kicked-out",
+      "text": "Kicked out"
+    },
+    {
+      "ordinal": 43,
+      "key": "added-by-mod",
+      "text": "Added by mod"
+    },
+    {
+      "ordinal": 44,
+      "key": "added-by-mod.summary",
+      "text": "{{modName}}"
+    },
+    {
+      "ordinal": 45,
+      "key": "internal-id",
+      "text": "Internal ID"
+    },
+    {
+      "ordinal": 46,
+      "key": "bundle-area.pantry",
+      "text": "Pantry"
+    },
+    {
+      "ordinal": 47,
+      "key": "bundle-area.crafts-room",
+      "text": "Crafts Room"
+    },
+    {
+      "ordinal": 48,
+      "key": "bundle-area.fish-tank",
+      "text": "Fish Tank"
+    },
+    {
+      "ordinal": 49,
+      "key": "bundle-area.boiler-room",
+      "text": "Boiler Room"
+    },
+    {
+      "ordinal": 50,
+      "key": "bundle-area.vault",
+      "text": "Vault"
+    },
+    {
+      "ordinal": 51,
+      "key": "bundle-area.bulletin-board",
+      "text": "Bulletin Board"
+    },
+    {
+      "ordinal": 52,
+      "key": "bundle-area.abandoned-joja-mart",
+      "text": "Abandoned Joja Mart"
+    },
+    {
+      "ordinal": 53,
+      "key": "shop.adventure-guild",
+      "text": "Adventure Guild"
+    },
+    {
+      "ordinal": 54,
+      "key": "shop.clint",
+      "text": "Clint"
+    },
+    {
+      "ordinal": 55,
+      "key": "shop.marnie",
+      "text": "Marnie"
+    },
+    {
+      "ordinal": 56,
+      "key": "shop.pierre",
+      "text": "Pierre"
+    },
+    {
+      "ordinal": 57,
+      "key": "shop.robin",
+      "text": "Robin"
+    },
+    {
+      "ordinal": 58,
+      "key": "shop.volcano",
+      "text": "volcano shop"
+    },
+    {
+      "ordinal": 59,
+      "key": "shop.willy",
+      "text": "Willy"
+    },
+    {
+      "ordinal": 60,
+      "key": "recipe-type.cooking",
+      "text": "Cooking"
+    },
+    {
+      "ordinal": 61,
+      "key": "recipe-type.crafting",
+      "text": "Crafting"
+    },
+    {
+      "ordinal": 62,
+      "key": "recipe-type.tailoring",
+      "text": "Tailoring"
+    },
+    {
+      "ordinal": 63,
+      "key": "data.npc.pet.description",
+      "text": "Your loyal pet."
+    },
+    {
+      "ordinal": 64,
+      "key": "data.npc.horse.description",
+      "text": "Your loyal steed."
+    },
+    {
+      "ordinal": 65,
+      "key": "data.npc.junimo.description",
+      "text": "A forest spirit from the spirit world. Very little is known about them."
+    },
+    {
+      "ordinal": 66,
+      "key": "data.npc.trash-bear.description",
+      "text": "A friendly spirit who cleans up trash."
+    },
+    {
+      "ordinal": 67,
+      "key": "data.type.container",
+      "text": "Container"
+    },
+    {
+      "ordinal": 68,
+      "key": "data.item.egg-incubator.description",
+      "text": "Hatches eggs into baby chickens and ducks."
+    },
+    {
+      "ordinal": 69,
+      "key": "data.item.barrel.name",
+      "text": "Barrel"
+    },
+    {
+      "ordinal": 70,
+      "key": "data.item.barrel.description",
+      "text": "Break apart to obtain sundry goods."
+    },
+    {
+      "ordinal": 71,
+      "key": "data.item.box.name",
+      "text": "Box"
+    },
+    {
+      "ordinal": 72,
+      "key": "data.item.box.description",
+      "text": "Break apart to obtain sundry goods."
+    },
+    {
+      "ordinal": 73,
+      "key": "location.beach.east-pier",
+      "text": "{{locationName}} (eastern pier)"
+    },
+    {
+      "ordinal": 74,
+      "key": "location.bugLand",
+      "text": "Mutant Bug Lair"
+    },
+    {
+      "ordinal": 75,
+      "key": "location.desert.topPond",
+      "text": "{{locationName}} (north pond)"
+    },
+    {
+      "ordinal": 76,
+      "key": "location.farmCave",
+      "text": "Farm Cave"
+    },
+    {
+      "ordinal": 77,
+      "key": "location.farmHouse",
+      "text": "Farmhouse"
+    },
+    {
+      "ordinal": 78,
+      "key": "location.forest.island-tip",
+      "text": "{{locationName}} (river near south tip of large island)"
+    },
+    {
+      "ordinal": 79,
+      "key": "location.forest.lake",
+      "text": "{{locationName}} (pond)"
+    },
+    {
+      "ordinal": 80,
+      "key": "location.forest.river",
+      "text": "{{locationName}} (river)"
+    },
+    {
+      "ordinal": 81,
+      "key": "location.HarveyRoom",
+      "text": "Harvey's Room"
+    },
+    {
+      "ordinal": 82,
+      "key": "location.LeoTreeHouse",
+      "text": "Treehouse"
+    },
+    {
+      "ordinal": 83,
+      "key": "location.SandyHouse",
+      "text": "Oasis"
+    },
+    {
+      "ordinal": 84,
+      "key": "location.SebastianRoom",
+      "text": "Sebastian's Room"
+    },
+    {
+      "ordinal": 85,
+      "key": "location.submarine",
+      "text": "Night Market Submarine"
+    },
+    {
+      "ordinal": 86,
+      "key": "location.town.northmost-bridge",
+      "text": "{{locationName}} (northmost bridge)"
+    },
+    {
+      "ordinal": 87,
+      "key": "location.undergroundMine",
+      "text": "Mines"
+    },
+    {
+      "ordinal": 88,
+      "key": "location.undergroundMine.level",
+      "text": "Mine Level {{level}}"
+    },
+    {
+      "ordinal": 89,
+      "key": "location.witchSwamp",
+      "text": "Witch's Swamp"
+    },
+    {
+      "ordinal": 90,
+      "key": "location.caldera",
+      "text": "Ginger Island Caldera"
+    },
+    {
+      "ordinal": 91,
+      "key": "location.islandEast",
+      "text": "Ginger Island East"
+    },
+    {
+      "ordinal": 92,
+      "key": "location.islandNorth",
+      "text": "Ginger Island North"
+    },
+    {
+      "ordinal": 93,
+      "key": "location.islandSouth",
+      "text": "Ginger Island South"
+    },
+    {
+      "ordinal": 94,
+      "key": "location.islandSouthEast",
+      "text": "Ginger Island Southeast"
+    },
+    {
+      "ordinal": 95,
+      "key": "location.islandSouthEastCave",
+      "text": "Ginger Island Southeast Cave"
+    },
+    {
+      "ordinal": 96,
+      "key": "location.islandWest",
+      "text": "Ginger Island West"
+    },
+    {
+      "ordinal": 97,
+      "key": "location.islandWest.freshwater",
+      "text": "Ginger Island West (pond)"
+    },
+    {
+      "ordinal": 98,
+      "key": "location.islandWest.ocean",
+      "text": "Ginger Island West (ocean)"
+    },
+    {
+      "ordinal": 99,
+      "key": "location.fish-area",
+      "text": "{{locationName}} ({{areaName}})"
+    },
+    {
+      "ordinal": 100,
+      "key": "location.unknown-fish-area",
+      "text": "{{locationName}} (fishing area {{id}})"
+    },
+    {
+      "ordinal": 101,
+      "key": "conditions-summary",
+      "text": "[conditions: {{conditions}}]"
+    },
+    {
+      "ordinal": 102,
+      "key": "condition-or-context-tag.negate",
+      "text": "not {{value}}"
+    },
+    {
+      "ordinal": 103,
+      "key": "condition.day-of-month",
+      "text": "on specific days ({{days}})"
+    },
+    {
+      "ordinal": 104,
+      "key": "condition.day-of-month.even",
+      "text": "even days"
+    },
+    {
+      "ordinal": 105,
+      "key": "condition.day-of-month.odd",
+      "text": "odd days"
+    },
+    {
+      "ordinal": 106,
+      "key": "condition.item-type.input",
+      "text": "input item"
+    },
+    {
+      "ordinal": 107,
+      "key": "condition.item-type.target",
+      "text": "target item"
+    },
+    {
+      "ordinal": 108,
+      "key": "condition.raw-context-tag",
+      "text": "context tag \"{{tag}}\""
+    },
+    {
+      "ordinal": 109,
+      "key": "condition.raw-condition",
+      "text": "query \"{{tag}}\""
+    },
+    {
+      "ordinal": 110,
+      "key": "condition.item-context-tag",
+      "text": "{{item}} has context tag {{tags}}"
+    },
+    {
+      "ordinal": 111,
+      "key": "condition.item-context-tags",
+      "text": "{{item}} has context tags {{tags}}"
+    },
+    {
+      "ordinal": 112,
+      "key": "condition.item-context-tag.value",
+      "text": "'{{tag}}'"
+    },
+    {
+      "ordinal": 113,
+      "key": "condition.item-edibility.edible",
+      "text": "{{item}} is edible"
+    },
+    {
+      "ordinal": 114,
+      "key": "condition.item-edibility.min",
+      "text": "{{item}} has edibility of {{min}} or more"
+    },
+    {
+      "ordinal": 115,
+      "key": "condition.item-edibility.range",
+      "text": "{{item}} has edibility of {{min}} to {{max}}"
+    },
+    {
+      "ordinal": 116,
+      "key": "context-tag.bone",
+      "text": "any bone"
+    },
+    {
+      "ordinal": 117,
+      "key": "context-tag.egg",
+      "text": "any egg"
+    },
+    {
+      "ordinal": 118,
+      "key": "context-tag.large-egg",
+      "text": "any large egg"
+    },
+    {
+      "ordinal": 119,
+      "key": "context-tag.preserved-item",
+      "text": "preserved {{name}}"
+    },
+    {
+      "ordinal": 120,
+      "key": "achievement.unlocked",
+      "text": "Unlocked"
+    },
+    {
+      "ordinal": 121,
+      "key": "achievement.hat-shop",
+      "text": "Hat shop"
+    },
+    {
+      "ordinal": 122,
+      "key": "achievement.hat-shop.hats-added",
+      "text": "These hats are added to the Hat Mouse shop when the achievement is unlocked:"
+    },
+    {
+      "ordinal": 123,
+      "key": "achievement.hat-shop.no-hats-added",
+      "text": "No hats are unlocked by this achievement."
+    },
+    {
+      "ordinal": 124,
+      "key": "animal.love",
+      "text": "Love"
+    },
+    {
+      "ordinal": 125,
+      "key": "animal.happiness",
+      "text": "Happiness"
+    },
+    {
+      "ordinal": 126,
+      "key": "animal.mood",
+      "text": "Mood today"
+    },
+    {
+      "ordinal": 127,
+      "key": "animal.complaints",
+      "text": "Complaints"
+    },
+    {
+      "ordinal": 128,
+      "key": "animal.produce-ready",
+      "text": "Produce ready"
+    },
+    {
+      "ordinal": 129,
+      "key": "animal.growth",
+      "text": "Growth"
+    },
+    {
+      "ordinal": 130,
+      "key": "animal.sells-for",
+      "text": "Sells for"
+    },
+    {
+      "ordinal": 131,
+      "key": "animal.golden-cracker",
+      "text": "Golden animal cracker"
+    },
+    {
+      "ordinal": 132,
+      "key": "animal.complaints.hungry",
+      "text": "wasn't fed yesterday"
+    },
+    {
+      "ordinal": 133,
+      "key": "animal.complaints.left-out",
+      "text": "was left outside last night"
+    },
+    {
+      "ordinal": 134,
+      "key": "animal.complaints.new-home",
+      "text": "moved into new home"
+    },
+    {
+      "ordinal": 135,
+      "key": "animal.complaints.no-heater",
+      "text": "no heater in winter"
+    },
+    {
+      "ordinal": 136,
+      "key": "animal.complaints.not-petted",
+      "text": "hasn't been petted today"
+    },
+    {
+      "ordinal": 137,
+      "key": "animal.complaints.wild-animal-attack",
+      "text": "attacked by wild animals during the night"
+    },
+    {
+      "ordinal": 138,
+      "key": "animal.golden-cracker.none",
+      "text": "None. Add a golden animal cracker to double produced items."
+    },
+    {
+      "ordinal": 139,
+      "key": "animal.golden-cracker.applied",
+      "text": "Applied; produced items are doubled."
+    },
+    {
+      "ordinal": 140,
+      "key": "building.animals",
+      "text": "Animals"
+    },
+    {
+      "ordinal": 141,
+      "key": "building.construction",
+      "text": "Construction"
+    },
+    {
+      "ordinal": 142,
+      "key": "building.construction-costs",
+      "text": "Construction costs"
+    },
+    {
+      "ordinal": 143,
+      "key": "building.feed-trough",
+      "text": "Feed trough"
+    },
+    {
+      "ordinal": 144,
+      "key": "building.horse",
+      "text": "Horse"
+    },
+    {
+      "ordinal": 145,
+      "key": "building.horse-location",
+      "text": "Horse location"
+    },
+    {
+      "ordinal": 146,
+      "key": "building.owner",
+      "text": "Owner"
+    },
+    {
+      "ordinal": 147,
+      "key": "building.slimes",
+      "text": "Slimes"
+    },
+    {
+      "ordinal": 148,
+      "key": "building.stored-hay",
+      "text": "Stored hay"
+    },
+    {
+      "ordinal": 149,
+      "key": "building.upgrades",
+      "text": "Upgrades"
+    },
+    {
+      "ordinal": 150,
+      "key": "building.water-trough",
+      "text": "Water trough"
+    },
+    {
+      "ordinal": 151,
+      "key": "building.animals.summary",
+      "text": "{{count}} of max {{max}} animals"
+    },
+    {
+      "ordinal": 152,
+      "key": "building.construction.summary",
+      "text": "ready on {{date}}"
+    },
+    {
+      "ordinal": 153,
+      "key": "building.feed-trough.automated",
+      "text": "automated"
+    },
+    {
+      "ordinal": 154,
+      "key": "building.feed-trough.summary",
+      "text": "{{filled}} of {{max}} feed slots filled"
+    },
+    {
+      "ordinal": 155,
+      "key": "building.horse-location.summary",
+      "text": "{{location}} ({{x}}, {{y}})"
+    },
+    {
+      "ordinal": 156,
+      "key": "building.junimo-harvesting-enabled",
+      "text": "Harvesting enabled"
+    },
+    {
+      "ordinal": 157,
+      "key": "building.owner.none",
+      "text": "no owner"
+    },
+    {
+      "ordinal": 158,
+      "key": "building.output-processing",
+      "text": "Output processing"
+    },
+    {
+      "ordinal": 159,
+      "key": "building.output-ready",
+      "text": "Output ready"
+    },
+    {
+      "ordinal": 160,
+      "key": "building.slimes.summary",
+      "text": "{{count}} of max {{max}} slimes"
+    },
+    {
+      "ordinal": 161,
+      "key": "building.stored-hay.summary",
+      "text": "{{hayCount}} of {{maxHayInLocation}} hay in this location (max capacity in this building: {{maxHayInBuilding}})"
+    },
+    {
+      "ordinal": 162,
+      "key": "building.upgrades.barn.0",
+      "text": "up to 4 animals, add cows"
+    },
+    {
+      "ordinal": 163,
+      "key": "building.upgrades.barn.1",
+      "text": "up to 8 animals, add pregnancy and goats"
+    },
+    {
+      "ordinal": 164,
+      "key": "building.upgrades.barn.2",
+      "text": "up to 12 animals, add autofeed, pigs, and sheep"
+    },
+    {
+      "ordinal": 165,
+      "key": "building.upgrades.cabin.0",
+      "text": "initial cabin"
+    },
+    {
+      "ordinal": 166,
+      "key": "building.upgrades.cabin.1",
+      "text": "add kitchen, enable marriage"
+    },
+    {
+      "ordinal": 167,
+      "key": "building.upgrades.cabin.2",
+      "text": "enable children"
+    },
+    {
+      "ordinal": 168,
+      "key": "building.upgrades.coop.0",
+      "text": "up to 4 animals; add chickens"
+    },
+    {
+      "ordinal": 169,
+      "key": "building.upgrades.coop.1",
+      "text": "up to 8 animals; add incubator, dinosaurs, and ducks"
+    },
+    {
+      "ordinal": 170,
+      "key": "building.upgrades.coop.2",
+      "text": "up to 12 animals; add autofeed and rabbits"
+    },
+    {
+      "ordinal": 171,
+      "key": "building.water-trough.summary",
+      "text": "{{filled}} of {{max}} water troughs filled"
+    },
+    {
+      "ordinal": 172,
+      "key": "building.fish-pond.population",
+      "text": "Population"
+    },
+    {
+      "ordinal": 173,
+      "key": "building.fish-pond.drops",
+      "text": "Drops"
+    },
+    {
+      "ordinal": 174,
+      "key": "building.fish-pond.quests",
+      "text": "Quests"
+    },
+    {
+      "ordinal": 175,
+      "key": "building.fish-pond.population.empty",
+      "text": "Add a fish to start this pond"
+    },
+    {
+      "ordinal": 176,
+      "key": "building.fish-pond.population.next-spawn",
+      "text": "New fish spawns {{relativeDate}}"
+    },
+    {
+      "ordinal": 177,
+      "key": "building.fish-pond.drops.preface",
+      "text": "{{chance}}% chance each day of producing the first matched item:"
+    },
+    {
+      "ordinal": 178,
+      "key": "building.fish-pond.drops.min-fish",
+      "text": "With {{count}} fish:"
+    },
+    {
+      "ordinal": 179,
+      "key": "building.fish-pond.quests.done",
+      "text": "{{count}} fish"
+    },
+    {
+      "ordinal": 180,
+      "key": "building.fish-pond.quests.incomplete-one",
+      "text": "{{count}} fish: will need {{itemName}}"
+    },
+    {
+      "ordinal": 181,
+      "key": "building.fish-pond.quests.incomplete-random",
+      "text": "{{count}} fish: will need one of {{itemList}}"
+    },
+    {
+      "ordinal": 182,
+      "key": "building.fish-pond.quests.available",
+      "text": "available {{relativeDate}}"
+    },
+    {
+      "ordinal": 183,
+      "key": "bush.name.berry",
+      "text": "Berry Bush"
+    },
+    {
+      "ordinal": 184,
+      "key": "bush.name.plain",
+      "text": "Plain Bush"
+    },
+    {
+      "ordinal": 185,
+      "key": "bush.name.tea",
+      "text": "Tea Bush"
+    },
+    {
+      "ordinal": 186,
+      "key": "bush.description.berry",
+      "text": "A bush that grows salmonberries and blackberries."
+    },
+    {
+      "ordinal": 187,
+      "key": "bush.description.plain",
+      "text": "A plain bush that doesn't grow anything."
+    },
+    {
+      "ordinal": 188,
+      "key": "bush.description.Tea",
+      "text": "A bush that grows tea leaves."
+    },
+    {
+      "ordinal": 189,
+      "key": "bush.date-planted",
+      "text": "Date planted"
+    },
+    {
+      "ordinal": 190,
+      "key": "bush.growth",
+      "text": "Growth"
+    },
+    {
+      "ordinal": 191,
+      "key": "bush.next-harvest",
+      "text": "Next harvest"
+    },
+    {
+      "ordinal": 192,
+      "key": "bush.growth.summary",
+      "text": "mature on {{date}}"
+    },
+    {
+      "ordinal": 193,
+      "key": "bush.schedule.berry",
+      "text": "20% chance of salmonberries in spring 15-18 and blackberries in fall 8-11."
+    },
+    {
+      "ordinal": 194,
+      "key": "bush.schedule.tea",
+      "text": "Grows tea leaves from the 22nd of each season (except winter if not in the greenhouse)."
+    },
+    {
+      "ordinal": 195,
+      "key": "fruit-tree.complaints",
+      "text": "Complaints"
+    },
+    {
+      "ordinal": 196,
+      "key": "fruit-tree.name",
+      "text": "{{fruitName}} Tree"
+    },
+    {
+      "ordinal": 197,
+      "key": "fruit-tree.growth",
+      "text": "Growth"
+    },
+    {
+      "ordinal": 198,
+      "key": "fruit-tree.next-fruit",
+      "text": "Next fruit"
+    },
+    {
+      "ordinal": 199,
+      "key": "fruit-tree.season",
+      "text": "Season"
+    },
+    {
+      "ordinal": 200,
+      "key": "fruit-tree.quality",
+      "text": "Quality"
+    },
+    {
+      "ordinal": 201,
+      "key": "fruit-tree.complaints.adjacent-objects",
+      "text": "can't grow because there are adjacent objects"
+    },
+    {
+      "ordinal": 202,
+      "key": "fruit-tree.growth.summary",
+      "text": "mature on {{date}}"
+    },
+    {
+      "ordinal": 203,
+      "key": "fruit-tree.next-fruit.max-fruit",
+      "text": "won't grow any more fruit until you harvest those it has"
+    },
+    {
+      "ordinal": 204,
+      "key": "fruit-tree.next-fruit.out-of-season",
+      "text": "out of season"
+    },
+    {
+      "ordinal": 205,
+      "key": "fruit-tree.next-fruit.struck-by-lightning",
+      "text": "struck by lightning! Will recover in {{count}} days."
+    },
+    {
+      "ordinal": 206,
+      "key": "fruit-tree.next-fruit.too-young",
+      "text": "too young to bear fruit"
+    },
+    {
+      "ordinal": 207,
+      "key": "fruit-tree.quality.now",
+      "text": "{{quality}} now"
+    },
+    {
+      "ordinal": 208,
+      "key": "fruit-tree.quality.on-date",
+      "text": "{{quality}} on {{date}}"
+    },
+    {
+      "ordinal": 209,
+      "key": "fruit-tree.quality.on-date-next-year",
+      "text": "{{quality}} on {{date}} next year"
+    },
+    {
+      "ordinal": 210,
+      "key": "fruit-tree.season.summary",
+      "text": "{{season}} (or anytime in greenhouse)"
+    },
+    {
+      "ordinal": 211,
+      "key": "crop.summary",
+      "text": "Crop"
+    },
+    {
+      "ordinal": 212,
+      "key": "crop.harvest",
+      "text": "Harvest"
+    },
+    {
+      "ordinal": 213,
+      "key": "crop.fertilized",
+      "text": "Fertilized"
+    },
+    {
+      "ordinal": 214,
+      "key": "crop.watered",
+      "text": "Watered"
+    },
+    {
+      "ordinal": 215,
+      "key": "crop.summary.dead",
+      "text": "This crop is dead."
+    },
+    {
+      "ordinal": 216,
+      "key": "crop.summary.drops-X",
+      "text": "drops {{count}}"
+    },
+    {
+      "ordinal": 217,
+      "key": "crop.summary.drops-X-to-Y",
+      "text": "drops {{min}} to {{max}} ({{percent}}% chance of extra crops)"
+    },
+    {
+      "ordinal": 218,
+      "key": "crop.summary.harvest-once",
+      "text": "harvest after {{daysToFirstHarvest}} days"
+    },
+    {
+      "ordinal": 219,
+      "key": "crop.summary.harvest-multi",
+      "text": "harvest after {{daysToFirstHarvest}} days, then every {{daysToNextHarvests}} days"
+    },
+    {
+      "ordinal": 220,
+      "key": "crop.summary.farming-xp",
+      "text": "gives +{{amount}} farming XP per harvest"
+    },
+    {
+      "ordinal": 221,
+      "key": "crop.summary.foraging-xp",
+      "text": "gives +{{amount}} foraging XP per harvest"
+    },
+    {
+      "ordinal": 222,
+      "key": "crop.summary.seasons",
+      "text": "grows in {{seasons}}"
+    },
+    {
+      "ordinal": 223,
+      "key": "crop.summary.sells-for",
+      "text": "sells for {{price}}"
+    },
+    {
+      "ordinal": 224,
+      "key": "crop.harvest.too-late",
+      "text": "too late in the season for the next harvest (would be on {{date}})"
+    },
+    {
+      "ordinal": 225,
+      "key": "item.contents",
+      "text": "Contents"
+    },
+    {
+      "ordinal": 226,
+      "key": "item.loves-this",
+      "text": "Loves this"
+    },
+    {
+      "ordinal": 227,
+      "key": "item.likes-this",
+      "text": "Likes this"
+    },
+    {
+      "ordinal": 228,
+      "key": "item.neutral-about-this",
+      "text": "Neutral about this"
+    },
+    {
+      "ordinal": 229,
+      "key": "item.dislikes-this",
+      "text": "Dislikes this"
+    },
+    {
+      "ordinal": 230,
+      "key": "item.hates-this",
+      "text": "Hates this"
+    },
+    {
+      "ordinal": 231,
+      "key": "item.needed-for",
+      "text": "Needed for"
+    },
+    {
+      "ordinal": 232,
+      "key": "item.flavor",
+      "text": "Flavor"
+    },
+    {
+      "ordinal": 233,
+      "key": "item.number-owned",
+      "text": "Owned"
+    },
+    {
+      "ordinal": 234,
+      "key": "item.number-cooked",
+      "text": "Cooked"
+    },
+    {
+      "ordinal": 235,
+      "key": "item.number-crafted",
+      "text": "Crafted"
+    },
+    {
+      "ordinal": 236,
+      "key": "item.recipes",
+      "text": "Recipes"
+    },
+    {
+      "ordinal": 237,
+      "key": "item.see-also",
+      "text": "See also"
+    },
+    {
+      "ordinal": 238,
+      "key": "item.sells-for",
+      "text": "Sells for"
+    },
+    {
+      "ordinal": 239,
+      "key": "item.sells-to",
+      "text": "Sells to"
+    },
+    {
+      "ordinal": 240,
+      "key": "item.can-be-dyed",
+      "text": "Can be dyed"
+    },
+    {
+      "ordinal": 241,
+      "key": "item.produces-dye",
+      "text": "Produces dye"
+    },
+    {
+      "ordinal": 242,
+      "key": "item.contents.placed",
+      "text": "{{name}} placed"
+    },
+    {
+      "ordinal": 243,
+      "key": "item.contents.ready",
+      "text": "{{name}} ready"
+    },
+    {
+      "ordinal": 244,
+      "key": "item.contents.partial",
+      "text": "{{name}} in {{time}}"
+    },
+    {
+      "ordinal": 245,
+      "key": "item.undiscovered-gift-taste",
+      "text": "{{count}} unrevealed villagers"
+    },
+    {
+      "ordinal": 246,
+      "key": "item.undiscovered-gift-taste-appended",
+      "text": ", and {{count}} unrevealed villagers"
+    },
+    {
+      "ordinal": 247,
+      "key": "item.needed-for.community-center",
+      "text": "community center ({{bundles}})"
+    },
+    {
+      "ordinal": 248,
+      "key": "item.needed-for.full-shipment",
+      "text": "full shipment achievement (ship one)"
+    },
+    {
+      "ordinal": 249,
+      "key": "item.needed-for.monoculture",
+      "text": "monoculture achievement (ship {{count}} more)"
+    },
+    {
+      "ordinal": 250,
+      "key": "item.needed-for.polyculture",
+      "text": "polyculture achievement (ship {{count}} more)"
+    },
+    {
+      "ordinal": 251,
+      "key": "item.needed-for.full-collection",
+      "text": "full collection achievement (donate one to museum)"
+    },
+    {
+      "ordinal": 252,
+      "key": "item.needed-for.gourmet-chef",
+      "text": "gourmet chef achievement (cook {{recipes}})"
+    },
+    {
+      "ordinal": 253,
+      "key": "item.needed-for.craft-master",
+      "text": "craft master achievement (make {{recipes}})"
+    },
+    {
+      "ordinal": 254,
+      "key": "item.needed-for.quests",
+      "text": "current quests ({{quests}})"
+    },
+    {
+      "ordinal": 255,
+      "key": "item.needed-for.trash-bear",
+      "text": "trash bear (deliver one)"
+    },
+    {
+      "ordinal": 256,
+      "key": "item.unknown-recipes",
+      "text": "{{count}} unknown recipes"
+    },
+    {
+      "ordinal": 257,
+      "key": "item.sells-to.shipping-box",
+      "text": "shipping box"
+    },
+    {
+      "ordinal": 258,
+      "key": "item.recipes-for-ingredient.entry",
+      "text": "{{name}} (needs {{count}})"
+    },
+    {
+      "ordinal": 259,
+      "key": "item.recipes-for-machine.multiple-items",
+      "text": "{{name}} x{{count}}"
+    },
+    {
+      "ordinal": 260,
+      "key": "item.recipes-for-machine.same-as-input",
+      "text": "[same as input]"
+    },
+    {
+      "ordinal": 261,
+      "key": "item.recipes-for-machine.too-complex",
+      "text": "Some machine rules are too dynamic to display."
+    },
+    {
+      "ordinal": 262,
+      "key": "item.number-owned.summary",
+      "text": "you own {{count}} of these"
+    },
+    {
+      "ordinal": 263,
+      "key": "item.number-owned-flavored.summary",
+      "text": "you own {{count}} ({{name}}) or {{baseCount}} ({{baseName}}) of these"
+    },
+    {
+      "ordinal": 264,
+      "key": "item.number-crafted.summary",
+      "text": "you made {{count}} of these"
+    },
+    {
+      "ordinal": 265,
+      "key": "item.internal-id.summary",
+      "text": "{{itemId}} (globally unique 'qualified ID': {{qualifiedItemId}})"
+    },
+    {
+      "ordinal": 266,
+      "key": "item.cask-contents",
+      "text": "Contents"
+    },
+    {
+      "ordinal": 267,
+      "key": "item.cask-schedule",
+      "text": "Aging"
+    },
+    {
+      "ordinal": 268,
+      "key": "item.cask-schedule.now",
+      "text": "{{quality}} ready now"
+    },
+    {
+      "ordinal": 269,
+      "key": "item.cask-schedule.now-partial",
+      "text": "{{quality}} now (use pickaxe to stop aging)"
+    },
+    {
+      "ordinal": 270,
+      "key": "item.cask-schedule.tomorrow",
+      "text": "{{quality}} tomorrow"
+    },
+    {
+      "ordinal": 271,
+      "key": "item.cask-schedule.in-x-days",
+      "text": "{{quality}} in {{count}} days ({{date}})"
+    },
+    {
+      "ordinal": 272,
+      "key": "item.crabpot-bait",
+      "text": "Bait"
+    },
+    {
+      "ordinal": 273,
+      "key": "item.crabpot-bait-needed",
+      "text": "Needs bait!"
+    },
+    {
+      "ordinal": 274,
+      "key": "item.crabpot-bait-not-needed",
+      "text": "Not needed due to Luremaster profession."
+    },
+    {
+      "ordinal": 275,
+      "key": "item.fence-health",
+      "text": "Health"
+    },
+    {
+      "ordinal": 276,
+      "key": "item.fence-health.gold-clock",
+      "text": "no decay with Gold Clock"
+    },
+    {
+      "ordinal": 277,
+      "key": "item.fence-health.summary",
+      "text": "{{percent}}% (roughly {{count}} days left)"
+    },
+    {
+      "ordinal": 278,
+      "key": "item.fish-pond-drops",
+      "text": "Fish pond drops"
+    },
+    {
+      "ordinal": 279,
+      "key": "item.fish-spawn-rules",
+      "text": "Spawn rules"
+    },
+    {
+      "ordinal": 280,
+      "key": "item.fish-spawn-rules.min-fishing-level",
+      "text": "min fishing level: {{level}}"
+    },
+    {
+      "ordinal": 281,
+      "key": "item.fish-spawn-rules.not-caught-yet",
+      "text": "not caught yet (can only be caught once)"
+    },
+    {
+      "ordinal": 282,
+      "key": "item.fish-spawn-rules.extended-family-quest-active",
+      "text": "\"Extended Family\" quest active"
+    },
+    {
+      "ordinal": 283,
+      "key": "item.fish-spawn-rules.locations",
+      "text": "locations: {{locations}}"
+    },
+    {
+      "ordinal": 284,
+      "key": "item.fish-spawn-rules.locations-by-season.label",
+      "text": "locations:"
+    },
+    {
+      "ordinal": 285,
+      "key": "item.fish-spawn-rules.locations-by-season.season-locations",
+      "text": "{{season}}: {{locations}}"
+    },
+    {
+      "ordinal": 286,
+      "key": "item.fish-spawn-rules.season-any",
+      "text": "any season"
+    },
+    {
+      "ordinal": 287,
+      "key": "item.fish-spawn-rules.season-list",
+      "text": "seasons: {{seasons}}"
+    },
+    {
+      "ordinal": 288,
+      "key": "item.fish-spawn-rules.time",
+      "text": "time of day: {{times}}"
+    },
+    {
+      "ordinal": 289,
+      "key": "item.fish-spawn-rules.weather-sunny",
+      "text": "weather: sunny"
+    },
+    {
+      "ordinal": 290,
+      "key": "item.fish-spawn-rules.weather-rainy",
+      "text": "weather: raining"
+    },
+    {
+      "ordinal": 291,
+      "key": "item.uncaught-fish",
+      "text": "{{count}} uncaught fish"
+    },
+    {
+      "ordinal": 292,
+      "key": "item.melee-weapon.accuracy",
+      "text": "Accuracy"
+    },
+    {
+      "ordinal": 293,
+      "key": "item.melee-weapon.critical-chance",
+      "text": "Critical chance"
+    },
+    {
+      "ordinal": 294,
+      "key": "item.melee-weapon.critical-damage",
+      "text": "Critical damage"
+    },
+    {
+      "ordinal": 295,
+      "key": "item.melee-weapon.damage",
+      "text": "Damage"
+    },
+    {
+      "ordinal": 296,
+      "key": "item.melee-weapon.defense",
+      "text": "Defense"
+    },
+    {
+      "ordinal": 297,
+      "key": "item.melee-weapon.knockback",
+      "text": "Knockback"
+    },
+    {
+      "ordinal": 298,
+      "key": "item.melee-weapon.reach",
+      "text": "Reach"
+    },
+    {
+      "ordinal": 299,
+      "key": "item.melee-weapon.speed",
+      "text": "Attack speed"
+    },
+    {
+      "ordinal": 300,
+      "key": "item.melee-weapon.critical-damage.label",
+      "text": "{{multiplier}} times normal damage (before player bonuses)"
+    },
+    {
+      "ordinal": 301,
+      "key": "item.melee-weapon.defense.label",
+      "text": "{{amount}} while equipped"
+    },
+    {
+      "ordinal": 302,
+      "key": "item.melee-weapon.knockback.label",
+      "text": "{{amount}} ({{multiplier}} times normal distance)"
+    },
+    {
+      "ordinal": 303,
+      "key": "item.melee-weapon.reach.label",
+      "text": "{{amount}} pixels"
+    },
+    {
+      "ordinal": 304,
+      "key": "item.melee-weapon.speed.shown-vs-actual",
+      "text": "shown: {{shownSpeed}}{{lineBreak}}actual: {{actualSpeed}}"
+    },
+    {
+      "ordinal": 305,
+      "key": "item.melee-weapon.speed.summary",
+      "text": "{{speed}} ({{milliseconds}} milliseconds per swing frame, before player speed bonuses)"
+    },
+    {
+      "ordinal": 306,
+      "key": "item.movie-snack-preference",
+      "text": "Preference"
+    },
+    {
+      "ordinal": 307,
+      "key": "item.movie-ticket.movie-this-week",
+      "text": "Movie this week"
+    },
+    {
+      "ordinal": 308,
+      "key": "item.movie-ticket.loves-movie",
+      "text": "Loves movie"
+    },
+    {
+      "ordinal": 309,
+      "key": "item.movie-ticket.likes-movie",
+      "text": "Likes movie"
+    },
+    {
+      "ordinal": 310,
+      "key": "item.movie-ticket.dislikes-movie",
+      "text": "Dislikes movie"
+    },
+    {
+      "ordinal": 311,
+      "key": "item.movie-ticket.rejects-movie",
+      "text": "Won't watch movie"
+    },
+    {
+      "ordinal": 312,
+      "key": "item.movie-snack-preference.love",
+      "text": "{{name}} loves this"
+    },
+    {
+      "ordinal": 313,
+      "key": "item.movie-snack-preference.like",
+      "text": "{{name}} likes this"
+    },
+    {
+      "ordinal": 314,
+      "key": "item.movie-snack-preference.dislike",
+      "text": "{{name}} dislikes this"
+    },
+    {
+      "ordinal": 315,
+      "key": "item.movie-ticket.movie-this-week.none",
+      "text": "No movie this week"
+    },
+    {
+      "ordinal": 316,
+      "key": "item.music-block.pitch",
+      "text": "Pitch"
+    },
+    {
+      "ordinal": 317,
+      "key": "item.music-block.drum-type",
+      "text": "Drum type"
+    },
+    {
+      "ordinal": 318,
+      "key": "monster.invincible",
+      "text": "Invincible"
+    },
+    {
+      "ordinal": 319,
+      "key": "monster.health",
+      "text": "Health"
+    },
+    {
+      "ordinal": 320,
+      "key": "monster.drops",
+      "text": "Drops"
+    },
+    {
+      "ordinal": 321,
+      "key": "monster.experience",
+      "text": "XP"
+    },
+    {
+      "ordinal": 322,
+      "key": "monster.defense",
+      "text": "Defense"
+    },
+    {
+      "ordinal": 323,
+      "key": "monster.attack",
+      "text": "Attack"
+    },
+    {
+      "ordinal": 324,
+      "key": "monster.adventure-guild",
+      "text": "Adventure Guild"
+    },
+    {
+      "ordinal": 325,
+      "key": "monster.drops.nothing",
+      "text": "nothing"
+    },
+    {
+      "ordinal": 326,
+      "key": "monster.adventure-guild.eradication-goal",
+      "text": "eradication goal: {{name}} (killed {{count}} of {{requiredCount}})"
+    },
+    {
+      "ordinal": 327,
+      "key": "npc.birthday",
+      "text": "Birthday"
+    },
+    {
+      "ordinal": 328,
+      "key": "npc.can-romance",
+      "text": "Can romance"
+    },
+    {
+      "ordinal": 329,
+      "key": "npc.friendship",
+      "text": "Friendship"
+    },
+    {
+      "ordinal": 330,
+      "key": "npc.talked-today",
+      "text": "Talked today"
+    },
+    {
+      "ordinal": 331,
+      "key": "npc.gifted-today",
+      "text": "Gifted today"
+    },
+    {
+      "ordinal": 332,
+      "key": "npc.gifted-this-week",
+      "text": "Gifted this week"
+    },
+    {
+      "ordinal": 333,
+      "key": "npc.kissed-today",
+      "text": "Kissed today"
+    },
+    {
+      "ordinal": 334,
+      "key": "npc.hugged-today",
+      "text": "Hugged today"
+    },
+    {
+      "ordinal": 335,
+      "key": "npc.loves-gifts",
+      "text": "Loves gifts"
+    },
+    {
+      "ordinal": 336,
+      "key": "npc.likes-gifts",
+      "text": "Likes gifts"
+    },
+    {
+      "ordinal": 337,
+      "key": "npc.neutral-gifts",
+      "text": "Neutral gifts"
+    },
+    {
+      "ordinal": 338,
+      "key": "npc.dislikes-gifts",
+      "text": "Dislikes gifts"
+    },
+    {
+      "ordinal": 339,
+      "key": "npc.hates-gifts",
+      "text": "Hates gifts"
+    },
+    {
+      "ordinal": 340,
+      "key": "npc.schedule",
+      "text": "Today's schedule"
+    },
+    {
+      "ordinal": 341,
+      "key": "npc.can-romance.married",
+      "text": "You're married! <"
+    },
+    {
+      "ordinal": 342,
+      "key": "npc.can-romance.housemate",
+      "text": "You're housemates!"
+    },
+    {
+      "ordinal": 343,
+      "key": "npc.friendship.not-met",
+      "text": "You haven't met them yet."
+    },
+    {
+      "ordinal": 344,
+      "key": "npc.friendship.need-bouquet",
+      "text": "need bouquet for next"
+    },
+    {
+      "ordinal": 345,
+      "key": "npc.friendship.need-points",
+      "text": "next in {{count}} pts"
+    },
+    {
+      "ordinal": 346,
+      "key": "npc.undiscovered-gift-taste",
+      "text": "{{count}} unrevealed items"
+    },
+    {
+      "ordinal": 347,
+      "key": "npc.unowned-gift-taste",
+      "text": "{{count}} unowned items"
+    },
+    {
+      "ordinal": 348,
+      "key": "npc.schedule.current-position",
+      "text": "Currently at {{locationName}} ({{x}}, {{y}})."
+    },
+    {
+      "ordinal": 349,
+      "key": "npc.schedule.no-entries",
+      "text": "No schedule loaded."
+    },
+    {
+      "ordinal": 350,
+      "key": "npc.schedule.not-following-schedule",
+      "text": "Currently not following a schedule. This usually means the NPC is doing special behaviors (e.g. at the movie theater)."
+    },
+    {
+      "ordinal": 351,
+      "key": "npc.schedule.entry",
+      "text": "{{time}}: walk to {{locationName}} ({{x}}, {{y}})."
+    },
+    {
+      "ordinal": 352,
+      "key": "npc.schedule.farmhand.unknown-position",
+      "text": "Currently in an unknown location on the host."
+    },
+    {
+      "ordinal": 353,
+      "key": "npc.schedule.farmhand.unknown-schedule",
+      "text": "In multiplayer, NPCs are managed by the host so their schedule isn't available."
+    },
+    {
+      "ordinal": 354,
+      "key": "npc.child.age",
+      "text": "Age"
+    },
+    {
+      "ordinal": 355,
+      "key": "npc.child.age.description-partial",
+      "text": "{{label}} ({{count}} days to {{nextLabel}})"
+    },
+    {
+      "ordinal": 356,
+      "key": "npc.child.age.description-grown",
+      "text": "{{label}}"
+    },
+    {
+      "ordinal": 357,
+      "key": "npc.child.age.newborn",
+      "text": "newborn"
+    },
+    {
+      "ordinal": 358,
+      "key": "npc.child.age.baby",
+      "text": "baby"
+    },
+    {
+      "ordinal": 359,
+      "key": "npc.child.age.crawler",
+      "text": "crawler"
+    },
+    {
+      "ordinal": 360,
+      "key": "npc.child.age.toddler",
+      "text": "toddler"
+    },
+    {
+      "ordinal": 361,
+      "key": "pet.love",
+      "text": "Love"
+    },
+    {
+      "ordinal": 362,
+      "key": "pet.petted-today",
+      "text": "Petted today"
+    },
+    {
+      "ordinal": 363,
+      "key": "pet.last-petted",
+      "text": "Last petted"
+    },
+    {
+      "ordinal": 364,
+      "key": "pet.water-bowl",
+      "text": "Water bowl"
+    },
+    {
+      "ordinal": 365,
+      "key": "pet.last-petted.yes",
+      "text": "yes (+12 love)"
+    },
+    {
+      "ordinal": 366,
+      "key": "pet.last-petted.days-ago",
+      "text": "{{days}} days ago"
+    },
+    {
+      "ordinal": 367,
+      "key": "pet.last-petted.never",
+      "text": "never"
+    },
+    {
+      "ordinal": 368,
+      "key": "pet.water-bowl.empty",
+      "text": "empty"
+    },
+    {
+      "ordinal": 369,
+      "key": "pet.water-bowl.filled",
+      "text": "filled (+6 love)"
+    },
+    {
+      "ordinal": 370,
+      "key": "player.farm-name",
+      "text": "Farm name"
+    },
+    {
+      "ordinal": 371,
+      "key": "player.farm-map",
+      "text": "Farm map"
+    },
+    {
+      "ordinal": 372,
+      "key": "player.favorite-thing",
+      "text": "Favorite thing"
+    },
+    {
+      "ordinal": 373,
+      "key": "player.gender",
+      "text": "Gender"
+    },
+    {
+      "ordinal": 374,
+      "key": "player.housemate",
+      "text": "Housemate"
+    },
+    {
+      "ordinal": 375,
+      "key": "player.spouse",
+      "text": "Spouse"
+    },
+    {
+      "ordinal": 376,
+      "key": "player.watched-movie-this-week",
+      "text": "Watched movie this week"
+    },
+    {
+      "ordinal": 377,
+      "key": "player.combat-skill",
+      "text": "Combat"
+    },
+    {
+      "ordinal": 378,
+      "key": "player.farming-skill",
+      "text": "Farming"
+    },
+    {
+      "ordinal": 379,
+      "key": "player.fishing-skill",
+      "text": "Fishing"
+    },
+    {
+      "ordinal": 380,
+      "key": "player.foraging-skill",
+      "text": "Foraging"
+    },
+    {
+      "ordinal": 381,
+      "key": "player.mining-skill",
+      "text": "Mining"
+    },
+    {
+      "ordinal": 382,
+      "key": "player.luck",
+      "text": "Luck"
+    },
+    {
+      "ordinal": 383,
+      "key": "player.save-format",
+      "text": "Save format"
+    },
+    {
+      "ordinal": 384,
+      "key": "player.farm-map.custom",
+      "text": "Custom"
+    },
+    {
+      "ordinal": 385,
+      "key": "player.gender.male",
+      "text": "male"
+    },
+    {
+      "ordinal": 386,
+      "key": "player.gender.female",
+      "text": "female"
+    },
+    {
+      "ordinal": 387,
+      "key": "player.luck.summary",
+      "text": "{{percent}}% to many random checks"
+    },
+    {
+      "ordinal": 388,
+      "key": "player.skill.progress",
+      "text": "level {{level}} ({{expNeeded}} XP to next)"
+    },
+    {
+      "ordinal": 389,
+      "key": "player.skill.progress-last",
+      "text": "level {{level}}"
+    },
+    {
+      "ordinal": 390,
+      "key": "puzzle.solution",
+      "text": "Solution"
+    },
+    {
+      "ordinal": 391,
+      "key": "puzzle.solution.solved",
+      "text": "Puzzle solved!"
+    },
+    {
+      "ordinal": 392,
+      "key": "puzzle.solution.hidden",
+      "text": "Puzzle solutions are hidden per your settings."
+    },
+    {
+      "ordinal": 393,
+      "key": "puzzle.island-crystal-cave.title",
+      "text": "Crystal Cave Puzzle"
+    },
+    {
+      "ordinal": 394,
+      "key": "puzzle.island-crystal-cave.crystal-id",
+      "text": "Crystal ID"
+    },
+    {
+      "ordinal": 395,
+      "key": "puzzle.island-crystal-cave.solution.not-activated",
+      "text": "Activate the statue to start the puzzle."
+    },
+    {
+      "ordinal": 396,
+      "key": "puzzle.island-crystal-cave.solution.waiting",
+      "text": "Waiting for game to generate sequence..."
+    },
+    {
+      "ordinal": 397,
+      "key": "puzzle.island-crystal-cave.solution.activated",
+      "text": "Repeat the pattern of activated crystals:"
+    },
+    {
+      "ordinal": 398,
+      "key": "puzzle.island-mermaid.title",
+      "text": "Island Mermaid Puzzle"
+    },
+    {
+      "ordinal": 399,
+      "key": "puzzle.island-mermaid.solution.intro",
+      "text": "Use flute blocks to play the Night Market mermaid song. Pitch values (you can lookup a flute block to see its pitch):"
+    },
+    {
+      "ordinal": 400,
+      "key": "puzzle.island-shrine.title",
+      "text": "Island Shrine Puzzle"
+    },
+    {
+      "ordinal": 401,
+      "key": "puzzle.island-shrine.solution",
+      "text": "For each pedestal, place the item dropped by gem birds in the corresponding island location when it rains. The items are randomized for each save."
+    },
+    {
+      "ordinal": 402,
+      "key": "puzzle.island-shrine.solution.east",
+      "text": "East: {{item}}"
+    },
+    {
+      "ordinal": 403,
+      "key": "puzzle.island-shrine.solution.north",
+      "text": "North: {{item}}"
+    },
+    {
+      "ordinal": 404,
+      "key": "puzzle.island-shrine.solution.south",
+      "text": "South: {{item}}"
+    },
+    {
+      "ordinal": 405,
+      "key": "puzzle.island-shrine.solution.west",
+      "text": "West: {{item}}"
+    },
+    {
+      "ordinal": 406,
+      "key": "tile.title",
+      "text": "Map tile ({{x}}, {{y}})"
+    },
+    {
+      "ordinal": 407,
+      "key": "tile.description",
+      "text": "A tile position on the map. This is displayed because you enabled tile lookups in the configuration."
+    },
+    {
+      "ordinal": 408,
+      "key": "tile.map-name",
+      "text": "Map name"
+    },
+    {
+      "ordinal": 409,
+      "key": "tile.map-properties",
+      "text": "Map properties"
+    },
+    {
+      "ordinal": 410,
+      "key": "tile.layer-tile",
+      "text": "{{layer}} tile"
+    },
+    {
+      "ordinal": 411,
+      "key": "tile.layer-tile-none",
+      "text": "Tile"
+    },
+    {
+      "ordinal": 412,
+      "key": "tile.map-properties.value",
+      "text": "{{name}}: {{value}}"
+    },
+    {
+      "ordinal": 413,
+      "key": "tile.layer-tile.appearance",
+      "text": "index {{index}} from tilesheet '{{tilesheetId}}' (path: '{{tilesheetPath}}')"
+    },
+    {
+      "ordinal": 414,
+      "key": "tile.layer-tile.blend-mode",
+      "text": "blend mode: {{value}}"
+    },
+    {
+      "ordinal": 415,
+      "key": "tile.layer-tile.index-property",
+      "text": "index property: {{name}}: {{value}}"
+    },
+    {
+      "ordinal": 416,
+      "key": "tile.layer-tile.tile-property",
+      "text": "tile property: {{name}}: {{value}}"
+    },
+    {
+      "ordinal": 417,
+      "key": "tile.layer-tile.none-here",
+      "text": "no tile here"
+    },
+    {
+      "ordinal": 418,
+      "key": "trash-bear-or-gourmand.item-wanted",
+      "text": "Item wanted"
+    },
+    {
+      "ordinal": 419,
+      "key": "trash-bear-or-gourmand.quest-progress",
+      "text": "Quest progress"
+    },
+    {
+      "ordinal": 420,
+      "key": "tree.stage",
+      "text": "Growth stage"
+    },
+    {
+      "ordinal": 421,
+      "key": "tree.next-growth",
+      "text": "Next growth"
+    },
+    {
+      "ordinal": 422,
+      "key": "tree.seed",
+      "text": "Seed"
+    },
+    {
+      "ordinal": 423,
+      "key": "tree.is-fertilized",
+      "text": "Is fertilized"
+    },
+    {
+      "ordinal": 424,
+      "key": "tree.name.big-mushroom",
+      "text": "Big Mushroom"
+    },
+    {
+      "ordinal": 425,
+      "key": "tree.name.mahogany",
+      "text": "Mahogany Tree"
+    },
+    {
+      "ordinal": 426,
+      "key": "tree.name.maple",
+      "text": "Maple Tree"
+    },
+    {
+      "ordinal": 427,
+      "key": "tree.name.oak",
+      "text": "Oak Tree"
+    },
+    {
+      "ordinal": 428,
+      "key": "tree.name.palm",
+      "text": "Palm Tree"
+    },
+    {
+      "ordinal": 429,
+      "key": "tree.name.pine",
+      "text": "Pine Tree"
+    },
+    {
+      "ordinal": 430,
+      "key": "tree.name.mossy",
+      "text": "Mossy Tree"
+    },
+    {
+      "ordinal": 431,
+      "key": "tree.name.mystic",
+      "text": "Mystic Tree"
+    },
+    {
+      "ordinal": 432,
+      "key": "tree.name.unknown",
+      "text": "Unknown Tree"
+    },
+    {
+      "ordinal": 433,
+      "key": "tree.stage.done",
+      "text": "Fully grown"
+    },
+    {
+      "ordinal": 434,
+      "key": "tree.stage.partial",
+      "text": "{{stageName}} ({{step}} of {{max}})"
+    },
+    {
+      "ordinal": 435,
+      "key": "tree.next-growth.winter",
+      "text": "can't grow in winter outside greenhouse unless fertilized"
+    },
+    {
+      "ordinal": 436,
+      "key": "tree.next-growth.adjacent-trees",
+      "text": "can't grow because other trees are too close"
+    },
+    {
+      "ordinal": 437,
+      "key": "tree.next-growth.chance",
+      "text": "{{chance}}% chance to grow into {{stage}} tomorrow"
+    },
+    {
+      "ordinal": 438,
+      "key": "tree.seed.not-ready",
+      "text": "Not ready"
+    },
+    {
+      "ordinal": 439,
+      "key": "tree.seed.probability-daily",
+      "text": "{{chance}}% chance of {{itemName}} each day."
+    },
+    {
+      "ordinal": 440,
+      "key": "tree.seed.probability-on-chop",
+      "text": "{{chance}}% chance of dropping {{itemName}} when chopped down."
+    },
+    {
+      "ordinal": 441,
+      "key": "tree.stages.seed",
+      "text": "seed"
+    },
+    {
+      "ordinal": 442,
+      "key": "tree.stages.sprout",
+      "text": "sprout"
+    },
+    {
+      "ordinal": 443,
+      "key": "tree.stages.sapling",
+      "text": "sapling"
+    },
+    {
+      "ordinal": 444,
+      "key": "tree.stages.bush",
+      "text": "bush"
+    },
+    {
+      "ordinal": 445,
+      "key": "tree.stages.smallTree",
+      "text": "small tree"
+    },
+    {
+      "ordinal": 446,
+      "key": "tree.stages.tree",
+      "text": "tree"
+    },
+    {
+      "ordinal": 447,
+      "key": "data-mining.name",
+      "text": "Raw data"
+    },
+    {
+      "ordinal": 448,
+      "key": "data-mining.name.map-tile",
+      "text": "Raw data (map tile)"
+    },
+    {
+      "ordinal": 449,
+      "key": "data-mining.name.map-location",
+      "text": "Raw data (location)"
+    },
+    {
+      "ordinal": 450,
+      "key": "data-mining.section-pinned",
+      "text": "Pinned"
+    },
+    {
+      "ordinal": 451,
+      "key": "search-menu.screen-reader.instructions",
+      "text": "Lookup Anything search menu. Search box selected. Enter text to search."
+    },
+    {
+      "ordinal": 452,
+      "key": "search-menu.screen-reader.search-results",
+      "text": "Search box. {{count}} results found for \"{{search}}\". Navigate down for results."
+    },
+    {
+      "ordinal": 453,
+      "key": "search-menu.screen-reader.search-no-results",
+      "text": "Search box. No results found for \"{{search}}\"."
+    },
+    {
+      "ordinal": 454,
+      "key": "search-menu.screen-reader.search-empty",
+      "text": "Search box. Currently empty."
+    },
+    {
+      "ordinal": 455,
+      "key": "search-menu.screen-reader.result",
+      "text": "{{name}} ({{type}})."
+    },
+    {
+      "ordinal": 456,
+      "key": "config.title.appearance",
+      "text": "Appearance"
+    },
+    {
+      "ordinal": 457,
+      "key": "config.theme.name",
+      "text": "Visual theme"
+    },
+    {
+      "ordinal": 458,
+      "key": "config.theme.desc",
+      "text": "The appearance to apply for the lookup and search menu."
+    },
+    {
+      "ordinal": 459,
+      "key": "config.theme.values.Parchment",
+      "text": "Parchment"
+    },
+    {
+      "ordinal": 460,
+      "key": "config.theme.values.Joja",
+      "text": "Joja"
+    },
+    {
+      "ordinal": 461,
+      "key": "config.theme.values.MenuBox_Border",
+      "text": "Menu box (border)"
+    },
+    {
+      "ordinal": 462,
+      "key": "config.theme.values.MenuBox_Inset",
+      "text": "Menu box (inset)"
+    },
+    {
+      "ordinal": 463,
+      "key": "config.theme.values.MenuBox_Raised",
+      "text": "Menu box (raised)"
+    },
+    {
+      "ordinal": 464,
+      "key": "config.theme.values.Plain",
+      "text": "Plain"
+    },
+    {
+      "ordinal": 465,
+      "key": "config.force-full-screen.name",
+      "text": "Force full screen"
+    },
+    {
+      "ordinal": 466,
+      "key": "config.force-full-screen.desc",
+      "text": "Whether the menu should always be full-screen, instead of centered in the window. This is mainly useful when viewing data mining fields."
+    },
+    {
+      "ordinal": 467,
+      "key": "config.title.progression",
+      "text": "Progression mode"
+    },
+    {
+      "ordinal": 468,
+      "key": "config.progression.show-uncaught-fish-spawn-rules.name",
+      "text": "Show uncaught fish spawn rules"
+    },
+    {
+      "ordinal": 469,
+      "key": "config.progression.show-uncaught-fish-spawn-rules.desc",
+      "text": "Whether to show spawn conditions for fish you haven't caught yet."
+    },
+    {
+      "ordinal": 470,
+      "key": "config.progression.show-unknown-gift-tastes.name",
+      "text": "Show unknown gift tastes"
+    },
+    {
+      "ordinal": 471,
+      "key": "config.progression.show-unknown-gift-tastes.desc",
+      "text": "Whether to show gift tastes you haven't learned about in-game yet (e.g. from dialogue text or experimenting)."
+    },
+    {
+      "ordinal": 472,
+      "key": "config.progression.show-unknown-recipes.name",
+      "text": "Show unknown recipes"
+    },
+    {
+      "ordinal": 473,
+      "key": "config.progression.show-unknown-recipes.desc",
+      "text": "Whether to show recipes you haven't learned in-game yet."
+    },
+    {
+      "ordinal": 474,
+      "key": "config.progression.show-puzzle-solutions.name",
+      "text": "Show puzzle solutions"
+    },
+    {
+      "ordinal": 475,
+      "key": "config.progression.show-puzzle-solutions.desc",
+      "text": "Whether to show puzzle solutions."
+    },
+    {
+      "ordinal": 476,
+      "key": "config.title.gift-tastes",
+      "text": "Gift tastes"
+    },
+    {
+      "ordinal": 477,
+      "key": "config.show-gift-tastes.loved.name",
+      "text": "Show loved gifts"
+    },
+    {
+      "ordinal": 478,
+      "key": "config.show-gift-tastes.loved.desc",
+      "text": "Whether to show loved gifts in NPC and item lookups."
+    },
+    {
+      "ordinal": 479,
+      "key": "config.show-gift-tastes.liked.name",
+      "text": "Show liked gifts"
+    },
+    {
+      "ordinal": 480,
+      "key": "config.show-gift-tastes.liked.desc",
+      "text": "Whether to show liked gifts in NPC and item lookups."
+    },
+    {
+      "ordinal": 481,
+      "key": "config.show-gift-tastes.neutral.name",
+      "text": "Show neutral gifts"
+    },
+    {
+      "ordinal": 482,
+      "key": "config.show-gift-tastes.neutral.desc",
+      "text": "Whether to show neutral gifts in NPC and item lookups."
+    },
+    {
+      "ordinal": 483,
+      "key": "config.show-gift-tastes.disliked.name",
+      "text": "Show disliked gifts"
+    },
+    {
+      "ordinal": 484,
+      "key": "config.show-gift-tastes.disliked.desc",
+      "text": "Whether to show disliked gifts in NPC and item lookups."
+    },
+    {
+      "ordinal": 485,
+      "key": "config.show-gift-tastes.hated.name",
+      "text": "Show hated gifts"
+    },
+    {
+      "ordinal": 486,
+      "key": "config.show-gift-tastes.hated.desc",
+      "text": "Whether to show hated gifts in NPC and item lookups."
+    },
+    {
+      "ordinal": 487,
+      "key": "config.show-unowned-gifts.name",
+      "text": "Show unowned gifts"
+    },
+    {
+      "ordinal": 488,
+      "key": "config.show-unowned-gifts.desc",
+      "text": "Whether to show gift tastes for items that the player doesn't own somewhere in the world."
+    },
+    {
+      "ordinal": 489,
+      "key": "config.highlight-unrevealed-gift-tastes.name",
+      "text": "Highlight unrevealed gifts"
+    },
+    {
+      "ordinal": 490,
+      "key": "config.highlight-unrevealed-gift-tastes.desc",
+      "text": "Whether to highlight item gift tastes which haven't been revealed in the NPC profile. When enabled, unrevealed gift tastes will be bold."
+    },
+    {
+      "ordinal": 491,
+      "key": "config.title.collapse-fields",
+      "text": "Collapse large fields"
+    },
+    {
+      "ordinal": 492,
+      "key": "config.collapse-fields.enabled.name",
+      "text": "Enabled"
+    },
+    {
+      "ordinal": 493,
+      "key": "config.collapse-fields.enabled.desc",
+      "text": "Whether to collapse large fields, so the lookup menu will replace the list with a clickable 'show X values' link to expand it."
+    },
+    {
+      "ordinal": 494,
+      "key": "config.collapse-fields.building-recipes.name",
+      "text": "Building lookup: recipes"
+    },
+    {
+      "ordinal": 495,
+      "key": "config.collapse-fields.item-recipes.name",
+      "text": "Item lookup: recipes"
+    },
+    {
+      "ordinal": 496,
+      "key": "config.collapse-fields.npc-gift-tastes.name",
+      "text": "NPC lookup: gift tastes"
+    },
+    {
+      "ordinal": 497,
+      "key": "config.collapse-fields.any.desc",
+      "text": "If the field contains this many values, the lookup menu will replace the list with a clickable 'show X values' link to expand it."
+    },
+    {
+      "ordinal": 498,
+      "key": "config.title.advanced-options",
+      "text": "Advanced options"
+    },
+    {
+      "ordinal": 499,
+      "key": "config.tile-lookups.name",
+      "text": "Tile lookups"
+    },
+    {
+      "ordinal": 500,
+      "key": "config.tile-lookups.desc",
+      "text": "Whether to include map tiles as lookup targets."
+    },
+    {
+      "ordinal": 501,
+      "key": "config.data-mining-fields.name",
+      "text": "Show data mining fields"
+    },
+    {
+      "ordinal": 502,
+      "key": "config.data-mining-fields.desc",
+      "text": "Whether to show raw data useful for data miners (as separate fields at the bottom of lookup results). This is an advanced feature not intended for most players."
+    },
+    {
+      "ordinal": 503,
+      "key": "config.show-invalid-recipes.name",
+      "text": "Show invalid recipes"
+    },
+    {
+      "ordinal": 504,
+      "key": "config.show-invalid-recipes.desc",
+      "text": "Whether to show recipes which require or produce broken items."
+    },
+    {
+      "ordinal": 505,
+      "key": "config.target-redirection.name",
+      "text": "Target redirection"
+    },
+    {
+      "ordinal": 506,
+      "key": "config.target-redirection.desc",
+      "text": "In some cases the game spawns a temporary entity to represent another one. For example, Abigail in the mines is actually a temporary NPC with the name 'AbigailMine', so looking her up there won't show Abigail's real info. With this option enabled, Lookup Anything will look up the original Abigail instead."
+    },
+    {
+      "ordinal": 507,
+      "key": "config.scroll-amount.name",
+      "text": "Scroll amount"
+    },
+    {
+      "ordinal": 508,
+      "key": "config.scroll-amount.desc",
+      "text": "The number of pixels to shift content on each up/down scroll."
+    },
+    {
+      "ordinal": 509,
+      "key": "config.title.controls",
+      "text": "Controls"
+    },
+    {
+      "ordinal": 510,
+      "key": "config.hide-on-key-up.name",
+      "text": "Hide on key up"
+    },
+    {
+      "ordinal": 511,
+      "key": "config.hide-on-key-up.desc",
+      "text": "Whether to hide the lookup UI when you release the lookup key."
+    },
+    {
+      "ordinal": 512,
+      "key": "config.toggle-lookup.name",
+      "text": "Toggle lookup"
+    },
+    {
+      "ordinal": 513,
+      "key": "config.toggle-lookup.desc",
+      "text": "The keys which toggle the lookup UI for something under the cursor."
+    },
+    {
+      "ordinal": 514,
+      "key": "config.toggle-lookup-on-double-click.name",
+      "text": "Toggle lookup on double click"
+    },
+    {
+      "ordinal": 515,
+      "key": "config.toggle-lookup-on-double-click.description",
+      "text": "Whether to toggle the lookup UI by clicking the left mouse button twice. This looks up the tapped position if possible."
+    },
+    {
+      "ordinal": 516,
+      "key": "config.toggle-lookup-on-double-tap.name",
+      "text": "Toggle lookup on double tap"
+    },
+    {
+      "ordinal": 517,
+      "key": "config.toggle-lookup-on-double-tap.description",
+      "text": "Whether to toggle the lookup UI by tapping the screen twice. This looks up the tapped position if possible."
+    },
+    {
+      "ordinal": 518,
+      "key": "config.toggle-search.name",
+      "text": "Toggle search"
+    },
+    {
+      "ordinal": 519,
+      "key": "config.toggle-search.desc",
+      "text": "The keys which toggle the search UI."
+    },
+    {
+      "ordinal": 520,
+      "key": "config.scroll-up.name",
+      "text": "Scroll up"
+    },
+    {
+      "ordinal": 521,
+      "key": "config.scroll-up.desc",
+      "text": "The keys which scroll up long content by a few lines."
+    },
+    {
+      "ordinal": 522,
+      "key": "config.scroll-down.name",
+      "text": "Scroll down"
+    },
+    {
+      "ordinal": 523,
+      "key": "config.scroll-down.desc",
+      "text": "The keys which scroll down long content by a few lines."
+    },
+    {
+      "ordinal": 524,
+      "key": "config.page-up.name",
+      "text": "Page up"
+    },
+    {
+      "ordinal": 525,
+      "key": "config.page-up.desc",
+      "text": "The keys which scroll up long content by a full page."
+    },
+    {
+      "ordinal": 526,
+      "key": "config.page-down.name",
+      "text": "Page down"
+    },
+    {
+      "ordinal": 527,
+      "key": "config.page-down.desc",
+      "text": "The keys which scroll down long content by a full page."
+    },
+    {
+      "ordinal": 528,
+      "key": "config.toggle-debug.name",
+      "text": "Toggle debug"
+    },
+    {
+      "ordinal": 529,
+      "key": "config.toggle-debug.desc",
+      "text": "The keys which toggle the display of debug information."
+    },
+    {
+      "ordinal": 530,
+      "key": "icon.toggle-search.name",
+      "text": "Lookup Anything"
+    },
+    {
+      "ordinal": 531,
+      "key": "icon.toggle-search.desc",
+      "text": "Toggle Lookup Anything Search"
+    }
+  ]
+}

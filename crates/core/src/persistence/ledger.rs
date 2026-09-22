@@ -49,6 +49,7 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
 pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
     let mut names: Vec<_> = TABLES.iter().map(|(name, _)| name.to_string()).collect();
     names.push("project_metadata".into());
+    names.extend(super::content::table_names());
     #[cfg(test)]
     if TEST_SCHEMA.with(|flag| flag.get()) {
         names.push("fixture_targets".into());
@@ -198,7 +199,7 @@ pub struct RecoveryPlan {
 fn error(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
 }
-fn sql_error(error: rusqlite::Error) -> ExecutionError {
+pub(super) fn sql_error(error: rusqlite::Error) -> ExecutionError {
     let code = match error {
         rusqlite::Error::QueryReturnedNoRows => ErrorCode::InvalidInput,
         rusqlite::Error::SqliteFailure(ref e, _)
@@ -236,7 +237,10 @@ fn cancel_revision(connection: &Connection, task: ExecutionId) -> Result<Revisio
         .map_err(sql_error)?;
     Revision::new(revision as u64)
 }
-fn load_input(connection: &Connection, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
+pub(super) fn load_input(
+    connection: &Connection,
+    attempt: ExecutionId,
+) -> Result<FixedInput, ExecutionError> {
     let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
         "SELECT CASE WHEN length(input)<=1048576 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", [attempt.to_string()],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
@@ -251,7 +255,7 @@ fn load_input(connection: &Connection, attempt: ExecutionId) -> Result<FixedInpu
     }
     Ok(input)
 }
-fn load_result(
+pub(super) fn load_result(
     connection: &Connection,
     input: &FixedInput,
     result: ExecutionId,
@@ -730,6 +734,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::OutcomeUnknown, "reconcile"));
         }
         validate(connection)?;
+        super::content::validate(connection)?;
         self.execution_unknown
             .store(false, std::sync::atomic::Ordering::Release);
         Ok(())
@@ -850,6 +855,9 @@ impl ProjectStore {
                 tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
             }
         }
+        super::content::record_input(&tx, input)?;
+        #[cfg(test)]
+        crash_hook("before-enqueue-commit");
         commit(tx)?;
         #[cfg(test)]
         crash_hook("after-enqueue");
@@ -1062,6 +1070,13 @@ impl ProjectStore {
         let output = load_result(&tx, &input, result)?;
         if output.envelope().outcome != ExecutionState::Succeeded {
             return Err(error(ErrorCode::OutputInvalid, "validation"));
+        }
+        if input.envelope().operation == crate::content::OPERATION {
+            if let Err(failure) = crate::content::validate_output(&input, &output) {
+                tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
         }
         let changed=tx.execute("UPDATE execution_items SET validation='valid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
         if changed != 1 {
@@ -1308,7 +1323,7 @@ impl ProjectStore {
     }
 }
 
-fn read_receipt(
+pub(super) fn read_receipt(
     connection: &Connection,
     action: ExecutionId,
 ) -> Result<Option<AdoptionReceipt>, ExecutionError> {

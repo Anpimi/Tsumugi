@@ -130,7 +130,9 @@ The desktop shell supports creating, opening, renaming, closing, and reconciling
 
 The Tasks view exposes persisted execution progress, saved outputs, cancellation, eligible recovery, and explicit result adoption. Normal builds have no synthetic task creation menu. Developers can use the isolated [execution test host](docs/execution-test-host.md) to exercise these paths without a translation provider.
 
-New projects use database schema 2. Earlier development databases are not supported and are left in place; create a project in a new directory to use this version. There is no automatic migration or reset. The application remains in the unreleased 0.1.0 development batch.
+The Source content view imports a SMAPI Mod's `manifest.json` and flat `i18n/default.json` through the bundled integration. Declare the source language, check the files, review the saved strings, and explicitly apply the complete first snapshot. Original files remain unchanged. See [supported inputs and recovery](docs/source-import.md). Translation, replacing existing source content, and building translated Mods are not implemented.
+
+New projects use database schema 3. Earlier development databases are not supported and are left in place; create a project in a new directory to use this version. There is no automatic migration or reset. The application remains in the unreleased 0.1.0 development batch.
 
 ## Status
 

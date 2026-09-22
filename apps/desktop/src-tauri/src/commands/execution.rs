@@ -13,7 +13,10 @@ macro_rules! handlers {
         super::add_target_locale,super::set_target_locales,super::close_project,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
-        read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,$($extra),*
+        read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
+        source::select_source,source::preflight_source,source::start_source_import,
+        source::cancel_source_capture,source::read_source_preview,source::read_source_content,
+        source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
@@ -83,6 +86,7 @@ pub(super) struct ExecutionHost {
     retired_queries: Vec<JoinHandle<()>>,
     quiescing: bool,
     last_error: Option<CommandError>,
+    source: source::SourceSession,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -101,7 +105,15 @@ impl ExecutionHost {
             retired_queries: Vec::new(),
             quiescing: false,
             last_error: None,
+            source: source::SourceSession::default(),
         };
+        host.runtime
+            .register(Arc::new(tsumugi_core::content::SourceRunner))
+            .map_err(map_read)?;
+        host.handlers.insert(
+            tsumugi_core::content::OPERATION.into(),
+            Arc::new(tsumugi_core::content::SourceAdoptionHandler),
+        );
         #[cfg(feature = "execution-test-host")]
         {
             host.runtime
@@ -116,6 +128,7 @@ impl ExecutionHost {
     }
     fn active(&self, store: &ProjectStore) -> Result<bool, CommandError> {
         Ok(self.quiescing
+            || self.source.is_active()
             || !self.queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
@@ -178,6 +191,7 @@ impl ExecutionHost {
         // Storage failure retains the session and pending evidence for retry.
         self.poll_queries(store)?;
         self.quiescing = true;
+        self.source.stop();
         for job in self.queries.drain(..) {
             self.retired_queries.push(job.thread);
         }
@@ -286,6 +300,7 @@ macro_rules! request {
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $(pub $field:$kind,)* }
     }
 }
+mod source;
 request!(SessionRequest {});
 request!(ListRequest {
     after: Revision,

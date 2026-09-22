@@ -3,6 +3,7 @@
 //! The crate owns metadata rules and the durable project boundary while
 //! remaining independent of the desktop webview.
 
+pub mod content;
 pub mod execution;
 mod persistence;
 mod project;

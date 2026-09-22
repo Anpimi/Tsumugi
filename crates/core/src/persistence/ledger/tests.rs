@@ -471,7 +471,9 @@ fn versions_and_corrupt_inputs_are_rejected_without_rebuilding_and_bad_output_is
         assert_eq!(std::fs::read(&database).unwrap(), before);
     }
     let connection = Connection::open(&database).unwrap();
-    connection.pragma_update(None, "user_version", 2).unwrap();
+    connection
+        .pragma_update(None, "user_version", crate::persistence::SCHEMA_VERSION)
+        .unwrap();
     connection
         .execute("UPDATE execution_results SET digest=?1", ["0".repeat(64)])
         .unwrap();

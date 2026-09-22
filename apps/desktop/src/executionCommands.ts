@@ -3,6 +3,17 @@ import type { CommandError, ProjectView } from "./projectCommands";
 
 export interface SessionRequest { sessionToken: string; projectId: string }
 export const executionContext = (project: ProjectView): SessionRequest => ({ sessionToken: project.sessionToken, projectId: project.metadata.projectId });
+/** One in-flight read per projection. Returning false stops at a terminal state. */
+export function pollExecutionProjection(read: () => Promise<boolean | void>, current: () => boolean, interval = 1500): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  async function tick() {
+    const again = await read();
+    if (!stopped && current() && again !== false) timer = setTimeout(() => void tick(), interval);
+  }
+  void tick();
+  return () => { stopped = true; clearTimeout(timer); };
+}
 export interface ListRequest extends SessionRequest { after: string; limit: number }
 export interface TaskRequest extends ListRequest { taskId: string }
 export interface AttemptRequest extends SessionRequest { attemptId: string; offset: number; limit: number }

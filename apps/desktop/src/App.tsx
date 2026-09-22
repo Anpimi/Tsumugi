@@ -31,6 +31,7 @@ import { isLocale, localeOptions, type Locale } from "./i18n";
 import { languageName } from "./i18n/languageNames";
 import type { TranslationKey } from "./i18n/types";
 import { ExecutionTasks } from "./ExecutionTasks";
+import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
   clearLastOpenProject,
@@ -333,6 +334,7 @@ function App() {
   const [stopping, setStopping] = useState(false);
   const [stoppedSession, setStoppedSession] = useState<string | null>(null);
   const pendingSave = useRef<PendingSave | null>(null);
+  const sourceWorkbench = useRef<SourceHandle>(null);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
   const folderNameEdited = useRef(false);
@@ -542,6 +544,7 @@ function App() {
       return true;
     }
 
+    if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
     setOperation("opening");
     setFeedback({ tone: "info", messageKey: "status.opening" });
     try {
@@ -578,6 +581,7 @@ function App() {
   }
 
   async function executeClose(preserveRestoreCandidate = false, coordinated = false) {
+    if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
     if (!project || (busy && !coordinated)) return false;
     setOperation("closing");
     setFeedback({ tone: "info", messageKey: "status.closing" });
@@ -1101,7 +1105,7 @@ function App() {
         </div>
 
         <nav className="navigation" aria-label={t("nav.workspace")}>
-          {project ? <ExecutionTasks key={project.sessionToken} project={project} disabled={busy || stopping} /> : null}
+          {project ? <><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} /><ExecutionTasks key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} /></> : null}
            {navItems.map((item) => (
              <button
                aria-current={item.selected ? "page" : undefined}

@@ -1,3 +1,15 @@
+.source-check { display: flex; align-items: flex-start; gap: 10px; margin: 16px 0; }
+.source-check input { flex: 0 0 auto; margin-top: 4px; }
+.source-table-scroll { overflow: auto; max-height: 40vh; }
+.source-table { width: 100%; border-collapse: collapse; text-align: left; }
+.source-table caption { text-align: left; padding: 8px 0; }
+.source-table th, .source-table td { padding: 10px; vertical-align: top; border-bottom: 1px solid #dce3ee; }
+.source-table th { max-width: 240px; overflow-wrap: anywhere; }
+.source-table pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 180px; font: inherit; }
+.source-dialog code { overflow-wrap: anywhere; font-size: 12px; }
+.source-dialog section { margin: 16px 0; }
+.source-dialog section > button { margin: 6px 8px 6px 0; }
+.source-dialog h3:focus { outline: 2px solid #6b8bd7; outline-offset: 4px; }
 :root {
   font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   color: #1d293d;

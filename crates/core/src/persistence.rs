@@ -13,13 +13,14 @@ use rusqlite::{Connection, OpenFlags, params};
 
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
+pub(crate) mod content;
 mod ledger;
 pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
 
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -529,6 +530,8 @@ fn initialize_schema(
     insert_metadata(&transaction, metadata)?;
     ledger::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    content::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
         .map_err(|error| map_commit_error(error))?;
@@ -777,6 +780,9 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
         });
     }
     ledger::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    content::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     Ok(())

@@ -13,6 +13,7 @@ path = "src/lib.rs"
 execution-test-host = []
 
 [dependencies]
+jsonc-parser = "=0.33.2"
 language-tags = "=0.3.2"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 serde = { version = "=1.0.229", features = ["derive"] }

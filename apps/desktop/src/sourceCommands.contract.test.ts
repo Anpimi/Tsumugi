@@ -1,0 +1,20 @@
+import { expect, it, vi } from "vitest";
+import fixture from "../test/fixtures/sourceCommands.contract.json";
+import { sourceCommands, type ContentPage, type StartRequest, type SourceAdoptRequest } from "./sourceCommands";
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+it("preserves bounded source requests, decimal revisions and explicit confirmation across IPC", async () => {
+  const start: StartRequest = fixture.start;
+  const prepare: SourceAdoptRequest = fixture.prepare;
+  const occurrence = fixture.page.rows[0].occurrence;
+  const page: ContentPage = { ...fixture.page, rows: [{ ...fixture.page.rows[0], occurrence: { ...occurrence, keyByteRange: [occurrence.keyByteRange[0], occurrence.keyByteRange[1]], valueByteRange: [occurrence.valueByteRange[0], occurrence.valueByteRange[1]] } }] };
+  invoke.mockResolvedValueOnce(page);
+  expect(await sourceCommands.preview(fixture.preview)).toEqual(page);
+  expect(invoke).toHaveBeenLastCalledWith("read_source_preview", { request: fixture.preview });
+  await sourceCommands.start(start);
+  expect(invoke).toHaveBeenLastCalledWith("start_source_import", { request: start });
+  await sourceCommands.prepare(prepare);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_source_adoption", { request: prepare });
+  expect(prepare.confirmation.expectedContentRevision).toBe("9007199254740993");
+  expect(page.rows[0].occurrence.text).toBe("Hello {{name}} 世界");
+});
