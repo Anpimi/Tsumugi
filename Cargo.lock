@@ -3810,7 +3810,9 @@ version = "0.1.0"
 dependencies = [
  "language-tags",
  "rusqlite",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "uuid",
 ]
