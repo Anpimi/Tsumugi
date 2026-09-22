@@ -325,6 +325,68 @@ fn read_attempt(
 }
 
 impl ProjectStore {
+    pub fn execution_sequence(&self) -> Result<Revision, ExecutionError> {
+        let sequence: i64 = self
+            .execution_connection()?
+            .query_row(
+                "SELECT COALESCE(MAX(sequence),0) FROM execution_attempts",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        Revision::new(sequence as u64)
+    }
+    /// Only attempts submitted during this runtime's lifetime are scheduled.
+    /// Older work requires an explicit recovery request creating a new attempt.
+    pub fn queued_execution_attempts(
+        &self,
+        after: Revision,
+    ) -> Result<Vec<ExecutionId>, ExecutionError> {
+        let mut statement=self.execution_connection()?.prepare("SELECT a.attempt_id FROM execution_attempts a WHERE a.sequence>?1 AND EXISTS(SELECT 1 FROM execution_items i WHERE i.attempt_id=a.attempt_id AND i.execution='queued') ORDER BY a.sequence LIMIT 32").map_err(sql_error)?;
+        statement
+            .query_map([after.get() as i64], |r| r.get::<_, String>(0))
+            .map_err(sql_error)?
+            .map(|row| parse_id(row.map_err(sql_error)?))
+            .collect()
+    }
+    pub fn execution_dispatch(
+        &self,
+        attempt: ExecutionId,
+        item: ExecutionId,
+    ) -> Result<DispatchRequest, ExecutionError> {
+        let input = self.execution_input(attempt)?;
+        let token: Option<String> = self
+            .execution_connection()?
+            .query_row(
+                "SELECT dispatch_token FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![attempt.to_string(), item.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        Ok(DispatchRequest {
+            input,
+            item_id: item,
+            dispatch_token: parse_id(
+                token.ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-token"))?,
+            )?,
+        })
+    }
+    pub fn note_execution_unknown(
+        &mut self,
+        attempt: ExecutionId,
+        item: ExecutionId,
+        reason: &str,
+    ) -> Result<(), ExecutionError> {
+        if reason.len() > 128 || reason.chars().any(char::is_control) {
+            return Err(error(ErrorCode::InvalidInput, "diagnostic"));
+        }
+        let tx = self.execution_write()?;
+        let changed=tx.execute("UPDATE execution_items SET execution='unknown',diagnostic=?3 WHERE attempt_id=?1 AND item_id=?2 AND execution='dispatched'",params![attempt.to_string(),item.to_string(),reason]).map_err(sql_error)?;
+        if changed == 0 {
+            load_input(&tx, attempt)?.item(item)?;
+        }
+        commit(tx)
+    }
     fn execution_connection(&self) -> Result<&Connection, ExecutionError> {
         self.connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "session"))

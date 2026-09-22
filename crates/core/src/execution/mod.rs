@@ -5,6 +5,7 @@
 
 pub(crate) mod codec;
 mod runner;
+mod runtime;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +14,7 @@ use uuid::Uuid;
 
 use crate::{Locale, ProjectId};
 pub use runner::*;
+pub use runtime::{ExecutionRuntime, OutcomeQuery};
 
 pub const MAX_ITEMS: usize = 256;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
