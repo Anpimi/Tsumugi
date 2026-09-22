@@ -60,6 +60,128 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("reads authoritative state after an unstructured save rejection without replaying", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.clear(screen.getByRole("textbox", { name: "Project name" }));
+    await user.type(screen.getByRole("textbox", { name: "Project name" }), "Committed");
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "rename_project") throw new Error("response lost");
+      if (command === "read_project") return projectView("Committed", "2", "settled");
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByText("The change was confirmed.")).toBeInTheDocument());
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_project")).toHaveLength(1);
+    expect(mocks.invoke).toHaveBeenLastCalledWith("read_project", { request: { sessionToken: "session-1", expectedRevision: "1" } });
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
+
+  it("uses runtime confirmation for canonicalized target tags after a lost response", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+    await user.clear(screen.getByRole("textbox", { name: "Target locales" }));
+    await user.type(screen.getByRole("textbox", { name: "Target locales" }), "iw");
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "set_target_locales") throw new Error("response lost");
+      return { ...projectView("Demo", "2", "committed"), metadata: { ...metadata("Demo", "2"), targetLocales: ["he"] } };
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("The change was confirmed.");
+    expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "set_target_locales")).toHaveLength(1);
+  });
+
+  it("blocks navigation until a lost acknowledgement is reconciled, including a lost read response", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.clear(screen.getByRole("textbox", { name: "Project name" }));
+    await user.type(screen.getByRole("textbox", { name: "Project name" }), "Committed");
+    let reads = 0;
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "rename_project") throw { code: "outcome-unknown", stage: "rename", recoveryRequired: true };
+      if (command === "read_project") {
+        reads += 1;
+        if (reads === 1) throw new Error("read acknowledgement lost");
+        return reads === 2 ? projectView("Unrelated", "3") : projectView("Committed", "2");
+      }
+      if (command === "close_project") return { closed: true };
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Save and continue" }));
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Retry read" })).toBeEnabled());
+    expect(dialog.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+    // Another close request must not replace the only actionable recovery feedback.
+    await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() });
+    await user.click(dialog.getByRole("button", { name: "Retry read" }));
+    expect(dialog.getByRole("button", { name: "Discard changes" })).toBeDisabled();
+    await user.click(dialog.getByRole("button", { name: "Retry read" }));
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled());
+    await user.click(dialog.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+  });
+
+  it("reports native close failures and permits a subsequent close request", async () => {
+    await renderApp();
+    mocks.close.mockRejectedValueOnce(new Error("native close rejected"));
+    const event = { preventDefault: vi.fn() };
+    await mocks.onCloseRequested.mock.calls.at(-1)![0](event);
+    await screen.findByText("The window could not close. Your saved project is safe. Try closing the window again.");
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    await mocks.onCloseRequested.mock.calls.at(-1)![0](event);
+    expect(mocks.close).toHaveBeenCalledTimes(2);
+  });
+
+  it("locks submitted create fields until creation finishes and retains a rejected draft", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.type(screen.getByLabelText(/Parent folder/), "C:\\Projects");
+    await user.type(screen.getByLabelText(/Project name/), "Submitted");
+    let rejectCreate!: (reason: unknown) => void;
+    mocks.invoke.mockImplementationOnce(() => new Promise((_, reject) => { rejectCreate = reject; }));
+    await user.click(screen.getByRole("button", { name: "Create and open" }));
+    await waitFor(() => expect(rejectCreate).toBeDefined());
+    expect(screen.getByLabelText(/Project name/)).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Common source languages" })).toBeDisabled();
+    rejectCreate({ code: "destination-conflict", stage: "create", recoveryRequired: false });
+    await waitFor(() => expect(screen.getByLabelText(/Project name/)).toBeEnabled());
+    expect(screen.getByLabelText(/Project name/)).toHaveValue("Submitted");
+  });
+
+  it("clears corrected field feedback and keeps create cancellation free of validation errors", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.click(screen.getByRole("button", { name: "Create and open" }));
+    await user.type(screen.getByLabelText(/Project name/), "Valid name");
+    expect(screen.getByLabelText(/Project name/)).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByText("Enter a project name.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(within(screen.getByRole("dialog")).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows removable language names for the complete target selection", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Common target languages" }), "ja-JP");
+    await user.click(screen.getByRole("button", { name: /Remove.*Simplified Chinese/ }));
+    expect(screen.getByLabelText("Target locales")).toHaveValue("ja-JP");
+    expect(screen.getByRole("button", { name: /Remove.*Japanese/ })).toBeInTheDocument();
+  });
+
   it("shows real language names and separates codes without duplicating unnamed tags", async () => {
     const user = userEvent.setup();
     await renderApp();
@@ -368,7 +490,10 @@ describe("project lifecycle workbench", () => {
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.getByText("The uncertain save was not committed. Your draft remains here.")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Retry read" })).toBeEnabled();
+    // PL-04: a confirmed previous state is settled; retaining the draft allows
+    // a new explicit save, rather than repeatedly reading an already known result.
+    expect(screen.queryByRole("button", { name: "Retry read" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
     expect(nameInput).toHaveValue("Not committed");
   });
 });

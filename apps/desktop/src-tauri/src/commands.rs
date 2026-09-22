@@ -121,6 +121,8 @@ pub struct OpenProjectRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ReadProjectRequest {
     pub session_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -212,12 +214,39 @@ pub struct AppState {
 #[derive(Default)]
 struct SessionManager {
     active: Option<ActiveSession>,
+    directory_recovery: Option<DirectoryRecovery>,
+}
+
+// Keep the token, last known location and both snapshots even when no database
+// can currently be opened. Recovery must not guess a location or replay a write.
+struct DirectoryRecovery {
+    token: String,
+    locator: PathBuf,
+    previous: ProjectMetadata,
+    intended: ProjectMetadata,
 }
 
 struct ActiveSession {
     token: String,
     locator: PathBuf,
     store: ProjectStore,
+    receipt: Option<ReconciliationReceipt>,
+}
+
+struct ReconciliationReceipt {
+    basis: u64,
+    metadata: ProjectMetadata,
+    state: ReconciliationState,
+}
+
+impl ActiveSession {
+    fn confirm_change(&mut self, basis: u64, metadata: &ProjectMetadata) {
+        self.receipt = Some(ReconciliationReceipt {
+            basis,
+            metadata: metadata.clone(),
+            state: ReconciliationState::Committed,
+        });
+    }
 }
 
 impl SessionManager {
@@ -243,6 +272,7 @@ impl SessionManager {
             token,
             locator,
             store,
+            receipt: None,
         });
         Ok(view)
     }
@@ -254,6 +284,7 @@ impl SessionManager {
             if active.locator == locator {
                 let token = active.token.clone();
                 return self.read(ReadProjectRequest {
+                    expected_revision: None,
                     session_token: token,
                 });
             }
@@ -270,13 +301,52 @@ impl SessionManager {
             token,
             locator,
             store,
+            receipt: None,
         });
         Ok(view)
     }
 
     fn read(&mut self, request: ReadProjectRequest) -> Result<ProjectView, CommandError> {
+        let requested_basis = request
+            .expected_revision
+            .as_deref()
+            .map(|value| parse_revision(value, CommandStage::Read))
+            .transpose()?;
+        if let Some(recovery) = self.directory_recovery.as_ref() {
+            if recovery.token != request.session_token {
+                return Err(CommandError::simple(
+                    CommandErrorCode::SessionInvalid,
+                    CommandStage::Read,
+                ));
+            }
+            let store = ProjectStore::open(&recovery.locator)
+                .map_err(|_| CommandError::unknown(CommandStage::Read))?;
+            let metadata = store
+                .metadata()
+                .map_err(|_| CommandError::unknown(CommandStage::Read))?;
+            let state = if metadata == recovery.intended {
+                ReconciliationState::Committed
+            } else if metadata == recovery.previous {
+                ReconciliationState::Previous
+            } else {
+                return Err(CommandError::unknown(CommandStage::Read));
+            };
+            let view = project_view(&recovery.token, &recovery.locator, &metadata, state);
+            self.active = Some(ActiveSession {
+                token: recovery.token.clone(),
+                locator: recovery.locator.clone(),
+                store,
+                receipt: Some(ReconciliationReceipt {
+                    basis: recovery.previous.metadata_revision(),
+                    metadata,
+                    state,
+                }),
+            });
+            self.directory_recovery = None;
+            return Ok(view);
+        }
         let active = self.active_mut(&request.session_token, CommandStage::Read)?;
-        let (metadata, reconciliation_state) = if active.store.is_reconciling() {
+        let (metadata, mut reconciliation_state) = if active.store.is_reconciling() {
             match active
                 .store
                 .reconcile()
@@ -298,6 +368,22 @@ impl SessionManager {
                 ReconciliationState::Settled,
             )
         };
+        if reconciliation_state != ReconciliationState::Settled {
+            let basis = if reconciliation_state == ReconciliationState::Committed {
+                metadata.metadata_revision() - 1
+            } else {
+                metadata.metadata_revision()
+            };
+            active.receipt = Some(ReconciliationReceipt {
+                basis,
+                metadata: metadata.clone(),
+                state: reconciliation_state,
+            });
+        } else if let Some(receipt) = &active.receipt {
+            if requested_basis == Some(receipt.basis) && metadata == receipt.metadata {
+                reconciliation_state = receipt.state;
+            }
+        }
         Ok(project_view(
             &active.token,
             &active.locator,
@@ -310,6 +396,7 @@ impl SessionManager {
         &mut self,
         request: RenameProjectRequest,
     ) -> Result<MetadataMutationView, CommandError> {
+        self.ensure_recovery_allowed(&request.session_token, CommandStage::Rename)?;
         if request.directory_name.is_none() {
             let expected_revision =
                 parse_revision(&request.expected_revision, CommandStage::Rename)?;
@@ -318,6 +405,7 @@ impl SessionManager {
                 .store
                 .rename(expected_revision, &request.display_name)
                 .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
+            active.confirm_change(expected_revision, change.metadata());
             return Ok(metadata_mutation_view(
                 &active.token,
                 &active.locator,
@@ -330,7 +418,7 @@ impl SessionManager {
         let directory_name = request.directory_name.expect("checked above");
         validate_directory_name(&directory_name, CommandStage::Rename)?;
 
-        {
+        let (previous, intended) = {
             let active = self.active.as_ref().ok_or_else(|| {
                 CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Rename)
             })?;
@@ -347,9 +435,30 @@ impl SessionManager {
                 .store
                 .metadata()
                 .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
-            metadata
+            let intended = metadata
                 .rename(expected_revision, &request.display_name)
-                .map_err(|error| map_metadata_error(error, CommandStage::Rename))?;
+                .map_err(|error| map_metadata_error(error, CommandStage::Rename))?
+                .into_metadata();
+            (metadata, intended)
+        };
+
+        // A metadata-only write must never remove the active session, including
+        // when SQLite rejects the write or loses its commit acknowledgement.
+        let active = self.active_mut(&request.session_token, CommandStage::Rename)?;
+        if let Some(parent) = active.locator.parent() {
+            if same_locator(&active.locator, &parent.join(&directory_name)) {
+                let change = active
+                    .store
+                    .rename(expected_revision, &request.display_name)
+                    .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
+                active.confirm_change(expected_revision, change.metadata());
+                return Ok(metadata_mutation_view(
+                    &active.token,
+                    &active.locator,
+                    &change,
+                    false,
+                ));
+            }
         }
 
         let active = self.active.take().ok_or_else(|| {
@@ -379,16 +488,6 @@ impl SessionManager {
             }
         };
         let new_locator = parent.join(&directory_name);
-        if same_locator(&old_locator, &new_locator) {
-            let mut active = active;
-            let change = active
-                .store
-                .rename(expected_revision, &request.display_name)
-                .map_err(|error| map_persistence_error(error, CommandStage::Rename))?;
-            let view = metadata_mutation_view(&active.token, &active.locator, &change, false);
-            self.active = Some(active);
-            return Ok(view);
-        }
         if new_locator.exists() {
             self.active = Some(active);
             return Err(CommandError::simple(
@@ -401,7 +500,14 @@ impl SessionManager {
             token,
             locator: old_locator,
             store,
+            ..
         } = active;
+        self.directory_recovery = Some(DirectoryRecovery {
+            token: token.clone(),
+            locator: old_locator.clone(),
+            previous,
+            intended,
+        });
         if let Err(error) = store.close() {
             return Err(self.restore_session_after_directory_failure(
                 token,
@@ -417,6 +523,10 @@ impl SessionManager {
                 map_directory_rename_error(error),
             ));
         }
+        self.directory_recovery
+            .as_mut()
+            .expect("directory transition captured")
+            .locator = new_locator.clone();
 
         let mut new_store = match ProjectStore::open(&new_locator) {
             Ok(store) => store,
@@ -437,18 +547,13 @@ impl SessionManager {
                         token,
                         locator: new_locator,
                         store: new_store,
+                        receipt: None,
                     });
+                    self.directory_recovery = None;
                     return Err(map_persistence_error(error, CommandStage::Rename));
                 }
                 let mapped = map_persistence_error(error, CommandStage::Rename);
                 if new_store.close().is_err() {
-                    if let Ok(store) = ProjectStore::open(&new_locator) {
-                        self.active = Some(ActiveSession {
-                            token,
-                            locator: new_locator,
-                            store,
-                        });
-                    }
                     return Err(CommandError::unknown(CommandStage::Rename));
                 }
                 return Err(self.rollback_directory_rename(
@@ -464,7 +569,13 @@ impl SessionManager {
             token,
             locator: new_locator,
             store: new_store,
+            receipt: Some(ReconciliationReceipt {
+                basis: expected_revision,
+                metadata: change.metadata().clone(),
+                state: ReconciliationState::Committed,
+            }),
         });
+        self.directory_recovery = None;
         Ok(view)
     }
 
@@ -474,15 +585,15 @@ impl SessionManager {
         locator: PathBuf,
         error: CommandError,
     ) -> CommandError {
-        match ProjectStore::open(&locator) {
-            Ok(store) => {
-                self.active = Some(ActiveSession {
-                    token,
-                    locator: locator.clone(),
-                    store,
-                });
-                error
-            }
+        self.directory_recovery
+            .as_mut()
+            .expect("directory transition captured")
+            .locator = locator;
+        match self.read(ReadProjectRequest {
+            expected_revision: None,
+            session_token: token,
+        }) {
+            Ok(_) => error,
             Err(_) => CommandError::unknown(CommandStage::Rename),
         }
     }
@@ -497,17 +608,7 @@ impl SessionManager {
         if fs::rename(&new_locator, &old_locator).is_err() {
             return CommandError::unknown(CommandStage::Rename);
         }
-        match ProjectStore::open(&old_locator) {
-            Ok(store) => {
-                self.active = Some(ActiveSession {
-                    token,
-                    locator: old_locator,
-                    store,
-                });
-                error
-            }
-            Err(_) => CommandError::unknown(CommandStage::Rename),
-        }
+        self.restore_session_after_directory_failure(token, old_locator, error)
     }
 
     fn add_target_locale(
@@ -521,6 +622,7 @@ impl SessionManager {
             .store
             .add_target_locale(expected_revision, &request.locale)
             .map_err(|error| map_persistence_error(error, CommandStage::AddTargetLocale))?;
+        active.confirm_change(expected_revision, change.metadata());
         Ok(metadata_mutation_view(
             &active.token,
             &active.locator,
@@ -540,6 +642,7 @@ impl SessionManager {
             .store
             .set_target_locales(expected_revision, &request.target_locales)
             .map_err(|error| map_persistence_error(error, stage))?;
+        active.confirm_change(expected_revision, change.metadata());
         Ok(metadata_mutation_view(
             &active.token,
             &active.locator,
@@ -549,6 +652,7 @@ impl SessionManager {
     }
 
     fn close(&mut self, request: CloseProjectRequest) -> Result<CloseProjectView, CommandError> {
+        self.ensure_recovery_allowed(&request.session_token, CommandStage::Close)?;
         let active = self.active.as_ref().ok_or_else(|| {
             CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Close)
         })?;
@@ -570,12 +674,28 @@ impl SessionManager {
     }
 
     fn ensure_switch_allowed(&self, stage: CommandStage) -> Result<(), CommandError> {
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|active| active.store.is_reconciling())
+        if self.directory_recovery.is_some()
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.store.is_reconciling())
         {
             return Err(CommandError::unknown(stage));
+        }
+        Ok(())
+    }
+
+    fn ensure_recovery_allowed(
+        &self,
+        token: &str,
+        stage: CommandStage,
+    ) -> Result<(), CommandError> {
+        if let Some(recovery) = &self.directory_recovery {
+            return Err(if recovery.token == token {
+                CommandError::unknown(stage)
+            } else {
+                CommandError::simple(CommandErrorCode::SessionInvalid, stage)
+            });
         }
         Ok(())
     }
@@ -585,6 +705,7 @@ impl SessionManager {
         token: &str,
         stage: CommandStage,
     ) -> Result<&mut ActiveSession, CommandError> {
+        self.ensure_recovery_allowed(token, stage)?;
         let active = self
             .active
             .as_mut()
@@ -894,6 +1015,178 @@ mod tests {
     use serde_json::json;
     use tempfile::TempDir;
 
+    #[test]
+    fn repeated_reads_recover_canonicalized_results_only_for_the_matching_basis() {
+        let parent = temporary_directory("acknowledgement");
+        let path = parent.path().join("project");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&path)).unwrap();
+        manager
+            .set_target_locales(SetTargetLocalesRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: "1".into(),
+                target_locales: vec!["iw".into()],
+            })
+            .unwrap();
+        let request = ReadProjectRequest {
+            session_token: created.session_token,
+            expected_revision: Some("1".into()),
+        };
+        for _ in 0..2 {
+            let read = manager.read(request.clone()).unwrap();
+            assert_eq!(read.metadata.target_locales, vec!["he"]);
+            assert_eq!(read.reconciliation_state, ReconciliationState::Committed);
+        }
+        let ordinary = manager
+            .read(ReadProjectRequest {
+                expected_revision: None,
+                ..request.clone()
+            })
+            .unwrap();
+        assert_eq!(ordinary.reconciliation_state, ReconciliationState::Settled);
+        let newer_basis = manager
+            .read(ReadProjectRequest {
+                expected_revision: Some("2".into()),
+                ..request.clone()
+            })
+            .unwrap();
+        assert_eq!(
+            newer_basis.reconciliation_state,
+            ReconciliationState::Settled
+        );
+        let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+        connection
+            .execute(
+                "UPDATE project_metadata SET display_name = 'External', metadata_revision = 3",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            manager.read(request).unwrap().reconciliation_state,
+            ReconciliationState::Settled
+        );
+    }
+
+    #[test]
+    fn directory_rollback_failure_retains_recovery_until_storage_is_readable() {
+        for committed in [false, true] {
+            let parent = temporary_directory("rollback-recovery");
+            let old = parent.path().join("project");
+            let moved = parent.path().join("moved");
+            let mut manager = SessionManager::default();
+            let created = manager.create(create_request(&old)).unwrap();
+            let active = manager.active.take().unwrap();
+            let previous = active.store.metadata().unwrap();
+            let intended = previous.rename(1, "Changed").unwrap().into_metadata();
+            active.store.close().unwrap();
+            fs::rename(&old, &moved).unwrap();
+            let mut blocker = ProjectStore::open(&moved).unwrap();
+            if committed {
+                blocker.rename(1, "Changed").unwrap();
+            }
+            fs::create_dir(&old).unwrap();
+            fs::write(old.join("unrelated.txt"), "keep").unwrap();
+            manager.directory_recovery = Some(DirectoryRecovery {
+                token: created.session_token.clone(),
+                locator: moved.clone(),
+                previous,
+                intended,
+            });
+            let error = manager.rollback_directory_rename(
+                created.session_token.clone(),
+                old.clone(),
+                moved.clone(),
+                CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::Rename),
+            );
+            assert_eq!(error.code, CommandErrorCode::OutcomeUnknown);
+            let request = ReadProjectRequest {
+                expected_revision: None,
+                session_token: created.session_token.clone(),
+            };
+            assert_eq!(
+                manager.read(request.clone()).unwrap_err().code,
+                CommandErrorCode::OutcomeUnknown
+            );
+            assert_eq!(
+                manager
+                    .close(CloseProjectRequest {
+                        session_token: created.session_token.clone()
+                    })
+                    .unwrap_err()
+                    .code,
+                CommandErrorCode::OutcomeUnknown
+            );
+            assert_eq!(
+                manager
+                    .open(OpenProjectRequest {
+                        locator: moved.to_string_lossy().into_owned()
+                    })
+                    .unwrap_err()
+                    .code,
+                CommandErrorCode::OutcomeUnknown
+            );
+            assert_eq!(
+                manager
+                    .set_target_locales(SetTargetLocalesRequest {
+                        session_token: created.session_token.clone(),
+                        expected_revision: "1".into(),
+                        target_locales: vec!["fr".into()]
+                    })
+                    .unwrap_err()
+                    .code,
+                CommandErrorCode::OutcomeUnknown
+            );
+            blocker.close().unwrap();
+            let read = manager.read(request).unwrap();
+            assert_eq!(read.metadata.project_id, created.metadata.project_id);
+            assert_eq!(
+                read.reconciliation_state,
+                if committed {
+                    ReconciliationState::Committed
+                } else {
+                    ReconciliationState::Previous
+                }
+            );
+            assert_eq!(PathBuf::from(read.locator), moved);
+            assert_eq!(
+                fs::read_to_string(old.join("unrelated.txt")).unwrap(),
+                "keep"
+            );
+            assert!(
+                manager
+                    .close(CloseProjectRequest {
+                        session_token: created.session_token
+                    })
+                    .unwrap()
+                    .closed
+            );
+        }
+    }
+
+    #[test]
+    fn same_directory_write_failure_keeps_the_session_readable() {
+        let parent = temporary_directory("failed-same-directory");
+        let path = parent.path().join("project");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&path)).unwrap();
+        let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+        connection.execute_batch("CREATE TRIGGER reject_update BEFORE UPDATE ON project_metadata BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
+        let failed = manager.rename(RenameProjectRequest {
+            session_token: created.session_token.clone(),
+            expected_revision: "1".to_owned(),
+            display_name: "Changed".to_owned(),
+            directory_name: Some("project".to_owned()),
+        });
+        assert!(failed.is_err());
+        let read = manager
+            .read(ReadProjectRequest {
+                expected_revision: None,
+                session_token: created.session_token,
+            })
+            .unwrap();
+        assert_eq!(read.metadata, created.metadata);
+    }
+
     fn temporary_directory(label: &str) -> TempDir {
         tempfile::Builder::new()
             .prefix(&format!("tsumugi-command-{label}-"))
@@ -944,6 +1237,14 @@ mod tests {
 
         let requests = &fixture["requests"];
         assert_eq!(
+            requests["reconcile"],
+            serde_json::to_value(ReadProjectRequest {
+                session_token: "session-1".to_owned(),
+                expected_revision: Some("1".to_owned()),
+            })
+            .unwrap()
+        );
+        assert_eq!(
             requests["create"],
             serde_json::to_value(CreateProjectRequest {
                 destination: "C:\\Projects\\demo".to_owned(),
@@ -963,6 +1264,7 @@ mod tests {
         assert_eq!(
             requests["read"],
             serde_json::to_value(ReadProjectRequest {
+                expected_revision: None,
                 session_token: "session-1".to_owned(),
             })
             .unwrap()
@@ -1054,6 +1356,7 @@ mod tests {
 
         let read = manager
             .read(ReadProjectRequest {
+                expected_revision: None,
                 session_token: created.session_token.clone(),
             })
             .unwrap();
@@ -1097,6 +1400,7 @@ mod tests {
 
         let read = manager
             .read(ReadProjectRequest {
+                expected_revision: None,
                 session_token: created.session_token.clone(),
             })
             .unwrap();
@@ -1152,6 +1456,7 @@ mod tests {
 
         let read = manager
             .read(ReadProjectRequest {
+                expected_revision: None,
                 session_token: created.session_token.clone(),
             })
             .unwrap();
@@ -1233,6 +1538,7 @@ mod tests {
 
         let invalid_session = manager
             .read(ReadProjectRequest {
+                expected_revision: None,
                 session_token: "wrong".to_owned(),
             })
             .unwrap_err();
@@ -1271,6 +1577,7 @@ mod tests {
 
         let read = manager
             .read(ReadProjectRequest {
+                expected_revision: None,
                 session_token: created.session_token.clone(),
             })
             .unwrap();
@@ -1312,6 +1619,7 @@ mod tests {
 
         let preserved = manager
             .read(ReadProjectRequest {
+                expected_revision: None,
                 session_token: created.session_token.clone(),
             })
             .unwrap();

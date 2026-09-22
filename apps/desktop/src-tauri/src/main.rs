@@ -76,6 +76,7 @@ mod tests {
                 "read_project",
                 json!({
                     "request": serde_json::to_value(ReadProjectRequest {
+                        expected_revision: None,
                         session_token: created.session_token.clone(),
                     })
                     .unwrap()

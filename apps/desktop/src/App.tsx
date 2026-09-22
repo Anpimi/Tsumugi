@@ -118,6 +118,40 @@ interface SaveResult {
   metadata?: ProjectMetadataView;
 }
 
+interface PendingSave {
+  previous: ProjectView;
+  form: ActiveForm;
+  value: string;
+  directoryName?: string;
+}
+
+function sameMetadata(left: ProjectMetadataView, right: ProjectMetadataView) {
+  return left.projectId === right.projectId && left.displayName === right.displayName
+    && left.sourceLocale === right.sourceLocale && left.metadataRevision === right.metadataRevision
+    && [...left.targetLocales].sort().join("\n") === [...right.targetLocales].sort().join("\n");
+}
+
+function classifySave(view: ProjectView, pending: PendingSave): "committed" | "previous" | "unknown" {
+  if (view.sessionToken !== pending.previous.sessionToken || view.metadata.projectId !== pending.previous.metadata.projectId) return "unknown";
+  if (view.reconciliationState === "committed" || view.reconciliationState === "previous") return view.reconciliationState;
+  if (sameMetadata(view.metadata, pending.previous.metadata) && normalizeLocator(view.locator) === normalizeLocator(pending.previous.locator)) return "previous";
+  // Runtime reconciliation owns canonicalization and commit classification. A settled
+  // read after transport loss must instead match the exact captured command and basis.
+  const before = pending.previous.metadata;
+  const after = view.metadata;
+  if (BigInt(after.metadataRevision) !== BigInt(before.metadataRevision) + 1n || after.sourceLocale !== before.sourceLocale) return "unknown";
+  const expectedLocator = pending.directoryName
+    ? pending.previous.locator.replace(/[\\/][^\\/]+[\\/]?$/, `\\${pending.directoryName}`)
+    : pending.previous.locator;
+  if (normalizeLocator(view.locator) !== normalizeLocator(expectedLocator)) return "unknown";
+  const targetsMatch = (left: string[], right: string[]) =>
+    left.map((tag) => tag.toLowerCase()).sort().join("\n") === right.map((tag) => tag.toLowerCase()).sort().join("\n");
+  const matches = pending.form.kind === "rename"
+    ? after.displayName === pending.value && targetsMatch(after.targetLocales, before.targetLocales)
+    : after.displayName === before.displayName && targetsMatch(after.targetLocales, parseTargetLocales(pending.value));
+  return matches ? "committed" : "unknown";
+}
+
 const CREATE_DEFAULT_VALUES: CreateFormValues = {
   parentDirectory: "",
   directoryName: "",
@@ -143,9 +177,13 @@ const languagePresets = [
   { value: "pt-BR", labelKey: "localeNames.portugueseBrazil" },
 ] as const satisfies readonly { value: string; labelKey: TranslationKey }[];
 
-function localeLabel(t: TFunction, value: string, uiLocale: string) {
+function localeDisplayName(t: TFunction, value: string, uiLocale: string) {
   const preset = languagePresets.find((candidate) => candidate.value === value);
-  const name = preset ? t(preset.labelKey) : languageName(value, uiLocale);
+  return preset ? t(preset.labelKey) : languageName(value, uiLocale);
+}
+
+function localeLabel(t: TFunction, value: string, uiLocale: string) {
+  const name = localeDisplayName(t, value, uiLocale);
   return <>{name}{name !== value ? <span className="locale-code"> ({value})</span> : null}</>;
 }
 
@@ -178,7 +216,8 @@ function asCommandError(value: unknown, stage: CommandStage): CommandError {
   if (typeof value === "object" && value !== null && "code" in value && "stage" in value) {
     return value as CommandError;
   }
-  return { code: "storage-failed", stage, recoveryRequired: false };
+  const mutation = stage === "rename" || stage === "set-target-locales" || stage === "add-target-locale";
+  return { code: mutation ? "outcome-unknown" : "storage-failed", stage, recoveryRequired: mutation };
 }
 
 function failureMessageKey(failure: CommandError): TranslationKey {
@@ -289,6 +328,9 @@ function App() {
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
   const [copiedLocator, setCopiedLocator] = useState(false);
   const allowWindowClose = useRef(false);
+  const pendingSave = useRef<PendingSave | null>(null);
+  const createInFlight = useRef(false);
+  const reconciliationInFlight = useRef(false);
   const folderNameEdited = useRef(false);
   const dialogReturnFocus = useRef<HTMLElement | null>(null);
   const cancelDialogButton = useRef<HTMLButtonElement | null>(null);
@@ -301,6 +343,7 @@ function App() {
   const createParentDirectory = createForm.watch("parentDirectory");
   const createDirectoryName = createForm.watch("directoryName");
   const createSourceLocale = createForm.watch("sourceLocale");
+  const createTargetLocales = createForm.watch("targetLocales");
   const editorValue = editorForm.watch("value");
   const syncDirectoryName = editorForm.watch("syncDirectoryName");
   const editorDirectoryError = Boolean(
@@ -327,6 +370,10 @@ function App() {
     setFeedback(null);
   }
 
+  function clearFieldFeedback(field: string) {
+    setFeedback((current) => current?.code === "invalid-input" && current.field === field ? null : current);
+  }
+
   function rememberOpenedProject(view: ProjectView) {
     const recent = rememberProject(view);
     setRecentProjects(recent);
@@ -338,14 +385,14 @@ function App() {
   }
 
   async function copyProjectLocation() {
-    if (!project?.locator) return;
+    if (!project?.locator || busy) return;
     try {
       await navigator.clipboard.writeText(project.locator);
       setCopiedLocator(true);
-      setFeedback({ tone: "success", messageKey: "feedback.locationCopied" });
+      setFeedback((current) => pendingSave.current ? current : { tone: "success", messageKey: "feedback.locationCopied" });
       window.setTimeout(() => setCopiedLocator(false), 1600);
     } catch {
-      setFeedback({ tone: "error", messageKey: "errors.copyFailed" });
+      setFeedback((current) => pendingSave.current ? current : { tone: "error", messageKey: "errors.copyFailed" });
     }
   }
 
@@ -403,6 +450,7 @@ function App() {
   }
 
   const executeCreate: SubmitHandler<CreateFormValues> = async (values) => {
+    if (createInFlight.current || busy) return;
     if (!values.parentDirectory.trim()) {
       createForm.setError("parentDirectory", { type: "required" });
       setFeedback(localValidation("parentDirectory"));
@@ -430,12 +478,14 @@ function App() {
       return;
     }
 
+    createInFlight.current = true;
     setOperation("opening");
     setFeedback({ tone: "info", messageKey: "status.opening" });
     let destination: string;
     try {
       destination = await joinPath(values.parentDirectory, values.directoryName);
     } catch {
+      createInFlight.current = false;
       setOperation("idle");
       setFeedback({ tone: "error", messageKey: "errors.directoryPickerUnavailable" });
       return;
@@ -460,6 +510,8 @@ function App() {
     } catch (value) {
       setOperation("idle");
       setFeedback(feedbackFromFailure(asCommandError(value, "create")));
+    } finally {
+      createInFlight.current = false;
     }
   };
 
@@ -540,6 +592,7 @@ function App() {
         return true;
       } catch {
         allowWindowClose.current = false;
+        setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
         return false;
       }
     }
@@ -551,6 +604,7 @@ function App() {
       return true;
     } catch {
       allowWindowClose.current = false;
+      setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
       return false;
     }
   }
@@ -581,18 +635,25 @@ function App() {
   }
 
   async function reconcileUnknown(form: ActiveForm): Promise<SaveResult> {
-    if (!project) return { ok: false };
+    if (!project || !pendingSave.current || reconciliationInFlight.current) return { ok: false };
+    reconciliationInFlight.current = true;
     setOperation("reconciling");
     setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
     try {
-      const view = await projectCommands.read({ sessionToken: project.sessionToken });
+      const view = await projectCommands.read({ sessionToken: project.sessionToken, expectedRevision: pendingSave.current.form.expectedRevision });
+      const outcome = classifySave(view, pendingSave.current);
+      if (outcome === "unknown") {
+        setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
+        return { ok: false };
+      }
       const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
       setProject(view);
       if (locatorChanged) rememberOpenedProject(view);
       setActiveForm((current) =>
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
-      if (view.reconciliationState === "committed") {
+      pendingSave.current = null;
+      if (outcome === "committed") {
         editorForm.reset(EDITOR_DEFAULT_VALUES);
         setActiveForm(null);
         setOperation("idle");
@@ -600,23 +661,26 @@ function App() {
         return { ok: true, metadata: view.metadata };
       }
       setOperation("idle");
-      setFeedback({ tone: "warning", messageKey: "feedback.previous", code: "outcome-unknown", action: "retry-reconciliation" });
+      setFeedback({ tone: "warning", messageKey: "feedback.previous" });
       return { ok: false, metadata: view.metadata };
     } catch {
       setOperation("reconciling");
       setFeedback({ tone: "error", messageKey: "feedback.reconcileFailed", code: "outcome-unknown", action: "retry-reconciliation" });
+    } finally {
+      reconciliationInFlight.current = false;
     }
     return { ok: false };
   }
 
   async function saveForm(form: ActiveForm, value = editorForm.getValues("value")): Promise<SaveResult> {
-    if (!project || operation !== "idle") return { ok: false };
+    if (!project || operation !== "idle" || pendingSave.current) return { ok: false };
     if (!editorForm.formState.isDirty) {
       setActiveForm(null);
       return { ok: true, metadata: project.metadata };
     }
 
     setOperation("saving");
+    pendingSave.current = { previous: project, form, value, ...(form.kind === "rename" && editorForm.getValues("syncDirectoryName") ? { directoryName: value } : {}) };
     setFeedback({ tone: "info", messageKey: "status.saving" });
     try {
       let result: MetadataMutationView;
@@ -625,6 +689,7 @@ function App() {
         if (shouldSyncDirectoryName && !isSafeChildDirectoryName(value)) {
           editorForm.setError("value", { type: "validate" });
           setOperation("idle");
+          pendingSave.current = null;
           setFeedback(localValidation(value.trim() ? "directoryName" : "displayName"));
           return { ok: false };
         }
@@ -651,6 +716,7 @@ function App() {
           }
         : null;
       setProject(nextProject);
+      pendingSave.current = null;
       if (nextProject && form.kind === "rename" && result.directoryChanged) rememberOpenedProject(nextProject);
       editorForm.reset(EDITOR_DEFAULT_VALUES);
       setActiveForm(null);
@@ -671,8 +737,9 @@ function App() {
       return { ok: true, metadata: result.metadata };
     } catch (value) {
       const failure = asCommandError(value, form.kind === "rename" ? "rename" : "set-target-locales");
-      if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
       if (failure.code === "outcome-unknown") return reconcileUnknown(form);
+      pendingSave.current = null;
+      if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
       setOperation("idle");
       setFeedback(feedbackFromFailure(failure));
       return { ok: false };
@@ -816,7 +883,8 @@ function App() {
   }
 
   function addTargetPreset(form: "create" | "editor", value: string) {
-    if (!value) return;
+    if (!value || busy) return;
+    clearFieldFeedback("targetLocales");
     if (form === "create") {
       const current = parseTargetLocales(createForm.getValues("targetLocales"));
       if (!current.some((locale) => locale.toLowerCase() === value.toLowerCase())) {
@@ -830,6 +898,33 @@ function App() {
       return;
     }
     editorForm.setValue("value", [...current, value].join(", "), { shouldDirty: true, shouldValidate: true });
+  }
+
+  function renderTargetSelection(form: "create" | "editor", raw: string) {
+    const values = parseTargetLocales(raw);
+    return (
+      <ul className="target-selection" aria-label={t("create.selectedTargets")}>
+        {values.map((value, index) => {
+          const name = localeDisplayName(t, value, locale);
+          return (
+            <li key={`${index}:${value}`}>
+              <span>{localeLabel(t, value, locale)}</span>
+              <button type="button" disabled={busy}
+                aria-label={t("create.removeTarget", { language: name === value ? value : `${name} (${value})` })}
+                onClick={() => {
+                  const next = values.filter((_, candidate) => candidate !== index).join(", ");
+                  if (form === "create") createForm.setValue("targetLocales", next, { shouldDirty: true, shouldValidate: true });
+                  else editorForm.setValue("value", next, { shouldDirty: true, shouldValidate: true });
+                  clearFieldFeedback("targetLocales");
+                  document.getElementById(form === "create" ? "create-target-locales" : "editor-value")?.focus();
+                }}>
+                <Icon name="close" size={14} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    );
   }
 
   function handleCreateInvalid(errors: FieldErrors<CreateFormValues>) {
@@ -880,7 +975,6 @@ function App() {
           event.preventDefault();
           if (disposed) return;
           if (busy) {
-            setFeedback({ tone: "warning", messageKey: "status.reconciling" });
             return;
           }
            if (!project && createDraftDirty) {
@@ -888,8 +982,7 @@ function App() {
              return;
            }
            if (!project) {
-             allowWindowClose.current = true;
-             await getCurrentWindow().close();
+             await executeWindowClose();
             return;
           }
           if (dirty) {
@@ -1047,9 +1140,12 @@ function App() {
                     ) : null}
                   </>
                 ) : closedPanel === "create" ? (
-                  <form className="form-card" onSubmit={createForm.handleSubmit(executeCreate, handleCreateInvalid)}>
+                  <form className="form-card create-form" onChange={(event) => {
+                    const target = event.target;
+                    if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) clearFieldFeedback(target.name);
+                  }} onSubmit={createForm.handleSubmit(executeCreate, handleCreateInvalid)}>
+                    <fieldset className="form-body" disabled={busy}>
                     <div className="form-heading">
-                      <p className="eyebrow">{t("empty.create")}</p>
                       <h1>{t("create.title")}</h1>
                       <p>{t("create.intro")}</p>
                     </div>
@@ -1105,7 +1201,7 @@ function App() {
                         <small>{t("create.directoryNameHelp")}</small>
                         {createForm.formState.errors.directoryName || fieldError(feedback, "directoryName") ? <span className="field-error">{t("errors.directoryName")}</span> : null}
                       </label>
-                      <div className="field-grid">
+                      <div className="field-grid language-fields">
                         <label className="field" htmlFor="create-source-locale">
                           <span>{t("create.sourceLocale")}</span>
                           <div className="locale-picker">
@@ -1129,8 +1225,8 @@ function App() {
                           <small>{t("create.sourceLocaleHelp")}</small>
                           {createForm.formState.errors.sourceLocale || fieldError(feedback, "sourceLocale") ? <span className="field-error">{t("errors.sourceLocale")}</span> : null}
                         </label>
-                        <label className="field" htmlFor="create-target-locales">
-                          <span>{t("create.targetLocales")}</span>
+                        <div className="field">
+                          <label htmlFor="create-target-locales">{t("create.targetLocales")}</label>
                           <select
                             aria-label={t("create.targetPreset")}
                             defaultValue=""
@@ -1139,9 +1235,10 @@ function App() {
                               event.currentTarget.value = "";
                             }}
                           >
-                            <option value="">{t("create.choosePreset")}</option>
+                            <option value="">{t("create.addTarget")}</option>
                             {languagePresets.map((preset) => <option key={preset.value} value={preset.value}>{t(preset.labelKey)}</option>)}
                           </select>
+                          {renderTargetSelection("create", createTargetLocales)}
                           <input
                             id="create-target-locales"
                             aria-invalid={Boolean(createForm.formState.errors.targetLocales || fieldError(feedback, "targetLocales"))}
@@ -1150,7 +1247,7 @@ function App() {
                           />
                           <small>{t("create.targetLocalesHelp")}</small>
                           {createForm.formState.errors.targetLocales || fieldError(feedback, "targetLocales") ? <span className="field-error">{t("errors.targetLocales")}</span> : null}
-                        </label>
+                        </div>
                       </div>
                       <div className="destination-preview" aria-live="polite">
                         <span>{t("create.destinationPreview")}</span>
@@ -1166,6 +1263,7 @@ function App() {
                         {busy ? t("status.opening") : t("create.submit")}
                       </button>
                     </div>
+                    </fieldset>
                   </form>
                 ) : (
                   <form className="form-card compact-form-card" onSubmit={handleOpenSubmit}>
@@ -1293,7 +1391,7 @@ function App() {
                 ) : null}
 
                 {activeForm ? (
-                  <form className="editor-card" onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
+                  <form className="editor-card" onChange={() => clearFieldFeedback(editorErrorField)} onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
                     <div className="editor-heading">
                       <div>
                         <p className="eyebrow">{activeForm.kind === "rename" ? t("project.rename") : t("project.addTarget")}</p>
@@ -1301,8 +1399,8 @@ function App() {
                       </div>
                       <span className="basis-label">{t("editor.basis", { revision: activeForm.expectedRevision })}</span>
                     </div>
-                    <label className="field" htmlFor="editor-value">
-                      <span>{activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}</span>
+                    <div className="field">
+                      <label htmlFor="editor-value">{activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}</label>
                       {activeForm.kind === "target" ? (
                         <select
                           aria-label={t("editor.targetPreset")}
@@ -1313,10 +1411,11 @@ function App() {
                             event.currentTarget.value = "";
                           }}
                         >
-                          <option value="">{t("create.choosePreset")}</option>
+                          <option value="">{t("create.addTarget")}</option>
                           {languagePresets.map((preset) => <option key={preset.value} value={preset.value}>{t(preset.labelKey)}</option>)}
                         </select>
                       ) : null}
+                      {activeForm.kind === "target" ? renderTargetSelection("editor", editorValue) : null}
                       <input
                         id="editor-value"
                         aria-label={activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}
@@ -1333,7 +1432,7 @@ function App() {
                             : t("errors.targetLocales")}
                         </span>
                       ) : null}
-                    </label>
+                    </div>
                     {activeForm.kind === "rename" ? (
                       <label className="checkbox-field">
                         <input
@@ -1403,7 +1502,7 @@ function App() {
                     : t("dialog.formMessage")}
               </DialogDescription>
               <p className="dialog-supporting-copy">{createDraftDirty ? t("dialog.createSupporting") : t("dialog.message")}</p>
-              {feedback && (feedback.tone === "error" || feedback.tone === "warning") ? (
+              {!createDraftDirty && feedback && (feedback.tone === "error" || feedback.tone === "warning") ? (
                 <div className={`dialog-feedback feedback-${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>
                   <span>{renderFeedbackMessage(t, feedback)}</span>
                   {feedback.action === "refresh" ? <button className="text-button" type="button" onClick={handleRefresh} disabled={busy}>{t("action.refresh")}</button> : null}
@@ -1412,8 +1511,13 @@ function App() {
               ) : null}
               <div className="dialog-actions">
                 <button ref={cancelDialogButton} className="secondary-button" type="button" onClick={() => void resolveNavigation("cancel")} disabled={busy}>{createDraftDirty ? t("action.keepEditing") : t("action.cancel")}</button>
-                <button className="danger-button" type="button" onClick={() => void resolveNavigation("discard")} disabled={busy}>{t("action.discard")}</button>
+                {activeForm || createDraftDirty ? <button className="danger-button" type="button" onClick={() => void resolveNavigation("discard")} disabled={busy}>{t("action.discard")}</button> : null}
                 {activeForm && !createDraftDirty ? <button className="primary-button" type="button" onClick={() => void resolveNavigation("save")} disabled={busy}>{t("action.saveAndContinue")}</button> : null}
+                {!activeForm && !createDraftDirty ? <button className="primary-button" type="button" disabled={busy} onClick={() => {
+                  const intent = navigationIntent;
+                  setNavigationIntent(null);
+                  if (intent) void continueNavigation(intent);
+                }}>{t("action.continue")}</button> : null}
               </div>
             </DialogContent>
           </DialogPortal>

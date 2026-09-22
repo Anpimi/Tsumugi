@@ -3819,6 +3819,7 @@ dependencies = [
 name = "tsumugi-desktop"
 version = "0.1.0"
 dependencies = [
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",

@@ -37,6 +37,7 @@ export interface OpenProjectRequest {
 
 export interface ReadProjectRequest {
   sessionToken: string;
+  expectedRevision?: string;
 }
 
 export interface RenameProjectRequest {

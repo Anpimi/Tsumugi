@@ -17,6 +17,7 @@ const requests: {
   create: CreateProjectRequest;
   open: OpenProjectRequest;
   read: ReadProjectRequest;
+  reconcile: ReadProjectRequest;
   rename: RenameProjectRequest;
   addTargetLocale: AddTargetLocaleRequest;
   close: CloseProjectRequest;
@@ -46,6 +47,7 @@ const error: CommandError = {
 
 describe("project command wire contract", () => {
   it("keeps TypeScript DTOs aligned with the Rust serialization fixture", () => {
+    expect(requests.reconcile).toEqual({ sessionToken: "session-1", expectedRevision: "1" });
     expect(requests.rename).toEqual({
       sessionToken: "session-1",
       expectedRevision: "18446744073709551615",

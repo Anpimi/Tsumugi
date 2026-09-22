@@ -1,5 +1,6 @@
 {
   "requests": {
+    "reconcile": { "sessionToken": "session-1", "expectedRevision": "1" },
     "create": {
       "destination": "C:\\Projects\\demo",
       "displayName": "Literal name",

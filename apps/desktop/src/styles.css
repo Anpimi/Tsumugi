@@ -703,8 +703,72 @@ button:focus-visible {
 
 .locale-picker {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+}
+
+.form-body {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.create-form {
+  padding: 24px;
+}
+
+.create-form .form-fields {
+  margin-top: 18px;
+  gap: 14px;
+}
+
+.language-fields > .field {
+  align-content: start;
+}
+
+.language-fields small {
+  color: #526178;
+  font-size: 13px;
+}
+
+.target-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.target-selection li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 1px solid #cbd7ee;
+  border-radius: 6px;
+  padding-left: 8px;
+  background: #f1f5ff;
+  color: #2c4268;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.target-selection button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 30px;
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.target-selection button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
 }
 
 .destination-preview {
