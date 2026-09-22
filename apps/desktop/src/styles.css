@@ -1245,6 +1245,22 @@ button:focus-visible {
 .execution-output { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: #f3f6fb; padding: 16px; }
 .execution-content button { max-width: 100%; white-space: normal; text-align: start; }
 .execution-content .field { margin-block: 14px; }
+.execution-confirm-backdrop { z-index: 12; }
+.execution-confirm-dialog { z-index: 13; }
+.execution-summary { padding: 16px; border-radius: 10px; background: #f3f6fb; }
+.execution-summary p { margin: 8px 0; }
+.execution-summary small { color: #52617a; }
+.execution-section-heading, .execution-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.execution-item-heading strong { flex: 1 1 220px; }
+.execution-section-heading h3 { margin-block: 18px 10px; }
+.execution-unit { background: #fafcff; }
+.execution-unit summary { cursor: pointer; }
+.execution-unit .execution-actions { margin-bottom: 0; }
+.execution-result { margin-top: 12px; padding: 12px; border-left: 3px solid #3f61cb; background: #f3f6fb; }
+.execution-result h4 { margin: 0 0 8px; }
+.execution-result:focus-visible { outline: 2px solid #3f61cb; outline-offset: 3px; }
+.execution-receipt { margin-top: 18px; padding: 16px; background: #f0faf3; border: 1px solid #c8e5d2; border-radius: 10px; }
+.execution-confirm-dialog li { overflow-wrap: anywhere; }
 
 .confirm-dialog > p:not(.eyebrow) {
   margin: 13px 0 0;
