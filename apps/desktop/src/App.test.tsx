@@ -62,6 +62,41 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("confirms stopping active work before closing and permits returning without cancellation", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    let stopped = false;
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "close_project") {
+        if (!stopped) throw { code: "busy", stage: "close", recoveryRequired: false };
+        return { closed: true };
+      }
+      if (command === "quiesce_execution") { stopped = true; return { active: false, quiescing: false, queryCount: 0, error: null }; }
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    let dialog = await screen.findByRole("dialog", { name: "Stop background work?" });
+    await user.click(within(dialog).getByRole("button", { name: "Back" }));
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "quiesce_execution")).toBe(false);
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    dialog = await screen.findByRole("dialog", { name: "Stop background work?" });
+    await user.click(within(dialog).getByRole("button", { name: "Stop work and continue" }));
+    await screen.findByRole("heading", { name: "No project open" });
+    expect(stopped).toBe(true);
+  });
+
+  it("retains metadata drafts when entering and leaving Tasks", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: /Project name/ });
+    await user.clear(input); await user.type(input, "Unsaved draft");
+    mocks.invoke.mockImplementation(async (command: string) => command === "list_execution_tasks" ? [] : projectView());
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByText(/No tasks in this project/);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("textbox", { name: /Project name/ })).toHaveValue("Unsaved draft");
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "rename_project")).toBe(false);
+  });
   it("clears a rejected create result after explicitly discarding the draft", async () => {
     const user = userEvent.setup();
     await renderApp();

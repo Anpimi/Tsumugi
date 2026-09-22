@@ -46,11 +46,15 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-pub(super) fn table_names() -> Vec<String> {
+pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
     let mut names: Vec<_> = TABLES.iter().map(|(name, _)| name.to_string()).collect();
     names.push("project_metadata".into());
     #[cfg(test)]
     if TEST_SCHEMA.with(|flag| flag.get()) {
+        names.push("fixture_targets".into());
+    }
+    #[cfg(feature = "execution-test-host")]
+    if !names.iter().any(|name|name=="fixture_targets") && _connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='fixture_targets' AND type='table')",[],|r|r.get::<_,bool>(0)).unwrap_or(false) {
         names.push("fixture_targets".into());
     }
     names.sort();
@@ -60,6 +64,20 @@ pub(super) fn table_names() -> Vec<String> {
 thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
+    #[cfg(feature = "execution-test-host")]
+    if let Some(sql) = connection
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name='fixture_targets'",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(sql_error)?
+    {
+        if sql != crate::execution::test_support::TARGET_SCHEMA {
+            return Err(error(ErrorCode::CorruptLedger, "fixture-schema"));
+        }
+    }
     for (name, expected) in TABLES {
         let actual: String = connection
             .query_row(
@@ -163,6 +181,7 @@ pub struct AttemptView {
 pub struct RecoveryUnit {
     pub unit_id: ExecutionId,
     pub item_ids: Vec<ExecutionId>,
+    pub scopes: Vec<Scope>,
     pub remaining_item_ids: Vec<ExecutionId>,
     pub result_ids: Vec<ExecutionId>,
     pub actions: Vec<RecoveryAction>,
@@ -383,6 +402,26 @@ fn read_attempt(
 }
 
 impl ProjectStore {
+    #[cfg(feature = "execution-test-host")]
+    pub fn install_execution_fixture(&mut self, ids: &[String]) -> Result<(), ExecutionError> {
+        let tx = self.execution_write()?;
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='fixture_targets')",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        if !exists {
+            tx.execute_batch(crate::execution::test_support::TARGET_SCHEMA)
+                .map_err(sql_error)?;
+        }
+        for id in ids {
+            tx.execute("INSERT INTO fixture_targets VALUES (?1,1,'original')", [id])
+                .map_err(sql_error)?;
+        }
+        commit(tx)
+    }
     pub fn execution_current_result(
         &self,
         attempt: ExecutionId,
@@ -424,6 +463,11 @@ impl ProjectStore {
             let mut entry = RecoveryUnit {
                 unit_id: unit.unit_id,
                 item_ids: unit.item_ids.clone(),
+                scopes: unit
+                    .item_ids
+                    .iter()
+                    .map(|id| input.item(*id).map(|item| item.scope.clone()))
+                    .collect::<Result<Vec<_>, _>>()?,
                 remaining_item_ids: Vec::new(),
                 result_ids: Vec::new(),
                 actions: Vec::new(),
@@ -862,6 +906,28 @@ impl ProjectStore {
             .collect()
     }
 
+    pub fn execution_attempt_page(
+        &self,
+        task: ExecutionId,
+        after: Revision,
+        limit: u32,
+    ) -> Result<Vec<(ExecutionId, Revision)>, ExecutionError> {
+        if !(1..=100).contains(&limit) {
+            return Err(error(ErrorCode::LimitExceeded, "attempt-page"));
+        }
+        let mut statement=self.execution_connection()?.prepare("SELECT attempt_id,sequence FROM execution_attempts WHERE task_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3").map_err(sql_error)?;
+        statement
+            .query_map(params![task.to_string(), after.get() as i64, limit], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(sql_error)?
+            .map(|row| {
+                let (id, sequence) = row.map_err(sql_error)?;
+                Ok((parse_id(id)?, Revision::new(sequence as u64)?))
+            })
+            .collect()
+    }
+
     pub fn dispatch_execution_item(
         &mut self,
         attempt: ExecutionId,
@@ -1054,12 +1120,53 @@ impl ProjectStore {
         result_ids: Vec<ExecutionId>,
         parameters: serde_json::Value,
     ) -> Result<AdoptionAction, ExecutionError> {
+        self.prepare_adoption_with_id(ExecutionId::new(), attempt, unit, result_ids, parameters)
+    }
+    pub fn adoption_action(&self, action: ExecutionId) -> Result<AdoptionAction, ExecutionError> {
+        let bytes: Vec<u8> = self
+            .execution_connection()?
+            .query_row(
+                "SELECT request FROM execution_actions WHERE action_id=?1",
+                [action.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        codec::decode(&bytes, MAX_INPUT_BYTES)
+    }
+    pub fn prepare_adoption_with_id(
+        &mut self,
+        action_id: ExecutionId,
+        attempt: ExecutionId,
+        unit: ExecutionId,
+        mut result_ids: Vec<ExecutionId>,
+        parameters: serde_json::Value,
+    ) -> Result<AdoptionAction, ExecutionError> {
         let tx = self.execution_write()?;
         let input = load_input(&tx, attempt)?;
+        result_ids.sort();
+        let existing: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT request FROM execution_actions WHERE action_id=?1",
+                [action_id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(sql_error)?;
+        if let Some(bytes) = existing {
+            let existing: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)?;
+            if existing.attempt_id != attempt
+                || existing.unit_id != unit
+                || existing.result_ids != result_ids
+                || existing.parameters != parameters
+            {
+                return Err(error(ErrorCode::ResultMismatch, "action-identity"));
+            }
+            return Ok(existing);
+        }
         let action = AdoptionAction {
             project_id: input.envelope().project_id,
             attempt_id: attempt,
-            action_id: ExecutionId::new(),
+            action_id,
             unit_id: unit,
             operation: input.envelope().operation.clone(),
             result_ids,

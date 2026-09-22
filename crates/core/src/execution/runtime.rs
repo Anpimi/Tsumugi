@@ -414,6 +414,9 @@ impl ExecutionRuntime {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
         self.generation = ExecutionId::new();
+        // The stop request is complete. New work still requires an explicit
+        // operation; a failed project switch may leave this session open.
+        self.accepting = true;
         Ok(())
     }
 }

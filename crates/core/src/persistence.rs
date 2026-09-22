@@ -749,7 +749,7 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
         .collect::<Result<_, _>>()
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if table_names != ledger::table_names() {
+    if table_names != ledger::table_names(connection) {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         });

@@ -1,4 +1,19 @@
 export const enUS = {
+    execution: {
+      operation: "Project operation", sampleOperation: "Sample update", willRun: "Will run", reuse: "Reuse saved output",
+      title: "Tasks", back: "Back", allTasks: "All tasks", refresh: "Refresh", loading: "Loading tasks…", empty: "No tasks in this project. Work will appear here when a supported operation starts.",
+      taskNumber: "Task {{number}}", attempt: "Execution attempt", attemptNumber: "Attempt {{number}}", currentAttempt: "Current attempt", firstPage: "First page", nextPage: "Next page", previousPage: "Previous page",
+      progress: "{{generated, number}} of {{total, number}} outputs generated · {{adopted, number}} adopted", cancel: "Cancel remaining work", cancellationRequested: "Cancellation requested. Saved outputs and adopted changes are preserved.",
+      output: "View saved output", nextSteps: "Available actions", continued: "Remaining work continued in another attempt. Select that attempt to continue.", running: "Work is still running. Refresh to see saved results.", blocked: "This group cannot proceed with its current scope or evidence. Saved results are preserved.",
+      receipt: "Recorded changes", revision: "Revision {{number}}", done: "Action completed. The latest saved state is shown below.", noReceipt: "No committed receipt was found. You can retry the same adoption request; cancellation and scope are checked again.", queryStarted: "Checking the earlier request. Its outcome remains unknown until reliable evidence is received.",
+      checkReceipt: "Check recorded outcome", retryAdoption: "Retry the same adoption", keepOutput: "Keep output and return", working: "Working…", confirm: "Continue",
+      cancelHelp: "Stop remaining work in this task, including other attempts. Already adopted changes stay applied. An in-flight external result may remain unknown.", actionHelp: "This consistency group contains {{count}} items. Only eligible remaining work is retried; saved successful outputs are reused. Adoption checks the complete group again.",
+      stopTitle: "Stop background work?", stopHelp: "This project has active work. Stop further scheduling and preserve saved results before continuing. Some in-flight results may need checking when you reopen the project.", stop: "Stop work and continue", stopped: "Background work was stopped. Saved results remain available in Tasks.",
+      states: { queued: "Not started", dispatched: "Running", succeeded: "Output generated", failed: "Generation failed", "cancelled-before-dispatch": "Cancelled before starting", unknown: "Outcome unknown" },
+      adoption: { unapplied: "Not applied", committed: "Adopted", conflict: "Related content changed", rejected: "Not eligible for adoption" },
+      actions: { "resume-undispatched": "Continue remaining work", "retry-safe-failure": "Retry eligible failures", "validate-output": "Check saved output", "adopt-result": "Adopt saved results", "query-outcome": "Check earlier request", "view-receipt": "View recorded changes" },
+      errors: { conflict: "Related content changed. The current target was preserved; review the saved output before choosing another action.", unknown: "The outcome is not yet known. Check the recorded outcome before trying again. Do not repeat generation without reliable evidence.", session: "This project session has changed. Close Tasks and open it again for the current project.", cancelled: "Cancellation withdrew this action. Saved outputs are preserved. A new explicit adoption can be requested after reviewing them.", invalid: "Saved output is missing or invalid. It cannot be adopted; other saved results are preserved.", busy: "Another operation is still active. Wait for it to finish, then refresh.", failed: "The operation could not complete. Saved work is preserved. Refresh to check the current state before trying again." },
+    },
     brandDescription: "Localization Workbench",
     nav: {
       workspace: "Workspace",

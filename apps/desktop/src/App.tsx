@@ -30,6 +30,8 @@ import {
 import { isLocale, localeOptions, type Locale } from "./i18n";
 import { languageName } from "./i18n/languageNames";
 import type { TranslationKey } from "./i18n/types";
+import { ExecutionTasks } from "./ExecutionTasks";
+import { executionCommands, executionContext } from "./executionCommands";
 import {
   clearLastOpenProject,
   normalizeLocator,
@@ -327,6 +329,9 @@ function App() {
   const [restoreCandidate, setRestoreCandidate] = useState<RecentProject | null>(() => readLastOpenProject());
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
   const [copiedLocator, setCopiedLocator] = useState(false);
+  const [stopIntent, setStopIntent] = useState<{ kind: "close" | "window-close" | "rename" } | { kind: "open"; locator: string } | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [stoppedSession, setStoppedSession] = useState<string | null>(null);
   const pendingSave = useRef<PendingSave | null>(null);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
@@ -354,7 +359,7 @@ function App() {
       ? "displayName"
       : "targetLocales";
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
-  const busy = operation !== "idle";
+  const busy = operation !== "idle" || stopping || stopIntent !== null;
   const status = statusFor(t, operation, dirty || createDraftDirty);
 
   useEffect(() => {
@@ -562,13 +567,18 @@ function App() {
       return true;
     } catch (value) {
       setOperation("idle");
+      if (asCommandError(value, "open").code === "busy" && project) {
+        setStopIntent({ kind: "open", locator });
+        setFeedback(null);
+        return false;
+      }
       setFeedback(feedbackFromFailure(asCommandError(value, "open")));
       return false;
     }
   }
 
-  async function executeClose(preserveRestoreCandidate = false) {
-    if (!project || busy) return false;
+  async function executeClose(preserveRestoreCandidate = false, coordinated = false) {
+    if (!project || (busy && !coordinated)) return false;
     setOperation("closing");
     setFeedback({ tone: "info", messageKey: "status.closing" });
     try {
@@ -588,12 +598,17 @@ function App() {
       return true;
     } catch (value) {
       setOperation("idle");
+      if (asCommandError(value, "close").code === "busy") {
+        setStopIntent({ kind: preserveRestoreCandidate ? "window-close" : "close" });
+        setFeedback(null);
+        return false;
+      }
       setFeedback(feedbackFromFailure(asCommandError(value, "close")));
       return false;
     }
   }
 
-  async function executeWindowClose() {
+  async function executeWindowClose(coordinated = false) {
     if (!project) {
       try {
         await getCurrentWindow().destroy();
@@ -603,7 +618,7 @@ function App() {
         return false;
       }
     }
-    const closed = await executeClose(true);
+    const closed = await executeClose(true, coordinated);
     if (!closed) return false;
     try {
       await getCurrentWindow().destroy();
@@ -612,6 +627,28 @@ function App() {
       setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
       return false;
     }
+  }
+
+  async function stopAndContinue() {
+    if (!project || !stopIntent || stopping) return;
+    const intent = stopIntent;
+    setStopping(true); setFeedback(null);
+    try {
+      const deadline = performance.now() + 6500;
+      let result = await executionCommands.quiesce(executionContext(project));
+      while (result.quiescing) {
+        if (performance.now() >= deadline) throw { code: "busy", stage: "execution-quiesce", recoveryRequired: false };
+        await new Promise(resolve => setTimeout(resolve, 100));
+        result = await executionCommands.quiesce(executionContext(project));
+      }
+      setStoppedSession(project.sessionToken);
+      setStopIntent(null);
+      if (intent.kind === "open") await executeOpen(intent.locator);
+      else if (intent.kind === "window-close") await executeWindowClose(true);
+      else if (intent.kind === "close") await executeClose(false, true);
+      else setFeedback({ tone: "info", messageKey: "execution.stopped" });
+    } catch (value) { setFeedback(feedbackFromFailure(asCommandError(value, "execution-quiesce"))); }
+    finally { setStopping(false); }
   }
 
   async function refreshAfterStale(form: ActiveForm, failure: CommandError): Promise<SaveResult> {
@@ -742,6 +779,7 @@ function App() {
       return { ok: true, metadata: result.metadata };
     } catch (value) {
       const failure = asCommandError(value, form.kind === "rename" ? "rename" : "set-target-locales");
+      if (failure.code === "busy" && form.kind === "rename" && editorForm.getValues("syncDirectoryName")) setStopIntent({ kind: "rename" });
       if (failure.code === "outcome-unknown") return reconcileUnknown(form);
       pendingSave.current = null;
       if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
@@ -1043,6 +1081,13 @@ function App() {
 
   return (
     <main className="shell">
+      <DialogRoot open={stopIntent !== null} onOpenChange={open => { if (!open && !stopping) setStopIntent(null); }}>
+        <DialogPortal><DialogOverlay className="dialog-backdrop" /><DialogContent className="confirm-dialog" onEscapeKeyDown={event => { if (stopping) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
+          <DialogTitle>{t("execution.stopTitle")}</DialogTitle><DialogDescription>{t("execution.stopHelp")}</DialogDescription>
+          {renderFeedback}
+          <div className="form-actions"><button className="secondary-button" disabled={stopping} onClick={() => setStopIntent(null)}>{t("execution.back")}</button><button className="primary-button" disabled={stopping} onClick={() => void stopAndContinue()}>{stopping ? t("execution.working") : t("execution.stop")}</button></div>
+        </DialogContent></DialogPortal>
+      </DialogRoot>
       <aside className="sidebar" aria-label={t("nav.workspace")}>
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">
@@ -1056,6 +1101,7 @@ function App() {
         </div>
 
         <nav className="navigation" aria-label={t("nav.workspace")}>
+          {project ? <ExecutionTasks key={project.sessionToken} project={project} disabled={busy || stopping} /> : null}
            {navItems.map((item) => (
              <button
                aria-current={item.selected ? "page" : undefined}
@@ -1096,7 +1142,8 @@ function App() {
 
         <div className="workspace-body">
           <div className={`workbench-content${project ? " is-project" : " is-closed"}`}>
-            {renderFeedback}
+            {stopIntent ? null : renderFeedback}
+            {project && stoppedSession === project.sessionToken ? <p role="status">{t("execution.stopped")}</p> : null}
 
             {!project ? (
               <section className="closed-state" aria-live="polite">

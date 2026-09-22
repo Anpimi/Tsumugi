@@ -1,6 +1,21 @@
 import type { UiMessages } from "./types";
 
 export const zhCN = {
+    execution: {
+      operation: "项目操作", sampleOperation: "示例更新", willRun: "将执行", reuse: "复用已保存输出",
+      title: "任务", back: "返回", allTasks: "全部任务", refresh: "刷新", loading: "正在读取任务…", empty: "此项目暂无任务。启动受支持的操作后，可在这里查看进度和结果。",
+      taskNumber: "任务 {{number}}", attempt: "执行尝试", attemptNumber: "第 {{number}} 次尝试", currentAttempt: "当前尝试", firstPage: "首页", nextPage: "下一页", previousPage: "上一页",
+      progress: "已生成 {{generated, number}} / {{total, number}} 项输出 · 已采纳 {{adopted, number}} 项", cancel: "取消剩余工作", cancellationRequested: "已请求取消。保存的输出和已采纳的变更会保留。",
+      output: "查看保存的输出", nextSteps: "可用操作", continued: "剩余工作已转入另一执行尝试，请选择该尝试继续。", running: "工作仍在运行，刷新可查看已保存的结果。", blocked: "此组当前的范围或执行证据不允许继续。已保存的结果会保留。",
+      receipt: "已记录的变更", revision: "修订 {{number}}", done: "操作已完成，下方显示最新保存状态。", noReceipt: "未找到已提交回执。可重试同一个采纳请求，系统会重新检查取消和范围条件。", queryStarted: "正在核对此前的请求。在取得可靠证据前，结果仍视为未知。",
+      checkReceipt: "核对已记录结果", retryAdoption: "重试原采纳请求", keepOutput: "保留输出并返回", working: "正在处理…", confirm: "继续",
+      cancelHelp: "停止此任务的剩余工作，包括其他执行尝试。已采纳的变更会保留，进行中的外部请求可能仍需核对结果。", actionHelp: "此一致组包含 {{count}} 项。仅重试符合条件的剩余工作，已保存的成功输出会复用；采纳前会重新检查整组。",
+      stopTitle: "停止后台工作？", stopHelp: "此项目仍有活动工作。继续前将停止后续调度并保留已保存结果；进行中的结果可能需要在重开项目后核对。", stop: "停止工作并继续", stopped: "后台工作已停止。可在“任务”中查看保存的结果。",
+      states: { queued: "尚未开始", dispatched: "正在运行", succeeded: "已生成输出", failed: "生成失败", "cancelled-before-dispatch": "开始前已取消", unknown: "结果待核对" },
+      adoption: { unapplied: "未应用", committed: "已采纳", conflict: "相关内容已变化", rejected: "不符合采纳条件" },
+      actions: { "resume-undispatched": "继续剩余工作", "retry-safe-failure": "重试可恢复的失败项", "validate-output": "检查保存的输出", "adopt-result": "采纳保存的结果", "query-outcome": "核对此前请求", "view-receipt": "查看已记录变更" },
+      errors: { conflict: "相关内容已变化，当前目标未被覆盖。请先检查保存的输出，再选择下一步。", unknown: "结果尚不确定。请先核对已记录结果，不要在缺少可靠证据时重复生成。", session: "项目会话已变化。请关闭任务视图，再从当前项目重新进入。", cancelled: "取消操作已撤回此行动。输出仍然保留；检查后可明确发起新的采纳请求。", invalid: "保存的输出缺失或无效，无法采纳。其他已保存结果会保留。", busy: "另一操作仍在进行，请等待结束后刷新。", failed: "操作未能完成，已保存的工作会保留。请刷新核对当前状态后再重试。" },
+    },
     brandDescription: "本地化工作台",
     nav: {
       workspace: "工作区",

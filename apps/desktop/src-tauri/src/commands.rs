@@ -2,7 +2,9 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+mod execution;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -26,6 +28,11 @@ pub enum CommandErrorCode {
     Busy,
     StorageFailed,
     OutcomeUnknown,
+    LimitExceeded,
+    ResultMismatch,
+    OutputInvalid,
+    DependencyConflict,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -38,6 +45,11 @@ pub enum CommandStage {
     AddTargetLocale,
     SetTargetLocales,
     Close,
+    ExecutionRead,
+    ExecutionCancel,
+    ExecutionRecover,
+    ExecutionAdopt,
+    ExecutionQuiesce,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -50,6 +62,10 @@ pub struct CommandError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_revision: Option<String>,
     pub recovery_required: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub item_ids: Vec<tsumugi_core::execution::ExecutionId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery_actions: Vec<tsumugi_core::execution::RecoveryAction>,
 }
 
 impl CommandError {
@@ -60,6 +76,8 @@ impl CommandError {
             field: None,
             current_revision: None,
             recovery_required: false,
+            item_ids: Vec::new(),
+            recovery_actions: Vec::new(),
         }
     }
 
@@ -70,6 +88,8 @@ impl CommandError {
             field: field.map(str::to_owned),
             current_revision: None,
             recovery_required: false,
+            item_ids: Vec::new(),
+            recovery_actions: Vec::new(),
         }
     }
 
@@ -80,6 +100,8 @@ impl CommandError {
             field: None,
             current_revision: Some(current_revision.to_string()),
             recovery_required: false,
+            item_ids: Vec::new(),
+            recovery_actions: Vec::new(),
         }
     }
 
@@ -90,6 +112,8 @@ impl CommandError {
             field: None,
             current_revision: None,
             recovery_required: true,
+            item_ids: Vec::new(),
+            recovery_actions: Vec::new(),
         }
     }
 }
@@ -208,7 +232,8 @@ pub struct CloseProjectView {
 
 #[derive(Default)]
 pub struct AppState {
-    sessions: Mutex<SessionManager>,
+    sessions: Arc<Mutex<SessionManager>>,
+    clock_started: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -231,6 +256,7 @@ struct ActiveSession {
     locator: PathBuf,
     store: ProjectStore,
     receipt: Option<ReconciliationReceipt>,
+    execution: Option<execution::ExecutionHost>,
 }
 
 struct ReconciliationReceipt {
@@ -272,13 +298,13 @@ impl SessionManager {
             token,
             locator,
             store,
+            execution: None,
             receipt: None,
         });
         Ok(view)
     }
 
     fn open(&mut self, request: OpenProjectRequest) -> Result<ProjectView, CommandError> {
-        self.ensure_switch_allowed(CommandStage::Open)?;
         let locator = resolve_existing_locator(&request.locator, CommandStage::Open)?;
         if let Some(active) = self.active.as_ref() {
             if active.locator == locator {
@@ -290,6 +316,7 @@ impl SessionManager {
             }
         }
 
+        self.ensure_switch_allowed(CommandStage::Open)?;
         let store = ProjectStore::open(&locator)
             .map_err(|error| map_persistence_error(error, CommandStage::Open))?;
         let metadata = store
@@ -301,6 +328,7 @@ impl SessionManager {
             token,
             locator,
             store,
+            execution: None,
             receipt: None,
         });
         Ok(view)
@@ -336,6 +364,7 @@ impl SessionManager {
                 token: recovery.token.clone(),
                 locator: recovery.locator.clone(),
                 store,
+                execution: None,
                 receipt: Some(ReconciliationReceipt {
                     basis: recovery.previous.metadata_revision(),
                     metadata,
@@ -431,6 +460,7 @@ impl SessionManager {
             if active.store.is_reconciling() {
                 return Err(CommandError::unknown(CommandStage::Rename));
             }
+            active.ensure_execution_idle(CommandStage::Rename)?;
             let metadata = active
                 .store
                 .metadata()
@@ -547,6 +577,7 @@ impl SessionManager {
                         token,
                         locator: new_locator,
                         store: new_store,
+                        execution: None,
                         receipt: None,
                     });
                     self.directory_recovery = None;
@@ -569,6 +600,7 @@ impl SessionManager {
             token,
             locator: new_locator,
             store: new_store,
+            execution: None,
             receipt: Some(ReconciliationReceipt {
                 basis: expected_revision,
                 metadata: change.metadata().clone(),
@@ -665,6 +697,7 @@ impl SessionManager {
         if active.store.is_reconciling() {
             return Err(CommandError::unknown(CommandStage::Close));
         }
+        active.ensure_execution_idle(CommandStage::Close)?;
         let active = self.active.take().expect("active session checked above");
         active
             .store
@@ -674,6 +707,9 @@ impl SessionManager {
     }
 
     fn ensure_switch_allowed(&self, stage: CommandStage) -> Result<(), CommandError> {
+        if let Some(active) = &self.active {
+            active.ensure_execution_idle(stage)?;
+        }
         if self.directory_recovery.is_some()
             || self
                 .active
@@ -786,15 +822,14 @@ pub fn close_project(
 pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder
         .manage(AppState::default())
-        .invoke_handler(tauri::generate_handler![
-            create_project,
-            open_project,
-            read_project,
-            rename_project,
-            add_target_locale,
-            set_target_locales,
-            close_project,
-        ])
+        .setup(|app| {
+            use tauri::Manager;
+            #[cfg(feature = "execution-test-host")]
+            execution::initialize_test_host(&app.state::<AppState>())?;
+            execution::start_clock(&app.state::<AppState>());
+            Ok(())
+        })
+        .invoke_handler(execution::handler())
 }
 
 fn lock_sessions<'a>(

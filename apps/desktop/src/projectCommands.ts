@@ -12,9 +12,11 @@ export type CommandErrorCode =
   | "project-in-use"
   | "busy"
   | "storage-failed"
-  | "outcome-unknown";
+  | "outcome-unknown"
+  | "limit-exceeded" | "result-mismatch" | "output-invalid" | "dependency-conflict" | "cancelled";
 
-export type CommandStage = "create" | "open" | "read" | "rename" | "add-target-locale" | "set-target-locales" | "close";
+export type CommandStage = "create" | "open" | "read" | "rename" | "add-target-locale" | "set-target-locales" | "close"
+  | "execution-read" | "execution-cancel" | "execution-recover" | "execution-adopt" | "execution-quiesce";
 
 export interface CommandError {
   code: CommandErrorCode;
@@ -22,6 +24,8 @@ export interface CommandError {
   field?: string;
   currentRevision?: string;
   recoveryRequired: boolean;
+  itemIds?: string[];
+  recoveryActions?: string[];
 }
 
 export interface CreateProjectRequest {

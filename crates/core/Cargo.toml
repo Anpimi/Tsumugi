@@ -9,6 +9,9 @@ authors.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[features]
+execution-test-host = []
+
 [dependencies]
 language-tags = "=0.3.2"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }

@@ -965,3 +965,109 @@ fn subprocess_crash_boundaries_preserve_outputs_and_atomic_adoption() {
         }
     }
 }
+
+#[test]
+fn cancellation_preserves_committed_failed_and_undispatched_items_and_late_evidence() {
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    install_targets(&store);
+    let input = fixture_input(&store, false);
+    store.enqueue_execution(&input).unwrap();
+    let a = input.envelope().items[0].item_id;
+    let b = input.envelope().items[1].item_id;
+    let c = input.envelope().items[2].item_id;
+    let first = produce(&mut store, &input, a);
+    store.save_execution_result(&first).unwrap();
+    store
+        .validate_execution_result(input.envelope().attempt_id, first.envelope().result_id)
+        .unwrap();
+    let prepared = action(&mut store, &input, &[first]);
+    store.adopt_execution(&prepared, &Handler).unwrap();
+    let eventual = produce(&mut store, &input, b);
+    let mut failed = eventual.envelope().clone();
+    failed.result_id = ExecutionId::new();
+    failed.outcome = ExecutionState::Failed;
+    failed.output = None;
+    failed.diagnostic = Some(Diagnostic {
+        code: "temporary".into(),
+        retry_safe: true,
+    });
+    let failed = FixedResult::capture(failed, &input, eventual.envelope().dispatch_token).unwrap();
+    store.save_execution_result(&failed).unwrap();
+    store
+        .cancel_execution(input.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    let view = store
+        .execution_attempt(input.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!(
+        (
+            view.progress.adopted,
+            view.progress.failed,
+            view.progress.cancelled
+        ),
+        (1, 1, 1)
+    );
+    assert!(
+        store
+            .dispatch_execution_item(input.envelope().attempt_id, c)
+            .is_err()
+    );
+    let mut late = eventual.envelope().clone();
+    late.supersedes = Some(failed.envelope().result_id);
+    let late = FixedResult::capture(late, &input, eventual.envelope().dispatch_token).unwrap();
+    store.save_execution_result(&late).unwrap();
+    store
+        .validate_execution_result(input.envelope().attempt_id, late.envelope().result_id)
+        .unwrap();
+    let view = store
+        .execution_attempt(input.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!(
+        (
+            view.progress.adopted,
+            view.progress.succeeded,
+            view.progress.cancelled
+        ),
+        (1, 2, 1)
+    );
+    assert!(view.items.iter().all(|item| item.cancellation_requested));
+    assert!(
+        store
+            .execution_retry_input(input.envelope().attempt_id, &[a])
+            .is_err()
+    );
+    let plan = store
+        .execution_recovery(input.envelope().attempt_id, false)
+        .unwrap();
+    assert!(
+        plan.units
+            .iter()
+            .find(|unit| unit.item_ids.contains(&a))
+            .unwrap()
+            .actions
+            .contains(&RecoveryAction::ViewReceipt)
+    );
+    assert_eq!(
+        store
+            .execution_connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM fixture_targets WHERE revision=2",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .execution_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+}

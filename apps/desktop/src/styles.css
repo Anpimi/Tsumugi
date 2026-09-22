@@ -1224,6 +1224,28 @@ button:focus-visible {
   transform: translate(-50%, -50%);
 }
 
+.execution-dialog {
+  position: fixed;
+  z-index: 11;
+  inset: 4vh max(20px, calc((100vw - 1040px) / 2));
+  overflow: auto;
+  padding: 28px;
+  background: #fff;
+  border: 1px solid #d7e0ef;
+  border-radius: 14px;
+  box-shadow: 0 22px 70px rgb(31 47 82 / 22%);
+}
+.execution-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.execution-heading h2 { margin: 0; }
+.execution-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; }
+.execution-list { list-style: none; padding: 0; display: grid; gap: 12px; }
+.execution-list li, .execution-unit { padding: 14px; border: 1px solid #d7e0ef; border-radius: 10px; overflow-wrap: anywhere; }
+.execution-unit { margin-top: 12px; }
+.execution-list p { margin: 8px 0; }
+.execution-output { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow: auto; background: #f3f6fb; padding: 16px; }
+.execution-content button { max-width: 100%; white-space: normal; text-align: start; }
+.execution-content .field { margin-block: 14px; }
+
 .confirm-dialog > p:not(.eyebrow) {
   margin: 13px 0 0;
   color: #5e6e86;

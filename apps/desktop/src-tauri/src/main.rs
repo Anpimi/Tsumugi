@@ -38,6 +38,32 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "execution-test-host"))]
+    fn production_commands_do_not_register_the_fixture_entry() {
+        let app = crate::commands::register_commands(tauri::test::mock_builder())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(
+            &app,
+            "main",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .build()
+        .unwrap();
+        let error = tauri::test::get_ipc_response(
+            &webview,
+            request("seed_execution_fixture", json!({"request":{}})),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .as_str()
+                .is_some_and(|message| message.contains("not found")),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn tauri_invoke_round_trip_reaches_real_core_storage() {
         let parent = temporary_directory("ipc");
         let destination = parent.path().join("project");

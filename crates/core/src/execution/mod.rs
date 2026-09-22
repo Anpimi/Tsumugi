@@ -6,6 +6,8 @@
 pub(crate) mod codec;
 mod runner;
 mod runtime;
+#[cfg(feature = "execution-test-host")]
+pub mod test_support;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

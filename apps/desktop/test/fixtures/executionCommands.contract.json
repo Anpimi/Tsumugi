@@ -1,0 +1,16 @@
+{
+  "session": {"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001"},
+  "list": {"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","after":"9007199254740993","limit":50},
+  "recover": {"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","unitId":"10000000-0000-4000-8000-000000000003","action":"query-outcome","itemIds":["10000000-0000-4000-8000-000000000004"]},
+  "prepare": {"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","unitId":"10000000-0000-4000-8000-000000000003","actionId":"10000000-0000-4000-8000-000000000005","resultIds":["10000000-0000-4000-8000-000000000006"]},
+  "detail": {
+    "attemptId":"10000000-0000-4000-8000-000000000002","taskId":"10000000-0000-4000-8000-000000000007","operation":"sample-update",
+    "progress":{"total":1,"queued":0,"running":0,"succeeded":0,"failed":0,"cancelled":0,"unknown":1,"adopted":0},
+    "items":[{"status":{"itemId":"10000000-0000-4000-8000-000000000004","execution":"unknown","validation":"absent","adoption":"unapplied","cancellationRequested":true,"retrySafe":false,"diagnostic":"result-missing"},"scope":{"kind":"sample","id":"Sample A","locale":"zh-CN"},"resultId":null}],
+    "recovery":{"attemptId":"10000000-0000-4000-8000-000000000002","units":[{"unitId":"10000000-0000-4000-8000-000000000003","itemIds":["10000000-0000-4000-8000-000000000004"],"scopes":[{"kind":"sample","id":"Sample A","locale":"zh-CN"}],"remainingItemIds":["10000000-0000-4000-8000-000000000004"],"resultIds":[],"actions":["query-outcome"],"blockedReason":"outcome-unknown","receiptId":null}]},
+    "nextOffset":null
+  },
+  "status":{"active":false,"quiescing":false,"queryCount":0,"error":null},
+  "error":{"code":"outcome-unknown","stage":"execution-recover","recoveryRequired":true,"itemIds":["10000000-0000-4000-8000-000000000004"],"recoveryActions":["query-outcome"]},
+  "receipt":{"projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","actionId":"10000000-0000-4000-8000-000000000005","unitId":"10000000-0000-4000-8000-000000000003","requestDigest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","changes":[{"kind":"sample-update","id":"Sample A","revision":"9007199254740993"}]}
+}

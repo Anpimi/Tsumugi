@@ -1,0 +1,25 @@
+import { expect, it, vi } from "vitest";
+import fixture from "../test/fixtures/executionCommands.contract.json";
+import { executionCommands, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+const session: SessionRequest = fixture.session;
+const list: ListRequest = fixture.list;
+const prepare: PrepareRequest = fixture.prepare;
+const receipt: Receipt = fixture.receipt;
+it("preserves Rust field names, exact revisions and explicit command scopes", async () => {
+  invoke.mockResolvedValueOnce(fixture.status);
+  expect(await executionCommands.status(session)).toEqual(fixture.status);
+  expect(invoke).toHaveBeenLastCalledWith("execution_status", { request: session });
+  invoke.mockResolvedValueOnce([]);
+  await executionCommands.list(list);
+  expect(invoke).toHaveBeenLastCalledWith("list_execution_tasks", { request: list });
+  expect(list.after).toBe("9007199254740993");
+  invoke.mockResolvedValueOnce({});
+  await executionCommands.prepare(prepare);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_execution_adoption", { request: prepare });
+  expect(receipt.changes[0].revision).toBe("9007199254740993");
+  expect(fixture.detail.recovery.units[0].actions).toEqual(["query-outcome"]);
+  expect(fixture.detail.items[0].status).toMatchObject({ execution: "unknown", adoption: "unapplied", retrySafe: false });
+  expect(JSON.stringify(fixture)).not.toMatch(/session_token|attempt_id|remaining_item_ids/);
+});
