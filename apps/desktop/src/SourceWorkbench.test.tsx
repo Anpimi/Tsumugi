@@ -28,6 +28,29 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+it.each([
+  ["en-US", "Source content", "Choose Mod folder", "I confirm", "Check source files", "Every value in i18n/default.json must be a string."],
+  ["zh-CN", "源内容", "选择 Mod 文件夹", "我确认", "检查源文件", "i18n/default.json 中的每个值都必须是字符串。"],
+])("explains unsupported source values in %s and allows rechecking", async (locale, entry, choose, declaration, check, message) => {
+  await i18n.changeLanguage(locale);
+  const original = invoke.getMockImplementation()!;
+  let invalid = true;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", field: "source-value-not-string" });
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: entry }));
+  await user.click(await screen.findByRole("button", { name: choose }));
+  await user.click(screen.getByRole("checkbox", { name: new RegExp(declaration) }));
+  await user.click(screen.getByRole("button", { name: check }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  invalid = false;
+  await user.click(screen.getByRole("button", { name: check }));
+  await screen.findByText(/Example\.Mod[:：]/);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
 async function select() {
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));

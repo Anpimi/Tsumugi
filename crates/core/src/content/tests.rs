@@ -118,6 +118,25 @@ fn real_source_matches_independent_oracle_and_keeps_byte_locations() {
 }
 
 #[test]
+fn non_string_source_values_have_an_actionable_diagnostic() {
+    for value in ["42", "true", "null", "[]", "{}"] {
+        let error = extract(
+            &small(&format!(r#"{{"key":{value}}}"#)),
+            &Cancellation::default(),
+        )
+        .unwrap_err();
+        assert_eq!(error.stage, "source-value-not-string");
+    }
+    assert!(
+        extract(
+            &small(r#"{"number":"42","empty":""}"#),
+            &Cancellation::default(),
+        )
+        .is_ok()
+    );
+}
+
+#[test]
 fn profile_rejects_ambiguous_structure_and_preserves_unicode_and_empty_values() {
     for source in [
         r#"{"A":"x","a":"y"}"#,

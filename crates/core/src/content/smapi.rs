@@ -148,7 +148,7 @@ pub fn extract(
         let text = p
             .value
             .as_string_lit()
-            .ok_or_else(|| invalid("invalid-structure"))?;
+            .ok_or_else(|| invalid("source-value-not-string"))?;
         if text.value.len() > MAX_TEXT_BYTES {
             return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
         }

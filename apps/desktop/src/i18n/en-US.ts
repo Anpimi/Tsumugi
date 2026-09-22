@@ -40,6 +40,7 @@ export const enUS = {
   "keep": "Stay in project",
   "leave": "Discard selection and continue",
   "errors": {
+    "stringValue": "Every value in i18n/default.json must be a string. Numbers, booleans, null, arrays and nested objects are unsupported. Correct those values in the source file, then check it again.",
     "encoding": "These files must use UTF-8. Convert the source files explicitly, then check them again.",
     "changed": "The source files changed during capture. Stop editing them and check the folder again.",
     "duplicate": "The source contains duplicate or case-colliding names. Resolve them before importing.",
