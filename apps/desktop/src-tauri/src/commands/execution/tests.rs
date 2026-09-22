@@ -28,6 +28,92 @@ fn execution_wire_fixture_matches_rust_types() {
     round_trip::<AdoptionReceipt>(&fixture["receipt"]);
 }
 
+#[test]
+fn completed_query_retains_its_result_until_storage_accepts_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("query-project");
+    let mut store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create("Query", "en-US", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    let mut host = ExecutionHost::new(&store).unwrap();
+    let input =
+        test_support::input(&mut store, test_support::FixtureMode::Unknown, 0, false).unwrap();
+    host.runtime.submit(&mut store, &input).unwrap();
+    let attempt = input.envelope().attempt_id;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while host.active(&store).unwrap() {
+        host.tick(&mut store).unwrap();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    let item = input.envelope().items[0].item_id;
+    let query = Arc::new(
+        host.runtime
+            .outcome_query(&store, attempt, item)
+            .unwrap()
+            .unwrap(),
+    );
+    let outcome = query.run().unwrap();
+    let QueryOutcome::Known(ref expected) = outcome else {
+        panic!("fixture query must resolve");
+    };
+    let expected = expected.clone();
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let thread = std::thread::spawn(move || {
+        sender.send(Ok(outcome)).unwrap();
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !thread.is_finished() {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    host.queries.push(QueryJob {
+        query,
+        receiver,
+        thread,
+        started: Instant::now(),
+        pending_outcome: None,
+    });
+    let blocker = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    assert_eq!(
+        host.tick(&mut store).unwrap_err().code,
+        CommandErrorCode::Busy
+    );
+    assert_eq!(host.queries.len(), 1);
+    assert!(host.queries[0].pending_outcome.is_some());
+    assert_eq!(
+        host.begin_quiesce(&mut store).unwrap_err().code,
+        CommandErrorCode::Busy
+    );
+    assert!(!host.quiescing);
+    assert!(host.queries[0].pending_outcome.is_some());
+    blocker.execute_batch("ROLLBACK").unwrap();
+    host.begin_quiesce(&mut store).unwrap();
+    host.runtime.finish_quiesce(&mut store).unwrap();
+    assert!(host.queries.is_empty());
+    assert_eq!(
+        store
+            .execution_result(attempt, expected.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        expected.bytes()
+    );
+    assert_eq!(
+        store
+            .execution_attempt(attempt, false)
+            .unwrap()
+            .items
+            .iter()
+            .find(|status| status.item_id == item)
+            .unwrap()
+            .validation,
+        ValidationState::Valid
+    );
+}
+
 fn call(
     webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     command: &str,

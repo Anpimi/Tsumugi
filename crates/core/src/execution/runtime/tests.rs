@@ -364,8 +364,9 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
     let (_temp, mut store, mut runtime, calls) = setup();
     let fixed = input(&store);
     runtime.submit(&mut store, &fixed).unwrap();
+    let cancellation_id = ExecutionId::new();
     runtime
-        .cancel(&mut store, fixed.envelope().task_id, ExecutionId::new())
+        .cancel(&mut store, fixed.envelope().task_id, cancellation_id)
         .unwrap();
     let selected = fixed.envelope().items[0].item_id;
     let attempt = runtime
@@ -375,6 +376,11 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
     let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(call.request.input.envelope().attempt_id, attempt);
     assert_eq!(call.request.item_id, selected);
+    runtime
+        .cancel(&mut store, fixed.envelope().task_id, cancellation_id)
+        .unwrap();
+    assert!(!runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_none());
     call.release.send(ExecutionState::Succeeded).unwrap();
     assert!(call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
     pump_until(&mut runtime, &mut store, |runtime, _| {
@@ -385,4 +391,154 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
         runtime.attempt(&store, attempt).unwrap().progress.succeeded,
         1
     );
+}
+
+#[test]
+fn received_output_survives_a_temporary_database_write_lock() {
+    let (temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    call.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    // The fixture delivers twice; leave exactly one copy for the scheduler.
+    let expected = runtime.workers[0].receiver.try_recv().unwrap();
+    let blocker = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    assert_eq!(runtime.tick(&mut store).unwrap_err().code, ErrorCode::Busy);
+    assert_eq!(
+        runtime.workers[0].pending_result.as_ref().unwrap().bytes(),
+        expected.bytes()
+    );
+    blocker.execute_batch("ROLLBACK").unwrap();
+    runtime.tick(&mut store).unwrap();
+    let saved = store
+        .execution_result(fixed.envelope().attempt_id, expected.envelope().result_id)
+        .unwrap();
+    assert_eq!(saved.bytes(), expected.bytes());
+    let status = runtime
+        .attempt(&store, fixed.envelope().attempt_id)
+        .unwrap();
+    assert_eq!(status.progress.succeeded, 1);
+    assert_eq!(
+        status
+            .items
+            .iter()
+            .find(|item| item.item_id == call.request.item_id)
+            .unwrap()
+            .validation,
+        ValidationState::Valid
+    );
+}
+
+#[test]
+fn timeout_persistence_failure_preserves_worker_ownership_and_concurrency() {
+    let (temp, mut store, mut runtime, calls) = setup();
+    for _ in 0..3 {
+        let fixed = input(&store);
+        runtime.submit(&mut store, &fixed).unwrap();
+    }
+    runtime.tick(&mut store).unwrap();
+    let first = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    let second = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    let blocker = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    assert_eq!(
+        runtime
+            .tick_at(&mut store, Instant::now() + Duration::from_secs(61))
+            .unwrap_err()
+            .code,
+        ErrorCode::Busy
+    );
+    assert_eq!(runtime.workers.len(), 2);
+    assert!(runtime.workers[0].cancellation.is_requested());
+    assert!(calls.try_recv().is_err());
+    blocker.execute_batch("ROLLBACK").unwrap();
+    runtime
+        .tick_at(&mut store, Instant::now() + Duration::from_secs(61))
+        .unwrap();
+    assert!(runtime.workers.is_empty());
+    assert_eq!(runtime.retired.len(), 2);
+    assert!(calls.try_recv().is_err());
+    for call in [first, second] {
+        call.release.send(ExecutionState::Succeeded).unwrap();
+        assert!(!call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    }
+}
+
+#[test]
+fn historical_duplicate_does_not_replace_a_correction_or_block_worker_shutdown() {
+    struct Correcting;
+    impl Runner for Correcting {
+        fn capability_id(&self) -> &str {
+            "correcting"
+        }
+        fn capability_version(&self) -> &str {
+            "1"
+        }
+        fn run(
+            &self,
+            request: DispatchRequest,
+            _: Cancellation,
+            results: ResultSender,
+        ) -> Result<(), ExecutionError> {
+            let first = FixedResult::capture(
+                ResultEnvelope {
+                    project_id: request.input.envelope().project_id,
+                    attempt_id: request.input.envelope().attempt_id,
+                    item_id: request.item_id,
+                    result_id: ExecutionId::new(),
+                    supersedes: None,
+                    dispatch_token: request.dispatch_token,
+                    capability_id: "correcting".into(),
+                    capability_version: "1".into(),
+                    outcome: ExecutionState::Succeeded,
+                    output: Some(json!("original")),
+                    diagnostic: None,
+                },
+                &request.input,
+                request.dispatch_token,
+            )?;
+            let mut corrected = first.envelope().clone();
+            corrected.result_id = ExecutionId::new();
+            corrected.supersedes = Some(first.envelope().result_id);
+            corrected.output = Some(json!("corrected"));
+            let corrected =
+                FixedResult::capture(corrected, &request.input, request.dispatch_token)?;
+            results.send(first.clone())?;
+            results.send(corrected)?;
+            results.send(first)
+        }
+    }
+    let (_temp, mut store, mut runtime, _calls) = setup();
+    runtime.register(Arc::new(Correcting)).unwrap();
+    let mut draft = input(&store).envelope().clone();
+    draft.capability_id = "correcting".into();
+    let fixed = FixedInput::capture(draft).unwrap();
+    runtime.submit(&mut store, &fixed).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, store| {
+        !runtime.has_active_work(store).unwrap()
+    });
+    let view = runtime
+        .attempt(&store, fixed.envelope().attempt_id)
+        .unwrap();
+    assert_eq!(view.progress.succeeded, 3);
+    for item in view.items {
+        assert_eq!(item.validation, ValidationState::Valid);
+        let result_id = store
+            .execution_current_result(fixed.envelope().attempt_id, item.item_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store
+                .execution_result(fixed.envelope().attempt_id, result_id)
+                .unwrap()
+                .envelope()
+                .output,
+            Some(json!("corrected"))
+        );
+    }
+    runtime.begin_quiesce(&mut store).unwrap();
+    runtime.finish_quiesce(&mut store).unwrap();
 }

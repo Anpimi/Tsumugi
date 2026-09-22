@@ -360,7 +360,13 @@ fn read_attempt(
             match load_result(connection, &input, parse_id(result)?) {
                 Ok(output)
                     if output.envelope().item_id == item_id
-                        && output.envelope().outcome == state => {}
+                        && output.envelope().outcome == state
+                        && output
+                            .envelope()
+                            .diagnostic
+                            .as_ref()
+                            .is_some_and(|value| value.retry_safe)
+                            == retry_safe => {}
                 _ => validation = ValidationState::Invalid,
             }
         } else if validation != ValidationState::Absent || state == ExecutionState::Succeeded {
@@ -823,6 +829,7 @@ impl ProjectStore {
                             | ExecutionState::CancelledBeforeDispatch
                             | ExecutionState::Failed
                     )
+                    || status.validation == ValidationState::Invalid
                     || (status.execution == ExecutionState::Failed && !status.retry_safe)
                 {
                     return Err(error(ErrorCode::Unauthorized, "retry-eligibility"));

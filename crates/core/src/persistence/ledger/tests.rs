@@ -547,6 +547,73 @@ fn storage_failure_does_not_leave_a_partial_attempt_and_readability_is_preserved
 }
 
 #[test]
+fn corrupt_retry_projection_cannot_authorize_replaying_an_unsafe_failure() {
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    let input = fixture_input(&store, false);
+    let item = input.envelope().items[0].item_id;
+    store.enqueue_execution(&input).unwrap();
+    let produced = produce(&mut store, &input, item);
+    let mut failed = produced.envelope().clone();
+    failed.outcome = ExecutionState::Failed;
+    failed.output = None;
+    failed.diagnostic = Some(Diagnostic {
+        code: "not-safe-to-replay".into(),
+        retry_safe: false,
+    });
+    let failed = FixedResult::capture(failed, &input, produced.envelope().dispatch_token).unwrap();
+    store.save_execution_result(&failed).unwrap();
+    store.close().unwrap();
+    let connection = Connection::open(path.join(super::super::DATABASE_FILENAME)).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET retry_safe=1 WHERE item_id=?1",
+            [item.to_string()],
+        )
+        .unwrap();
+    drop(connection);
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    let view = reopened
+        .execution_attempt(input.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!(
+        view.items
+            .iter()
+            .find(|status| status.item_id == item)
+            .unwrap()
+            .validation,
+        ValidationState::Invalid
+    );
+    let recovery = reopened
+        .execution_recovery(input.envelope().attempt_id, false)
+        .unwrap();
+    assert!(
+        recovery
+            .units
+            .iter()
+            .all(|unit| !unit.actions.contains(&RecoveryAction::RetrySafeFailure))
+    );
+    assert!(
+        reopened
+            .execution_retry_input(input.envelope().attempt_id, &[item])
+            .is_err()
+    );
+    assert!(
+        reopened
+            .enqueue_execution(&input.retry(&[item]).unwrap())
+            .is_err()
+    );
+    assert_eq!(
+        reopened
+            .execution_result(input.envelope().attempt_id, failed.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        failed.bytes()
+    );
+}
+
+#[test]
 fn execution_crash_child() {
     let Ok(path) = std::env::var("TSUMUGI_EXECUTION_PROJECT") else {
         return;

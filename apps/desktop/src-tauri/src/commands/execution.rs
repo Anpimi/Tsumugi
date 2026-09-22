@@ -89,6 +89,7 @@ struct QueryJob {
     receiver: mpsc::Receiver<Result<QueryOutcome, ExecutionError>>,
     thread: JoinHandle<()>,
     started: Instant,
+    pending_outcome: Option<QueryOutcome>,
 }
 impl ExecutionHost {
     fn new(store: &ProjectStore) -> Result<Self, CommandError> {
@@ -119,19 +120,43 @@ impl ExecutionHost {
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
+        self.poll_queries(store)?;
+        self.runtime.tick(store).map_err(map_read)
+    }
+    fn poll_queries(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.retired_queries.retain(|thread| !thread.is_finished());
         let mut index = 0;
         while index < self.queries.len() {
+            if let Some(outcome) = self.queries[index].pending_outcome.as_ref() {
+                let result = self.runtime.apply_query_outcome(
+                    store,
+                    &self.queries[index].query,
+                    outcome.clone(),
+                );
+                if let Err(error) = &result {
+                    if matches!(
+                        error.code,
+                        ErrorCode::Busy | ErrorCode::StorageFailed | ErrorCode::OutcomeUnknown
+                    ) {
+                        // Retain the same evidence across storage reconciliation.
+                        return Err(map_recover(error.clone()));
+                    }
+                }
+                let job = self.queries.remove(index);
+                self.retired_queries.push(job.thread);
+                result.map_err(map_recover)?;
+                continue;
+            }
             let result = self.queries[index].receiver.try_recv();
             let expired = self.queries[index].started.elapsed() >= Duration::from_secs(60);
             match result {
-                Ok(result) => {
+                Ok(Ok(outcome)) => {
+                    self.queries[index].pending_outcome = Some(outcome);
+                }
+                Ok(Err(error)) => {
                     let job = self.queries.remove(index);
                     self.retired_queries.push(job.thread);
-                    let outcome = result.map_err(map_recover)?;
-                    self.runtime
-                        .apply_query_outcome(store, &job.query, outcome)
-                        .map_err(map_recover)?;
+                    return Err(map_recover(error));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     let job = self.queries.remove(index);
@@ -146,7 +171,21 @@ impl ExecutionHost {
                 Err(mpsc::TryRecvError::Empty) => index += 1,
             }
         }
-        self.runtime.tick(store).map_err(map_read)
+        Ok(())
+    }
+    fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
+        // Persist already received evidence before revoking late callbacks.
+        // Storage failure retains the session and pending evidence for retry.
+        self.poll_queries(store)?;
+        self.quiescing = true;
+        for job in self.queries.drain(..) {
+            self.retired_queries.push(job.thread);
+        }
+        match self.runtime.begin_quiesce(store) {
+            Ok(()) => Ok(()),
+            Err(error) if error.code == ErrorCode::Busy => Ok(()),
+            Err(error) => Err(map_execution(error, CommandStage::ExecutionQuiesce)),
+        }
     }
     fn allow_mutation(&self) -> Result<(), CommandError> {
         if self.quiescing {
@@ -658,6 +697,7 @@ pub fn recover_execution(
                 receiver,
                 thread,
                 started: Instant::now(),
+                pending_outcome: None,
             });
             response.query_started = true;
         }
@@ -759,17 +799,7 @@ pub fn quiesce_execution(
     )?;
     let (host, store) = active.execution_parts()?;
     if !host.quiescing {
-        host.quiescing = true;
-        // Dropping every receiver revokes query writes; running threads own no
-        // session data and can finish independently after the project closes.
-        for job in host.queries.drain(..) {
-            host.retired_queries.push(job.thread);
-        }
-        match host.runtime.begin_quiesce(store) {
-            Ok(()) => {}
-            Err(error) if error.code == ErrorCode::Busy => {}
-            Err(error) => return Err(map_execution(error, CommandStage::ExecutionQuiesce)),
-        }
+        host.begin_quiesce(store)?;
     }
     match host.runtime.finish_quiesce(store) {
         Ok(()) => host.quiescing = false,

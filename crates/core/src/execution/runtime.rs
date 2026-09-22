@@ -12,6 +12,20 @@ use std::{
 
 const CONCURRENCY: usize = 2;
 
+fn persist_result(store: &mut ProjectStore, result: &FixedResult) -> Result<(), ExecutionError> {
+    store.save_execution_result(result)?;
+    let envelope = result.envelope();
+    // Historical same-identity delivery is an allowed no-op. Only the current
+    // result can advance validation; never replace a newer corrected result.
+    if envelope.outcome == ExecutionState::Succeeded
+        && store.execution_current_result(envelope.attempt_id, envelope.item_id)?
+            == Some(envelope.result_id)
+    {
+        store.validate_execution_result(envelope.attempt_id, envelope.result_id)?;
+    }
+    Ok(())
+}
+
 struct Worker {
     request: DispatchRequest,
     cancellation: Cancellation,
@@ -19,6 +33,8 @@ struct Worker {
     thread: JoinHandle<Result<(), ExecutionError>>,
     started: Instant,
     cancellation_started: Option<Instant>,
+    pending_result: Option<FixedResult>,
+    stop_reason: Option<&'static str>,
 }
 
 /// Session-owned scheduler. `tick` only performs bounded polling and short store
@@ -121,10 +137,7 @@ impl ExecutionRuntime {
                         "query-result",
                     ));
                 }
-                store.save_execution_result(&result)?;
-                if envelope.outcome == ExecutionState::Succeeded {
-                    store.validate_execution_result(envelope.attempt_id, envelope.result_id)?;
-                }
+                persist_result(store, &result)?;
                 Ok(true)
             }
             QueryOutcome::Pending | QueryOutcome::Unavailable => Ok(false),
@@ -159,48 +172,53 @@ impl ExecutionRuntime {
         self.retired = remaining;
         let mut index = 0;
         while index < self.workers.len() {
-            let worker = &self.workers[index];
+            let worker = &mut self.workers[index];
             let attempt = worker.request.input.envelope().attempt_id;
             let item = worker.request.item_id;
-            let mut protocol_error = None;
+            let finished_before_drain = worker.thread.is_finished();
+            let mut drained = false;
             // A producer may refill the channel; do not let it monopolize the session.
             for _ in 0..8 {
-                match worker.receiver.try_recv() {
-                    Ok(result) => {
-                        if result.envelope().item_id != item
-                            || result.envelope().attempt_id != attempt
-                        {
-                            protocol_error = Some("result-association");
+                if worker.stop_reason.is_some() {
+                    break;
+                }
+                if worker.pending_result.is_none() {
+                    match worker.receiver.try_recv() {
+                        Ok(result) => worker.pending_result = Some(result),
+                        Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
+                            drained = true;
                             break;
                         }
-                        match store.save_execution_result(&result) {
-                            Ok(_) => {
-                                if result.envelope().outcome == ExecutionState::Succeeded {
-                                    store.validate_execution_result(
-                                        attempt,
-                                        result.envelope().result_id,
-                                    )?;
-                                }
-                            }
-                            Err(error)
-                                if matches!(
-                                    error.code,
-                                    ErrorCode::ResultMismatch
-                                        | ErrorCode::OutputInvalid
-                                        | ErrorCode::LimitExceeded
-                                        | ErrorCode::InvalidInput
-                                ) =>
-                            {
-                                protocol_error = Some("result-protocol");
-                                break;
-                            }
-                            Err(error) => return Err(error),
-                        }
                     }
-                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                 }
+                if let Some(result) = worker.pending_result.as_ref() {
+                    if result.envelope().item_id != item || result.envelope().attempt_id != attempt
+                    {
+                        worker.stop_reason = Some("result-association");
+                        break;
+                    }
+                    match persist_result(store, result) {
+                        Ok(()) => {}
+                        Err(error)
+                            if matches!(
+                                error.code,
+                                ErrorCode::ResultMismatch
+                                    | ErrorCode::OutputInvalid
+                                    | ErrorCode::LimitExceeded
+                                    | ErrorCode::InvalidInput
+                            ) =>
+                        {
+                            worker.stop_reason = Some("result-protocol");
+                            break;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                // Storage failures leave this bounded message owned by the worker.
+                // Re-delivery after reconciliation uses the same immutable identity.
+                worker.pending_result = None;
             }
-            let worker = &self.workers[index];
+            let worker = &mut self.workers[index];
             let timed_out = now.saturating_duration_since(worker.started)
                 >= Duration::from_millis(worker.request.input.envelope().limits.timeout_ms as u64);
             let cancelled_wait = worker.cancellation_started.is_some_and(|started| {
@@ -209,56 +227,24 @@ impl ExecutionRuntime {
                         worker.request.input.envelope().limits.cancel_wait_ms as u64,
                     )
             });
-            if let Some(reason) = protocol_error {
-                store.note_execution_unknown(attempt, item, reason)?;
-            }
-            if timed_out || cancelled_wait || protocol_error.is_some() {
-                let worker = self.workers.remove(index);
+            if timed_out || cancelled_wait || worker.stop_reason.is_some() {
                 worker.cancellation.request();
-                store.note_execution_unknown(
-                    attempt,
-                    item,
-                    if timed_out {
-                        "runner-timeout"
-                    } else {
-                        "runner-stopped"
-                    },
-                )?;
+                let reason = *worker.stop_reason.get_or_insert(if timed_out {
+                    "runner-timeout"
+                } else {
+                    "runner-stopped"
+                });
+                store.note_execution_unknown(attempt, item, reason)?;
+                let worker = self.workers.remove(index);
                 // Dropping the receiver revokes the only path back to this store.
                 self.retired.push((attempt, worker.thread));
                 continue;
             }
-            if worker.thread.is_finished() {
-                // Drain again after join on the next tick if up to eight results
-                // were consumed while the producer was still writing.
-                match worker.receiver.try_recv() {
-                    Ok(result) => {
-                        if result.envelope().item_id != item
-                            || result.envelope().attempt_id != attempt
-                        {
-                            store.note_execution_unknown(attempt, item, "result-association")?;
-                        } else {
-                            store.save_execution_result(&result)?;
-                            if result.envelope().outcome == ExecutionState::Succeeded {
-                                store.validate_execution_result(
-                                    attempt,
-                                    result.envelope().result_id,
-                                )?;
-                            }
-                        }
-                        index += 1;
-                        continue;
-                    }
-                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
-                }
+            if finished_before_drain && drained {
+                // Keep the worker until its final durable transition succeeds.
+                store.note_execution_unknown(attempt, item, "result-missing")?;
                 let worker = self.workers.remove(index);
-                let outcome = worker.thread.join();
-                let reason = if matches!(outcome, Ok(Ok(()))) {
-                    "result-missing"
-                } else {
-                    "runner-outcome-unknown"
-                };
-                store.note_execution_unknown(attempt, item, reason)?;
+                let _ = worker.thread.join();
                 continue;
             }
             index += 1;
@@ -307,6 +293,8 @@ impl ExecutionRuntime {
                     thread,
                     started: now,
                     cancellation_started: None,
+                    pending_result: None,
+                    stop_reason: None,
                 }),
                 Err(_) => {
                     store.note_execution_unknown(attempt, item.item_id, "runner-start-failed")?;
@@ -327,7 +315,13 @@ impl ExecutionRuntime {
     ) -> Result<Revision, ExecutionError> {
         let revision = store.cancel_execution(task, request)?;
         for worker in &mut self.workers {
-            if worker.request.input.envelope().task_id == task {
+            if worker.request.input.envelope().task_id == task
+                && store
+                    .execution_attempt(worker.request.input.envelope().attempt_id, true)?
+                    .items
+                    .iter()
+                    .any(|item| item.cancellation_requested)
+            {
                 worker.cancellation.request();
                 worker.cancellation_started.get_or_insert_with(Instant::now);
             }

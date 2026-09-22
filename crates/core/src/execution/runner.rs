@@ -24,6 +24,7 @@ pub struct DispatchRequest {
     pub dispatch_token: ExecutionId,
 }
 
+#[derive(Clone)]
 pub enum QueryOutcome {
     Known(FixedResult),
     Pending,
