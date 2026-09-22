@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { i18n } from "./i18n";
-import { LAST_OPEN_PROJECT_STORAGE_KEY } from "./recentProjects";
+import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -62,6 +62,60 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("clears a rejected create result after explicitly discarding the draft", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", stage: "create", context: {} });
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.type(screen.getByLabelText(/Parent folder/), "C:\\Projects");
+    await user.type(screen.getByLabelText(/Project name/), "Occupied");
+    await user.click(screen.getByRole("button", { name: "Create and open" }));
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "No project open" })).toBeInTheDocument();
+  });
+
+  it.each([false, true])("replaces the previous recent locator after a confirmed move (reconciled: %s)", async (reconciled) => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.clear(screen.getByRole("textbox", { name: "Project name" }));
+    await user.type(screen.getByRole("textbox", { name: "Project name" }), "Moved");
+    await user.click(screen.getByRole("checkbox", { name: "Also rename the project folder" }));
+    const moved = { ...projectView("Moved", "2", "committed"), locator: "C:\\Projects\\Moved" };
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "rename_project") {
+        if (reconciled) throw new Error("acknowledgement lost");
+        return { ...moved, outcome: "changed", directoryChanged: true };
+      }
+      return moved;
+    });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("heading", { name: "Moved" });
+    expect(readRecentProjects().map((item) => item.locator)).toEqual([moved.locator]);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
+  });
+
+  it("clears a corrected folder conflict without removing the existing recent locator", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.clear(screen.getByRole("textbox", { name: "Project name" }));
+    await user.type(screen.getByRole("textbox", { name: "Project name" }), "Occupied");
+    await user.click(screen.getByRole("checkbox", { name: "Also rename the project folder" }));
+    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", stage: "write", context: {} });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByRole("alert");
+    expect(readRecentProjects().map((item) => item.locator)).toEqual([projectView().locator]);
+    await user.type(screen.getByRole("textbox", { name: "Project name" }), "2");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Also rename the project folder" })).toBeChecked();
+  });
+
   it("destroys the native window only after releasing the project and preserves the restore candidate", async () => {
     const user = userEvent.setup();
     await renderApp();
@@ -388,9 +442,10 @@ describe("project lifecycle workbench", () => {
     expect(screen.getByLabelText(/Project name/)).toHaveValue("Draft project");
   });
 
-  it("treats opening the active project again as a no-op and keeps an editor draft", async () => {
+  it.each(["C:\\Projects\\demo", "\\\\?\\C:\\Projects\\demo"])("keeps a draft when reopening the active locator %s", async (locator) => {
     const user = userEvent.setup();
     await renderApp();
+    mocks.invoke.mockResolvedValueOnce({ ...projectView(), locator });
     await createProject(user);
     await user.click(screen.getByRole("button", { name: "Rename" }));
     const editor = screen.getByRole("textbox", { name: /Project name/ });

@@ -373,8 +373,16 @@ function App() {
     setFeedback((current) => current?.code === "invalid-input" && current.field === field ? null : current);
   }
 
-  function rememberOpenedProject(view: ProjectView) {
-    const recent = rememberProject(view);
+  function clearEditorFeedback() {
+    setFeedback((current) => {
+      if (current?.code === "invalid-input" && (current.field === editorErrorField || (activeForm?.kind === "rename" && current.field === "directoryName"))) return null;
+      if (activeForm?.kind === "rename" && current?.code === "destination-conflict") return null;
+      return current;
+    });
+  }
+
+  function rememberOpenedProject(view: ProjectView, replacedLocator?: string) {
+    const recent = rememberProject(view, replacedLocator);
     setRecentProjects(recent);
     setRestoreCandidate(recent[0] ?? null);
   }
@@ -613,7 +621,7 @@ function App() {
       const view = await projectCommands.read({ sessionToken: project.sessionToken });
       const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
       setProject(view);
-      if (locatorChanged) rememberOpenedProject(view);
+      if (locatorChanged) rememberOpenedProject(view, project.locator);
       setActiveForm((current) =>
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
@@ -645,7 +653,7 @@ function App() {
       }
       const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
       setProject(view);
-      if (locatorChanged) rememberOpenedProject(view);
+      if (locatorChanged) rememberOpenedProject(view, project.locator);
       setActiveForm((current) =>
         current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
@@ -714,7 +722,7 @@ function App() {
         : null;
       setProject(nextProject);
       pendingSave.current = null;
-      if (nextProject && form.kind === "rename" && result.directoryChanged) rememberOpenedProject(nextProject);
+      if (nextProject && form.kind === "rename" && result.directoryChanged) rememberOpenedProject(nextProject, project.locator);
       editorForm.reset(EDITOR_DEFAULT_VALUES);
       setActiveForm(null);
       setOperation("idle");
@@ -757,6 +765,7 @@ function App() {
       return;
     }
     if (intent.kind === "panel") {
+      clearFeedback();
       setClosedPanel(intent.panel);
       createForm.reset(CREATE_DEFAULT_VALUES);
       folderNameEdited.current = false;
@@ -849,7 +858,7 @@ function App() {
       .then((view) => {
         const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
         setProject(view);
-        if (locatorChanged) rememberOpenedProject(view);
+        if (locatorChanged) rememberOpenedProject(view, project.locator);
         setActiveForm((current) => (current ? { ...current, expectedRevision: view.metadata.metadataRevision } : current));
         setOperation("idle");
         setFeedback({ tone: "info", messageKey: "feedback.opened" });
@@ -1387,7 +1396,7 @@ function App() {
                 ) : null}
 
                 {activeForm ? (
-                  <form className="editor-card" onChange={() => clearFieldFeedback(editorErrorField)} onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
+                  <form className="editor-card" onChange={clearEditorFeedback} onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
                     <fieldset className="editor-fields" disabled={busy}>
                     <div className="editor-heading">
                       <div>

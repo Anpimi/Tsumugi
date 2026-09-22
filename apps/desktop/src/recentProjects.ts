@@ -10,8 +10,11 @@ export const LAST_OPEN_PROJECT_STORAGE_KEY = "tsumugi.lastOpenProject";
 export const MAX_RECENT_PROJECTS = 5;
 
 export function normalizeLocator(locator: string): string {
-  const trimmed = locator.trim().replace(/\//g, "\\");
+  let trimmed = locator.trim().replace(/\//g, "\\");
   if (!trimmed) return "";
+  // Rust canonical paths use the Windows verbatim prefix; typed paths usually do not.
+  if (trimmed.startsWith("\\\\?\\") && /^[A-Za-z]:\\/.test(trimmed.slice(4))) trimmed = trimmed.slice(4);
+  else if (trimmed.toLowerCase().startsWith("\\\\?\\unc\\")) trimmed = `\\\\${trimmed.slice(8)}`;
 
   const drive = trimmed.match(/^([A-Za-z]):/);
   const isUnc = trimmed.startsWith("\\\\");
@@ -76,13 +79,17 @@ export function recentProjectName(locator: string): string {
   return segments.at(-1) ?? locator;
 }
 
-export function rememberProject(view: ProjectView): RecentProject[] {
+export function rememberProject(view: ProjectView, replacedLocator?: string): RecentProject[] {
   const entry: RecentProject = {
     locator: view.locator,
     lastOpenedAt: Date.now(),
   };
   const identity = normalizeLocator(entry.locator);
-  const recent = [entry, ...readRecentProjects().filter((item) => normalizeLocator(item.locator) !== identity)].slice(
+  const replacedIdentity = replacedLocator === undefined ? undefined : normalizeLocator(replacedLocator);
+  const recent = [entry, ...readRecentProjects().filter((item) => {
+    const itemIdentity = normalizeLocator(item.locator);
+    return itemIdentity !== identity && itemIdentity !== replacedIdentity;
+  })].slice(
     0,
     MAX_RECENT_PROJECTS,
   );
