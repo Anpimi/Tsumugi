@@ -126,6 +126,8 @@ export const enUS = {
       createTitle: "Leave this project setup?",
       createMessage: "Your new project is not created yet. Leave setup and discard the information entered so far?",
       createSupporting: "Choose Keep editing to preserve the setup, or Discard to return to the start screen.",
+      createWindowCloseMessage: "Your project has not been created. Quit Tsumugi and discard this setup?",
+      createWindowCloseSupporting: "Choose Keep editing to preserve the setup, or Discard changes to quit Tsumugi.",
     },
     feedback: {
       created: "Project created and opened.",

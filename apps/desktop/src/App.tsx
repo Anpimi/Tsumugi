@@ -327,7 +327,6 @@ function App() {
   const [restoreCandidate, setRestoreCandidate] = useState<RecentProject | null>(() => readLastOpenProject());
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
   const [copiedLocator, setCopiedLocator] = useState(false);
-  const allowWindowClose = useRef(false);
   const pendingSave = useRef<PendingSave | null>(null);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
@@ -560,7 +559,7 @@ function App() {
     }
   }
 
-  async function executeClose() {
+  async function executeClose(preserveRestoreCandidate = false) {
     if (!project || busy) return false;
     setOperation("closing");
     setFeedback({ tone: "info", messageKey: "status.closing" });
@@ -568,8 +567,10 @@ function App() {
       const result: CloseProjectView = await projectCommands.close({ sessionToken: project.sessionToken });
       if (!result.closed) throw new Error("close-not-confirmed");
       setProject(null);
-      clearLastOpenProject();
-      setRestoreCandidate(null);
+      if (!preserveRestoreCandidate) {
+        clearLastOpenProject();
+        setRestoreCandidate(null);
+      }
       setActiveForm(null);
       editorForm.reset(EDITOR_DEFAULT_VALUES);
       setOpenPanel(false);
@@ -587,23 +588,19 @@ function App() {
   async function executeWindowClose() {
     if (!project) {
       try {
-        allowWindowClose.current = true;
-        await getCurrentWindow().close();
+        await getCurrentWindow().destroy();
         return true;
       } catch {
-        allowWindowClose.current = false;
         setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
         return false;
       }
     }
-    const closed = await executeClose();
+    const closed = await executeClose(true);
     if (!closed) return false;
     try {
-      allowWindowClose.current = true;
-      await getCurrentWindow().close();
+      await getCurrentWindow().destroy();
       return true;
     } catch {
-      allowWindowClose.current = false;
       setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
       return false;
     }
@@ -971,7 +968,6 @@ function App() {
     try {
       void getCurrentWindow()
         .onCloseRequested(async (event) => {
-          if (allowWindowClose.current) return;
           event.preventDefault();
           if (disposed) return;
           if (busy) {
@@ -1392,6 +1388,7 @@ function App() {
 
                 {activeForm ? (
                   <form className="editor-card" onChange={() => clearFieldFeedback(editorErrorField)} onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
+                    <fieldset className="editor-fields" disabled={busy}>
                     <div className="editor-heading">
                       <div>
                         <p className="eyebrow">{activeForm.kind === "rename" ? t("project.rename") : t("project.addTarget")}</p>
@@ -1421,7 +1418,6 @@ function App() {
                         aria-label={activeForm.kind === "rename" ? t("editor.renameLabel") : t("editor.targetLabel")}
                         aria-invalid={Boolean(editorForm.formState.errors.value || fieldError(feedback, editorErrorField))}
                         autoFocus
-                        disabled={busy}
                         {...editorForm.register("value", { required: true, validate: (value) => Boolean(value.trim()) })}
                       />
                       <small>{activeForm.kind === "rename" ? t("editor.renameHelp") : t("editor.targetHelp")}</small>
@@ -1438,7 +1434,6 @@ function App() {
                         <input
                           type="checkbox"
                           aria-label={t("editor.syncDirectoryName")}
-                          disabled={busy}
                           {...editorForm.register("syncDirectoryName")}
                         />
                         <span>
@@ -1454,6 +1449,7 @@ function App() {
                         {busy ? t("status.saving") : t("editor.save")}
                       </button>
                     </div>
+                    </fieldset>
                   </form>
                 ) : null}
               </section>
@@ -1493,7 +1489,9 @@ function App() {
               <p className="eyebrow">{createDraftDirty ? t("empty.create") : t("status.unsaved")}</p>
               <DialogTitle>{createDraftDirty ? t("dialog.createTitle") : t("dialog.title")}</DialogTitle>
               <DialogDescription>
-                {navigationIntent?.kind === "panel"
+                {createDraftDirty && navigationIntent?.kind === "window-close"
+                  ? t("dialog.createWindowCloseMessage")
+                  : navigationIntent?.kind === "panel"
                   ? t("dialog.createMessage")
                   : navigationIntent?.kind === "close" || navigationIntent?.kind === "window-close"
                   ? t("dialog.closeMessage")
@@ -1501,7 +1499,9 @@ function App() {
                     ? t("dialog.openMessage")
                     : t("dialog.formMessage")}
               </DialogDescription>
-              <p className="dialog-supporting-copy">{createDraftDirty ? t("dialog.createSupporting") : t("dialog.message")}</p>
+              <p className="dialog-supporting-copy">{createDraftDirty
+                ? t(navigationIntent?.kind === "window-close" ? "dialog.createWindowCloseSupporting" : "dialog.createSupporting")
+                : t("dialog.message")}</p>
               {!createDraftDirty && feedback && (feedback.tone === "error" || feedback.tone === "warning") ? (
                 <div className={`dialog-feedback feedback-${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>
                   <span>{renderFeedbackMessage(t, feedback)}</span>

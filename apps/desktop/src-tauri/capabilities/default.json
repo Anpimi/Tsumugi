@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Permissions for the Tsumugi desktop shell",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-close", "dialog:allow-open"]
+  "permissions": ["core:default", "core:window:allow-destroy", "dialog:allow-open"]
 }

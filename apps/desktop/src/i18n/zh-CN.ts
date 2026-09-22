@@ -128,6 +128,8 @@ export const zhCN = {
       createTitle: "要离开项目设置吗？",
       createMessage: "项目还没有创建。离开设置会放弃目前填写的内容。",
       createSupporting: "选择“继续编辑”可以保留设置；选择“放弃更改”会返回开始页面。",
+      createWindowCloseMessage: "项目尚未创建。要放弃当前填写的内容并退出 Tsumugi 吗？",
+      createWindowCloseSupporting: "选择“继续编辑”可以保留设置；选择“放弃更改”会退出 Tsumugi。",
     },
     feedback: {
       created: "项目已创建并打开。",

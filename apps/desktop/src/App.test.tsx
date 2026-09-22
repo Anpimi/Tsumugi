@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   onCloseRequested: vi.fn(),
   close: vi.fn(),
+  destroy: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
@@ -20,6 +21,7 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onCloseRequested: mocks.onCloseRequested,
     close: mocks.close,
+    destroy: mocks.destroy,
   }),
 }));
 
@@ -60,6 +62,46 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("destroys the native window only after releasing the project and preserves the restore candidate", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    mocks.invoke.mockResolvedValueOnce({ closed: true });
+    const event = { preventDefault: vi.fn() };
+    await mocks.onCloseRequested.mock.calls.at(-1)![0](event);
+    await waitFor(() => expect(mocks.destroy).toHaveBeenCalledOnce());
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(mocks.close).not.toHaveBeenCalled();
+    expect(mocks.invoke).toHaveBeenLastCalledWith("close_project", { request: { sessionToken: "session-1" } });
+    expect(localStorage.getItem(LAST_OPEN_PROJECT_STORAGE_KEY)).not.toBeNull();
+  });
+
+  it("preserves folder synchronization after a rejected save and navigation retry", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.clear(screen.getByRole("textbox", { name: "Project name" }));
+    await user.type(screen.getByRole("textbox", { name: "Project name" }), "Occupied");
+    const checkbox = screen.getByRole("checkbox", { name: "Also rename the project folder" });
+    await user.click(checkbox);
+    let rejectSave!: (reason: unknown) => void;
+    mocks.invoke.mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(checkbox).toBeDisabled());
+    rejectSave({ code: "destination-conflict", stage: "rename", recoveryRequired: false });
+    await waitFor(() => expect(checkbox).toBeEnabled());
+    expect(checkbox).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", stage: "rename", recoveryRequired: false });
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save and continue" }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith("rename_project", {
+      request: { sessionToken: "session-1", expectedRevision: "1", displayName: "Occupied", directoryName: "Occupied" },
+    }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(mocks.destroy).not.toHaveBeenCalled();
+  });
+
   it("reads authoritative state after an unstructured save rejection without replaying", async () => {
     const user = userEvent.setup();
     await renderApp();
@@ -134,13 +176,13 @@ describe("project lifecycle workbench", () => {
 
   it("reports native close failures and permits a subsequent close request", async () => {
     await renderApp();
-    mocks.close.mockRejectedValueOnce(new Error("native close rejected"));
+    mocks.destroy.mockRejectedValueOnce(new Error("native destroy rejected"));
     const event = { preventDefault: vi.fn() };
     await mocks.onCloseRequested.mock.calls.at(-1)![0](event);
     await screen.findByText("The window could not close. Your saved project is safe. Try closing the window again.");
     expect(event.preventDefault).toHaveBeenCalledOnce();
     await mocks.onCloseRequested.mock.calls.at(-1)![0](event);
-    expect(mocks.close).toHaveBeenCalledTimes(2);
+    expect(mocks.destroy).toHaveBeenCalledTimes(2);
   });
 
   it("locks submitted create fields until creation finishes and retains a rejected draft", async () => {
@@ -293,6 +335,7 @@ describe("project lifecycle workbench", () => {
     mocks.open.mockResolvedValue(null);
     mocks.onCloseRequested.mockResolvedValue(() => undefined);
     mocks.close.mockResolvedValue(undefined);
+    mocks.destroy.mockResolvedValue(undefined);
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === "create_project") return projectView();
       if (command === "close_project") return { closed: true };
