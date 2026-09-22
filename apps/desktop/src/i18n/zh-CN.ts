@@ -24,7 +24,7 @@ export const zhCN = {
   "imported": "已导入源内容",
   "range": "{{namespace}} · {{count}} 条原文 · {{language}}",
   "fingerprint": "文件摘要",
-  "identityHelp": "每个原生键保留独立的内容身份，即使文本相同也不会合并。此次导入将建立项目的第一份源快照。",
+  "identityHelp": "每个原生键保留独立的内容身份，即使文本相同也不会合并。",
   "pageRange": "显示第 {{first}}–{{last}} 条，共 {{total}} 条",
   "key": "原生键",
   "text": "原文",

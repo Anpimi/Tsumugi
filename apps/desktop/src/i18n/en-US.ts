@@ -22,7 +22,7 @@ export const enUS = {
   "imported": "Imported source content",
   "range": "{{namespace}} · {{count}} strings · {{language}}",
   "fingerprint": "File fingerprint",
-  "identityHelp": "Each native key keeps a separate content identity, even when its text matches another key. This import creates the project's first source snapshot.",
+  "identityHelp": "Each native key keeps a separate content identity, even when its text matches another key.",
   "pageRange": "Showing {{first}}–{{last}} of {{total}}",
   "key": "Native key",
   "text": "Original text",
