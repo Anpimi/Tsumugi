@@ -3,7 +3,7 @@
 //! Generating a result never grants permission to apply it. Persistence and the
 //! active project session must check these associations again at every mutation.
 
-mod codec;
+pub(crate) mod codec;
 mod runner;
 
 use serde::{Deserialize, Serialize};
@@ -777,6 +777,10 @@ impl AdoptionAction {
         results: &[FixedResult],
     ) -> Result<String, ExecutionError> {
         self.validate(input, results)?;
+        self.request_digest(input)
+    }
+    pub(crate) fn request_digest(&self, input: &FixedInput) -> Result<String, ExecutionError> {
+        codec::validate_depth(&self.parameters, 1)?;
         let mut action = self.clone();
         action.result_ids.sort();
         // The exact frozen input binds scopes, dependencies, settings and versions.

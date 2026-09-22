@@ -128,6 +128,8 @@ pnpm --dir apps/desktop tauri dev
 
 The desktop shell supports creating, opening, renaming, closing, and reconciling local projects, as well as adding target locales. These operations use Tauri commands. Translation and the remaining workbench modules are planned for later development.
 
+New projects use database schema 2. Earlier development databases are not supported and are left in place; create a project in a new directory to use this version. There is no automatic migration or reset. The application remains in the unreleased 0.1.0 development batch.
+
 ## Status
 
 Tsumugi is in early development. Current work focuses on the foundations for complete localization workflows:

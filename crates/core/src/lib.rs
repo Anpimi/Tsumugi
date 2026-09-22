@@ -8,7 +8,8 @@ mod persistence;
 mod project;
 
 pub use persistence::{
-    PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore, Reconciliation,
+    AttemptView, PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore,
+    Reconciliation, TaskView,
 };
 
 #[cfg(test)]

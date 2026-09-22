@@ -13,10 +13,13 @@ use rusqlite::{Connection, OpenFlags, params};
 
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
+mod ledger;
+pub use ledger::{AttemptView, TaskView};
+
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -192,6 +195,7 @@ pub struct ProjectStore {
     connection: Option<Connection>,
     lock: Option<File>,
     pending: Option<PendingChange>,
+    execution_unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
     fault: Option<StorageFault>,
     #[cfg(test)]
@@ -232,6 +236,7 @@ impl ProjectStore {
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
+            execution_unknown: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -282,6 +287,7 @@ impl ProjectStore {
             connection: Some(connection),
             lock: Some(lock),
             pending: None,
+            execution_unknown: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -335,10 +341,17 @@ impl ProjectStore {
 
     pub fn is_reconciling(&self) -> bool {
         self.pending.is_some()
+            || self
+                .execution_unknown
+                .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Re-read durable state and resolve an acknowledgement lost at commit.
     pub fn reconcile(&mut self) -> Result<Reconciliation, PersistenceError> {
+        self.reconcile_execution()
+            .map_err(|_| PersistenceError::OutcomeUnknown {
+                stage: PersistenceStage::Reconcile,
+            })?;
         let connection = self.connection()?;
         let current =
             read_metadata_from(connection).map_err(|_| PersistenceError::OutcomeUnknown {
@@ -362,7 +375,7 @@ impl ProjectStore {
 
     /// Release the database connection and ownership marker lock.
     pub fn close(mut self) -> Result<(), PersistenceError> {
-        if self.pending.is_some() {
+        if self.is_reconciling() {
             return Err(PersistenceError::OutcomeUnknown {
                 stage: PersistenceStage::Close,
             });
@@ -380,7 +393,7 @@ impl ProjectStore {
     where
         F: FnOnce(&ProjectMetadata) -> Result<crate::MetadataChange, MetadataError>,
     {
-        if self.pending.is_some() {
+        if self.is_reconciling() {
             return Err(PersistenceError::OutcomeUnknown {
                 stage: PersistenceStage::Reconcile,
             });
@@ -393,7 +406,7 @@ impl ProjectStore {
 
         let connection = self.connection_mut()?;
         let transaction = connection
-            .transaction()
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Write))?;
         let previous = read_metadata_from(&transaction)?;
         let change = transition(&previous)
@@ -514,6 +527,8 @@ fn initialize_schema(
         .execute(CREATE_METADATA_TABLE, [])
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     insert_metadata(&transaction, metadata)?;
+    ledger::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
         .map_err(|error| map_commit_error(error))?;
@@ -662,6 +677,9 @@ fn encode_target_locales(metadata: &ProjectMetadata) -> Result<String, Persisten
 
 fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceError> {
     connection
+        .pragma_update(None, "foreign_keys", true)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    connection
         .busy_timeout(BUSY_TIMEOUT)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     connection
@@ -680,6 +698,9 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
 }
 
 fn validate_existing_connection(connection: &Connection) -> Result<(), PersistenceError> {
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     connection
         .busy_timeout(BUSY_TIMEOUT)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -728,7 +749,7 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
         .collect::<Result<_, _>>()
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if table_names != [String::from("project_metadata")] {
+    if table_names != ledger::table_names() {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         });
@@ -755,6 +776,9 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
             stage: PersistenceStage::Open,
         });
     }
+    ledger::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
     Ok(())
 }
 
