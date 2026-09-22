@@ -82,6 +82,54 @@ impl ExecutionRuntime {
             .iter()
             .any(|worker| worker.request.input.envelope().attempt_id == attempt)
     }
+    /// Rebuild only eligible remaining work from durable evidence. Capability
+    /// registration and enqueue-time checks remain authoritative.
+    pub fn resume(
+        &mut self,
+        store: &mut ProjectStore,
+        attempt: ExecutionId,
+        items: &[ExecutionId],
+    ) -> Result<ExecutionId, ExecutionError> {
+        if self.is_active(attempt) || self.retired.iter().any(|(id, _)| *id == attempt) {
+            return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
+        }
+        let input = store.execution_retry_input(attempt, items)?;
+        self.submit(store, &input)?;
+        Ok(input.envelope().attempt_id)
+    }
+    pub fn apply_query_outcome(
+        &self,
+        store: &mut ProjectStore,
+        query: &OutcomeQuery,
+        outcome: QueryOutcome,
+    ) -> Result<bool, ExecutionError> {
+        if !self.accepting || self.generation != query.generation {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "session-generation",
+            ));
+        }
+        match outcome {
+            QueryOutcome::Known(result) => {
+                let envelope = result.envelope();
+                if envelope.attempt_id != query.request.input.envelope().attempt_id
+                    || envelope.item_id != query.request.item_id
+                    || envelope.dispatch_token != query.request.dispatch_token
+                {
+                    return Err(ExecutionError::new(
+                        ErrorCode::ResultMismatch,
+                        "query-result",
+                    ));
+                }
+                store.save_execution_result(&result)?;
+                if envelope.outcome == ExecutionState::Succeeded {
+                    store.validate_execution_result(envelope.attempt_id, envelope.result_id)?;
+                }
+                Ok(true)
+            }
+            QueryOutcome::Pending | QueryOutcome::Unavailable => Ok(false),
+        }
+    }
     pub fn has_active_work(&self, store: &ProjectStore) -> Result<bool, ExecutionError> {
         Ok(!self.workers.is_empty()
             || !store
@@ -294,6 +342,19 @@ impl ExecutionRuntime {
     ) -> Result<Option<OutcomeQuery>, ExecutionError> {
         // The returned operation owns no store and can run outside the session
         // lock. The host rechecks generation before persisting its outcome.
+        if !self.accepting || self.is_active(attempt) {
+            return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
+        }
+        let plan = store.execution_recovery(attempt, false)?;
+        if !plan.units.iter().any(|unit| {
+            unit.actions.contains(&RecoveryAction::QueryOutcome)
+                && unit.remaining_item_ids.contains(&item)
+        }) {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "query-eligibility",
+            ));
+        }
         let request = store.execution_dispatch(attempt, item)?;
         let Some(runner) = self.runners.get(&(
             request.input.envelope().capability_id.clone(),

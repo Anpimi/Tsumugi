@@ -344,10 +344,45 @@ fn timed_out_producer_remains_unknown_and_holds_its_concurrency_slot() {
     runtime.finish_quiesce(&mut store).unwrap();
     assert_eq!(
         runtime
+            .apply_query_outcome(&mut store, &query, QueryOutcome::Unavailable)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(
+        runtime
             .attempt(&store, fixed.envelope().attempt_id)
             .unwrap()
             .progress
             .unknown,
+        1
+    );
+}
+
+#[test]
+fn explicit_resume_dispatches_only_eligible_remaining_work() {
+    let (_temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime
+        .cancel(&mut store, fixed.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    let selected = fixed.envelope().items[0].item_id;
+    let attempt = runtime
+        .resume(&mut store, fixed.envelope().attempt_id, &[selected])
+        .unwrap();
+    runtime.tick(&mut store).unwrap();
+    let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(call.request.input.envelope().attempt_id, attempt);
+    assert_eq!(call.request.item_id, selected);
+    call.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.is_active(attempt)
+    });
+    assert!(calls.try_recv().is_err());
+    assert_eq!(
+        runtime.attempt(&store, attempt).unwrap().progress.succeeded,
         1
     );
 }

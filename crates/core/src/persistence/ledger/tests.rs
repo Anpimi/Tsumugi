@@ -555,6 +555,36 @@ fn execution_crash_child() {
     let mut store = ProjectStore::open(&path).unwrap();
     let input = fixture_input(&store, false);
     store.enqueue_execution(&input).unwrap();
+    if std::env::var("TSUMUGI_EXECUTION_CRASH").as_deref() == Ok("after-runner-call") {
+        struct InterruptedRunner;
+        impl Runner for InterruptedRunner {
+            fn capability_id(&self) -> &str {
+                "controlled"
+            }
+            fn capability_version(&self) -> &str {
+                "1"
+            }
+            fn run(
+                &self,
+                _: DispatchRequest,
+                _: Cancellation,
+                _: ResultSender,
+            ) -> Result<(), ExecutionError> {
+                crash_hook("after-runner-call");
+                unreachable!()
+            }
+        }
+        let request = store
+            .dispatch_execution_item(
+                input.envelope().attempt_id,
+                input.envelope().items[0].item_id,
+            )
+            .unwrap();
+        let (sender, _receiver) = result_channel();
+        InterruptedRunner
+            .run(request, Cancellation::default(), sender)
+            .unwrap();
+    }
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     store
@@ -562,7 +592,257 @@ fn execution_crash_child() {
         .unwrap();
     let action = action(&mut store, &input, &[result]);
     store.adopt_execution(&action, &Handler).unwrap();
+    store
+        .dispatch_execution_item(
+            input.envelope().attempt_id,
+            input.envelope().items[1].item_id,
+        )
+        .unwrap();
+    crash_hook("partially-committed-batch");
     panic!("configured crash boundary was not reached");
+}
+
+#[test]
+fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    install_targets(&store);
+    let input = fixture_input(&store, true);
+    store.enqueue_execution(&input).unwrap();
+    let mut successful = Vec::new();
+    for item in &input.envelope().items[..2] {
+        let result = produce(&mut store, &input, item.item_id);
+        store.save_execution_result(&result).unwrap();
+        store
+            .validate_execution_result(input.envelope().attempt_id, result.envelope().result_id)
+            .unwrap();
+        successful.push(result);
+    }
+    let failed = input.envelope().items[2].item_id;
+    let request = store
+        .dispatch_execution_item(input.envelope().attempt_id, failed)
+        .unwrap();
+    let failure = FixedResult::capture(
+        ResultEnvelope {
+            project_id: input.envelope().project_id,
+            attempt_id: input.envelope().attempt_id,
+            item_id: failed,
+            result_id: ExecutionId::new(),
+            supersedes: None,
+            dispatch_token: request.dispatch_token,
+            capability_id: "controlled".into(),
+            capability_version: "1".into(),
+            outcome: ExecutionState::Failed,
+            output: None,
+            diagnostic: Some(Diagnostic {
+                code: "temporary".into(),
+                retry_safe: true,
+            }),
+        },
+        &input,
+        request.dispatch_token,
+    )
+    .unwrap();
+    store.save_execution_result(&failure).unwrap();
+    let plan = store
+        .execution_recovery(input.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!(
+        plan.units[0].actions,
+        vec![RecoveryAction::RetrySafeFailure]
+    );
+    assert_eq!(plan.units[0].remaining_item_ids, vec![failed]);
+    let retry = store
+        .execution_retry_input(input.envelope().attempt_id, &[failed])
+        .unwrap();
+    assert_eq!(retry.envelope().reused_results.len(), 2);
+    store.enqueue_execution(&retry).unwrap();
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    let view = reopened
+        .execution_attempt(retry.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!((view.progress.succeeded, view.progress.queued), (2, 1));
+    for result in &successful {
+        assert!(
+            reopened
+                .dispatch_execution_item(retry.envelope().attempt_id, result.envelope().item_id)
+                .is_err()
+        );
+        assert_eq!(
+            reopened
+                .execution_result(retry.envelope().attempt_id, result.envelope().result_id)
+                .unwrap()
+                .bytes(),
+            result.bytes()
+        );
+    }
+    let last = produce(&mut reopened, &retry, failed);
+    reopened.save_execution_result(&last).unwrap();
+    reopened
+        .validate_execution_result(retry.envelope().attempt_id, last.envelope().result_id)
+        .unwrap();
+    successful.push(last);
+    let prepared = action(&mut reopened, &retry, &successful);
+    let receipt = reopened.adopt_execution(&prepared, &Handler).unwrap();
+    assert_eq!(receipt.changes.len(), 3);
+    assert_eq!(
+        reopened
+            .execution_attempt(retry.envelope().attempt_id, false)
+            .unwrap()
+            .progress
+            .adopted,
+        3
+    );
+    let records: i64 = reopened
+        .execution_connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM execution_results", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(records, 4);
+    assert_eq!(
+        reopened
+            .execution_recovery(input.envelope().attempt_id, false)
+            .unwrap()
+            .units[0]
+            .blocked_reason
+            .as_deref(),
+        Some("continued-in-new-attempt")
+    );
+}
+
+#[test]
+fn duplicate_adoption_commands_compete_for_one_durable_receipt() {
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    install_targets(&store);
+    let input = fixture_input(&store, false);
+    store.enqueue_execution(&input).unwrap();
+    let result = produce(&mut store, &input, input.envelope().items[0].item_id);
+    store.save_execution_result(&result).unwrap();
+    store
+        .validate_execution_result(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let prepared = action(&mut store, &input, &[result]);
+    let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+    let start = std::sync::Arc::new(std::sync::Barrier::new(3));
+    let mut threads = Vec::new();
+    for _ in 0..2 {
+        let store = store.clone();
+        let start = start.clone();
+        let action = prepared.clone();
+        threads.push(std::thread::spawn(move || {
+            start.wait();
+            store
+                .lock()
+                .unwrap()
+                .adopt_execution(&action, &Handler)
+                .unwrap()
+        }));
+    }
+    start.wait();
+    let first = threads.remove(0).join().unwrap();
+    let second = threads.remove(0).join().unwrap();
+    assert_eq!(first, second);
+    let guard = store.lock().unwrap();
+    let count: i64 = guard
+        .execution_connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 1);
+    let updated: i64 = guard
+        .execution_connection()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM fixture_targets WHERE revision=2",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(updated, 1);
+}
+
+#[test]
+fn concurrent_cancel_and_adoption_have_one_transaction_order() {
+    let _schema = TestSchema::enable();
+    for _ in 0..8 {
+        let parent = tempfile::tempdir().unwrap();
+        let mut store = store(&parent.path().join("project"));
+        install_targets(&store);
+        let input = fixture_input(&store, false);
+        store.enqueue_execution(&input).unwrap();
+        let result = produce(&mut store, &input, input.envelope().items[0].item_id);
+        store.save_execution_result(&result).unwrap();
+        store
+            .validate_execution_result(input.envelope().attempt_id, result.envelope().result_id)
+            .unwrap();
+        let prepared = action(&mut store, &input, &[result]);
+        let store = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let start = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let adopter = {
+            let store = store.clone();
+            let start = start.clone();
+            let action = prepared.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                store.lock().unwrap().adopt_execution(&action, &Handler)
+            })
+        };
+        let canceller = {
+            let store = store.clone();
+            let start = start.clone();
+            let task = input.envelope().task_id;
+            std::thread::spawn(move || {
+                start.wait();
+                store
+                    .lock()
+                    .unwrap()
+                    .cancel_execution(task, ExecutionId::new())
+                    .unwrap()
+            })
+        };
+        start.wait();
+        let adopted = adopter.join().unwrap();
+        canceller.join().unwrap();
+        let mut store = store.lock().unwrap();
+        let receipts: i64 = store
+            .execution_connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |r| r.get(0))
+            .unwrap();
+        let changed: i64 = store
+            .execution_connection()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM fixture_targets WHERE value='applied'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        match adopted {
+            Ok(receipt) => {
+                assert_eq!((receipts, changed), (1, 1));
+                assert_eq!(store.adopt_execution(&prepared, &Handler).unwrap(), receipt);
+            }
+            Err(error) => {
+                assert_eq!(error.code, ErrorCode::Cancelled);
+                assert_eq!((receipts, changed), (0, 0));
+            }
+        }
+        assert!(
+            store
+                .execution_current_result(
+                    input.envelope().attempt_id,
+                    input.envelope().items[0].item_id
+                )
+                .unwrap()
+                .is_some()
+        );
+    }
 }
 
 #[test]
@@ -571,10 +851,12 @@ fn subprocess_crash_boundaries_preserve_outputs_and_atomic_adoption() {
     for point in [
         "after-enqueue",
         "after-dispatch-intent",
+        "after-runner-call",
         "after-output",
         "after-validation",
         "before-adoption-commit",
         "after-adoption-commit",
+        "partially-committed-batch",
     ] {
         let parent = tempfile::tempdir().unwrap();
         let path = parent.path().join("project");
@@ -627,7 +909,7 @@ fn subprocess_crash_boundaries_preserve_outputs_and_atomic_adoption() {
         let receipts: i64 = connection
             .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |r| r.get(0))
             .unwrap();
-        if point == "after-adoption-commit" {
+        if matches!(point, "after-adoption-commit" | "partially-committed-batch") {
             assert_eq!((applied, receipts), (1, 1));
             assert_eq!(view.progress.adopted, 1);
         } else {
@@ -635,7 +917,7 @@ fn subprocess_crash_boundaries_preserve_outputs_and_atomic_adoption() {
         }
         if point == "after-enqueue" {
             assert_eq!(view.progress.queued, 3);
-        } else if point == "after-dispatch-intent" {
+        } else if matches!(point, "after-dispatch-intent" | "after-runner-call") {
             assert_eq!(view.progress.unknown, 1);
         } else {
             assert_eq!(view.progress.succeeded, 1);
@@ -645,6 +927,38 @@ fn subprocess_crash_boundaries_preserve_outputs_and_atomic_adoption() {
                 view.items
                     .iter()
                     .filter(|item| item.validation == ValidationState::Pending)
+                    .count(),
+                1
+            );
+        }
+        if point == "partially-committed-batch" {
+            assert_eq!(
+                (
+                    view.progress.adopted,
+                    view.progress.unknown,
+                    view.progress.queued
+                ),
+                (1, 1, 1)
+            );
+            let plan = reopened.execution_recovery(attempt, false).unwrap();
+            assert_eq!(
+                plan.units
+                    .iter()
+                    .filter(|u| u.actions.contains(&RecoveryAction::ViewReceipt))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                plan.units
+                    .iter()
+                    .filter(|u| u.actions.contains(&RecoveryAction::QueryOutcome))
+                    .count(),
+                1
+            );
+            assert_eq!(
+                plan.units
+                    .iter()
+                    .filter(|u| u.actions.contains(&RecoveryAction::ResumeUndispatched))
                     .count(),
                 1
             );

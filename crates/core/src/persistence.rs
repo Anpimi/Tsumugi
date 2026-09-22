@@ -14,7 +14,7 @@ use rusqlite::{Connection, OpenFlags, params};
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 mod ledger;
-pub use ledger::{AttemptView, TaskView};
+pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
 
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";

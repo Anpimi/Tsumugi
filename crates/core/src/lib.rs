@@ -9,7 +9,7 @@ mod project;
 
 pub use persistence::{
     AttemptView, PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore,
-    Reconciliation, TaskView,
+    Reconciliation, RecoveryPlan, RecoveryUnit, TaskView,
 };
 
 #[cfg(test)]

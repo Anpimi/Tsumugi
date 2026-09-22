@@ -259,6 +259,15 @@ pub struct InputEnvelope {
     pub limits: ExecutionLimits,
     pub items: Vec<InputItem>,
     pub units: Vec<AdoptionUnit>,
+    pub reused_results: Vec<ReusedResult>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReusedResult {
+    pub item_id: ExecutionId,
+    pub source_attempt_id: ExecutionId,
+    pub result_id: ExecutionId,
 }
 
 impl InputEnvelope {
@@ -286,10 +295,12 @@ impl InputEnvelope {
             limits: ExecutionLimits::default(),
             items,
             units,
+            reused_results: Vec::new(),
         })
     }
 
     fn normalize(&mut self) {
+        self.reused_results.sort_by_key(|result| result.item_id);
         self.items.sort_by_key(|item| item.item_id);
         for item in &mut self.items {
             item.dependencies.sort();
@@ -357,6 +368,22 @@ impl InputEnvelope {
                 "unit-coverage",
             ));
         }
+        let mut reused = BTreeSet::new();
+        for result in &self.reused_results {
+            if self.previous_attempt_id.is_none()
+                || result.source_attempt_id == self.attempt_id
+                || !items.contains(&result.item_id)
+                || !reused.insert(result.item_id)
+            {
+                return Err(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "reused-result",
+                ));
+            }
+        }
+        if reused.len() == items.len() {
+            return Err(ExecutionError::new(ErrorCode::InvalidInput, "empty-retry"));
+        }
         let value = serde_json::to_value(self)
             .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "input"))?;
         codec::validate_depth(&value, 0)
@@ -417,6 +444,13 @@ impl FixedInput {
             .ok_or_else(|| ExecutionError::new(ErrorCode::ResultMismatch, "item").for_item(id))
     }
     pub fn retry(&self, item_ids: &[ExecutionId]) -> Result<Self, ExecutionError> {
+        self.retry_with_reused(item_ids, Vec::new())
+    }
+    pub(crate) fn retry_with_reused(
+        &self,
+        item_ids: &[ExecutionId],
+        reused_results: Vec<ReusedResult>,
+    ) -> Result<Self, ExecutionError> {
         let selected: BTreeSet<_> = item_ids.iter().copied().collect();
         if selected.len() != item_ids.len()
             || selected.is_empty()
@@ -425,16 +459,26 @@ impl FixedInput {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "retry-scope"));
         }
         let mut next = self.envelope().clone();
+        next.reused_results = reused_results;
+        let mut included = selected.clone();
+        for reused in &next.reused_results {
+            if !included.insert(reused.item_id) {
+                return Err(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "retry-overlap",
+                ));
+            }
+        }
         next.previous_attempt_id = Some(next.attempt_id);
         next.attempt_id = ExecutionId::new();
-        next.items.retain(|item| selected.contains(&item.item_id));
+        next.items.retain(|item| included.contains(&item.item_id));
         next.units
             .retain(|unit| unit.item_ids.iter().any(|item| selected.contains(item)));
         // A retry cannot silently split an operation's consistency unit.
         if next
             .units
             .iter()
-            .any(|unit| unit.item_ids.iter().any(|item| !selected.contains(item)))
+            .any(|unit| unit.item_ids.iter().any(|item| !included.contains(item)))
         {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "retry-unit"));
         }
@@ -760,7 +804,12 @@ impl AdoptionAction {
             || items.len() != results.len()
             || items != unit.item_ids.iter().copied().collect()
             || results.iter().any(|result| {
-                result.envelope.attempt_id != self.attempt_id
+                (result.envelope.attempt_id != self.attempt_id
+                    && !envelope.reused_results.iter().any(|reference| {
+                        reference.item_id == result.envelope.item_id
+                            && reference.result_id == result.envelope.result_id
+                            && reference.source_attempt_id == result.envelope.attempt_id
+                    }))
                     || result.envelope.project_id != self.project_id
                     || result.envelope.outcome != ExecutionState::Succeeded
             })

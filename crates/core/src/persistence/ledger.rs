@@ -158,6 +158,24 @@ pub struct AttemptView {
     pub progress: Progress,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryUnit {
+    pub unit_id: ExecutionId,
+    pub item_ids: Vec<ExecutionId>,
+    pub remaining_item_ids: Vec<ExecutionId>,
+    pub result_ids: Vec<ExecutionId>,
+    pub actions: Vec<RecoveryAction>,
+    pub blocked_reason: Option<String>,
+    pub receipt_id: Option<ExecutionId>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryPlan {
+    pub attempt_id: ExecutionId,
+    pub units: Vec<RecoveryUnit>,
+}
+
 fn error(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
 }
@@ -219,10 +237,38 @@ fn load_result(
     input: &FixedInput,
     result: ExecutionId,
 ) -> Result<FixedResult, ExecutionError> {
+    let reused = input
+        .envelope()
+        .reused_results
+        .iter()
+        .find(|reference| reference.result_id == result);
+    let source = if let Some(reference) = reused {
+        let source = load_input(connection, reference.source_attempt_id)?;
+        if source.envelope().task_id != input.envelope().task_id
+            || source.envelope().project_id != input.envelope().project_id
+            || source.envelope().operation != input.envelope().operation
+            || source.envelope().capability_id != input.envelope().capability_id
+            || source.envelope().capability_version != input.envelope().capability_version
+            || source.envelope().settings != input.envelope().settings
+            || source.item(reference.item_id)? != input.item(reference.item_id)?
+        {
+            return Err(error(ErrorCode::CorruptLedger, "reused-input"));
+        }
+        Some(source)
+    } else {
+        None
+    };
+    let result_input = source.as_ref().unwrap_or(input);
     let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
         "SELECT CASE WHEN length(bytes)<=262144 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
-        params![result.to_string(),input.envelope().attempt_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
-    let result_value = FixedResult::restore(&bytes, &digest, input, parse_id(token)?)?;
+        params![result.to_string(),result_input.envelope().attempt_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+    let result_value = FixedResult::restore(&bytes, &digest, result_input, parse_id(token)?)?;
+    if reused.is_some_and(|reference| {
+        reference.item_id != result_value.envelope().item_id
+            || result_value.envelope().outcome != ExecutionState::Succeeded
+    }) {
+        return Err(error(ErrorCode::CorruptLedger, "reused-result"));
+    }
     if result_value.envelope().result_id != result
         || result_value.envelope().item_id.to_string() != item
     {
@@ -269,10 +315,22 @@ fn read_attempt(
         let mut state: ExecutionState = decode_enum(execution)?;
         let mut validation: ValidationState = decode_enum(validation)?;
         let adoption: AdoptionState = decode_enum(adoption)?;
-        if matches!(
-            state,
-            ExecutionState::Queued | ExecutionState::CancelledBeforeDispatch
-        ) != token.is_none()
+        let reused = envelope
+            .reused_results
+            .iter()
+            .find(|reference| reference.item_id == item_id);
+        if reused.is_some()
+            && (token.is_some()
+                || state != ExecutionState::Succeeded
+                || reused.map(|reference| reference.result_id.to_string()) != result)
+        {
+            return Err(error(ErrorCode::CorruptLedger, "reused-state"));
+        }
+        if reused.is_none()
+            && matches!(
+                state,
+                ExecutionState::Queued | ExecutionState::CancelledBeforeDispatch
+            ) != token.is_none()
         {
             return Err(error(ErrorCode::CorruptLedger, "dispatch-association"));
         }
@@ -325,6 +383,218 @@ fn read_attempt(
 }
 
 impl ProjectStore {
+    pub fn execution_current_result(
+        &self,
+        attempt: ExecutionId,
+        item: ExecutionId,
+    ) -> Result<Option<ExecutionId>, ExecutionError> {
+        let id: Option<String> = self
+            .execution_connection()?
+            .query_row(
+                "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![attempt.to_string(), item.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        id.map(parse_id).transpose()
+    }
+    pub fn execution_recovery(
+        &self,
+        attempt: ExecutionId,
+        active: bool,
+    ) -> Result<RecoveryPlan, ExecutionError> {
+        let input = self.execution_input(attempt)?;
+        let view = self.execution_attempt(attempt, active)?;
+        let connection = self.execution_connection()?;
+        let metadata = self
+            .metadata()
+            .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
+        let mut units = Vec::new();
+        for unit in &input.envelope().units {
+            let statuses = unit
+                .item_ids
+                .iter()
+                .map(|id| {
+                    view.items
+                        .iter()
+                        .find(|item| item.item_id == *id)
+                        .ok_or_else(|| error(ErrorCode::CorruptLedger, "unit"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let mut entry = RecoveryUnit {
+                unit_id: unit.unit_id,
+                item_ids: unit.item_ids.clone(),
+                remaining_item_ids: Vec::new(),
+                result_ids: Vec::new(),
+                actions: Vec::new(),
+                blocked_reason: None,
+                receipt_id: None,
+            };
+            for item in &statuses {
+                if let Some(id) = self.execution_current_result(attempt, item.item_id)? {
+                    entry.result_ids.push(id);
+                }
+            }
+            let receipt: Option<String> = connection
+                .query_row(
+                    "SELECT action_id FROM adoption_receipts WHERE attempt_id=?1 AND unit_id=?2",
+                    params![attempt.to_string(), unit.unit_id.to_string()],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            if let Some(receipt) = receipt {
+                entry.receipt_id = Some(parse_id(receipt)?);
+                entry.actions.push(RecoveryAction::ViewReceipt);
+                units.push(entry);
+                continue;
+            }
+            let mut newer = false;
+            for id in &unit.item_ids {
+                let exists:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![input.envelope().task_id.to_string(),id.to_string(),attempt.to_string()],|r|r.get(0)).map_err(sql_error)?;
+                newer |= exists;
+            }
+            if newer {
+                entry.blocked_reason = Some("continued-in-new-attempt".into());
+            } else if unit.item_ids.iter().any(|id| {
+                input
+                    .item(*id)
+                    .ok()
+                    .and_then(|item| item.scope.locale.as_ref())
+                    .is_some_and(|locale| {
+                        !metadata
+                            .target_locales()
+                            .iter()
+                            .any(|target| target.as_str() == locale)
+                    })
+            }) {
+                entry.blocked_reason = Some("scope-removed".into());
+            } else if statuses
+                .iter()
+                .any(|item| item.execution == ExecutionState::Dispatched)
+            {
+                entry.blocked_reason = Some("still-running".into());
+            } else if statuses
+                .iter()
+                .any(|item| item.execution == ExecutionState::Unknown)
+            {
+                entry.actions.push(RecoveryAction::QueryOutcome);
+                entry.remaining_item_ids = statuses
+                    .iter()
+                    .filter(|item| item.execution == ExecutionState::Unknown)
+                    .map(|item| item.item_id)
+                    .collect();
+                entry.blocked_reason = Some("outcome-unknown".into());
+            } else if statuses
+                .iter()
+                .any(|item| item.validation == ValidationState::Invalid)
+            {
+                entry.blocked_reason = Some("output-invalid".into());
+            } else if statuses
+                .iter()
+                .any(|item| item.validation == ValidationState::Pending)
+            {
+                entry.actions.push(RecoveryAction::ValidateOutput);
+                entry.remaining_item_ids = statuses
+                    .iter()
+                    .filter(|item| item.validation == ValidationState::Pending)
+                    .map(|item| item.item_id)
+                    .collect();
+            } else if statuses.iter().all(|item| {
+                item.execution == ExecutionState::Succeeded
+                    && item.validation == ValidationState::Valid
+            }) {
+                entry.actions.push(RecoveryAction::AdoptResult);
+            } else {
+                let remaining: Vec<_> = statuses
+                    .iter()
+                    .filter(|item| item.execution != ExecutionState::Succeeded)
+                    .collect();
+                if remaining.iter().all(|item| {
+                    matches!(
+                        item.execution,
+                        ExecutionState::Queued | ExecutionState::CancelledBeforeDispatch
+                    ) || (item.execution == ExecutionState::Failed && item.retry_safe)
+                }) {
+                    entry.remaining_item_ids = remaining.iter().map(|item| item.item_id).collect();
+                    entry.actions.push(
+                        if remaining
+                            .iter()
+                            .any(|item| item.execution == ExecutionState::Failed)
+                        {
+                            RecoveryAction::RetrySafeFailure
+                        } else {
+                            RecoveryAction::ResumeUndispatched
+                        },
+                    );
+                } else {
+                    entry.blocked_reason = Some("retry-not-safe".into());
+                }
+            }
+            units.push(entry);
+        }
+        Ok(RecoveryPlan {
+            attempt_id: attempt,
+            units,
+        })
+    }
+    /// Builds a new immutable attempt, preserving successful members of selected
+    /// consistency units as verified references instead of dispatching them again.
+    pub fn execution_retry_input(
+        &self,
+        attempt: ExecutionId,
+        item_ids: &[ExecutionId],
+    ) -> Result<FixedInput, ExecutionError> {
+        let input = self.execution_input(attempt)?;
+        let plan = self.execution_recovery(attempt, false)?;
+        let selected: std::collections::BTreeSet<_> = item_ids.iter().copied().collect();
+        if selected.is_empty() || selected.len() != item_ids.len() {
+            return Err(error(ErrorCode::InvalidInput, "retry-scope"));
+        }
+        let mut covered = std::collections::BTreeSet::new();
+        let mut reused = Vec::new();
+        for unit in &plan.units {
+            if !unit.item_ids.iter().any(|id| selected.contains(id)) {
+                continue;
+            }
+            if !unit.actions.iter().any(|action| {
+                matches!(
+                    action,
+                    RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                )
+            }) || !unit
+                .remaining_item_ids
+                .iter()
+                .all(|id| selected.contains(id))
+                || unit
+                    .item_ids
+                    .iter()
+                    .any(|id| selected.contains(id) && !unit.remaining_item_ids.contains(id))
+            {
+                return Err(error(ErrorCode::Unauthorized, "retry-eligibility"));
+            }
+            for id in &unit.remaining_item_ids {
+                covered.insert(*id);
+            }
+            for id in &unit.item_ids {
+                if !selected.contains(id) {
+                    let result_id = self
+                        .execution_current_result(attempt, *id)?
+                        .ok_or_else(|| error(ErrorCode::OutputInvalid, "reused-result"))?;
+                    let result = self.execution_result(attempt, result_id)?;
+                    reused.push(ReusedResult {
+                        item_id: *id,
+                        source_attempt_id: result.envelope().attempt_id,
+                        result_id,
+                    });
+                }
+            }
+        }
+        if covered != selected {
+            return Err(error(ErrorCode::InvalidInput, "retry-scope"));
+        }
+        input.retry_with_reused(item_ids, reused)
+    }
     pub fn execution_sequence(&self) -> Result<Revision, ExecutionError> {
         let sequence: i64 = self
             .execution_connection()?
@@ -465,6 +735,13 @@ impl ProjectStore {
             if old.envelope().task_id != envelope.task_id {
                 return Err(error(ErrorCode::ResultMismatch, "previous-attempt"));
             }
+            if envelope
+                .units
+                .iter()
+                .any(|unit| !old.envelope().units.contains(unit))
+            {
+                return Err(error(ErrorCode::Unauthorized, "retry-unit"));
+            }
             let state = read_attempt(&tx, previous, false)?;
             for item in &envelope.items {
                 let newer: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON a.attempt_id=i.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![envelope.task_id.to_string(),item.item_id.to_string(),previous.to_string()],|r|r.get(0)).map_err(sql_error)?;
@@ -476,6 +753,25 @@ impl ProjectStore {
                     .iter()
                     .find(|old| old.item_id == item.item_id)
                     .ok_or_else(|| error(ErrorCode::InvalidInput, "retry-item"))?;
+                if let Some(reference) = envelope
+                    .reused_results
+                    .iter()
+                    .find(|reference| reference.item_id == item.item_id)
+                {
+                    let current:Option<String>=tx.query_row("SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![previous.to_string(),item.item_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
+                    let output = load_result(&tx, &old, reference.result_id)?;
+                    load_result(&tx, input, reference.result_id)?;
+                    if status.adoption == AdoptionState::Committed
+                        || status.validation != ValidationState::Valid
+                        || status.execution != ExecutionState::Succeeded
+                        || current != Some(reference.result_id.to_string())
+                        || output.envelope().attempt_id != reference.source_attempt_id
+                        || old.item(item.item_id)? != item
+                    {
+                        return Err(error(ErrorCode::Unauthorized, "reuse-eligibility"));
+                    }
+                    continue;
+                }
                 if status.adoption == AdoptionState::Committed
                     || !matches!(
                         status.execution,
@@ -493,7 +789,15 @@ impl ProjectStore {
         let cancelled = cancel_revision(&tx, envelope.task_id)?;
         tx.execute("INSERT INTO execution_attempts VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_attempts))", params![envelope.attempt_id.to_string(),envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.previous_attempt_id.map(|id|id.to_string()),input.bytes(),input.digest(),cancelled.get() as i64]).map_err(sql_error)?;
         for item in &envelope.items {
-            tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
+            if let Some(reference) = envelope
+                .reused_results
+                .iter()
+                .find(|reference| reference.item_id == item.item_id)
+            {
+                tx.execute("INSERT INTO execution_items VALUES (?1,?2,'succeeded','valid','unapplied',NULL,?3,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string(),reference.result_id.to_string()]).map_err(sql_error)?;
+            } else {
+                tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
+            }
         }
         commit(tx)?;
         #[cfg(test)]
@@ -577,6 +881,19 @@ impl ProjectStore {
         if status.execution != ExecutionState::Queued {
             return Err(error(ErrorCode::OutcomeUnknown, "dispatch"));
         }
+        if let Some(locale) = &input.item(item)?.scope.locale {
+            let metadata = super::read_metadata_from(&tx)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "scope"))?;
+            if !metadata
+                .target_locales()
+                .iter()
+                .any(|target| target.as_str() == locale)
+            {
+                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='scope-removed' WHERE attempt_id=?1 AND item_id=?2", params![attempt.to_string(),item.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(error(ErrorCode::Unauthorized, "locale-scope"));
+            }
+        }
         let token = ExecutionId::new();
         tx.execute("UPDATE execution_items SET execution='dispatched',dispatch_token=?3 WHERE attempt_id=?1 AND item_id=?2",params![attempt.to_string(),item.to_string(),token.to_string()]).map_err(sql_error)?;
         commit(tx)?;
@@ -629,7 +946,16 @@ impl ProjectStore {
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
-        if used as usize + result.bytes().len()
+        let reused_bytes =
+            input
+                .envelope()
+                .reused_results
+                .iter()
+                .try_fold(0usize, |total, reference| {
+                    load_result(&tx, &input, reference.result_id)
+                        .map(|result| total + result.bytes().len())
+                })?;
+        if used as usize + reused_bytes + result.bytes().len()
             > input.envelope().limits.max_attempt_result_bytes as usize
         {
             return Err(error(ErrorCode::LimitExceeded, "attempt-output"));
@@ -806,6 +1132,10 @@ impl ProjectStore {
         }
         let state = read_attempt(&tx, action.attempt_id, true)?;
         for result in &results {
+            let newer:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![input.envelope().task_id.to_string(),result.envelope().item_id.to_string(),action.attempt_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
+            if newer {
+                return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
+            }
             let item = state
                 .items
                 .iter()
