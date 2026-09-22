@@ -40,7 +40,7 @@ export const enUS = {
       "revision": "Revision {{number}}",
       "done": "Action completed. The latest saved state is shown below.",
       "noReceipt": "No applied changes were found for this request. You can retry the same request; cancellation and scope are checked again.",
-      "queryStarted": "Checking the earlier request. Its outcome remains unknown until reliable evidence is received.",
+      "queryStarted": "Outcome check requested. The latest item states are shown below; unknown work is not repeated.",
       "checkReceipt": "Check recorded outcome",
       "retryAdoption": "Retry the same application",
       "keepOutput": "Keep output and return",

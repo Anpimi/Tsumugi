@@ -1082,7 +1082,7 @@ function App() {
   return (
     <main className="shell">
       <DialogRoot open={stopIntent !== null} onOpenChange={open => { if (!open && !stopping) setStopIntent(null); }}>
-        <DialogPortal><DialogOverlay className="dialog-backdrop" /><DialogContent className="confirm-dialog" onEscapeKeyDown={event => { if (stopping) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
+        <DialogPortal><DialogOverlay className="dialog-backdrop lifecycle-confirm-backdrop" /><DialogContent className="confirm-dialog lifecycle-confirm-dialog" onEscapeKeyDown={event => { if (stopping) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <DialogTitle>{t("execution.stopTitle")}</DialogTitle><DialogDescription>{t("execution.stopHelp")}</DialogDescription>
           {renderFeedback}
           <div className="form-actions"><button className="secondary-button" disabled={stopping} onClick={() => setStopIntent(null)}>{t("execution.back")}</button><button className="primary-button" disabled={stopping} onClick={() => void stopAndContinue()}>{stopping ? t("execution.working") : t("execution.stop")}</button></div>

@@ -1247,6 +1247,8 @@ button:focus-visible {
 .execution-content .field { margin-block: 14px; }
 .execution-confirm-backdrop { z-index: 12; }
 .execution-confirm-dialog { z-index: 13; }
+.lifecycle-confirm-backdrop { z-index: 14; }
+.lifecycle-confirm-dialog { z-index: 15; }
 .execution-summary { padding: 16px; border-radius: 10px; background: #f3f6fb; }
 .execution-summary p { margin: 8px 0; }
 .execution-summary small { color: #52617a; }

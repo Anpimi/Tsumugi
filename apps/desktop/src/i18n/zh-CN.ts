@@ -42,7 +42,7 @@ export const zhCN = {
       "revision": "修订 {{number}}",
       "done": "操作已完成，下方显示最新保存状态。",
       "noReceipt": "未找到此请求已应用的变更。可重试原请求，系统会重新检查取消和范围条件。",
-      "queryStarted": "正在核对此前的请求。在取得可靠证据前，结果仍视为未知。",
+      "queryStarted": "已发起结果核对。请以下方各项的最新状态为准；结果未知的工作不会重复执行。",
       "checkReceipt": "核对已记录结果",
       "retryAdoption": "重试原应用请求",
       "keepOutput": "保留输出并返回",

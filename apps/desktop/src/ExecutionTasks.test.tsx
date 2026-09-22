@@ -39,7 +39,9 @@ it("offers only evidence-backed actions for an unknown result and confirms the e
   invoke.mockResolvedValueOnce({ attemptId: fixture.detail.attemptId, queryStarted: true });
   await user.click(within(dialog).getByRole("button", { name: "Check earlier request" }));
   expect(invoke).toHaveBeenCalledWith("recover_execution", { request: fixture.recover });
-  await screen.findByText(/Checking the earlier request/);
+  await screen.findByText(/Outcome check requested/);
+  await user.click(screen.getByRole("button", { name: /Check earlier request ·/ }));
+  expect(within(screen.getByRole("dialog", { name: "Check earlier request" })).queryByText(/Outcome check requested/)).not.toBeInTheDocument();
 });
 it("keeps an uncertain adoption recoverable inside the confirmation dialog without regenerating", async () => {
   const value = detail(); value.items[0].status.execution = "succeeded"; value.items[0].status.validation = "valid"; value.items[0].resultId = fixture.prepare.resultIds[0];

@@ -44,7 +44,7 @@ export function TaskContent({ project, onDismissBlockedChange }: { project: Proj
   const outputRegion = useRef<HTMLDivElement | null>(null);
   useEffect(() => { onDismissBlockedChange?.(busy || pendingAction !== null); return () => onDismissBlockedChange?.(false); }, [busy, pendingAction, onDismissBlockedChange]);
   useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
-  function confirm(choice: Confirmation) { actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmation(choice); }
+  function confirm(choice: Confirmation) { actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFailure(null); setMessage(null); setConfirmation(choice); }
   const sequence = useRef(0);
   const mounted = useRef(true);
   const mutating = useRef(false);
