@@ -3,6 +3,15 @@ use crate::execution::{codec, *};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
+const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
+        result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 2097152), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
+const EXECUTION_RESULTS_TABLE_V3: &str = "CREATE TABLE execution_results (
+        result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
+
 const TABLES: &[(&str, &str)] = &[
     ("execution_tasks", "CREATE TABLE execution_tasks (
         task_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL, operation TEXT NOT NULL,
@@ -22,10 +31,7 @@ const TABLES: &[(&str, &str)] = &[
         dispatch_token TEXT UNIQUE, current_result_id TEXT,
         retry_safe INTEGER NOT NULL CHECK(retry_safe IN (0,1)), diagnostic TEXT CHECK(length(diagnostic) <= 4096),
         PRIMARY KEY(attempt_id,item_id), UNIQUE(attempt_id,item_id,dispatch_token))"),
-    ("execution_results", "CREATE TABLE execution_results (
-        result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
-        FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))"),
+    ("execution_results", EXECUTION_RESULTS_TABLE),
     ("execution_cancellations", "CREATE TABLE execution_cancellations (
         request_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL REFERENCES execution_tasks(task_id),
         revision INTEGER NOT NULL CHECK(revision > 0), UNIQUE(task_id,revision))"),
@@ -65,6 +71,17 @@ pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
 thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
+    validate_schema(connection, false)
+}
+
+pub(super) fn validate_v3(connection: &Connection) -> Result<(), ExecutionError> {
+    validate_schema(connection, true)
+}
+
+fn validate_schema(
+    connection: &Connection,
+    legacy_result_limit: bool,
+) -> Result<(), ExecutionError> {
     #[cfg(feature = "execution-test-host")]
     if let Some(sql) = connection
         .query_row(
@@ -80,6 +97,11 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         }
     }
     for (name, expected) in TABLES {
+        let expected = if legacy_result_limit && *name == "execution_results" {
+            EXECUTION_RESULTS_TABLE_V3
+        } else {
+            *expected
+        };
         let actual: String = connection
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -87,7 +109,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
-        if actual != *expected {
+        if actual != expected {
             return Err(error(ErrorCode::CorruptLedger, "schema"));
         }
     }
@@ -155,6 +177,53 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         }
     }
     Ok(())
+}
+
+pub(super) fn migrate_v3_result_limit(connection: &mut Connection) -> rusqlite::Result<()> {
+    let foreign_keys: bool =
+        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    if !foreign_keys {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    connection.pragma_update(None, "foreign_keys", false)?;
+
+    let migration = (|| {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let create_sql = EXECUTION_RESULTS_TABLE.replacen(
+            "\"execution_results\"",
+            "\"execution_results_v4\"",
+            1,
+        );
+        transaction.execute_batch(&create_sql)?;
+        transaction.execute(
+            "INSERT INTO execution_results_v4 (result_id,attempt_id,item_id,dispatch_token,bytes,digest)
+             SELECT result_id,attempt_id,item_id,dispatch_token,bytes,digest FROM execution_results",
+            [],
+        )?;
+        transaction.execute_batch(
+            "DROP TABLE execution_results;
+             ALTER TABLE execution_results_v4 RENAME TO execution_results;",
+        )?;
+        if transaction
+            .prepare("PRAGMA foreign_key_check")?
+            .exists([])?
+        {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        transaction.pragma_update(None, "user_version", super::SCHEMA_VERSION)?;
+        transaction.commit()
+    })();
+    let restore_foreign_keys = connection.pragma_update(None, "foreign_keys", true);
+    match migration {
+        Err(error) => {
+            restore_foreign_keys?;
+            Err(error)
+        }
+        Ok(()) => {
+            restore_foreign_keys?;
+            Ok(())
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -283,8 +352,8 @@ pub(super) fn load_result(
     };
     let result_input = source.as_ref().unwrap_or(input);
     let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
-        "SELECT CASE WHEN length(bytes)<=262144 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
-        params![result.to_string(),result_input.envelope().attempt_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+        "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
+        params![result.to_string(),result_input.envelope().attempt_id.to_string(),i64::from(result_input.envelope().limits.max_result_bytes)], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
     let result_value = FixedResult::restore(&bytes, &digest, result_input, parse_id(token)?)?;
     if reused.is_some_and(|reference| {
         reference.item_id != result_value.envelope().item_id

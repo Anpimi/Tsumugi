@@ -20,7 +20,8 @@ pub use runtime::{ExecutionRuntime, OutcomeQuery};
 
 pub const MAX_ITEMS: usize = 256;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
-pub const MAX_RESULT_BYTES: usize = 256 * 1024;
+pub const DEFAULT_RESULT_BYTES: usize = 256 * 1024;
+pub const MAX_RESULT_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_ATTEMPT_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 pub const MAX_DEPTH: usize = 32;
@@ -225,7 +226,7 @@ impl Default for ExecutionLimits {
         Self {
             timeout_ms: 60_000,
             cancel_wait_ms: 5_000,
-            max_result_bytes: MAX_RESULT_BYTES as u32,
+            max_result_bytes: DEFAULT_RESULT_BYTES as u32,
             max_attempt_result_bytes: MAX_ATTEMPT_RESULT_BYTES as u32,
         }
     }

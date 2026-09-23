@@ -1,7 +1,16 @@
 use super::*;
-use crate::{PersistenceErrorCode, ProjectMetadata};
+use crate::{
+    PersistenceErrorCode, ProjectMetadata,
+    content::{SourceAdoptionHandler, SourceBundle, SourceRunner},
+    execution::{ExecutionRuntime, ExecutionState},
+};
 use serde_json::json;
-use std::{path::Path, process::Command};
+use std::{
+    path::Path,
+    process::Command,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 struct TestSchema;
 impl TestSchema {
@@ -505,6 +514,160 @@ fn versions_and_corrupt_inputs_are_rejected_without_rebuilding_and_bad_output_is
         ProjectStore::open(&path).unwrap_err().code(),
         PersistenceErrorCode::CorruptProject
     );
+}
+
+#[test]
+fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    let input = fixture_input(&store, false);
+    store.enqueue_execution(&input).unwrap();
+    let item = input.envelope().items[0].item_id;
+    let result = produce(&mut store, &input, item);
+    let result_bytes = result.bytes().to_vec();
+    store.save_execution_result(&result).unwrap();
+    store
+        .validate_execution_result(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+
+    let source_bundle = SourceBundle::capture(
+        br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+        br#"{"greeting":"Hello"}"#,
+        "en-US",
+    )
+    .unwrap();
+    let source_input = source_bundle
+        .fixed_input(store.metadata().unwrap().project_id())
+        .unwrap();
+    let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+    runtime.register(Arc::new(SourceRunner)).unwrap();
+    runtime.submit(&mut store, &source_input).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        runtime.tick(&mut store).unwrap();
+        let status = store
+            .execution_attempt(source_input.envelope().attempt_id, true)
+            .unwrap();
+        if status.items[0].execution == ExecutionState::Succeeded {
+            break;
+        }
+        assert!(Instant::now() < deadline, "source runner did not finish");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let source_result_id = store
+        .execution_current_result(
+            source_input.envelope().attempt_id,
+            source_input.envelope().items[0].item_id,
+        )
+        .unwrap()
+        .unwrap();
+    let source_result = store
+        .execution_result(source_input.envelope().attempt_id, source_result_id)
+        .unwrap();
+    store
+        .validate_execution_result(source_input.envelope().attempt_id, source_result_id)
+        .unwrap();
+    let preview = store
+        .source_preview(source_input.envelope().attempt_id, source_result_id, 0, 50)
+        .unwrap();
+    let source_action = store
+        .prepare_adoption_with_id(
+            ExecutionId::new(),
+            source_input.envelope().attempt_id,
+            source_input.envelope().units[0].unit_id,
+            vec![source_result_id],
+            serde_json::to_value(preview.confirmation).unwrap(),
+        )
+        .unwrap();
+    let source_receipt = store
+        .adopt_execution(&source_action, &SourceAdoptionHandler)
+        .unwrap();
+    let source_result_bytes = source_result.bytes().to_vec();
+    store.close().unwrap();
+
+    let database = path.join(super::super::DATABASE_FILENAME);
+    let mut connection = Connection::open(&database).unwrap();
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    transaction
+        .pragma_update(None, "defer_foreign_keys", true)
+        .unwrap();
+    transaction
+        .execute_batch(
+            "CREATE TEMP TABLE execution_results_copy AS SELECT * FROM main.execution_results;
+             DROP TABLE main.execution_results;",
+        )
+        .unwrap();
+    transaction
+        .execute_batch(super::EXECUTION_RESULTS_TABLE_V3)
+        .unwrap();
+    transaction
+        .execute_batch(
+            "INSERT INTO main.execution_results SELECT * FROM temp.execution_results_copy;
+             DROP TABLE temp.execution_results_copy;",
+        )
+        .unwrap();
+    transaction
+        .pragma_update(None, "user_version", 3i64)
+        .unwrap();
+    transaction.commit().unwrap();
+    drop(connection);
+
+    let reopened = ProjectStore::open(&path).unwrap();
+    let persisted = reopened
+        .execution_result(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    assert_eq!(persisted.bytes(), result_bytes);
+    assert_eq!(
+        reopened
+            .execution_attempt(input.envelope().attempt_id, false)
+            .unwrap()
+            .items[0]
+            .validation,
+        ValidationState::Valid
+    );
+    assert_eq!(
+        reopened
+            .execution_result(source_input.envelope().attempt_id, source_result_id)
+            .unwrap()
+            .bytes(),
+        source_result_bytes
+    );
+    let snapshot = reopened.content_scope().unwrap().current_snapshot.unwrap();
+    assert_eq!(
+        reopened.source_content(snapshot, 0, 50).unwrap().rows.len(),
+        1
+    );
+    assert_eq!(
+        reopened.adoption_receipt(source_action.action_id).unwrap(),
+        Some(source_receipt)
+    );
+    let version: i64 = reopened
+        .execution_connection()
+        .unwrap()
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, crate::persistence::SCHEMA_VERSION);
+    let violations: i64 = reopened
+        .execution_connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(violations, 0);
+    let result_references: i64 = reopened
+        .execution_connection()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_foreign_key_list('source_snapshots') WHERE \"table\"='execution_results'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(result_references, 1);
 }
 
 #[test]

@@ -18,10 +18,12 @@ pub(crate) fn encode<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, E
     struct BoundedWriter {
         bytes: Vec<u8>,
         limit: usize,
+        exceeded: bool,
     }
     impl Write for BoundedWriter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
             if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+                self.exceeded = true;
                 return Err(std::io::Error::other("encoded value exceeds limit"));
             }
             self.bytes.extend_from_slice(bytes);
@@ -34,9 +36,16 @@ pub(crate) fn encode<T: Serialize>(value: &T, limit: usize) -> Result<Vec<u8>, E
     let mut writer = BoundedWriter {
         bytes: Vec::new(),
         limit,
+        exceeded: false,
     };
-    serde_json::to_writer(&mut writer, value)
-        .map_err(|_| ExecutionError::new(ErrorCode::LimitExceeded, "encoding"))?;
+    if serde_json::to_writer(&mut writer, value).is_err() {
+        let stage = if writer.exceeded {
+            "limit-exceeded"
+        } else {
+            "encoding"
+        };
+        return Err(ExecutionError::new(ErrorCode::LimitExceeded, stage));
+    }
     Ok(writer.bytes)
 }
 

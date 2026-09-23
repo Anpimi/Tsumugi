@@ -194,6 +194,7 @@ fn real_runtime_preview_adoption_reopen_and_pagination_keep_independent_ids() {
                 100,
             )
             .unwrap();
+        assert!(serde_json::to_vec(&page).unwrap().len() <= MAX_CONTENT_PAGE_BYTES);
         seen.extend(page.rows.into_iter().map(|r| r.occurrence.key));
         match page.next_ordinal {
             Some(n) => next = n,
@@ -225,6 +226,35 @@ fn real_runtime_preview_adoption_reopen_and_pagination_keep_independent_ids() {
         store.adoption_receipt(action.action_id).unwrap(),
         Some(receipt)
     );
+}
+
+#[test]
+fn maximum_supported_source_result_fits_its_declared_byte_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut store = create(&tmp.path().join("project"));
+    let manifest = serde_json::to_vec(&json!({
+        "UniqueID": "\"".repeat(256),
+        "Name": "Example",
+        "Version": "1.0.0",
+        "EntryDll": "Example.dll"
+    }))
+    .unwrap();
+    let entries: serde_json::Map<String, serde_json::Value> = (0..MAX_OCCURRENCES)
+        .map(|index| (format!("key-{index:04}"), json!("")))
+        .collect();
+    let source = serde_json::to_vec(&entries).unwrap();
+    let bundle = SourceBundle::capture(&manifest, &source, "en").unwrap();
+
+    let (input, result) = generate(&mut store, bundle);
+    let output = validate_output(&input, &result).unwrap();
+
+    assert_eq!(output.occurrences.len(), MAX_OCCURRENCES);
+    assert_eq!(
+        input.envelope().limits.max_result_bytes as usize,
+        MAX_SOURCE_RESULT_BYTES
+    );
+    assert!(result.bytes().len() > crate::execution::DEFAULT_RESULT_BYTES);
+    assert!(result.bytes().len() <= input.envelope().limits.max_result_bytes as usize);
 }
 
 #[test]

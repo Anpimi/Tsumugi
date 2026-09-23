@@ -17,6 +17,8 @@ pub const IDENTITY_POLICY: &str = "smapi-native-key/1";
 pub const MAX_SOURCE_BYTES: usize = 128 * 1024;
 pub const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 pub const MAX_OCCURRENCES: usize = 2000;
+pub const MAX_SOURCE_RESULT_BYTES: usize = MAX_RESULT_BYTES;
+pub const MAX_CONTENT_PAGE_BYTES: usize = 256 * 1024;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 pub const MANIFEST_PATH: &str = "manifest.json";
 pub const SOURCE_PATH: &str = "i18n/default.json";
@@ -221,13 +223,15 @@ impl SourceBundle {
             value(self)?,
             vec![],
         );
-        FixedInput::capture(InputEnvelope::new(
+        let mut envelope = InputEnvelope::new(
             project,
             OPERATION,
             CAPABILITY,
             CAPABILITY_VERSION,
             vec![item],
-        )?)
+        )?;
+        envelope.limits.max_result_bytes = MAX_SOURCE_RESULT_BYTES as u32;
+        FixedInput::capture(envelope)
     }
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let e = input.envelope();

@@ -208,7 +208,7 @@ pub fn extract(
             vec![]
         },
     };
-    codec::encode(&output, MAX_RESULT_BYTES)?;
+    codec::encode(&output, MAX_SOURCE_RESULT_BYTES)?;
     Ok(output)
 }
 

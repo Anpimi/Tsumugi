@@ -420,4 +420,33 @@ mod tests {
             ErrorCode::Unauthorized
         );
     }
+
+    #[test]
+    fn preflight_captures_and_extracts_maximum_supported_source() {
+        let root = fixture();
+        fs::write(
+            root.path().join("manifest.json"),
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+        )
+        .unwrap();
+        let mut entries = serde_json::Map::new();
+        for index in 0..tsumugi_core::content::MAX_OCCURRENCES {
+            entries.insert(
+                format!("key-{index:04}"),
+                serde_json::Value::String(String::new()),
+            );
+        }
+        fs::write(
+            root.path().join("i18n/default.json"),
+            serde_json::to_vec(&entries).unwrap(),
+        )
+        .unwrap();
+        let selection = Selection::authorize(root.path().into()).unwrap();
+        let bundle = selection.capture("en", &Cancellation::default()).unwrap();
+        let output = tsumugi_core::content::extract(&bundle, &Cancellation::default()).unwrap();
+        assert_eq!(
+            output.occurrences.len(),
+            tsumugi_core::content::MAX_OCCURRENCES
+        );
+    }
 }

@@ -20,7 +20,7 @@ pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -245,7 +245,7 @@ impl ProjectStore {
         })
     }
 
-    /// Open an existing project without creating or repairing any files.
+    /// Open an existing project and apply supported, transactional schema upgrades.
     pub fn open<P: AsRef<Path>>(directory: P) -> Result<Self, PersistenceError> {
         let directory = directory.as_ref().to_path_buf();
         if !directory.is_dir() {
@@ -277,10 +277,10 @@ impl ProjectStore {
             })?;
         acquire_lock(&lock)?;
 
-        let connection =
+        let mut connection =
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        validate_existing_connection(&connection)?;
+        validate_existing_connection(&mut connection)?;
         let _ = read_metadata_from(&connection)?;
 
         Ok(Self {
@@ -700,7 +700,7 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
     Ok(())
 }
 
-fn validate_existing_connection(connection: &Connection) -> Result<(), PersistenceError> {
+fn validate_existing_connection(connection: &mut Connection) -> Result<(), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -718,12 +718,6 @@ fn validate_existing_connection(connection: &Connection) -> Result<(), Persisten
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if user_version != SCHEMA_VERSION {
-        return Err(PersistenceError::UnsupportedSchema {
-            found_version: user_version,
-            stage: PersistenceStage::Open,
-        });
-    }
     let journal_mode: String = connection
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -740,11 +734,25 @@ fn validate_existing_connection(connection: &Connection) -> Result<(), Persisten
             stage: PersistenceStage::Open,
         });
     }
-    validate_schema_shape(connection)?;
-    Ok(())
+    match user_version {
+        SCHEMA_VERSION => validate_schema_shape(connection, false),
+        3 => {
+            validate_schema_shape(connection, true)?;
+            ledger::migrate_v3_result_limit(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false)
+        }
+        found_version => Err(PersistenceError::UnsupportedSchema {
+            found_version,
+            stage: PersistenceStage::Open,
+        }),
+    }
 }
 
-fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError> {
+fn validate_schema_shape(
+    connection: &Connection,
+    legacy_result_limit: bool,
+) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
@@ -779,7 +787,12 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
             stage: PersistenceStage::Open,
         });
     }
-    ledger::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+    let ledger_validation = if legacy_result_limit {
+        ledger::validate_v3(connection)
+    } else {
+        ledger::validate(connection)
+    };
+    ledger_validation.map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     content::validate(connection).map_err(|_| PersistenceError::CorruptProject {

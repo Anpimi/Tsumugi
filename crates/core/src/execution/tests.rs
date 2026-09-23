@@ -141,6 +141,26 @@ fn item_and_unit_coverage_is_exact_and_limits_are_enforced() {
 }
 
 #[test]
+fn bounded_json_encoding_reports_the_public_limit_reason() {
+    let error = codec::encode(&json!({"value": "too large"}), 8).unwrap_err();
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
+    assert_eq!(error.stage, "limit-exceeded");
+}
+
+#[test]
+fn result_limits_keep_the_small_default_and_allow_the_bounded_cap() {
+    let fixed = input();
+    assert_eq!(
+        fixed.envelope().limits.max_result_bytes as usize,
+        DEFAULT_RESULT_BYTES
+    );
+    let mut envelope = fixed.envelope().clone();
+    envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
+    assert!(FixedInput::capture(envelope).is_ok());
+    assert_eq!(MAX_RESULT_BYTES, 2 * 1024 * 1024);
+}
+
+#[test]
 fn result_identity_and_capability_checks_preserve_original_evidence() {
     let fixed = input();
     let token = ExecutionId::new();

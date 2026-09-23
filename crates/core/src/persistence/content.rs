@@ -358,7 +358,7 @@ fn page(
     };
     for row in rows.into_iter().skip(after as usize).take(limit as usize) {
         page.rows.push(row);
-        if codec::encode(&page, MAX_RESULT_BYTES).is_err() {
+        if codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
             page.rows.pop();
             break;
         }
@@ -371,7 +371,7 @@ fn page(
         return Err(failure(ErrorCode::LimitExceeded, "page"));
     }
     // nextOrdinal can add bytes; keep a small fixed margin in the page budget.
-    while codec::encode(&page, MAX_RESULT_BYTES).is_err() {
+    while codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
         page.rows
             .pop()
             .ok_or_else(|| failure(ErrorCode::LimitExceeded, "page"))?;
