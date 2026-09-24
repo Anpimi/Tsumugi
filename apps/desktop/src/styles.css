@@ -8,6 +8,7 @@
 .source-table pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 180px; font: inherit; }
 .source-dialog code { overflow-wrap: anywhere; font-size: 12px; }
 .source-dialog section { margin: 16px 0; }
+.source-dialog .execution-content p { overflow-wrap: anywhere; }
 .source-dialog section > button { margin: 6px 8px 6px 0; }
 .source-dialog h3:focus { outline: 2px solid #6b8bd7; outline-offset: 4px; }
 :root {
