@@ -58,6 +58,7 @@ export const zhCN = {
       draft: "您的草稿",
       draftHelp: "保存会创建不可变修订并选中它。空文本有效。保存不表示批准或 QA 通过。",
       save: "保存修订",
+      saveAndContinue: "保存后继续",
       savedNewerDraft: "较早的文本已保存。您继续输入的新草稿仍在，可另行保存。",
       history: "修订历史",
         refreshHistory: "刷新历史",

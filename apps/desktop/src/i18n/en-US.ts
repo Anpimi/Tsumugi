@@ -56,6 +56,7 @@ export const enUS = {
       draft: "Your draft",
       draftHelp: "Save creates a new immutable revision and selects it. Empty text is valid. Saving does not approve or QA the translation.",
       save: "Save revision",
+        saveAndContinue: "Save and continue",
       savedNewerDraft: "The earlier text was saved. Your newer draft is still here; save it separately when ready.",
       history: "Revision history",
         refreshHistory: "Refresh history",

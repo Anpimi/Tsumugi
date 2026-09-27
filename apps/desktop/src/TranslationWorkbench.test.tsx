@@ -90,6 +90,32 @@ it("keeps text typed after an earlier save and checks the new selection before s
   expect(saves[1][1].request).toMatchObject({ text: "AB", expectedSelectionId: "selected" });
 });
 
+it("saves before leaving and retains an uncertain action for a checked retry", async () => {
+  const ref = createRef<TranslationHandle>();
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(screen.getByRole("button", { name: "Edit translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Draft");
+  let decision!: Promise<boolean>;
+  act(() => { decision = ref.current!.allowLeave(); });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "save_translation_revision"
+    ? Promise.reject({ code: "outcome-unknown", field: "outcome-unknown" })
+    : original(command, args));
+  await user.click(screen.getByRole("button", { name: "Save and continue" }));
+  expect(await screen.findByRole("button", { name: "Retry the same action" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Discard draft and continue" })).toBeDisabled();
+  invoke.mockImplementation(original);
+  await user.click(screen.getByRole("button", { name: "Retry the same action" }));
+  expect(await decision).toBe(true);
+  const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
+  expect(saves).toHaveLength(2);
+  expect(saves[0][1].request.actionId).toBe(saves[1][1].request.actionId);
+  expect(saves[1][1].request.text).toBe("Draft");
+});
+
 it("requires a separate comparison and confirmation before replacing a selected translation", async () => {
   conflicting = true;
   render(<TranslationWorkbench project={project} disabled={false} />);
