@@ -17,6 +17,8 @@ request!(TranslationStartRequest {
     file_name: String,
     target_locale: String,
     language_confirmed: bool,
+    expected_file_digest: String,
+    expected_source_snapshot_id: ExecutionId,
     attempt_id: ExecutionId,
 });
 request!(TranslationPreviewRequest {
@@ -72,6 +74,7 @@ fn begin_translation(
     project: ExecutionId,
     selection_id: ExecutionId,
     target_locale: &str,
+    expected_snapshot: Option<ExecutionId>,
 ) -> Result<(CaptureJob, ExecutionId), CommandError> {
     let active = authorized(sessions, token, project, CommandStage::ExecutionRead)?;
     let metadata = active
@@ -100,6 +103,12 @@ fn begin_translation(
                 "translation-source",
             ))
         })?;
+    if expected_snapshot.is_some_and(|expected| expected != snapshot) {
+        return Err(map_source(ExecutionError::new(
+            ErrorCode::DependencyConflict,
+            "translation-source",
+        )));
+    }
     if host.source.is_active() {
         return Err(map_source(ExecutionError::new(
             ErrorCode::Busy,
@@ -187,6 +196,7 @@ pub async fn preflight_translation(
             request.project_id,
             request.selection_id,
             &request.target_locale,
+            None,
         )?
     };
     let job_id = job.id;
@@ -244,6 +254,8 @@ pub async fn start_translation_import(
             request.selection_id,
             request.file_name.clone(),
             request.target_locale.clone(),
+            request.expected_file_digest.clone(),
+            request.expected_source_snapshot_id,
         );
         match store.execution_input(request.attempt_id) {
             Ok(input) => {
@@ -263,6 +275,7 @@ pub async fn start_translation_import(
             request.project_id,
             request.selection_id,
             &request.target_locale,
+            Some(request.expected_source_snapshot_id),
         )?;
         let active = authorized(
             &mut sessions,
@@ -293,6 +306,12 @@ pub async fn start_translation_import(
         job_id,
     )?;
     let bundle = result?.map_err(map_source)?;
+    if bundle.file.sha256 != request.expected_file_digest {
+        return Err(map_source(ExecutionError::new(
+            ErrorCode::DependencyConflict,
+            "source-changed",
+        )));
+    }
     let metadata = active
         .store
         .metadata()
@@ -442,4 +461,22 @@ pub fn select_translation_revision(
             revision_id: request.revision_id,
         })
         .map_err(map_source)
+}
+
+#[cfg(test)]
+mod contracts {
+    use super::*;
+
+    #[test]
+    fn translation_command_fixture_round_trips_camel_case_requests() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../test/fixtures/translation-commands.json"
+        ))
+        .unwrap();
+        let start: TranslationStartRequest =
+            serde_json::from_value(fixture["start"].clone()).unwrap();
+        let save: TranslationSaveRequest = serde_json::from_value(fixture["save"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(start).unwrap(), fixture["start"]);
+        assert_eq!(serde_json::to_value(save).unwrap(), fixture["save"]);
+    }
 }

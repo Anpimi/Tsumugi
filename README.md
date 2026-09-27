@@ -126,11 +126,11 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
-The desktop shell supports creating, opening, renaming, closing, and reconciling local projects, as well as adding target locales. These operations use Tauri commands. Translation and the remaining workbench modules are planned for later development.
+The desktop shell supports creating, opening, renaming, closing, and reconciling local projects, adding target locales, importing source content, and managing translation revisions. These operations use Tauri commands. Review, validation, and release workflows are planned for later development.
 
 The Tasks view exposes persisted execution progress, saved outputs, cancellation, eligible recovery, and explicit result adoption. Normal builds have no synthetic task creation menu. Developers can use the isolated [execution test host](docs/execution-test-host.md) to exercise these paths without a translation provider.
 
-The Source content view imports a SMAPI Mod's `manifest.json` and flat `i18n/default.json` through the bundled integration. Declare the source language, check the files, review the saved strings, and explicitly apply the complete first snapshot. Original files remain unchanged. See [supported inputs and recovery](docs/source-import.md). Translation, replacing existing source content, and building translated Mods are not implemented.
+The Source content view imports a SMAPI Mod's `manifest.json` and flat `i18n/default.json` through the bundled integration. Declare the source language, check the files, review the saved strings, and explicitly apply the complete first snapshot. Original files remain unchanged. See [supported inputs and recovery](docs/source-import.md). The Translations view imports a flat `i18n/<language>.json`, previews matches against the current source, creates candidates or checked selections, and saves immutable manual revisions. See [translation import and editing](docs/translation-import.md). Replacing existing source content and building translated Mods are not implemented.
 
 New projects use database schema 5. Valid schema 3 and 4 projects are backed up in their project directory and upgraded when opened. Other schema versions are rejected without resetting the directory. The application remains in the unreleased 0.1.0 development batch.
 

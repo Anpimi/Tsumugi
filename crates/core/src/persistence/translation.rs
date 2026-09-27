@@ -16,6 +16,7 @@ pub enum TranslationMatch {
     Ambiguous,
     SelectedConflict,
     SourceChanged,
+    Applied,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -53,6 +54,7 @@ pub struct TranslationPreview {
     pub ambiguous: u32,
     pub selected_conflicts: u32,
     pub source_changed: u32,
+    pub applied: u32,
     pub next_ordinal: Option<u32>,
     pub rows: Vec<TranslationPreviewRow>,
 }
@@ -142,6 +144,7 @@ pub struct TranslationHistory {
     pub locale: String,
     pub total: u64,
     pub current: Option<TranslationSelection>,
+    pub current_text: Option<String>,
     pub rows: Vec<TranslationRevision>,
     pub next_ordinal: Option<u64>,
 }
@@ -872,12 +875,12 @@ impl ProjectStore {
         let mut result_evidence = Vec::with_capacity(input.envelope().items.len());
         let mut selection_evidence = Vec::new();
         for item in &input.envelope().items {
-            let persisted: (Option<String>, String, String) = connection
+            let persisted: (Option<String>, String, String, String) = connection
                 .query_row(
-                    "SELECT current_result_id,validation,execution FROM execution_items
+                    "SELECT current_result_id,validation,execution,adoption FROM execution_items
                      WHERE attempt_id=?1 AND item_id=?2",
                     params![attempt.to_string(), item.item_id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
                 .map_err(super::ledger::sql_error)?;
             if persisted.1 != "valid" || persisted.2 != "succeeded" {
@@ -940,8 +943,11 @@ impl ProjectStore {
             selection_evidence.push((
                 entry.ordinal,
                 selection.as_ref().map(|s| s.event_id.to_string()),
+                persisted.3.clone(),
             ));
-            let status = if current != bundle.source_snapshot_id {
+            let status = if persisted.3 == "committed" {
+                TranslationMatch::Applied
+            } else if current != bundle.source_snapshot_id {
                 TranslationMatch::SourceChanged
             } else if candidates.is_none() {
                 TranslationMatch::Unmatched
@@ -1002,9 +1008,14 @@ impl ProjectStore {
                 .iter()
                 .filter(|row| row.status == TranslationMatch::SelectedConflict)
                 .count() as u32,
-            source_changed: rows
+            source_changed: if current != bundle.source_snapshot_id {
+                rows.len() as u32
+            } else {
+                0
+            },
+            applied: rows
                 .iter()
-                .filter(|row| row.status == TranslationMatch::SourceChanged)
+                .filter(|row| row.status == TranslationMatch::Applied)
                 .count() as u32,
             next_ordinal: None,
             rows: Vec::new(),
@@ -1057,6 +1068,18 @@ impl ProjectStore {
             )
             .map_err(super::ledger::sql_error)?;
         let current = current_selection(connection, unit, locale)?;
+        let current_text = current
+            .as_ref()
+            .map(|selection| {
+                connection
+                    .query_row(
+                        "SELECT text FROM translation_revisions WHERE revision_id=?1",
+                        [selection.revision_id.to_string()],
+                        |row| row.get(0),
+                    )
+                    .map_err(super::ledger::sql_error)
+            })
+            .transpose()?;
         let mut statement = connection
             .prepare(
                 "SELECT revision_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,
@@ -1082,6 +1105,7 @@ impl ProjectStore {
             total: u64::try_from(total)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "translation-total"))?,
             current,
+            current_text,
             rows: Vec::new(),
             next_ordinal: None,
         };
@@ -1345,18 +1369,27 @@ mod tests {
         ProjectStore,
         Vec<crate::content::ContentRow>,
     ) {
+        project_with_source_bytes(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"same","second":"same"}"#,
+        )
+    }
+
+    fn project_with_source_bytes(
+        manifest: &[u8],
+        source: &[u8],
+    ) -> (
+        tempfile::TempDir,
+        ProjectStore,
+        Vec<crate::content::ContentRow>,
+    ) {
         let temp = tempfile::tempdir().unwrap();
         let mut store = ProjectStore::create(
             temp.path().join("project"),
             ProjectMetadata::create("Translations", "en", ["ja", "zh-CN"]).unwrap(),
         )
         .unwrap();
-        let bundle = SourceBundle::capture(
-            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
-            br#"{"first":"same","second":"same"}"#,
-            "en",
-        )
-        .unwrap();
+        let bundle = SourceBundle::capture(manifest, source, "en").unwrap();
         let input = bundle
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
@@ -1742,7 +1775,7 @@ mod tests {
         let changed = store
             .translation_preview(input.envelope().attempt_id, 0, 3, None)
             .unwrap();
-        assert_eq!(changed.selected_conflicts, 2);
+        assert_eq!(changed.applied, 2);
         store.close().unwrap();
         std::fs::remove_file(&external).unwrap();
         let store = ProjectStore::open(temp.path().join("project")).unwrap();
@@ -1774,7 +1807,10 @@ mod tests {
 
     #[test]
     fn real_translation_attempt_validates_every_saved_entry() {
-        let (_temp, mut store, _) = project_with_source();
+        let (_temp, mut store, _) = project_with_source_bytes(
+            include_bytes!("../../tests/fixtures/stardew-lookup/manifest.json"),
+            include_bytes!("../../tests/fixtures/stardew-lookup/i18n/default.json"),
+        );
         let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
         let bytes = include_bytes!("../../tests/fixtures/stardew-lookup/i18n/zh.json");
         let bundle = TranslationBundle::capture("i18n/zh.json", bytes, "zh-CN", snapshot).unwrap();
@@ -1813,8 +1849,51 @@ mod tests {
             .translation_preview(input.envelope().attempt_id, 0, 100, None)
             .unwrap();
         assert_eq!(preview.total, 532);
-        assert_eq!(preview.unique + preview.unmatched, 532);
+        assert_eq!(preview.unique, 532);
+        assert_eq!(preview.unmatched, 0);
         assert_eq!(preview.rows.len(), 100);
         assert_eq!(preview.next_ordinal, Some(100));
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/stardew-lookup/translation-oracle.json"
+        ))
+        .unwrap();
+        let expected = oracle["entries"].as_array().unwrap();
+        let mut source_rows = Vec::new();
+        let mut source_after = 0;
+        loop {
+            let page = store.source_content(snapshot, source_after, 100).unwrap();
+            source_rows.extend(page.rows);
+            if let Some(next) = page.next_ordinal {
+                source_after = next;
+            } else {
+                break;
+            }
+        }
+        let mut page = preview;
+        let mut actual = Vec::new();
+        loop {
+            actual.extend(page.rows);
+            if let Some(next) = page.next_ordinal {
+                page = store
+                    .translation_preview(input.envelope().attempt_id, next, 100, Some(&page.basis))
+                    .unwrap();
+            } else {
+                break;
+            }
+        }
+        assert_eq!(actual.len(), expected.len());
+        for (row, expected) in actual.iter().zip(expected) {
+            let source = &source_rows[expected["sourceOrdinal"].as_u64().unwrap() as usize];
+            assert_eq!(row.status, TranslationMatch::Unique);
+            assert_eq!(
+                row.entry.ordinal as u64,
+                expected["ordinal"].as_u64().unwrap()
+            );
+            assert_eq!(row.entry.native_key, expected["key"].as_str().unwrap());
+            assert_eq!(row.entry.text, expected["text"].as_str().unwrap());
+            assert_eq!(row.occurrence_id, source.occurrence_id);
+            assert_eq!(row.unit_id, source.unit_id);
+            assert_eq!(row.source_revision_id, source.source_revision_id);
+        }
     }
 }

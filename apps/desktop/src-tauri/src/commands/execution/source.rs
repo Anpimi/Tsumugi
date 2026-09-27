@@ -13,7 +13,14 @@ pub(super) struct SourceSession {
     job: Option<ExecutionId>,
     cancel: Cancellation,
     last_start: Option<(ExecutionId, ExecutionId, String)>,
-    translation_last_start: Option<(ExecutionId, ExecutionId, String, String)>,
+    translation_last_start: Option<(
+        ExecutionId,
+        ExecutionId,
+        String,
+        String,
+        String,
+        ExecutionId,
+    )>,
 }
 impl SourceSession {
     pub fn is_active(&self) -> bool {

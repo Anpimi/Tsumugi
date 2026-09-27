@@ -11,6 +11,16 @@
 .source-dialog .execution-content p { overflow-wrap: anywhere; }
 .source-dialog section > button { margin: 6px 8px 6px 0; }
 .source-dialog h3:focus { outline: 2px solid #6b8bd7; outline-offset: 4px; }
+.translation-editor { border-top: 1px solid #d7e0ef; margin-top: 20px; padding-top: 16px; }
+.translation-editor > label { display: grid; gap: 8px; font-weight: 600; }
+.translation-editor textarea { width: 100%; min-height: 140px; padding: 12px; border: 1px solid #aab9d1; border-radius: 8px; font: inherit; line-height: 1.5; resize: vertical; }
+.translation-editor textarea:focus-visible { outline: 2px solid #3f61cb; outline-offset: 2px; }
+.translation-editor li { margin: 10px 0; padding: 12px; border: 1px solid #d7e0ef; border-radius: 8px; overflow-wrap: anywhere; }
+.translation-editor li p { white-space: pre-wrap; }
+.source-dialog .execution-content > label { display: grid; gap: 8px; max-width: 440px; }
+.source-dialog .execution-content select { min-width: 0; padding: 8px; border: 1px solid #aab9d1; border-radius: 8px; font: inherit; }
+.translation-row-actions { display: grid; justify-items: start; gap: 4px; margin-top: 8px; }
+.translation-action-compare p { white-space: pre-wrap; overflow-wrap: anywhere; }
 :root {
   font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   color: #1d293d;

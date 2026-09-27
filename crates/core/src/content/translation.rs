@@ -496,6 +496,17 @@ mod tests {
             output.entry,
             Some(entries[ordinal.unwrap() as usize].clone())
         );
+        let mut forged = result.envelope().clone();
+        let mut forged_output = output;
+        forged_output.entry.as_mut().unwrap().text = "forged".into();
+        forged.output = Some(value(&forged_output).unwrap());
+        let forged = FixedResult::capture(forged, &input, token).unwrap();
+        assert_eq!(
+            validate_translation_output(&input, &forged)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutputInvalid
+        );
     }
 
     #[test]
@@ -544,6 +555,26 @@ mod tests {
             )
             .unwrap_err()
             .code,
+            ErrorCode::LimitExceeded
+        );
+        let longest = format!("{{\"a\":\"{}\"}}", "x".repeat(MAX_TEXT_BYTES));
+        let exact =
+            TranslationBundle::capture("i18n/zh.json", longest.as_bytes(), "zh-CN", snapshot())
+                .unwrap();
+        assert_eq!(
+            extract_translation(&exact, &Cancellation::default()).unwrap()[0]
+                .text
+                .len(),
+            MAX_TEXT_BYTES
+        );
+        let too_long = format!("{{\"a\":\"{}\"}}", "x".repeat(MAX_TEXT_BYTES + 1));
+        let over =
+            TranslationBundle::capture("i18n/zh.json", too_long.as_bytes(), "zh-CN", snapshot())
+                .unwrap();
+        assert_eq!(
+            extract_translation(&over, &Cancellation::default())
+                .unwrap_err()
+                .code,
             ErrorCode::LimitExceeded
         );
         for (path, target) in [

@@ -50,6 +50,25 @@ fn call(
     .map(|r| r.deserialize::<Value>().unwrap())
 }
 
+#[cfg(windows)]
+fn wait_for_execution_idle(
+    webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    context: &Value,
+) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let status = call(webview, "execution_status", context.clone()).unwrap();
+        if status["active"] == false {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "execution stayed active: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[test]
 #[cfg(windows)]
 fn production_source_ipc_captures_previews_commits_and_reopens() {
@@ -199,6 +218,7 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     read["limit"] = json!(100);
     let content = call(&view, "read_source_content", read.clone()).unwrap();
     assert_eq!(content["total"], 532);
+    wait_for_execution_idle(&view, &context);
     call(
         &view,
         "close_project",
@@ -341,6 +361,14 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     );
     let translation_attempt = ExecutionId::new();
     translation["attemptId"] = json!(translation_attempt);
+    let checked = call(&view, "preflight_translation", {
+        let mut request = translation.clone();
+        request.as_object_mut().unwrap().remove("attemptId");
+        request
+    })
+    .unwrap();
+    translation["expectedFileDigest"] = checked["fileDigest"].clone();
+    translation["expectedSourceSnapshotId"] = checked["sourceSnapshotId"].clone();
     translation["languageConfirmed"] = json!(false);
     assert!(call(&view, "start_translation_import", translation.clone()).is_err());
     translation["languageConfirmed"] = json!(true);
@@ -417,6 +445,7 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     select["revisionId"] = imported["rows"][0]["revisionId"].clone();
     let restored = call(&view, "select_translation_revision", select).unwrap();
     assert_eq!(restored["revisionId"], imported["rows"][0]["revisionId"]);
+    wait_for_execution_idle(&view, &context);
     call(
         &view,
         "close_project",
