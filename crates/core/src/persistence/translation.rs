@@ -1693,6 +1693,7 @@ mod tests {
         assert_eq!(changed.selected_conflicts, 1);
         assert_eq!(changed.rows[0].current_text.as_deref(), Some("existing"));
         let adopt = |store: &mut ProjectStore,
+                     input: &FixedInput,
                      row: &TranslationPreviewRow,
                      decision: TranslationSelectionDecision| {
             let unit = input
@@ -1725,6 +1726,7 @@ mod tests {
         };
         let conflict = adopt(
             &mut store,
+            &input,
             &changed.rows[0],
             TranslationSelectionDecision::SelectIfEmpty,
         );
@@ -1737,6 +1739,7 @@ mod tests {
         );
         let candidate = adopt(
             &mut store,
+            &input,
             &changed.rows[0],
             TranslationSelectionDecision::CandidateOnly,
         );
@@ -1752,6 +1755,7 @@ mod tests {
         );
         let selected = adopt(
             &mut store,
+            &input,
             &changed.rows[1],
             TranslationSelectionDecision::SelectIfEmpty,
         );
@@ -1776,6 +1780,57 @@ mod tests {
             .translation_preview(input.envelope().attempt_id, 0, 3, None)
             .unwrap();
         assert_eq!(changed.applied, 2);
+        let replacement =
+            TranslationBundle::capture("i18n/zh.json", &captured, "zh-CN", snapshot).unwrap();
+        let replacement_input = replacement
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        runtime.submit(&mut store, &replacement_input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            runtime.tick(&mut store).unwrap();
+            let view = store
+                .execution_attempt(replacement_input.envelope().attempt_id, true)
+                .unwrap();
+            if view
+                .items
+                .iter()
+                .all(|item| item.execution == ExecutionState::Succeeded)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let replacement_page = store
+            .translation_preview(replacement_input.envelope().attempt_id, 0, 3, None)
+            .unwrap();
+        assert_eq!(replacement_page.selected_conflicts, 2);
+        let replace = adopt(
+            &mut store,
+            &replacement_input,
+            &replacement_page.rows[1],
+            TranslationSelectionDecision::Replace,
+        );
+        let replace_receipt = store
+            .adopt_execution(&replace, &TranslationAdoptionHandler)
+            .unwrap();
+        assert_eq!(replace_receipt.changes.len(), 2);
+        assert_eq!(
+            store
+                .adopt_execution(&replace, &TranslationAdoptionHandler)
+                .unwrap(),
+            replace_receipt
+        );
+        let replaced_history = store
+            .translation_history(project_id, changed.rows[1].unit_id.unwrap(), "zh-CN", 0, 10)
+            .unwrap();
+        assert_eq!(replaced_history.total, 2);
+        assert_eq!(replaced_history.current.unwrap().sequence, 2);
+        let after_replace = store
+            .translation_preview(input.envelope().attempt_id, 0, 3, None)
+            .unwrap()
+            .rows;
         store.close().unwrap();
         std::fs::remove_file(&external).unwrap();
         let store = ProjectStore::open(temp.path().join("project")).unwrap();
@@ -1801,7 +1856,7 @@ mod tests {
                 .translation_preview(input.envelope().attempt_id, 0, 3, None)
                 .unwrap()
                 .rows,
-            changed.rows
+            after_replace
         );
     }
 
