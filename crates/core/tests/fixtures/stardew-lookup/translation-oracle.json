@@ -1,0 +1,3203 @@
+{
+  "upstreamRevision": "76565e83ede4bc8b3c293f1c659032ba9c39c213",
+  "sourcePath": "i18n/default.json",
+  "translationPath": "i18n/zh.json",
+  "translationSha256": "d5b840327b886dab3afccef3e9e9c6cf1b2eb30668699dd70ed0b52ab662b4a7",
+  "declaredLocale": "zh",
+  "confirmedProjectLocale": "zh-CN",
+  "count": 532,
+  "entries": [
+    {
+      "ordinal": 0,
+      "key": "generic.list-separator",
+      "text": "、",
+      "sourceOrdinal": 0
+    },
+    {
+      "ordinal": 1,
+      "key": "generic.line-wrap-on",
+      "text": "、",
+      "sourceOrdinal": 1
+    },
+    {
+      "ordinal": 2,
+      "key": "generic.now",
+      "text": "现在",
+      "sourceOrdinal": 2
+    },
+    {
+      "ordinal": 3,
+      "key": "generic.tomorrow",
+      "text": "明天",
+      "sourceOrdinal": 3
+    },
+    {
+      "ordinal": 4,
+      "key": "generic.yesterday",
+      "text": "昨天",
+      "sourceOrdinal": 4
+    },
+    {
+      "ordinal": 5,
+      "key": "generic.unknown",
+      "text": "未知",
+      "sourceOrdinal": 5
+    },
+    {
+      "ordinal": 6,
+      "key": "generic.percent",
+      "text": "{{percent}}%",
+      "sourceOrdinal": 6
+    },
+    {
+      "ordinal": 7,
+      "key": "generic.percent-chance-of",
+      "text": "{{percent}}%几率{{label}}",
+      "sourceOrdinal": 7
+    },
+    {
+      "ordinal": 8,
+      "key": "generic.percent-ratio",
+      "text": "{{percent}}%（{{max}}中的{{value}}）",
+      "sourceOrdinal": 8
+    },
+    {
+      "ordinal": 9,
+      "key": "generic.ratio",
+      "text": "总数{{max}}中的{{value}}",
+      "sourceOrdinal": 9
+    },
+    {
+      "ordinal": 10,
+      "key": "generic.range",
+      "text": "{{min}}到{{max}}",
+      "sourceOrdinal": 10
+    },
+    {
+      "ordinal": 11,
+      "key": "generic.yes",
+      "text": "是",
+      "sourceOrdinal": 11
+    },
+    {
+      "ordinal": 12,
+      "key": "generic.no",
+      "text": "否",
+      "sourceOrdinal": 12
+    },
+    {
+      "ordinal": 13,
+      "key": "generic.seconds",
+      "text": "{{count}}秒",
+      "sourceOrdinal": 13
+    },
+    {
+      "ordinal": 14,
+      "key": "generic.minutes",
+      "text": "{{count}}分",
+      "sourceOrdinal": 14
+    },
+    {
+      "ordinal": 15,
+      "key": "generic.hours",
+      "text": "{{count}}时",
+      "sourceOrdinal": 15
+    },
+    {
+      "ordinal": 16,
+      "key": "generic.days",
+      "text": "{{count}}天",
+      "sourceOrdinal": 16
+    },
+    {
+      "ordinal": 17,
+      "key": "generic.in-x-days",
+      "text": "在{{count}}天内",
+      "sourceOrdinal": 17
+    },
+    {
+      "ordinal": 18,
+      "key": "generic.x-days-ago",
+      "text": "{{count}}天前",
+      "sourceOrdinal": 18
+    },
+    {
+      "ordinal": 19,
+      "key": "generic.price",
+      "text": "{{price}}金",
+      "sourceOrdinal": 19
+    },
+    {
+      "ordinal": 20,
+      "key": "generic.price-for-quality",
+      "text": "{{price}}金（{{quality}}）",
+      "sourceOrdinal": 20
+    },
+    {
+      "ordinal": 21,
+      "key": "generic.price-for-stack",
+      "text": "{{count}}个，总共价值{{price}}金",
+      "sourceOrdinal": 21
+    },
+    {
+      "ordinal": 22,
+      "key": "generic.show-x-results",
+      "text": "显示 {{count}} 个结果",
+      "sourceOrdinal": 22
+    },
+    {
+      "ordinal": 23,
+      "key": "type.achievement",
+      "text": "Achievement",
+      "sourceOrdinal": 23
+    },
+    {
+      "ordinal": 24,
+      "key": "type.building",
+      "text": "建筑",
+      "sourceOrdinal": 24
+    },
+    {
+      "ordinal": 25,
+      "key": "type.bush",
+      "text": "灌木丛",
+      "sourceOrdinal": 25
+    },
+    {
+      "ordinal": 26,
+      "key": "type.fruit-tree",
+      "text": "果树",
+      "sourceOrdinal": 26
+    },
+    {
+      "ordinal": 27,
+      "key": "type.monster",
+      "text": "怪物",
+      "sourceOrdinal": 27
+    },
+    {
+      "ordinal": 28,
+      "key": "type.player",
+      "text": "玩家",
+      "sourceOrdinal": 28
+    },
+    {
+      "ordinal": 29,
+      "key": "type.tree",
+      "text": "树",
+      "sourceOrdinal": 29
+    },
+    {
+      "ordinal": 30,
+      "key": "type.villager",
+      "text": "村民",
+      "sourceOrdinal": 30
+    },
+    {
+      "ordinal": 31,
+      "key": "type.other",
+      "text": "其它",
+      "sourceOrdinal": 31
+    },
+    {
+      "ordinal": 32,
+      "key": "quality.normal",
+      "text": "普通",
+      "sourceOrdinal": 32
+    },
+    {
+      "ordinal": 33,
+      "key": "quality.silver",
+      "text": "银星",
+      "sourceOrdinal": 33
+    },
+    {
+      "ordinal": 34,
+      "key": "quality.gold",
+      "text": "金星",
+      "sourceOrdinal": 34
+    },
+    {
+      "ordinal": 35,
+      "key": "quality.iridium",
+      "text": "铱星",
+      "sourceOrdinal": 35
+    },
+    {
+      "ordinal": 36,
+      "key": "item.wild-seeds",
+      "text": "野生种子 (任意)",
+      "sourceOrdinal": 36
+    },
+    {
+      "ordinal": 37,
+      "key": "friendship-status.friendly",
+      "text": "友好的",
+      "sourceOrdinal": 37
+    },
+    {
+      "ordinal": 38,
+      "key": "friendship-status.dating",
+      "text": "交往中",
+      "sourceOrdinal": 38
+    },
+    {
+      "ordinal": 39,
+      "key": "friendship-status.engaged",
+      "text": "已订婚",
+      "sourceOrdinal": 39
+    },
+    {
+      "ordinal": 40,
+      "key": "friendship-status.married",
+      "text": "已结婚",
+      "sourceOrdinal": 40
+    },
+    {
+      "ordinal": 41,
+      "key": "friendship-status.divorced",
+      "text": "已离婚",
+      "sourceOrdinal": 41
+    },
+    {
+      "ordinal": 42,
+      "key": "friendship-status.kicked-out",
+      "text": "关系解除",
+      "sourceOrdinal": 42
+    },
+    {
+      "ordinal": 43,
+      "key": "added-by-mod",
+      "text": "由模组添加",
+      "sourceOrdinal": 43
+    },
+    {
+      "ordinal": 44,
+      "key": "added-by-mod.summary",
+      "text": "{{modName}}",
+      "sourceOrdinal": 44
+    },
+    {
+      "ordinal": 45,
+      "key": "internal-id",
+      "text": "内置ID",
+      "sourceOrdinal": 45
+    },
+    {
+      "ordinal": 46,
+      "key": "bundle-area.pantry",
+      "text": "茶水间",
+      "sourceOrdinal": 46
+    },
+    {
+      "ordinal": 47,
+      "key": "bundle-area.crafts-room",
+      "text": "工艺室",
+      "sourceOrdinal": 47
+    },
+    {
+      "ordinal": 48,
+      "key": "bundle-area.fish-tank",
+      "text": "鱼缸",
+      "sourceOrdinal": 48
+    },
+    {
+      "ordinal": 49,
+      "key": "bundle-area.boiler-room",
+      "text": "锅炉房",
+      "sourceOrdinal": 49
+    },
+    {
+      "ordinal": 50,
+      "key": "bundle-area.vault",
+      "text": "地下室",
+      "sourceOrdinal": 50
+    },
+    {
+      "ordinal": 51,
+      "key": "bundle-area.bulletin-board",
+      "text": "布告栏",
+      "sourceOrdinal": 51
+    },
+    {
+      "ordinal": 52,
+      "key": "bundle-area.abandoned-joja-mart",
+      "text": "废弃的乔家超市",
+      "sourceOrdinal": 52
+    },
+    {
+      "ordinal": 53,
+      "key": "shop.adventure-guild",
+      "text": "探险家公会",
+      "sourceOrdinal": 53
+    },
+    {
+      "ordinal": 54,
+      "key": "shop.clint",
+      "text": "克林特",
+      "sourceOrdinal": 54
+    },
+    {
+      "ordinal": 55,
+      "key": "shop.marnie",
+      "text": "玛妮",
+      "sourceOrdinal": 55
+    },
+    {
+      "ordinal": 56,
+      "key": "shop.pierre",
+      "text": "皮埃尔",
+      "sourceOrdinal": 56
+    },
+    {
+      "ordinal": 57,
+      "key": "shop.robin",
+      "text": "罗宾",
+      "sourceOrdinal": 57
+    },
+    {
+      "ordinal": 58,
+      "key": "shop.volcano",
+      "text": "火山商店",
+      "sourceOrdinal": 58
+    },
+    {
+      "ordinal": 59,
+      "key": "shop.willy",
+      "text": "威利",
+      "sourceOrdinal": 59
+    },
+    {
+      "ordinal": 60,
+      "key": "recipe-type.cooking",
+      "text": "烹饪",
+      "sourceOrdinal": 60
+    },
+    {
+      "ordinal": 61,
+      "key": "recipe-type.crafting",
+      "text": "制造",
+      "sourceOrdinal": 61
+    },
+    {
+      "ordinal": 62,
+      "key": "recipe-type.tailoring",
+      "text": "裁缝",
+      "sourceOrdinal": 62
+    },
+    {
+      "ordinal": 63,
+      "key": "data.npc.pet.description",
+      "text": "对你忠心耿耿的宠物。",
+      "sourceOrdinal": 63
+    },
+    {
+      "ordinal": 64,
+      "key": "data.npc.horse.description",
+      "text": "对你忠心耿耿的坐骑。",
+      "sourceOrdinal": 64
+    },
+    {
+      "ordinal": 65,
+      "key": "data.npc.junimo.description",
+      "text": "来自精神世界的森林精灵。人类对它们知之甚少。",
+      "sourceOrdinal": 65
+    },
+    {
+      "ordinal": 66,
+      "key": "data.npc.trash-bear.description",
+      "text": "清理垃圾的友好精灵。",
+      "sourceOrdinal": 66
+    },
+    {
+      "ordinal": 67,
+      "key": "data.type.container",
+      "text": "容器",
+      "sourceOrdinal": 67
+    },
+    {
+      "ordinal": 68,
+      "key": "data.item.egg-incubator.description",
+      "text": "将蛋孵化成小鸡或小鸭。",
+      "sourceOrdinal": 68
+    },
+    {
+      "ordinal": 69,
+      "key": "data.item.barrel.name",
+      "text": "桶",
+      "sourceOrdinal": 69
+    },
+    {
+      "ordinal": 70,
+      "key": "data.item.barrel.description",
+      "text": "打碎之后可以获得各种物品。",
+      "sourceOrdinal": 70
+    },
+    {
+      "ordinal": 71,
+      "key": "data.item.box.name",
+      "text": "箱",
+      "sourceOrdinal": 71
+    },
+    {
+      "ordinal": 72,
+      "key": "data.item.box.description",
+      "text": "打碎之后可以获得各种物品。",
+      "sourceOrdinal": 72
+    },
+    {
+      "ordinal": 73,
+      "key": "location.beach.east-pier",
+      "text": "海滩（码头东侧）",
+      "sourceOrdinal": 73
+    },
+    {
+      "ordinal": 74,
+      "key": "location.bugLand",
+      "text": "突变虫穴",
+      "sourceOrdinal": 74
+    },
+    {
+      "ordinal": 75,
+      "key": "location.desert.topPond",
+      "text": "沙漠池塘",
+      "sourceOrdinal": 75
+    },
+    {
+      "ordinal": 76,
+      "key": "location.farmCave",
+      "text": "农场洞穴",
+      "sourceOrdinal": 76
+    },
+    {
+      "ordinal": 77,
+      "key": "location.farmHouse",
+      "text": "农舍",
+      "sourceOrdinal": 77
+    },
+    {
+      "ordinal": 78,
+      "key": "location.forest.island-tip",
+      "text": "煤矿森林（河流小岛南端）",
+      "sourceOrdinal": 78
+    },
+    {
+      "ordinal": 79,
+      "key": "location.forest.lake",
+      "text": "煤矿森林（湖泊）",
+      "sourceOrdinal": 79
+    },
+    {
+      "ordinal": 80,
+      "key": "location.forest.river",
+      "text": "煤矿森林（河流）",
+      "sourceOrdinal": 80
+    },
+    {
+      "ordinal": 81,
+      "key": "location.HarveyRoom",
+      "text": "哈维的房间",
+      "sourceOrdinal": 81
+    },
+    {
+      "ordinal": 82,
+      "key": "location.LeoTreeHouse",
+      "text": "树屋",
+      "sourceOrdinal": 82
+    },
+    {
+      "ordinal": 83,
+      "key": "location.SandyHouse",
+      "text": "绿洲",
+      "sourceOrdinal": 83
+    },
+    {
+      "ordinal": 84,
+      "key": "location.SebastianRoom",
+      "text": "塞巴斯蒂安的房间",
+      "sourceOrdinal": 84
+    },
+    {
+      "ordinal": 85,
+      "key": "location.submarine",
+      "text": "夜市潜艇",
+      "sourceOrdinal": 85
+    },
+    {
+      "ordinal": 86,
+      "key": "location.town.northmost-bridge",
+      "text": "鹈鹕镇（北部桥区）",
+      "sourceOrdinal": 86
+    },
+    {
+      "ordinal": 87,
+      "key": "location.undergroundMine",
+      "text": "矿井",
+      "sourceOrdinal": 87
+    },
+    {
+      "ordinal": 88,
+      "key": "location.undergroundMine.level",
+      "text": "矿井层数：{{level}}",
+      "sourceOrdinal": 88
+    },
+    {
+      "ordinal": 89,
+      "key": "location.witchSwamp",
+      "text": "女巫的沼泽",
+      "sourceOrdinal": 89
+    },
+    {
+      "ordinal": 90,
+      "key": "location.caldera",
+      "text": "姜岛火山口",
+      "sourceOrdinal": 90
+    },
+    {
+      "ordinal": 91,
+      "key": "location.islandEast",
+      "text": "姜岛东部",
+      "sourceOrdinal": 91
+    },
+    {
+      "ordinal": 92,
+      "key": "location.islandNorth",
+      "text": "姜岛北部",
+      "sourceOrdinal": 92
+    },
+    {
+      "ordinal": 93,
+      "key": "location.islandSouth",
+      "text": "姜岛南部",
+      "sourceOrdinal": 93
+    },
+    {
+      "ordinal": 94,
+      "key": "location.islandSouthEast",
+      "text": "姜岛东南部",
+      "sourceOrdinal": 94
+    },
+    {
+      "ordinal": 95,
+      "key": "location.islandSouthEastCave",
+      "text": "姜岛东南部洞穴",
+      "sourceOrdinal": 95
+    },
+    {
+      "ordinal": 96,
+      "key": "location.islandWest",
+      "text": "姜岛西部",
+      "sourceOrdinal": 96
+    },
+    {
+      "ordinal": 97,
+      "key": "location.islandWest.freshwater",
+      "text": "姜岛西部（淡水）",
+      "sourceOrdinal": 97
+    },
+    {
+      "ordinal": 98,
+      "key": "location.islandWest.ocean",
+      "text": "姜岛西部（海洋）",
+      "sourceOrdinal": 98
+    },
+    {
+      "ordinal": 99,
+      "key": "location.fish-area",
+      "text": "{{locationName}} ({{areaName}})",
+      "sourceOrdinal": 99
+    },
+    {
+      "ordinal": 100,
+      "key": "location.unknown-fish-area",
+      "text": "{{locationName}}（钓鱼区 {{id}}）",
+      "sourceOrdinal": 100
+    },
+    {
+      "ordinal": 101,
+      "key": "conditions-summary",
+      "text": "[条件: {{conditions}}]",
+      "sourceOrdinal": 101
+    },
+    {
+      "ordinal": 102,
+      "key": "condition-or-context-tag.negate",
+      "text": "非{{value}}",
+      "sourceOrdinal": 102
+    },
+    {
+      "ordinal": 103,
+      "key": "condition.day-of-month",
+      "text": "每季指定日期 ({{days}})",
+      "sourceOrdinal": 103
+    },
+    {
+      "ordinal": 104,
+      "key": "condition.day-of-month.even",
+      "text": "偶数日",
+      "sourceOrdinal": 104
+    },
+    {
+      "ordinal": 105,
+      "key": "condition.day-of-month.odd",
+      "text": "奇数日",
+      "sourceOrdinal": 105
+    },
+    {
+      "ordinal": 106,
+      "key": "condition.item-type.input",
+      "text": "输入物品",
+      "sourceOrdinal": 106
+    },
+    {
+      "ordinal": 107,
+      "key": "condition.item-type.target",
+      "text": "产物",
+      "sourceOrdinal": 107
+    },
+    {
+      "ordinal": 108,
+      "key": "condition.raw-context-tag",
+      "text": "标签 \"{{tag}}\"",
+      "sourceOrdinal": 108
+    },
+    {
+      "ordinal": 109,
+      "key": "condition.raw-condition",
+      "text": "要求 \"{{tag}}\"",
+      "sourceOrdinal": 109
+    },
+    {
+      "ordinal": 110,
+      "key": "condition.item-context-tag",
+      "text": "{{item}}有{{tags}}标签",
+      "sourceOrdinal": 110
+    },
+    {
+      "ordinal": 111,
+      "key": "condition.item-context-tags",
+      "text": "{{item}}有{{tags}}标签",
+      "sourceOrdinal": 111
+    },
+    {
+      "ordinal": 112,
+      "key": "condition.item-context-tag.value",
+      "text": "'{{tag}}'",
+      "sourceOrdinal": 112
+    },
+    {
+      "ordinal": 113,
+      "key": "condition.item-edibility.edible",
+      "text": "{{item}}是可食用的",
+      "sourceOrdinal": 113
+    },
+    {
+      "ordinal": 114,
+      "key": "condition.item-edibility.min",
+      "text": "{{item}}的可食用性大于等于{{min}}",
+      "sourceOrdinal": 114
+    },
+    {
+      "ordinal": 115,
+      "key": "condition.item-edibility.range",
+      "text": "{{item}}的可食用性为{{min}}到{{max}}",
+      "sourceOrdinal": 115
+    },
+    {
+      "ordinal": 116,
+      "key": "context-tag.bone",
+      "text": "骨头（任意）",
+      "sourceOrdinal": 116
+    },
+    {
+      "ordinal": 117,
+      "key": "context-tag.egg",
+      "text": "鸡蛋（任意）",
+      "sourceOrdinal": 117
+    },
+    {
+      "ordinal": 118,
+      "key": "context-tag.large-egg",
+      "text": "大鸡蛋（任意）",
+      "sourceOrdinal": 118
+    },
+    {
+      "ordinal": 119,
+      "key": "context-tag.preserved-item",
+      "text": "由{{name}}生产",
+      "sourceOrdinal": 119
+    },
+    {
+      "ordinal": 120,
+      "key": "achievement.unlocked",
+      "text": "Unlocked",
+      "sourceOrdinal": 120
+    },
+    {
+      "ordinal": 121,
+      "key": "achievement.hat-shop",
+      "text": "Hat shop",
+      "sourceOrdinal": 121
+    },
+    {
+      "ordinal": 122,
+      "key": "achievement.hat-shop.hats-added",
+      "text": "These hats are added to the Hat Mouse shop when the achievement is unlocked:",
+      "sourceOrdinal": 122
+    },
+    {
+      "ordinal": 123,
+      "key": "achievement.hat-shop.no-hats-added",
+      "text": "No hats are unlocked by this achievement.",
+      "sourceOrdinal": 123
+    },
+    {
+      "ordinal": 124,
+      "key": "animal.love",
+      "text": "友好度",
+      "sourceOrdinal": 124
+    },
+    {
+      "ordinal": 125,
+      "key": "animal.happiness",
+      "text": "心情值",
+      "sourceOrdinal": 125
+    },
+    {
+      "ordinal": 126,
+      "key": "animal.mood",
+      "text": "今天心情",
+      "sourceOrdinal": 126
+    },
+    {
+      "ordinal": 127,
+      "key": "animal.complaints",
+      "text": "问题",
+      "sourceOrdinal": 127
+    },
+    {
+      "ordinal": 128,
+      "key": "animal.produce-ready",
+      "text": "动物制品",
+      "sourceOrdinal": 128
+    },
+    {
+      "ordinal": 129,
+      "key": "animal.growth",
+      "text": "生长",
+      "sourceOrdinal": 129
+    },
+    {
+      "ordinal": 130,
+      "key": "animal.sells-for",
+      "text": "出售",
+      "sourceOrdinal": 130
+    },
+    {
+      "ordinal": 131,
+      "key": "animal.golden-cracker",
+      "text": "金色动物饼干",
+      "sourceOrdinal": 131
+    },
+    {
+      "ordinal": 132,
+      "key": "animal.complaints.hungry",
+      "text": "昨天没有喂食",
+      "sourceOrdinal": 132
+    },
+    {
+      "ordinal": 133,
+      "key": "animal.complaints.left-out",
+      "text": "昨晚被关在外面",
+      "sourceOrdinal": 133
+    },
+    {
+      "ordinal": 134,
+      "key": "animal.complaints.new-home",
+      "text": "刚搬到新家",
+      "sourceOrdinal": 134
+    },
+    {
+      "ordinal": 135,
+      "key": "animal.complaints.no-heater",
+      "text": "冬天没有暖气",
+      "sourceOrdinal": 135
+    },
+    {
+      "ordinal": 136,
+      "key": "animal.complaints.not-petted",
+      "text": "今天还没有被爱抚",
+      "sourceOrdinal": 136
+    },
+    {
+      "ordinal": 137,
+      "key": "animal.complaints.wild-animal-attack",
+      "text": "夜晚被野生动物攻击了",
+      "sourceOrdinal": 137
+    },
+    {
+      "ordinal": 138,
+      "key": "animal.golden-cracker.none",
+      "text": "未使用。使用可使其产出双倍产品。",
+      "sourceOrdinal": 138
+    },
+    {
+      "ordinal": 139,
+      "key": "animal.golden-cracker.applied",
+      "text": "已使用。将产出双倍产品。",
+      "sourceOrdinal": 139
+    },
+    {
+      "ordinal": 140,
+      "key": "building.animals",
+      "text": "动物",
+      "sourceOrdinal": 140
+    },
+    {
+      "ordinal": 141,
+      "key": "building.construction",
+      "text": "施工",
+      "sourceOrdinal": 141
+    },
+    {
+      "ordinal": 142,
+      "key": "building.construction-costs",
+      "text": "建筑材料",
+      "sourceOrdinal": 142
+    },
+    {
+      "ordinal": 143,
+      "key": "building.feed-trough",
+      "text": "喂食槽",
+      "sourceOrdinal": 143
+    },
+    {
+      "ordinal": 144,
+      "key": "building.horse",
+      "text": "马",
+      "sourceOrdinal": 144
+    },
+    {
+      "ordinal": 145,
+      "key": "building.horse-location",
+      "text": "马位置",
+      "sourceOrdinal": 145
+    },
+    {
+      "ordinal": 146,
+      "key": "building.owner",
+      "text": "屋主",
+      "sourceOrdinal": 146
+    },
+    {
+      "ordinal": 147,
+      "key": "building.slimes",
+      "text": "史莱姆",
+      "sourceOrdinal": 147
+    },
+    {
+      "ordinal": 148,
+      "key": "building.stored-hay",
+      "text": "存放干草",
+      "sourceOrdinal": 148
+    },
+    {
+      "ordinal": 149,
+      "key": "building.upgrades",
+      "text": "升级",
+      "sourceOrdinal": 149
+    },
+    {
+      "ordinal": 150,
+      "key": "building.water-trough",
+      "text": "水槽",
+      "sourceOrdinal": 150
+    },
+    {
+      "ordinal": 151,
+      "key": "building.animals.summary",
+      "text": "已容纳{{count}}只动物，最大可容纳{{max}}只动物",
+      "sourceOrdinal": 151
+    },
+    {
+      "ordinal": 152,
+      "key": "building.construction.summary",
+      "text": "{{date}} 完成",
+      "sourceOrdinal": 152
+    },
+    {
+      "ordinal": 153,
+      "key": "building.feed-trough.automated",
+      "text": "自动喂食",
+      "sourceOrdinal": 153
+    },
+    {
+      "ordinal": 154,
+      "key": "building.feed-trough.summary",
+      "text": "{{filled}}个喂食槽已填充，最大可填充喂食槽为{{max}}个",
+      "sourceOrdinal": 154
+    },
+    {
+      "ordinal": 155,
+      "key": "building.horse-location.summary",
+      "text": "{{location}}（{{x}}, {{y}}）",
+      "sourceOrdinal": 155
+    },
+    {
+      "ordinal": 156,
+      "key": "building.junimo-harvesting-enabled",
+      "text": "自动收获已启用",
+      "sourceOrdinal": 156
+    },
+    {
+      "ordinal": 157,
+      "key": "building.owner.none",
+      "text": "没有屋主",
+      "sourceOrdinal": 157
+    },
+    {
+      "ordinal": 158,
+      "key": "building.output-processing",
+      "text": "产品处理中",
+      "sourceOrdinal": 158
+    },
+    {
+      "ordinal": 159,
+      "key": "building.output-ready",
+      "text": "产品完成",
+      "sourceOrdinal": 159
+    },
+    {
+      "ordinal": 160,
+      "key": "building.slimes.summary",
+      "text": "已容纳{{count}}只史莱姆，最大可容纳{{max}}只史莱姆",
+      "sourceOrdinal": 160
+    },
+    {
+      "ordinal": 161,
+      "key": "building.stored-hay.summary",
+      "text": "该地点已存放 {{hayCount}}/{{maxHayInLocation}} 个干草（该建筑最大容量：{{maxHayInBuilding}}）",
+      "sourceOrdinal": 161
+    },
+    {
+      "ordinal": 162,
+      "key": "building.upgrades.barn.0",
+      "text": "可容纳动物量上升至 4 只动物，解锁牛",
+      "sourceOrdinal": 162
+    },
+    {
+      "ordinal": 163,
+      "key": "building.upgrades.barn.1",
+      "text": "可容纳动物量上升至 8 只动物，解锁繁殖和山羊",
+      "sourceOrdinal": 163
+    },
+    {
+      "ordinal": 164,
+      "key": "building.upgrades.barn.2",
+      "text": "可容纳动物量上升至 12 只动物，解锁自动喂食、猪和绵羊",
+      "sourceOrdinal": 164
+    },
+    {
+      "ordinal": 165,
+      "key": "building.upgrades.cabin.0",
+      "text": "初始小屋",
+      "sourceOrdinal": 165
+    },
+    {
+      "ordinal": 166,
+      "key": "building.upgrades.cabin.1",
+      "text": "添加厨房,解锁婚姻",
+      "sourceOrdinal": 166
+    },
+    {
+      "ordinal": 167,
+      "key": "building.upgrades.cabin.2",
+      "text": "解锁孩童",
+      "sourceOrdinal": 167
+    },
+    {
+      "ordinal": 168,
+      "key": "building.upgrades.coop.0",
+      "text": "可容纳动物量上升至 4 只动物，解锁鸡",
+      "sourceOrdinal": 168
+    },
+    {
+      "ordinal": 169,
+      "key": "building.upgrades.coop.1",
+      "text": "可容纳动物量上升至 8 只动物，解锁孵化器、恐龙和鸭",
+      "sourceOrdinal": 169
+    },
+    {
+      "ordinal": 170,
+      "key": "building.upgrades.coop.2",
+      "text": "可容纳动物量上升至 12 只动物，解锁自动喂食和兔子",
+      "sourceOrdinal": 170
+    },
+    {
+      "ordinal": 171,
+      "key": "building.water-trough.summary",
+      "text": "{{filled}}个水槽已填充，最大可填充{{max}}个水槽",
+      "sourceOrdinal": 171
+    },
+    {
+      "ordinal": 172,
+      "key": "building.fish-pond.population",
+      "text": "鱼群数量",
+      "sourceOrdinal": 172
+    },
+    {
+      "ordinal": 173,
+      "key": "building.fish-pond.drops",
+      "text": "鱼塘产出",
+      "sourceOrdinal": 173
+    },
+    {
+      "ordinal": 174,
+      "key": "building.fish-pond.quests",
+      "text": "鱼塘扩充任务",
+      "sourceOrdinal": 174
+    },
+    {
+      "ordinal": 175,
+      "key": "building.fish-pond.population.empty",
+      "text": "往池塘里加一条鱼以开始养殖。",
+      "sourceOrdinal": 175
+    },
+    {
+      "ordinal": 176,
+      "key": "building.fish-pond.population.next-spawn",
+      "text": "{{relativeDate}}会繁殖新鱼",
+      "sourceOrdinal": 176
+    },
+    {
+      "ordinal": 177,
+      "key": "building.fish-pond.drops.preface",
+      "text": "当满足以下列表条件时每天有{{chance}}%几率收获水产品：",
+      "sourceOrdinal": 177
+    },
+    {
+      "ordinal": 178,
+      "key": "building.fish-pond.drops.min-fish",
+      "text": "当有{{count}}条鱼时：",
+      "sourceOrdinal": 178
+    },
+    {
+      "ordinal": 179,
+      "key": "building.fish-pond.quests.done",
+      "text": "扩充到{{count}}条鱼",
+      "sourceOrdinal": 179
+    },
+    {
+      "ordinal": 180,
+      "key": "building.fish-pond.quests.incomplete-one",
+      "text": "扩充到{{count}}条鱼：将需要{{itemName}}",
+      "sourceOrdinal": 180
+    },
+    {
+      "ordinal": 181,
+      "key": "building.fish-pond.quests.incomplete-random",
+      "text": "扩充到{{count}}条鱼：将需要{{itemList}}其中之一",
+      "sourceOrdinal": 181
+    },
+    {
+      "ordinal": 182,
+      "key": "building.fish-pond.quests.available",
+      "text": "{{relativeDate}}可以获取任务",
+      "sourceOrdinal": 182
+    },
+    {
+      "ordinal": 183,
+      "key": "bush.name.berry",
+      "text": "莓类灌木丛",
+      "sourceOrdinal": 183
+    },
+    {
+      "ordinal": 184,
+      "key": "bush.name.plain",
+      "text": "普通灌木丛",
+      "sourceOrdinal": 184
+    },
+    {
+      "ordinal": 185,
+      "key": "bush.name.tea",
+      "text": "茶树丛",
+      "sourceOrdinal": 185
+    },
+    {
+      "ordinal": 186,
+      "key": "bush.description.berry",
+      "text": "生长美洲大树莓和黑莓的灌木丛。",
+      "sourceOrdinal": 186
+    },
+    {
+      "ordinal": 187,
+      "key": "bush.description.plain",
+      "text": "不生长任何东西的普通灌木。",
+      "sourceOrdinal": 187
+    },
+    {
+      "ordinal": 188,
+      "key": "bush.description.Tea",
+      "text": "产出茶叶的茶树丛",
+      "sourceOrdinal": 188
+    },
+    {
+      "ordinal": 189,
+      "key": "bush.date-planted",
+      "text": "栽种日期",
+      "sourceOrdinal": 189
+    },
+    {
+      "ordinal": 190,
+      "key": "bush.growth",
+      "text": "成熟日期",
+      "sourceOrdinal": 190
+    },
+    {
+      "ordinal": 191,
+      "key": "bush.next-harvest",
+      "text": "下次收获日期",
+      "sourceOrdinal": 191
+    },
+    {
+      "ordinal": 192,
+      "key": "bush.growth.summary",
+      "text": "将于 {{date}} 成熟",
+      "sourceOrdinal": 192
+    },
+    {
+      "ordinal": 193,
+      "key": "bush.schedule.berry",
+      "text": "春季15-18日有20%几率生长美洲大树莓，秋季8-11日有20%几率生长黑莓。",
+      "sourceOrdinal": 193
+    },
+    {
+      "ordinal": 194,
+      "key": "bush.schedule.tea",
+      "text": "每个季节22日开始茶叶可以收获（冬季除外，在温室里种植则四季可收）。",
+      "sourceOrdinal": 194
+    },
+    {
+      "ordinal": 195,
+      "key": "fruit-tree.complaints",
+      "text": "问题",
+      "sourceOrdinal": 195
+    },
+    {
+      "ordinal": 196,
+      "key": "fruit-tree.name",
+      "text": "{{fruitName}}树",
+      "sourceOrdinal": 196
+    },
+    {
+      "ordinal": 197,
+      "key": "fruit-tree.growth",
+      "text": "生长",
+      "sourceOrdinal": 197
+    },
+    {
+      "ordinal": 198,
+      "key": "fruit-tree.next-fruit",
+      "text": "下次结果",
+      "sourceOrdinal": 198
+    },
+    {
+      "ordinal": 199,
+      "key": "fruit-tree.season",
+      "text": "季节",
+      "sourceOrdinal": 199
+    },
+    {
+      "ordinal": 200,
+      "key": "fruit-tree.quality",
+      "text": "质量",
+      "sourceOrdinal": 200
+    },
+    {
+      "ordinal": 201,
+      "key": "fruit-tree.complaints.adjacent-objects",
+      "text": "因相邻的物体无法生长",
+      "sourceOrdinal": 201
+    },
+    {
+      "ordinal": 202,
+      "key": "fruit-tree.growth.summary",
+      "text": "将于 {{date}} 成熟",
+      "sourceOrdinal": 202
+    },
+    {
+      "ordinal": 203,
+      "key": "fruit-tree.next-fruit.max-fruit",
+      "text": "收获这批水果之前无法再次结果",
+      "sourceOrdinal": 203
+    },
+    {
+      "ordinal": 204,
+      "key": "fruit-tree.next-fruit.out-of-season",
+      "text": "过季",
+      "sourceOrdinal": 204
+    },
+    {
+      "ordinal": 205,
+      "key": "fruit-tree.next-fruit.struck-by-lightning",
+      "text": "被闪电击中！将在 {{count}} 天后复原。",
+      "sourceOrdinal": 205
+    },
+    {
+      "ordinal": 206,
+      "key": "fruit-tree.next-fruit.too-young",
+      "text": "树龄太小无法结果",
+      "sourceOrdinal": 206
+    },
+    {
+      "ordinal": 207,
+      "key": "fruit-tree.quality.now",
+      "text": "目前{{quality}}",
+      "sourceOrdinal": 207
+    },
+    {
+      "ordinal": 208,
+      "key": "fruit-tree.quality.on-date",
+      "text": "将于{{date}}获得{{quality}}",
+      "sourceOrdinal": 208
+    },
+    {
+      "ordinal": 209,
+      "key": "fruit-tree.quality.on-date-next-year",
+      "text": "将于第二年的{{date}}获得{{quality}}",
+      "sourceOrdinal": 209
+    },
+    {
+      "ordinal": 210,
+      "key": "fruit-tree.season.summary",
+      "text": "{{season}}（在温室内全年结果）",
+      "sourceOrdinal": 210
+    },
+    {
+      "ordinal": 211,
+      "key": "crop.summary",
+      "text": "作物",
+      "sourceOrdinal": 211
+    },
+    {
+      "ordinal": 212,
+      "key": "crop.harvest",
+      "text": "收割",
+      "sourceOrdinal": 212
+    },
+    {
+      "ordinal": 213,
+      "key": "crop.fertilized",
+      "text": "施肥",
+      "sourceOrdinal": 213
+    },
+    {
+      "ordinal": 214,
+      "key": "crop.watered",
+      "text": "浇水",
+      "sourceOrdinal": 214
+    },
+    {
+      "ordinal": 215,
+      "key": "crop.summary.dead",
+      "text": "作物死亡",
+      "sourceOrdinal": 215
+    },
+    {
+      "ordinal": 216,
+      "key": "crop.summary.drops-X",
+      "text": "收获{{count}}份",
+      "sourceOrdinal": 216
+    },
+    {
+      "ordinal": 217,
+      "key": "crop.summary.drops-X-to-Y",
+      "text": "收获{{min}}至{{max}}份（{{percent}}%几率收获额外作物）",
+      "sourceOrdinal": 217
+    },
+    {
+      "ordinal": 218,
+      "key": "crop.summary.harvest-once",
+      "text": "{{daysToFirstHarvest}}天后收获",
+      "sourceOrdinal": 218
+    },
+    {
+      "ordinal": 219,
+      "key": "crop.summary.harvest-multi",
+      "text": "{{daysToFirstHarvest}}天后收获，之后每隔{{daysToNextHarvests}}天收获一次",
+      "sourceOrdinal": 219
+    },
+    {
+      "ordinal": 220,
+      "key": "crop.summary.farming-xp",
+      "text": "每次收获给予+{{amount}}耕种经验",
+      "sourceOrdinal": 220
+    },
+    {
+      "ordinal": 221,
+      "key": "crop.summary.foraging-xp",
+      "text": "每次收获给予+{{amount}}采集经验",
+      "sourceOrdinal": 221
+    },
+    {
+      "ordinal": 222,
+      "key": "crop.summary.seasons",
+      "text": "在{{seasons}}生长",
+      "sourceOrdinal": 222
+    },
+    {
+      "ordinal": 223,
+      "key": "crop.summary.sells-for",
+      "text": "以{{price}}出售",
+      "sourceOrdinal": 223
+    },
+    {
+      "ordinal": 224,
+      "key": "crop.harvest.too-late",
+      "text": "下次收获超出本季（下次收获将在{{date}}）",
+      "sourceOrdinal": 224
+    },
+    {
+      "ordinal": 225,
+      "key": "item.contents",
+      "text": "内容",
+      "sourceOrdinal": 225
+    },
+    {
+      "ordinal": 226,
+      "key": "item.loves-this",
+      "text": "最爱",
+      "sourceOrdinal": 226
+    },
+    {
+      "ordinal": 227,
+      "key": "item.likes-this",
+      "text": "喜欢",
+      "sourceOrdinal": 227
+    },
+    {
+      "ordinal": 228,
+      "key": "item.neutral-about-this",
+      "text": "无感",
+      "sourceOrdinal": 228
+    },
+    {
+      "ordinal": 229,
+      "key": "item.dislikes-this",
+      "text": "不喜欢",
+      "sourceOrdinal": 229
+    },
+    {
+      "ordinal": 230,
+      "key": "item.hates-this",
+      "text": "讨厌",
+      "sourceOrdinal": 230
+    },
+    {
+      "ordinal": 231,
+      "key": "item.needed-for",
+      "text": "用于",
+      "sourceOrdinal": 231
+    },
+    {
+      "ordinal": 232,
+      "key": "item.flavor",
+      "text": "风味",
+      "sourceOrdinal": 232
+    },
+    {
+      "ordinal": 233,
+      "key": "item.number-owned",
+      "text": "拥有",
+      "sourceOrdinal": 233
+    },
+    {
+      "ordinal": 234,
+      "key": "item.number-cooked",
+      "text": "已烹饪",
+      "sourceOrdinal": 234
+    },
+    {
+      "ordinal": 235,
+      "key": "item.number-crafted",
+      "text": "已打造",
+      "sourceOrdinal": 235
+    },
+    {
+      "ordinal": 236,
+      "key": "item.recipes",
+      "text": "配方",
+      "sourceOrdinal": 236
+    },
+    {
+      "ordinal": 237,
+      "key": "item.see-also",
+      "text": "另请参阅",
+      "sourceOrdinal": 237
+    },
+    {
+      "ordinal": 238,
+      "key": "item.sells-for",
+      "text": "售价为",
+      "sourceOrdinal": 238
+    },
+    {
+      "ordinal": 239,
+      "key": "item.sells-to",
+      "text": "卖给",
+      "sourceOrdinal": 239
+    },
+    {
+      "ordinal": 240,
+      "key": "item.can-be-dyed",
+      "text": "可以染色",
+      "sourceOrdinal": 240
+    },
+    {
+      "ordinal": 241,
+      "key": "item.produces-dye",
+      "text": "产生染料",
+      "sourceOrdinal": 241
+    },
+    {
+      "ordinal": 242,
+      "key": "item.contents.placed",
+      "text": "已放置{{name}}",
+      "sourceOrdinal": 242
+    },
+    {
+      "ordinal": 243,
+      "key": "item.contents.ready",
+      "text": "目前{{name}}",
+      "sourceOrdinal": 243
+    },
+    {
+      "ordinal": 244,
+      "key": "item.contents.partial",
+      "text": "{{name}}在{{time}}后完成",
+      "sourceOrdinal": 244
+    },
+    {
+      "ordinal": 245,
+      "key": "item.undiscovered-gift-taste",
+      "text": "{{count}} 位没揭露的村民",
+      "sourceOrdinal": 245
+    },
+    {
+      "ordinal": 246,
+      "key": "item.undiscovered-gift-taste-appended",
+      "text": ", 和 {{count}} 位没揭露的村民",
+      "sourceOrdinal": 246
+    },
+    {
+      "ordinal": 247,
+      "key": "item.needed-for.community-center",
+      "text": "社区中心（{{bundles}}）",
+      "sourceOrdinal": 247
+    },
+    {
+      "ordinal": 248,
+      "key": "item.needed-for.full-shipment",
+      "text": "全部货物成就（出货一个）",
+      "sourceOrdinal": 248
+    },
+    {
+      "ordinal": 249,
+      "key": "item.needed-for.monoculture",
+      "text": "单一栽培成就（再出货{{count}}个）",
+      "sourceOrdinal": 249
+    },
+    {
+      "ordinal": 250,
+      "key": "item.needed-for.polyculture",
+      "text": "混合栽培成就（再出货{{count}}个）",
+      "sourceOrdinal": 250
+    },
+    {
+      "ordinal": 251,
+      "key": "item.needed-for.full-collection",
+      "text": "全套收集成就（向博物馆捐赠一个）",
+      "sourceOrdinal": 251
+    },
+    {
+      "ordinal": 252,
+      "key": "item.needed-for.gourmet-chef",
+      "text": "美食大厨成就（烹饪{{recipes}}）",
+      "sourceOrdinal": 252
+    },
+    {
+      "ordinal": 253,
+      "key": "item.needed-for.craft-master",
+      "text": "制造大师成就（制造{{recipes}}）",
+      "sourceOrdinal": 253
+    },
+    {
+      "ordinal": 254,
+      "key": "item.needed-for.quests",
+      "text": "当前任务（{{quests}}）",
+      "sourceOrdinal": 254
+    },
+    {
+      "ordinal": 255,
+      "key": "item.needed-for.trash-bear",
+      "text": "垃圾清理熊（交付一个）",
+      "sourceOrdinal": 255
+    },
+    {
+      "ordinal": 256,
+      "key": "item.unknown-recipes",
+      "text": "{{count}}个未知配方",
+      "sourceOrdinal": 256
+    },
+    {
+      "ordinal": 257,
+      "key": "item.sells-to.shipping-box",
+      "text": "出货箱",
+      "sourceOrdinal": 257
+    },
+    {
+      "ordinal": 258,
+      "key": "item.recipes-for-ingredient.entry",
+      "text": "{{name}}（需要{{count}}）",
+      "sourceOrdinal": 258
+    },
+    {
+      "ordinal": 259,
+      "key": "item.recipes-for-machine.multiple-items",
+      "text": "{{name}} x{{count}}",
+      "sourceOrdinal": 259
+    },
+    {
+      "ordinal": 260,
+      "key": "item.recipes-for-machine.same-as-input",
+      "text": "[与输入物品相同]",
+      "sourceOrdinal": 260
+    },
+    {
+      "ordinal": 261,
+      "key": "item.recipes-for-machine.too-complex",
+      "text": "一些生产规则因太复杂而无法显示",
+      "sourceOrdinal": 261
+    },
+    {
+      "ordinal": 262,
+      "key": "item.number-owned.summary",
+      "text": "你目前拥有的总数为{{count}}",
+      "sourceOrdinal": 262
+    },
+    {
+      "ordinal": 263,
+      "key": "item.number-owned-flavored.summary",
+      "text": "你目前拥有{{count}}个{{name}}（总共拥有{{baseCount}}个{{baseName}}）",
+      "sourceOrdinal": 263
+    },
+    {
+      "ordinal": 264,
+      "key": "item.number-crafted.summary",
+      "text": "你已制造{{count}}个此物",
+      "sourceOrdinal": 264
+    },
+    {
+      "ordinal": 265,
+      "key": "item.internal-id.summary",
+      "text": "{{itemId}}（全局唯一'限定性ID'：{{qualifiedItemId}}）",
+      "sourceOrdinal": 265
+    },
+    {
+      "ordinal": 266,
+      "key": "item.cask-contents",
+      "text": "内容",
+      "sourceOrdinal": 266
+    },
+    {
+      "ordinal": 267,
+      "key": "item.cask-schedule",
+      "text": "陈酿中",
+      "sourceOrdinal": 267
+    },
+    {
+      "ordinal": 268,
+      "key": "item.cask-schedule.now",
+      "text": "目前{{quality}}",
+      "sourceOrdinal": 268
+    },
+    {
+      "ordinal": 269,
+      "key": "item.cask-schedule.now-partial",
+      "text": "目前{{quality}}（用镐停止陈酿）",
+      "sourceOrdinal": 269
+    },
+    {
+      "ordinal": 270,
+      "key": "item.cask-schedule.tomorrow",
+      "text": "明天{{quality}}",
+      "sourceOrdinal": 270
+    },
+    {
+      "ordinal": 271,
+      "key": "item.cask-schedule.in-x-days",
+      "text": "将在{{count}}天（{{date}}）后提升到{{quality}}",
+      "sourceOrdinal": 271
+    },
+    {
+      "ordinal": 272,
+      "key": "item.crabpot-bait",
+      "text": "鱼饵",
+      "sourceOrdinal": 272
+    },
+    {
+      "ordinal": 273,
+      "key": "item.crabpot-bait-needed",
+      "text": "需要鱼饵！",
+      "sourceOrdinal": 273
+    },
+    {
+      "ordinal": 274,
+      "key": "item.crabpot-bait-not-needed",
+      "text": "诱饵大师职业不需要鱼饵",
+      "sourceOrdinal": 274
+    },
+    {
+      "ordinal": 275,
+      "key": "item.fence-health",
+      "text": "耐久",
+      "sourceOrdinal": 275
+    },
+    {
+      "ordinal": 276,
+      "key": "item.fence-health.gold-clock",
+      "text": "黄金时钟增益，无法腐坏",
+      "sourceOrdinal": 276
+    },
+    {
+      "ordinal": 277,
+      "key": "item.fence-health.summary",
+      "text": "{{percent}}%（大约还剩{{count}}天）",
+      "sourceOrdinal": 277
+    },
+    {
+      "ordinal": 278,
+      "key": "item.fish-pond-drops",
+      "text": "鱼塘产物",
+      "sourceOrdinal": 278
+    },
+    {
+      "ordinal": 279,
+      "key": "item.fish-spawn-rules",
+      "text": "捕获条件",
+      "sourceOrdinal": 279
+    },
+    {
+      "ordinal": 280,
+      "key": "item.fish-spawn-rules.min-fishing-level",
+      "text": "最低钓鱼等级：{{level}}",
+      "sourceOrdinal": 280
+    },
+    {
+      "ordinal": 281,
+      "key": "item.fish-spawn-rules.not-caught-yet",
+      "text": "尚未被抓住（只能被抓住一次）",
+      "sourceOrdinal": 281
+    },
+    {
+      "ordinal": 282,
+      "key": "item.fish-spawn-rules.extended-family-quest-active",
+      "text": "“大家族”任务正在进行",
+      "sourceOrdinal": 282
+    },
+    {
+      "ordinal": 283,
+      "key": "item.fish-spawn-rules.locations",
+      "text": "地点：{{locations}}",
+      "sourceOrdinal": 283
+    },
+    {
+      "ordinal": 284,
+      "key": "item.fish-spawn-rules.locations-by-season.label",
+      "text": "地点：",
+      "sourceOrdinal": 284
+    },
+    {
+      "ordinal": 285,
+      "key": "item.fish-spawn-rules.locations-by-season.season-locations",
+      "text": "{{season}}: {{locations}}",
+      "sourceOrdinal": 285
+    },
+    {
+      "ordinal": 286,
+      "key": "item.fish-spawn-rules.season-any",
+      "text": "任何季节",
+      "sourceOrdinal": 286
+    },
+    {
+      "ordinal": 287,
+      "key": "item.fish-spawn-rules.season-list",
+      "text": "季节：{{seasons}}",
+      "sourceOrdinal": 287
+    },
+    {
+      "ordinal": 288,
+      "key": "item.fish-spawn-rules.time",
+      "text": "一天中出现时间： {{times}}",
+      "sourceOrdinal": 288
+    },
+    {
+      "ordinal": 289,
+      "key": "item.fish-spawn-rules.weather-sunny",
+      "text": "天气：晴天",
+      "sourceOrdinal": 289
+    },
+    {
+      "ordinal": 290,
+      "key": "item.fish-spawn-rules.weather-rainy",
+      "text": "天气：雨天",
+      "sourceOrdinal": 290
+    },
+    {
+      "ordinal": 291,
+      "key": "item.uncaught-fish",
+      "text": "{{count}}只尚未捕获过的鱼",
+      "sourceOrdinal": 291
+    },
+    {
+      "ordinal": 292,
+      "key": "item.melee-weapon.accuracy",
+      "text": "精准度",
+      "sourceOrdinal": 292
+    },
+    {
+      "ordinal": 293,
+      "key": "item.melee-weapon.critical-chance",
+      "text": "暴击率",
+      "sourceOrdinal": 293
+    },
+    {
+      "ordinal": 294,
+      "key": "item.melee-weapon.critical-damage",
+      "text": "暴击伤害（力量）",
+      "sourceOrdinal": 294
+    },
+    {
+      "ordinal": 295,
+      "key": "item.melee-weapon.damage",
+      "text": "伤害",
+      "sourceOrdinal": 295
+    },
+    {
+      "ordinal": 296,
+      "key": "item.melee-weapon.defense",
+      "text": "防御",
+      "sourceOrdinal": 296
+    },
+    {
+      "ordinal": 297,
+      "key": "item.melee-weapon.knockback",
+      "text": "击退（重量）",
+      "sourceOrdinal": 297
+    },
+    {
+      "ordinal": 298,
+      "key": "item.melee-weapon.reach",
+      "text": "范围",
+      "sourceOrdinal": 298
+    },
+    {
+      "ordinal": 299,
+      "key": "item.melee-weapon.speed",
+      "text": "攻速（速度）",
+      "sourceOrdinal": 299
+    },
+    {
+      "ordinal": 300,
+      "key": "item.melee-weapon.critical-damage.label",
+      "text": "{{multiplier}} 倍正常伤害（未计算玩家加成）",
+      "sourceOrdinal": 300
+    },
+    {
+      "ordinal": 301,
+      "key": "item.melee-weapon.defense.label",
+      "text": "{{amount}}（装备时）",
+      "sourceOrdinal": 301
+    },
+    {
+      "ordinal": 302,
+      "key": "item.melee-weapon.knockback.label",
+      "text": "{{amount}}（{{multiplier}} 倍正常距离）",
+      "sourceOrdinal": 302
+    },
+    {
+      "ordinal": 303,
+      "key": "item.melee-weapon.reach.label",
+      "text": "{{amount}} 像素",
+      "sourceOrdinal": 303
+    },
+    {
+      "ordinal": 304,
+      "key": "item.melee-weapon.speed.shown-vs-actual",
+      "text": "显示: {{shownSpeed}}{{lineBreak}} 实际: {{actualSpeed}}",
+      "sourceOrdinal": 304
+    },
+    {
+      "ordinal": 305,
+      "key": "item.melee-weapon.speed.summary",
+      "text": "{{speed}}（攻击动画 {{milliseconds}} 毫秒，未计算玩家加成）",
+      "sourceOrdinal": 305
+    },
+    {
+      "ordinal": 306,
+      "key": "item.movie-snack-preference",
+      "text": "喜好",
+      "sourceOrdinal": 306
+    },
+    {
+      "ordinal": 307,
+      "key": "item.movie-ticket.movie-this-week",
+      "text": "本周电影",
+      "sourceOrdinal": 307
+    },
+    {
+      "ordinal": 308,
+      "key": "item.movie-ticket.loves-movie",
+      "text": "最爱电影",
+      "sourceOrdinal": 308
+    },
+    {
+      "ordinal": 309,
+      "key": "item.movie-ticket.likes-movie",
+      "text": "喜欢电影",
+      "sourceOrdinal": 309
+    },
+    {
+      "ordinal": 310,
+      "key": "item.movie-ticket.dislikes-movie",
+      "text": "不喜欢电影",
+      "sourceOrdinal": 310
+    },
+    {
+      "ordinal": 311,
+      "key": "item.movie-ticket.rejects-movie",
+      "text": "拒绝电影",
+      "sourceOrdinal": 311
+    },
+    {
+      "ordinal": 312,
+      "key": "item.movie-snack-preference.love",
+      "text": "{{name}}最爱这个",
+      "sourceOrdinal": 312
+    },
+    {
+      "ordinal": 313,
+      "key": "item.movie-snack-preference.like",
+      "text": "{{name}}喜欢这个",
+      "sourceOrdinal": 313
+    },
+    {
+      "ordinal": 314,
+      "key": "item.movie-snack-preference.dislike",
+      "text": "{{name}}不喜欢这个",
+      "sourceOrdinal": 314
+    },
+    {
+      "ordinal": 315,
+      "key": "item.movie-ticket.movie-this-week.none",
+      "text": "本周没有电影",
+      "sourceOrdinal": 315
+    },
+    {
+      "ordinal": 316,
+      "key": "item.music-block.pitch",
+      "text": "音调",
+      "sourceOrdinal": 316
+    },
+    {
+      "ordinal": 317,
+      "key": "item.music-block.drum-type",
+      "text": "鼓点类型",
+      "sourceOrdinal": 317
+    },
+    {
+      "ordinal": 318,
+      "key": "monster.invincible",
+      "text": "无敌",
+      "sourceOrdinal": 318
+    },
+    {
+      "ordinal": 319,
+      "key": "monster.health",
+      "text": "生命值",
+      "sourceOrdinal": 319
+    },
+    {
+      "ordinal": 320,
+      "key": "monster.drops",
+      "text": "掉落",
+      "sourceOrdinal": 320
+    },
+    {
+      "ordinal": 321,
+      "key": "monster.experience",
+      "text": "经验",
+      "sourceOrdinal": 321
+    },
+    {
+      "ordinal": 322,
+      "key": "monster.defense",
+      "text": "防御",
+      "sourceOrdinal": 322
+    },
+    {
+      "ordinal": 323,
+      "key": "monster.attack",
+      "text": "攻击",
+      "sourceOrdinal": 323
+    },
+    {
+      "ordinal": 324,
+      "key": "monster.adventure-guild",
+      "text": "探险家公会",
+      "sourceOrdinal": 324
+    },
+    {
+      "ordinal": 325,
+      "key": "monster.drops.nothing",
+      "text": "无",
+      "sourceOrdinal": 325
+    },
+    {
+      "ordinal": 326,
+      "key": "monster.adventure-guild.eradication-goal",
+      "text": "击杀目标：{{name}}（要求击杀{{requiredCount}}个，已击杀{{count}}个）",
+      "sourceOrdinal": 326
+    },
+    {
+      "ordinal": 327,
+      "key": "npc.birthday",
+      "text": "生日",
+      "sourceOrdinal": 327
+    },
+    {
+      "ordinal": 328,
+      "key": "npc.can-romance",
+      "text": "可结婚",
+      "sourceOrdinal": 328
+    },
+    {
+      "ordinal": 329,
+      "key": "npc.friendship",
+      "text": "关系",
+      "sourceOrdinal": 329
+    },
+    {
+      "ordinal": 330,
+      "key": "npc.talked-today",
+      "text": "今天已交谈",
+      "sourceOrdinal": 330
+    },
+    {
+      "ordinal": 331,
+      "key": "npc.gifted-today",
+      "text": "今天已送礼",
+      "sourceOrdinal": 331
+    },
+    {
+      "ordinal": 332,
+      "key": "npc.gifted-this-week",
+      "text": "本周送礼",
+      "sourceOrdinal": 332
+    },
+    {
+      "ordinal": 333,
+      "key": "npc.kissed-today",
+      "text": "今日已接吻",
+      "sourceOrdinal": 333
+    },
+    {
+      "ordinal": 334,
+      "key": "npc.hugged-today",
+      "text": "今日已拥抱",
+      "sourceOrdinal": 334
+    },
+    {
+      "ordinal": 335,
+      "key": "npc.loves-gifts",
+      "text": "最爱",
+      "sourceOrdinal": 335
+    },
+    {
+      "ordinal": 336,
+      "key": "npc.likes-gifts",
+      "text": "喜欢",
+      "sourceOrdinal": 336
+    },
+    {
+      "ordinal": 337,
+      "key": "npc.neutral-gifts",
+      "text": "无感",
+      "sourceOrdinal": 337
+    },
+    {
+      "ordinal": 338,
+      "key": "npc.dislikes-gifts",
+      "text": "不喜欢",
+      "sourceOrdinal": 338
+    },
+    {
+      "ordinal": 339,
+      "key": "npc.hates-gifts",
+      "text": "讨厌",
+      "sourceOrdinal": 339
+    },
+    {
+      "ordinal": 340,
+      "key": "npc.schedule",
+      "text": "今天的日程",
+      "sourceOrdinal": 340
+    },
+    {
+      "ordinal": 341,
+      "key": "npc.can-romance.married",
+      "text": "你们已结婚! ♡",
+      "sourceOrdinal": 341
+    },
+    {
+      "ordinal": 342,
+      "key": "npc.can-romance.housemate",
+      "text": "你们是室友!",
+      "sourceOrdinal": 342
+    },
+    {
+      "ordinal": 343,
+      "key": "npc.friendship.not-met",
+      "text": "你们还没有见过面",
+      "sourceOrdinal": 343
+    },
+    {
+      "ordinal": 344,
+      "key": "npc.friendship.need-bouquet",
+      "text": "需要花束进行到下一阶段",
+      "sourceOrdinal": 344
+    },
+    {
+      "ordinal": 345,
+      "key": "npc.friendship.need-points",
+      "text": "下一等级需要{{count}}点好感度",
+      "sourceOrdinal": 345
+    },
+    {
+      "ordinal": 346,
+      "key": "npc.undiscovered-gift-taste",
+      "text": "{{count}} 个未揭露的物品",
+      "sourceOrdinal": 346
+    },
+    {
+      "ordinal": 347,
+      "key": "npc.unowned-gift-taste",
+      "text": "{{count}} 个未拥有的物品",
+      "sourceOrdinal": 347
+    },
+    {
+      "ordinal": 348,
+      "key": "npc.schedule.current-position",
+      "text": "当前位于{{locationName}} ({{x}}, {{y}})。",
+      "sourceOrdinal": 348
+    },
+    {
+      "ordinal": 349,
+      "key": "npc.schedule.no-entries",
+      "text": "未加载日程.",
+      "sourceOrdinal": 349
+    },
+    {
+      "ordinal": 350,
+      "key": "npc.schedule.not-following-schedule",
+      "text": "目前没有日程。通常意味着NPC在做着某项特别活动（比如在看电影）。",
+      "sourceOrdinal": 350
+    },
+    {
+      "ordinal": 351,
+      "key": "npc.schedule.entry",
+      "text": "{{time}}: 步行至{{locationName}} ({{x}}, {{y}})。",
+      "sourceOrdinal": 351
+    },
+    {
+      "ordinal": 352,
+      "key": "npc.schedule.farmhand.unknown-position",
+      "text": "当前位于一个房主可见的未知位置。",
+      "sourceOrdinal": 352
+    },
+    {
+      "ordinal": 353,
+      "key": "npc.schedule.farmhand.unknown-schedule",
+      "text": "日程无法显示（在多人游戏中，NPC的日程由房主管理）",
+      "sourceOrdinal": 353
+    },
+    {
+      "ordinal": 354,
+      "key": "npc.child.age",
+      "text": "年龄",
+      "sourceOrdinal": 354
+    },
+    {
+      "ordinal": 355,
+      "key": "npc.child.age.description-partial",
+      "text": "目前位于{{label}}，还有（{{count}}天进入{{nextLabel}}）",
+      "sourceOrdinal": 355
+    },
+    {
+      "ordinal": 356,
+      "key": "npc.child.age.description-grown",
+      "text": "{{label}}",
+      "sourceOrdinal": 356
+    },
+    {
+      "ordinal": 357,
+      "key": "npc.child.age.newborn",
+      "text": "新生儿期",
+      "sourceOrdinal": 357
+    },
+    {
+      "ordinal": 358,
+      "key": "npc.child.age.baby",
+      "text": "婴儿期",
+      "sourceOrdinal": 358
+    },
+    {
+      "ordinal": 359,
+      "key": "npc.child.age.crawler",
+      "text": "爬走期",
+      "sourceOrdinal": 359
+    },
+    {
+      "ordinal": 360,
+      "key": "npc.child.age.toddler",
+      "text": "幼童期",
+      "sourceOrdinal": 360
+    },
+    {
+      "ordinal": 361,
+      "key": "pet.love",
+      "text": "友好度",
+      "sourceOrdinal": 361
+    },
+    {
+      "ordinal": 362,
+      "key": "pet.petted-today",
+      "text": "今日已抚摸",
+      "sourceOrdinal": 362
+    },
+    {
+      "ordinal": 363,
+      "key": "pet.last-petted",
+      "text": "最后一次抚摸",
+      "sourceOrdinal": 363
+    },
+    {
+      "ordinal": 364,
+      "key": "pet.water-bowl",
+      "text": "是否给水碗添水",
+      "sourceOrdinal": 364
+    },
+    {
+      "ordinal": 365,
+      "key": "pet.last-petted.yes",
+      "text": "是（+12友好度）",
+      "sourceOrdinal": 365
+    },
+    {
+      "ordinal": 366,
+      "key": "pet.last-petted.days-ago",
+      "text": "{{days}}天前",
+      "sourceOrdinal": 366
+    },
+    {
+      "ordinal": 367,
+      "key": "pet.last-petted.never",
+      "text": "还没有抚摸",
+      "sourceOrdinal": 367
+    },
+    {
+      "ordinal": 368,
+      "key": "pet.water-bowl.empty",
+      "text": "水碗是空的",
+      "sourceOrdinal": 368
+    },
+    {
+      "ordinal": 369,
+      "key": "pet.water-bowl.filled",
+      "text": "水碗加满水了（+6友好度）",
+      "sourceOrdinal": 369
+    },
+    {
+      "ordinal": 370,
+      "key": "player.farm-name",
+      "text": "农场名字",
+      "sourceOrdinal": 370
+    },
+    {
+      "ordinal": 371,
+      "key": "player.farm-map",
+      "text": "农场地图",
+      "sourceOrdinal": 371
+    },
+    {
+      "ordinal": 372,
+      "key": "player.favorite-thing",
+      "text": "兴趣",
+      "sourceOrdinal": 372
+    },
+    {
+      "ordinal": 373,
+      "key": "player.gender",
+      "text": "性别",
+      "sourceOrdinal": 373
+    },
+    {
+      "ordinal": 374,
+      "key": "player.housemate",
+      "text": "室友",
+      "sourceOrdinal": 374
+    },
+    {
+      "ordinal": 375,
+      "key": "player.spouse",
+      "text": "配偶",
+      "sourceOrdinal": 375
+    },
+    {
+      "ordinal": 376,
+      "key": "player.watched-movie-this-week",
+      "text": "本周看过的电影",
+      "sourceOrdinal": 376
+    },
+    {
+      "ordinal": 377,
+      "key": "player.combat-skill",
+      "text": "战斗",
+      "sourceOrdinal": 377
+    },
+    {
+      "ordinal": 378,
+      "key": "player.farming-skill",
+      "text": "耕种",
+      "sourceOrdinal": 378
+    },
+    {
+      "ordinal": 379,
+      "key": "player.fishing-skill",
+      "text": "钓鱼",
+      "sourceOrdinal": 379
+    },
+    {
+      "ordinal": 380,
+      "key": "player.foraging-skill",
+      "text": "采集",
+      "sourceOrdinal": 380
+    },
+    {
+      "ordinal": 381,
+      "key": "player.mining-skill",
+      "text": "采矿",
+      "sourceOrdinal": 381
+    },
+    {
+      "ordinal": 382,
+      "key": "player.luck",
+      "text": "运气",
+      "sourceOrdinal": 382
+    },
+    {
+      "ordinal": 383,
+      "key": "player.save-format",
+      "text": "保存格式",
+      "sourceOrdinal": 383
+    },
+    {
+      "ordinal": 384,
+      "key": "player.farm-map.custom",
+      "text": "自定义",
+      "sourceOrdinal": 384
+    },
+    {
+      "ordinal": 385,
+      "key": "player.gender.male",
+      "text": "男",
+      "sourceOrdinal": 385
+    },
+    {
+      "ordinal": 386,
+      "key": "player.gender.female",
+      "text": "女",
+      "sourceOrdinal": 386
+    },
+    {
+      "ordinal": 387,
+      "key": "player.luck.summary",
+      "text": "{{percent}}%随机事件概率",
+      "sourceOrdinal": 387
+    },
+    {
+      "ordinal": 388,
+      "key": "player.skill.progress",
+      "text": "{{level}}级，（下一等级需要{{expNeeded}}经验）",
+      "sourceOrdinal": 388
+    },
+    {
+      "ordinal": 389,
+      "key": "player.skill.progress-last",
+      "text": "{{level}}级",
+      "sourceOrdinal": 389
+    },
+    {
+      "ordinal": 390,
+      "key": "puzzle.solution",
+      "text": "解决方法",
+      "sourceOrdinal": 390
+    },
+    {
+      "ordinal": 391,
+      "key": "puzzle.solution.solved",
+      "text": "谜题已解决！",
+      "sourceOrdinal": 391
+    },
+    {
+      "ordinal": 392,
+      "key": "puzzle.solution.hidden",
+      "text": "谜题解决方法根据您的设置隐藏",
+      "sourceOrdinal": 392
+    },
+    {
+      "ordinal": 393,
+      "key": "puzzle.island-crystal-cave.title",
+      "text": "水晶洞穴谜题",
+      "sourceOrdinal": 393
+    },
+    {
+      "ordinal": 394,
+      "key": "puzzle.island-crystal-cave.crystal-id",
+      "text": "水晶 ID",
+      "sourceOrdinal": 394
+    },
+    {
+      "ordinal": 395,
+      "key": "puzzle.island-crystal-cave.solution.not-activated",
+      "text": "激活雕像以开始谜题。",
+      "sourceOrdinal": 395
+    },
+    {
+      "ordinal": 396,
+      "key": "puzzle.island-crystal-cave.solution.waiting",
+      "text": "等待游戏生成序列…",
+      "sourceOrdinal": 396
+    },
+    {
+      "ordinal": 397,
+      "key": "puzzle.island-crystal-cave.solution.activated",
+      "text": "重复激活水晶的序列：",
+      "sourceOrdinal": 397
+    },
+    {
+      "ordinal": 398,
+      "key": "puzzle.island-mermaid.title",
+      "text": "岛屿美人鱼谜题",
+      "sourceOrdinal": 398
+    },
+    {
+      "ordinal": 399,
+      "key": "puzzle.island-mermaid.solution.intro",
+      "text": "使用长笛块播放夜市的美人鱼歌曲。音高值（你可以查找长笛块以查看其音调）：",
+      "sourceOrdinal": 399
+    },
+    {
+      "ordinal": 400,
+      "key": "puzzle.island-shrine.title",
+      "text": "岛屿神庙谜题",
+      "sourceOrdinal": 400
+    },
+    {
+      "ordinal": 401,
+      "key": "puzzle.island-shrine.solution",
+      "text": "对于每个基座，下雨时将宝石鸟掉落的物品放在相应的岛上位置。每个存档都会随机分配物品。",
+      "sourceOrdinal": 401
+    },
+    {
+      "ordinal": 402,
+      "key": "puzzle.island-shrine.solution.east",
+      "text": "东部：{{item}}",
+      "sourceOrdinal": 402
+    },
+    {
+      "ordinal": 403,
+      "key": "puzzle.island-shrine.solution.north",
+      "text": "北部：{{item}}",
+      "sourceOrdinal": 403
+    },
+    {
+      "ordinal": 404,
+      "key": "puzzle.island-shrine.solution.south",
+      "text": "南部：{{item}}",
+      "sourceOrdinal": 404
+    },
+    {
+      "ordinal": 405,
+      "key": "puzzle.island-shrine.solution.west",
+      "text": "西部：{{item}}",
+      "sourceOrdinal": 405
+    },
+    {
+      "ordinal": 406,
+      "key": "tile.title",
+      "text": "贴图 ({{x}}, {{y}})",
+      "sourceOrdinal": 406
+    },
+    {
+      "ordinal": 407,
+      "key": "tile.description",
+      "text": "地图上此位置的贴图。显示此信息是因为你在设置中启用了贴图查询功能。",
+      "sourceOrdinal": 407
+    },
+    {
+      "ordinal": 408,
+      "key": "tile.map-name",
+      "text": "地图名",
+      "sourceOrdinal": 408
+    },
+    {
+      "ordinal": 409,
+      "key": "tile.map-properties",
+      "text": "地图属性",
+      "sourceOrdinal": 409
+    },
+    {
+      "ordinal": 410,
+      "key": "tile.layer-tile",
+      "text": "{{layer}}贴图",
+      "sourceOrdinal": 410
+    },
+    {
+      "ordinal": 411,
+      "key": "tile.layer-tile-none",
+      "text": "贴图",
+      "sourceOrdinal": 411
+    },
+    {
+      "ordinal": 412,
+      "key": "tile.map-properties.value",
+      "text": "地图属性{{name}}的值为：{{value}}",
+      "sourceOrdinal": 412
+    },
+    {
+      "ordinal": 413,
+      "key": "tile.layer-tile.appearance",
+      "text": "贴图表'{{tilesheetId}}'，索引编号：{{index}}（路径：'{{tilesheetPath}}'）",
+      "sourceOrdinal": 413
+    },
+    {
+      "ordinal": 414,
+      "key": "tile.layer-tile.blend-mode",
+      "text": "混合模式: {{value}}",
+      "sourceOrdinal": 414
+    },
+    {
+      "ordinal": 415,
+      "key": "tile.layer-tile.index-property",
+      "text": "索引属性: {{name}}: {{value}}",
+      "sourceOrdinal": 415
+    },
+    {
+      "ordinal": 416,
+      "key": "tile.layer-tile.tile-property",
+      "text": "贴图属性: {{name}}: {{value}}",
+      "sourceOrdinal": 416
+    },
+    {
+      "ordinal": 417,
+      "key": "tile.layer-tile.none-here",
+      "text": "此处无贴图",
+      "sourceOrdinal": 417
+    },
+    {
+      "ordinal": 418,
+      "key": "trash-bear-or-gourmand.item-wanted",
+      "text": "想要的东西",
+      "sourceOrdinal": 418
+    },
+    {
+      "ordinal": 419,
+      "key": "trash-bear-or-gourmand.quest-progress",
+      "text": "任务进度",
+      "sourceOrdinal": 419
+    },
+    {
+      "ordinal": 420,
+      "key": "tree.stage",
+      "text": "生长阶段",
+      "sourceOrdinal": 420
+    },
+    {
+      "ordinal": 421,
+      "key": "tree.next-growth",
+      "text": "下次生长",
+      "sourceOrdinal": 421
+    },
+    {
+      "ordinal": 422,
+      "key": "tree.seed",
+      "text": "产出种子",
+      "sourceOrdinal": 422
+    },
+    {
+      "ordinal": 423,
+      "key": "tree.is-fertilized",
+      "text": "播洒树肥",
+      "sourceOrdinal": 423
+    },
+    {
+      "ordinal": 424,
+      "key": "tree.name.big-mushroom",
+      "text": "大蘑菇",
+      "sourceOrdinal": 424
+    },
+    {
+      "ordinal": 425,
+      "key": "tree.name.mahogany",
+      "text": "桃花心木",
+      "sourceOrdinal": 425
+    },
+    {
+      "ordinal": 426,
+      "key": "tree.name.maple",
+      "text": "枫树",
+      "sourceOrdinal": 426
+    },
+    {
+      "ordinal": 427,
+      "key": "tree.name.oak",
+      "text": "橡树",
+      "sourceOrdinal": 427
+    },
+    {
+      "ordinal": 428,
+      "key": "tree.name.palm",
+      "text": "棕榈树",
+      "sourceOrdinal": 428
+    },
+    {
+      "ordinal": 429,
+      "key": "tree.name.pine",
+      "text": "松树",
+      "sourceOrdinal": 429
+    },
+    {
+      "ordinal": 430,
+      "key": "tree.name.mossy",
+      "text": "长满苔藓的树",
+      "sourceOrdinal": 430
+    },
+    {
+      "ordinal": 431,
+      "key": "tree.name.mystic",
+      "text": "神秘树",
+      "sourceOrdinal": 431
+    },
+    {
+      "ordinal": 432,
+      "key": "tree.name.unknown",
+      "text": "未知",
+      "sourceOrdinal": 432
+    },
+    {
+      "ordinal": 433,
+      "key": "tree.stage.done",
+      "text": "完全长成",
+      "sourceOrdinal": 433
+    },
+    {
+      "ordinal": 434,
+      "key": "tree.stage.partial",
+      "text": "{{stageName}}（总共{{max}}个阶段中的第{{step}}阶段）",
+      "sourceOrdinal": 434
+    },
+    {
+      "ordinal": 435,
+      "key": "tree.next-growth.winter",
+      "text": "除非施肥，冬天在温室之外无法生长",
+      "sourceOrdinal": 435
+    },
+    {
+      "ordinal": 436,
+      "key": "tree.next-growth.adjacent-trees",
+      "text": "因其他树靠的太近无法生长",
+      "sourceOrdinal": 436
+    },
+    {
+      "ordinal": 437,
+      "key": "tree.next-growth.chance",
+      "text": "明天有{{chance}}%几率成长到{{stage}}",
+      "sourceOrdinal": 437
+    },
+    {
+      "ordinal": 438,
+      "key": "tree.seed.not-ready",
+      "text": "尚未就绪",
+      "sourceOrdinal": 438
+    },
+    {
+      "ordinal": 439,
+      "key": "tree.seed.probability-daily",
+      "text": "每天有{{chance}}%几率产生{{itemName}}。",
+      "sourceOrdinal": 439
+    },
+    {
+      "ordinal": 440,
+      "key": "tree.seed.probability-on-chop",
+      "text": "砍倒时有{{chance}}%几率掉落{{itemName}}。",
+      "sourceOrdinal": 440
+    },
+    {
+      "ordinal": 441,
+      "key": "tree.stages.seed",
+      "text": "种子",
+      "sourceOrdinal": 441
+    },
+    {
+      "ordinal": 442,
+      "key": "tree.stages.sprout",
+      "text": "发芽",
+      "sourceOrdinal": 442
+    },
+    {
+      "ordinal": 443,
+      "key": "tree.stages.sapling",
+      "text": "树苗",
+      "sourceOrdinal": 443
+    },
+    {
+      "ordinal": 444,
+      "key": "tree.stages.bush",
+      "text": "矮树丛",
+      "sourceOrdinal": 444
+    },
+    {
+      "ordinal": 445,
+      "key": "tree.stages.smallTree",
+      "text": "小树",
+      "sourceOrdinal": 445
+    },
+    {
+      "ordinal": 446,
+      "key": "tree.stages.tree",
+      "text": "树",
+      "sourceOrdinal": 446
+    },
+    {
+      "ordinal": 447,
+      "key": "data-mining.name",
+      "text": "原始数据",
+      "sourceOrdinal": 447
+    },
+    {
+      "ordinal": 448,
+      "key": "data-mining.name.map-tile",
+      "text": "原始数据（地图土块）",
+      "sourceOrdinal": 448
+    },
+    {
+      "ordinal": 449,
+      "key": "data-mining.name.map-location",
+      "text": "原始数据（位置）",
+      "sourceOrdinal": 449
+    },
+    {
+      "ordinal": 450,
+      "key": "data-mining.section-pinned",
+      "text": "Pinned",
+      "sourceOrdinal": 450
+    },
+    {
+      "ordinal": 451,
+      "key": "search-menu.screen-reader.instructions",
+      "text": "Lookup Anything 搜索菜单。搜索框已选中。输入文本以进行搜索。",
+      "sourceOrdinal": 451
+    },
+    {
+      "ordinal": 452,
+      "key": "search-menu.screen-reader.search-results",
+      "text": "搜索框。已找到关于 “{{search}}” 的 {{count}} 个结果。向下导航以查看结果。",
+      "sourceOrdinal": 452
+    },
+    {
+      "ordinal": 453,
+      "key": "search-menu.screen-reader.search-no-results",
+      "text": "搜索框。未找到任何关于 “{{search}}” 的结果。",
+      "sourceOrdinal": 453
+    },
+    {
+      "ordinal": 454,
+      "key": "search-menu.screen-reader.search-empty",
+      "text": "搜索框。当前为空。",
+      "sourceOrdinal": 454
+    },
+    {
+      "ordinal": 455,
+      "key": "search-menu.screen-reader.result",
+      "text": "{{name}}（{{type}}）。",
+      "sourceOrdinal": 455
+    },
+    {
+      "ordinal": 456,
+      "key": "config.title.appearance",
+      "text": "外观",
+      "sourceOrdinal": 456
+    },
+    {
+      "ordinal": 457,
+      "key": "config.theme.name",
+      "text": "视觉样式",
+      "sourceOrdinal": 457
+    },
+    {
+      "ordinal": 458,
+      "key": "config.theme.desc",
+      "text": "物品查询与搜索菜单的视觉样式。",
+      "sourceOrdinal": 458
+    },
+    {
+      "ordinal": 459,
+      "key": "config.theme.values.Parchment",
+      "text": "羊皮纸",
+      "sourceOrdinal": 459
+    },
+    {
+      "ordinal": 460,
+      "key": "config.theme.values.Joja",
+      "text": "Joja",
+      "sourceOrdinal": 460
+    },
+    {
+      "ordinal": 461,
+      "key": "config.theme.values.MenuBox_Border",
+      "text": "游戏菜单样式（带边框）",
+      "sourceOrdinal": 461
+    },
+    {
+      "ordinal": 462,
+      "key": "config.theme.values.MenuBox_Inset",
+      "text": "游戏菜单样式（窄边框）",
+      "sourceOrdinal": 462
+    },
+    {
+      "ordinal": 463,
+      "key": "config.theme.values.MenuBox_Raised",
+      "text": "游戏菜单样式（无边框）",
+      "sourceOrdinal": 463
+    },
+    {
+      "ordinal": 464,
+      "key": "config.theme.values.Plain",
+      "text": "纯色背景",
+      "sourceOrdinal": 464
+    },
+    {
+      "ordinal": 465,
+      "key": "config.force-full-screen.name",
+      "text": "强制全屏",
+      "sourceOrdinal": 465
+    },
+    {
+      "ordinal": 466,
+      "key": "config.force-full-screen.desc",
+      "text": "是否强制使用全屏显示查询结果窗口，这对查看数据挖掘字段时非常有用",
+      "sourceOrdinal": 466
+    },
+    {
+      "ordinal": 467,
+      "key": "config.title.progression",
+      "text": "进度模式",
+      "sourceOrdinal": 467
+    },
+    {
+      "ordinal": 468,
+      "key": "config.progression.show-uncaught-fish-spawn-rules.name",
+      "text": "显示未捕获鱼的捕获条件",
+      "sourceOrdinal": 468
+    },
+    {
+      "ordinal": 469,
+      "key": "config.progression.show-uncaught-fish-spawn-rules.desc",
+      "text": "是否显示没有捕获过的鱼的捕获条件",
+      "sourceOrdinal": 469
+    },
+    {
+      "ordinal": 470,
+      "key": "config.progression.show-unknown-gift-tastes.name",
+      "text": "显示未知的礼物品味",
+      "sourceOrdinal": 470
+    },
+    {
+      "ordinal": 471,
+      "key": "config.progression.show-unknown-gift-tastes.desc",
+      "text": "是否显示游戏中不知道的礼物品味（例如，从对话或实际送礼中）。",
+      "sourceOrdinal": 471
+    },
+    {
+      "ordinal": 472,
+      "key": "config.progression.show-unknown-recipes.name",
+      "text": "显示未知的配方",
+      "sourceOrdinal": 472
+    },
+    {
+      "ordinal": 473,
+      "key": "config.progression.show-unknown-recipes.desc",
+      "text": "是否显示游戏中尚未学习的配方。",
+      "sourceOrdinal": 473
+    },
+    {
+      "ordinal": 474,
+      "key": "config.progression.show-puzzle-solutions.name",
+      "text": "显示谜题的解决方法",
+      "sourceOrdinal": 474
+    },
+    {
+      "ordinal": 475,
+      "key": "config.progression.show-puzzle-solutions.desc",
+      "text": "是否显示谜题的解决方法。",
+      "sourceOrdinal": 475
+    },
+    {
+      "ordinal": 476,
+      "key": "config.title.gift-tastes",
+      "text": "礼物品位",
+      "sourceOrdinal": 476
+    },
+    {
+      "ordinal": 477,
+      "key": "config.show-gift-tastes.loved.name",
+      "text": "显示最爱的礼物",
+      "sourceOrdinal": 477
+    },
+    {
+      "ordinal": 478,
+      "key": "config.show-gift-tastes.loved.desc",
+      "text": "是否在NPC和物品查询中显示最爱的礼物",
+      "sourceOrdinal": 478
+    },
+    {
+      "ordinal": 479,
+      "key": "config.show-gift-tastes.liked.name",
+      "text": "显示喜欢的礼物",
+      "sourceOrdinal": 479
+    },
+    {
+      "ordinal": 480,
+      "key": "config.show-gift-tastes.liked.desc",
+      "text": "是否在NPC和物品查询中显示喜欢的礼物",
+      "sourceOrdinal": 480
+    },
+    {
+      "ordinal": 481,
+      "key": "config.show-gift-tastes.neutral.name",
+      "text": "显示无感的礼物",
+      "sourceOrdinal": 481
+    },
+    {
+      "ordinal": 482,
+      "key": "config.show-gift-tastes.neutral.desc",
+      "text": "是否在NPC和物品查询中显示无感的礼物",
+      "sourceOrdinal": 482
+    },
+    {
+      "ordinal": 483,
+      "key": "config.show-gift-tastes.disliked.name",
+      "text": "显示不喜欢的礼物",
+      "sourceOrdinal": 483
+    },
+    {
+      "ordinal": 484,
+      "key": "config.show-gift-tastes.disliked.desc",
+      "text": "是否在NPC和物品查询中显示不喜欢的礼物",
+      "sourceOrdinal": 484
+    },
+    {
+      "ordinal": 485,
+      "key": "config.show-gift-tastes.hated.name",
+      "text": "显示讨厌的礼物",
+      "sourceOrdinal": 485
+    },
+    {
+      "ordinal": 486,
+      "key": "config.show-gift-tastes.hated.desc",
+      "text": "是否在NPC和物品查询中显示讨厌的礼物",
+      "sourceOrdinal": 486
+    },
+    {
+      "ordinal": 487,
+      "key": "config.show-unowned-gifts.name",
+      "text": "显示未拥有的礼物",
+      "sourceOrdinal": 487
+    },
+    {
+      "ordinal": 488,
+      "key": "config.show-unowned-gifts.desc",
+      "text": "是否在NPC和物品查询中显示未拥有的礼物",
+      "sourceOrdinal": 488
+    },
+    {
+      "ordinal": 489,
+      "key": "config.highlight-unrevealed-gift-tastes.name",
+      "text": "加粗显示未揭露的礼物",
+      "sourceOrdinal": 489
+    },
+    {
+      "ordinal": 490,
+      "key": "config.highlight-unrevealed-gift-tastes.desc",
+      "text": "是否加粗显示未揭露的礼物品位",
+      "sourceOrdinal": 490
+    },
+    {
+      "ordinal": 491,
+      "key": "config.title.collapse-fields",
+      "text": "折叠大型字段",
+      "sourceOrdinal": 491
+    },
+    {
+      "ordinal": 492,
+      "key": "config.collapse-fields.enabled.name",
+      "text": "启用",
+      "sourceOrdinal": 492
+    },
+    {
+      "ordinal": 493,
+      "key": "config.collapse-fields.enabled.desc",
+      "text": "是否折叠大型字段。当启用时，查找菜单会用'显示X个结果'的链接来替代大型字段，点击该字段会显示全部信息。",
+      "sourceOrdinal": 493
+    },
+    {
+      "ordinal": 494,
+      "key": "config.collapse-fields.building-recipes.name",
+      "text": "建筑查看: 生产规则",
+      "sourceOrdinal": 494
+    },
+    {
+      "ordinal": 495,
+      "key": "config.collapse-fields.item-recipes.name",
+      "text": "物品查看: 配方",
+      "sourceOrdinal": 495
+    },
+    {
+      "ordinal": 496,
+      "key": "config.collapse-fields.npc-gift-tastes.name",
+      "text": "NPC查看: 礼物品味",
+      "sourceOrdinal": 496
+    },
+    {
+      "ordinal": 497,
+      "key": "config.collapse-fields.any.desc",
+      "text": "如果某个字段包含的信息数量超过你所设置的值，查找菜单会用'显示X个结果'的链接来替代该字段。",
+      "sourceOrdinal": 497
+    },
+    {
+      "ordinal": 498,
+      "key": "config.title.advanced-options",
+      "text": "高级",
+      "sourceOrdinal": 498
+    },
+    {
+      "ordinal": 499,
+      "key": "config.tile-lookups.name",
+      "text": "贴图查询",
+      "sourceOrdinal": 499
+    },
+    {
+      "ordinal": 500,
+      "key": "config.tile-lookups.desc",
+      "text": "是否将地图贴图变为可查询对象",
+      "sourceOrdinal": 500
+    },
+    {
+      "ordinal": 501,
+      "key": "config.data-mining-fields.name",
+      "text": "显示数据挖掘字段",
+      "sourceOrdinal": 501
+    },
+    {
+      "ordinal": 502,
+      "key": "config.data-mining-fields.desc",
+      "text": "是否显示对数据挖掘者有用的原始数据（作为查询结果底部的单独字段）。这是一个高级功能，不适合大多数玩家。",
+      "sourceOrdinal": 502
+    },
+    {
+      "ordinal": 503,
+      "key": "config.show-invalid-recipes.name",
+      "text": "显示无效配方",
+      "sourceOrdinal": 503
+    },
+    {
+      "ordinal": 504,
+      "key": "config.show-invalid-recipes.desc",
+      "text": "是否显示含有错误物品的配方。",
+      "sourceOrdinal": 504
+    },
+    {
+      "ordinal": 505,
+      "key": "config.target-redirection.name",
+      "text": "目标重定向",
+      "sourceOrdinal": 505
+    },
+    {
+      "ordinal": 506,
+      "key": "config.target-redirection.desc",
+      "text": "游戏在某些情况下会生成一个暂时的替身来指代某个目标。比如，矿井中的阿比盖尔实际上只是一个暂时的npc，导致查询时并不会显示阿比盖尔的信息。开启该选项后，才能显示阿比盖尔的真正信息。",
+      "sourceOrdinal": 506
+    },
+    {
+      "ordinal": 507,
+      "key": "config.scroll-amount.name",
+      "text": "滚动值",
+      "sourceOrdinal": 507
+    },
+    {
+      "ordinal": 508,
+      "key": "config.scroll-amount.desc",
+      "text": "每次上下滚动时移动的像素数。",
+      "sourceOrdinal": 508
+    },
+    {
+      "ordinal": 509,
+      "key": "config.title.controls",
+      "text": "快捷键",
+      "sourceOrdinal": 509
+    },
+    {
+      "ordinal": 510,
+      "key": "config.hide-on-key-up.name",
+      "text": "松开时隐藏",
+      "sourceOrdinal": 510
+    },
+    {
+      "ordinal": 511,
+      "key": "config.hide-on-key-up.desc",
+      "text": "松开查询键时自动关闭查询窗口",
+      "sourceOrdinal": 511
+    },
+    {
+      "ordinal": 512,
+      "key": "config.toggle-lookup.name",
+      "text": "查询",
+      "sourceOrdinal": 512
+    },
+    {
+      "ordinal": 513,
+      "key": "config.toggle-lookup.desc",
+      "text": "自定义查询快捷键",
+      "sourceOrdinal": 513
+    },
+    {
+      "ordinal": 514,
+      "key": "config.toggle-lookup-on-double-click.name",
+      "text": "Toggle lookup on double click",
+      "sourceOrdinal": 514
+    },
+    {
+      "ordinal": 515,
+      "key": "config.toggle-lookup-on-double-click.description",
+      "text": "Whether to toggle the lookup UI by clicking the left mouse button twice. This looks up the tapped position if possible.",
+      "sourceOrdinal": 515
+    },
+    {
+      "ordinal": 516,
+      "key": "config.toggle-lookup-on-double-tap.name",
+      "text": "Toggle lookup on double tap",
+      "sourceOrdinal": 516
+    },
+    {
+      "ordinal": 517,
+      "key": "config.toggle-lookup-on-double-tap.description",
+      "text": "Whether to toggle the lookup UI by tapping the screen twice. This looks up the tapped position if possible.",
+      "sourceOrdinal": 517
+    },
+    {
+      "ordinal": 518,
+      "key": "config.toggle-search.name",
+      "text": "搜索",
+      "sourceOrdinal": 518
+    },
+    {
+      "ordinal": 519,
+      "key": "config.toggle-search.desc",
+      "text": "自定义搜索快捷键",
+      "sourceOrdinal": 519
+    },
+    {
+      "ordinal": 520,
+      "key": "config.scroll-up.name",
+      "text": "向上滚动",
+      "sourceOrdinal": 520
+    },
+    {
+      "ordinal": 521,
+      "key": "config.scroll-up.desc",
+      "text": "自定义长内容向上滚动快捷键",
+      "sourceOrdinal": 521
+    },
+    {
+      "ordinal": 522,
+      "key": "config.scroll-down.name",
+      "text": "向下滚动",
+      "sourceOrdinal": 522
+    },
+    {
+      "ordinal": 523,
+      "key": "config.scroll-down.desc",
+      "text": "自定义长内容向下滚动快捷键",
+      "sourceOrdinal": 523
+    },
+    {
+      "ordinal": 524,
+      "key": "config.page-up.name",
+      "text": "向上滚动一页",
+      "sourceOrdinal": 524
+    },
+    {
+      "ordinal": 525,
+      "key": "config.page-up.desc",
+      "text": "自定义长内容向上滚动一页快捷键",
+      "sourceOrdinal": 525
+    },
+    {
+      "ordinal": 526,
+      "key": "config.page-down.name",
+      "text": "向下滚动一页",
+      "sourceOrdinal": 526
+    },
+    {
+      "ordinal": 527,
+      "key": "config.page-down.desc",
+      "text": "自定义长内容向下滚动一页快捷键",
+      "sourceOrdinal": 527
+    },
+    {
+      "ordinal": 528,
+      "key": "config.toggle-debug.name",
+      "text": "调试模式",
+      "sourceOrdinal": 528
+    },
+    {
+      "ordinal": 529,
+      "key": "config.toggle-debug.desc",
+      "text": "自定义显示或隐藏调试信息快捷键",
+      "sourceOrdinal": 529
+    },
+    {
+      "ordinal": 530,
+      "key": "icon.toggle-search.name",
+      "text": "查询一切",
+      "sourceOrdinal": 530
+    },
+    {
+      "ordinal": 531,
+      "key": "icon.toggle-search.desc",
+      "text": "切换查询搜索任意内容",
+      "sourceOrdinal": 531
+    }
+  ]
+}
