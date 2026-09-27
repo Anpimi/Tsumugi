@@ -13,7 +13,7 @@ Only the first source snapshot can be applied. Each native key receives its own 
 - `$schema` is retained as editor metadata, not a string to translate. Original files are kept byte-for-byte, including comments and fields not extracted.
 - Split `i18n/default/` layouts, archives, inline Content Patcher text, linked paths and other resource formats are unsupported. Build-time manifest version placeholders produce a warning; importing does not establish game compatibility.
 
-Limits are cumulative: 16 KiB manifest, 128 KiB combined input, at most 256 direct entries in each inspected directory, 2,000 strings, 1,024-byte native keys, 256-byte namespace and 16 KiB per string. The encoded input also must fit 1 MiB and the complete encoded result 256 KiB; these limits may be reached before the string-count limit. Oversized input fails as a whole. Preview pages contain at most 100 rows and 256 KiB without truncating text.
+Limits are cumulative: 16 KiB manifest, 128 KiB combined input, at most 256 direct entries in each inspected directory, 2,000 strings, 1,024-byte native keys, 256-byte namespace and 16 KiB per string. The encoded input also must fit 1 MiB and the complete encoded result 2 MiB; these limits may be reached before the string-count limit. Oversized input fails as a whole. Preview pages contain at most 100 rows and 256 KiB without truncating text.
 
 Files are read through authorized native directory handles. Ordinary writes, renames and deletion are denied while both input files are captured. Reparse points and duplicate physical inputs are rejected. This is not a sandbox against privileged software. The trusted in-process extractor receives only captured bytes, not project write access.
 
@@ -25,4 +25,4 @@ If a start acknowledgement is lost, check or resume that same import. If applyin
 
 After capture, the external Mod can be moved or removed: preview, adoption and reopening use project-owned bytes. Moving the closed project keeps content identities and receipts intact. Corrupt stored evidence and unsupported database schemas are rejected rather than repaired or shown as empty content.
 
-New projects use schema 3. Older development databases are left intact and require a new project; there is no migration or reset. This remains part of the unreleased 0.1.0 batch.
+New projects use schema 5. Valid schema 3 and 4 databases receive a SQLite backup in their project directory before automatic upgrade. Other schema versions are rejected without resetting the project. This remains part of the unreleased 0.1.0 batch.

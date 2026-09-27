@@ -132,7 +132,7 @@ The Tasks view exposes persisted execution progress, saved outputs, cancellation
 
 The Source content view imports a SMAPI Mod's `manifest.json` and flat `i18n/default.json` through the bundled integration. Declare the source language, check the files, review the saved strings, and explicitly apply the complete first snapshot. Original files remain unchanged. See [supported inputs and recovery](docs/source-import.md). Translation, replacing existing source content, and building translated Mods are not implemented.
 
-New projects use database schema 3. Earlier development databases are not supported and are left in place; create a project in a new directory to use this version. There is no automatic migration or reset. The application remains in the unreleased 0.1.0 development batch.
+New projects use database schema 5. Valid schema 3 and 4 projects are backed up in their project directory and upgraded when opened. Other schema versions are rejected without resetting the directory. The application remains in the unreleased 0.1.0 development batch.
 
 ## Status
 

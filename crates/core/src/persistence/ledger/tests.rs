@@ -610,6 +610,9 @@ fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
         )
         .unwrap();
     transaction
+        .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
+        .unwrap();
+    transaction
         .pragma_update(None, "user_version", 3i64)
         .unwrap();
     transaction.commit().unwrap();

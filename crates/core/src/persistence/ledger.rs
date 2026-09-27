@@ -210,7 +210,7 @@ pub(super) fn migrate_v3_result_limit(connection: &mut Connection) -> rusqlite::
         {
             return Err(rusqlite::Error::InvalidQuery);
         }
-        transaction.pragma_update(None, "user_version", super::SCHEMA_VERSION)?;
+        transaction.pragma_update(None, "user_version", 4)?;
         transaction.commit()
     })();
     let restore_foreign_keys = connection.pragma_update(None, "foreign_keys", true);
@@ -804,6 +804,8 @@ impl ProjectStore {
         }
         validate(connection)?;
         super::content::validate(connection)?;
+        super::translation::validate(connection)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "translation"))?;
         self.execution_unknown
             .store(false, std::sync::atomic::Ordering::Release);
         Ok(())

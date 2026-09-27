@@ -15,12 +15,17 @@ use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 pub(crate) mod content;
 mod ledger;
+mod translation;
 pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
+pub use translation::{
+    SaveTranslationRevision, SelectTranslationRevision, TranslationHistory, TranslationRevision,
+    TranslationSelection,
+};
 
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -280,7 +285,7 @@ impl ProjectStore {
         let mut connection =
             Connection::open_with_flags(&database_path, OpenFlags::SQLITE_OPEN_READ_WRITE)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        validate_existing_connection(&mut connection)?;
+        validate_existing_connection(&mut connection, &directory)?;
         let _ = read_metadata_from(&connection)?;
 
         Ok(Self {
@@ -532,6 +537,8 @@ fn initialize_schema(
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     content::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    translation::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
         .map_err(|error| map_commit_error(error))?;
@@ -700,7 +707,10 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
     Ok(())
 }
 
-fn validate_existing_connection(connection: &mut Connection) -> Result<(), PersistenceError> {
+fn validate_existing_connection(
+    connection: &mut Connection,
+    directory: &Path,
+) -> Result<(), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -735,12 +745,23 @@ fn validate_existing_connection(connection: &mut Connection) -> Result<(), Persi
         });
     }
     match user_version {
-        SCHEMA_VERSION => validate_schema_shape(connection, false),
+        SCHEMA_VERSION => validate_schema_shape(connection, false, true),
+        4 => {
+            validate_schema_shape(connection, false, false)?;
+            backup_before_migration(connection, directory, 4)?;
+            translation::migrate_v4(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true)
+        }
         3 => {
-            validate_schema_shape(connection, true)?;
+            validate_schema_shape(connection, true, false)?;
+            backup_before_migration(connection, directory, 3)?;
             ledger::migrate_v3_result_limit(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false)
+            validate_schema_shape(connection, false, false)?;
+            translation::migrate_v4(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true)
         }
         found_version => Err(PersistenceError::UnsupportedSchema {
             found_version,
@@ -749,9 +770,42 @@ fn validate_existing_connection(connection: &mut Connection) -> Result<(), Persi
     }
 }
 
+fn backup_before_migration(
+    connection: &Connection,
+    directory: &Path,
+    version: i64,
+) -> Result<(), PersistenceError> {
+    // VACUUM INTO uses SQLite's consistent database snapshot rather than a raw
+    // copy of a possibly active rollback-journal database. Keep the backup for
+    // explicit recovery; never replace a previous one.
+    let filename = format!(
+        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
+        uuid::Uuid::new_v4()
+    );
+    let path = directory.join(filename);
+    connection
+        .execute("VACUUM INTO ?1", params![path.to_string_lossy().as_ref()])
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    let backup = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    let backup_version: i64 = backup
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    let check: String = backup
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    if backup_version != version || check != "ok" {
+        return Err(PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        });
+    }
+    Ok(())
+}
+
 fn validate_schema_shape(
     connection: &Connection,
     legacy_result_limit: bool,
+    has_translation: bool,
 ) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -760,7 +814,12 @@ fn validate_schema_shape(
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?
         .collect::<Result<_, _>>()
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if table_names != ledger::table_names(connection) {
+    let mut expected_tables = ledger::table_names(connection);
+    if has_translation {
+        expected_tables.extend(translation::table_names());
+        expected_tables.sort();
+    }
+    if table_names != expected_tables {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         });
@@ -798,6 +857,11 @@ fn validate_schema_shape(
     content::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
+    if has_translation {
+        translation::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
+    }
     Ok(())
 }
 
@@ -1054,6 +1118,78 @@ mod tests {
         let error = ProjectStore::open(&project_path).unwrap_err();
         assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
         assert_eq!(fs::read(&database).unwrap(), before);
+    }
+
+    #[test]
+    fn schema_four_upgrade_preserves_project_and_recoverable_backup() {
+        let parent = temporary_directory("translation-upgrade");
+        let path = parent.path().join("project");
+        let store = ProjectStore::create(&path, metadata()).unwrap();
+        store.close().unwrap();
+
+        let database = path.join(DATABASE_FILENAME);
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
+            .unwrap();
+        connection.pragma_update(None, "user_version", 4).unwrap();
+        drop(connection);
+
+        let reopened = ProjectStore::open(&path).unwrap();
+        assert_eq!(reopened.metadata().unwrap(), metadata());
+        assert_eq!(
+            reopened
+                .connection()
+                .unwrap()
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
+        reopened.close().unwrap();
+
+        let backups: Vec<_> = fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("project.sqlite3.pre-v4-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        let backup =
+            Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(
+            backup
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            backup
+                .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            backup
+                .query_row("SELECT display_name FROM project_metadata", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "Demo"
+        );
+        assert_eq!(
+            backup
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name='translation_revisions'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
