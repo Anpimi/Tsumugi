@@ -1194,6 +1194,137 @@ mod tests {
     }
 
     #[test]
+    fn translation_migration_crash_child() {
+        let Ok(project) = std::env::var("TSUMUGI_MIGRATION_PROJECT") else {
+            return;
+        };
+        let _ = ProjectStore::open(project);
+        panic!("translation migration crash hook did not abort");
+    }
+
+    #[test]
+    fn schema_four_migration_reopens_across_process_commit_boundaries() {
+        use std::process::Stdio;
+        use std::time::Instant;
+
+        for point in [
+            "before-translation-migration-commit",
+            "after-translation-migration-commit",
+        ] {
+            let parent = temporary_directory("translation-migration-crash");
+            let project_path = parent.path().join("project");
+            ProjectStore::create(&project_path, metadata())
+                .unwrap()
+                .close()
+                .unwrap();
+            let database = project_path.join(DATABASE_FILENAME);
+            let connection = Connection::open(&database).unwrap();
+            connection
+                .execute_batch(
+                    "DROP TABLE translation_selections; DROP TABLE translation_revisions;",
+                )
+                .unwrap();
+            connection.pragma_update(None, "user_version", 4).unwrap();
+            drop(connection);
+
+            let hook = parent.path().join("migration-hook");
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "persistence::tests::translation_migration_crash_child",
+                    "--nocapture",
+                ])
+                .env("TSUMUGI_MIGRATION_PROJECT", &project_path)
+                .env("TSUMUGI_MIGRATION_CRASH", point)
+                .env("TSUMUGI_MIGRATION_HOOK", &hook)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(!status.success());
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("owned migration crash helper timed out");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(fs::read_to_string(&hook).unwrap(), point);
+
+            let connection = Connection::open(&database).unwrap();
+            let version: i64 = connection
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap();
+            let table_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('translation_revisions','translation_selections')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                (version, table_count),
+                if point == "before-translation-migration-commit" {
+                    (4, 0)
+                } else {
+                    (SCHEMA_VERSION, 2)
+                }
+            );
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            drop(connection);
+
+            let backups: Vec<_> = fs::read_dir(&project_path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("project.sqlite3.pre-v4-")
+                })
+                .collect();
+            assert_eq!(backups.len(), 1);
+            let backup =
+                Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            assert_eq!(
+                backup
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                4
+            );
+            assert_eq!(
+                backup
+                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            drop(backup);
+
+            let reopened = ProjectStore::open(&project_path).unwrap();
+            assert_eq!(reopened.metadata().unwrap(), metadata());
+            assert_eq!(
+                reopened
+                    .connection()
+                    .unwrap()
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                SCHEMA_VERSION
+            );
+            reopened.close().unwrap();
+        }
+    }
+
+    #[test]
     fn open_refuses_corrupt_metadata_without_repair() {
         let parent = temporary_directory("corrupt");
         let project_path = parent.path().join("project");

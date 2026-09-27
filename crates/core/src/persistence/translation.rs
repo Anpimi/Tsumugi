@@ -216,7 +216,22 @@ pub(super) fn migrate_v4(connection: &mut Connection) -> rusqlite::Result<()> {
         return Err(rusqlite::Error::InvalidQuery);
     }
     transaction.pragma_update(None, "user_version", super::SCHEMA_VERSION)?;
-    transaction.commit()
+    #[cfg(test)]
+    migration_crash_hook("before-translation-migration-commit");
+    transaction.commit()?;
+    #[cfg(test)]
+    migration_crash_hook("after-translation-migration-commit");
+    Ok(())
+}
+
+#[cfg(test)]
+fn migration_crash_hook(point: &str) {
+    if std::env::var("TSUMUGI_MIGRATION_CRASH").as_deref() == Ok(point) {
+        if let Ok(path) = std::env::var("TSUMUGI_MIGRATION_HOOK") {
+            std::fs::write(path, point).unwrap();
+        }
+        std::process::abort();
+    }
 }
 
 pub(super) fn record_input(
@@ -1360,6 +1375,7 @@ mod tests {
         execution::{ExecutionRuntime, ExecutionState},
     };
     use std::{
+        process::{Command, Stdio},
         sync::Arc,
         time::{Duration, Instant},
     };
@@ -1949,6 +1965,151 @@ mod tests {
             assert_eq!(row.occurrence_id, source.occurrence_id);
             assert_eq!(row.unit_id, source.unit_id);
             assert_eq!(row.source_revision_id, source.source_revision_id);
+        }
+    }
+
+    #[test]
+    fn translation_adoption_crash_child() {
+        let Ok(project) = std::env::var("TSUMUGI_TRANSLATION_CRASH_PROJECT") else {
+            return;
+        };
+        let action =
+            ExecutionId::parse(&std::env::var("TSUMUGI_TRANSLATION_CRASH_ACTION").unwrap())
+                .unwrap();
+        let mut store = ProjectStore::open(project).unwrap();
+        let prepared = store.adoption_action(action).unwrap();
+        let _ = store.adopt_execution(&prepared, &TranslationAdoptionHandler);
+        panic!("translation crash hook did not abort");
+    }
+
+    #[test]
+    fn translation_adoption_reopens_across_process_commit_boundaries() {
+        for point in ["before-adoption-commit", "after-adoption-commit"] {
+            let (temp, mut store, _) = project_with_source();
+            let project = temp.path().join("project");
+            let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+            let project_id = store.metadata().unwrap().project_id();
+            let bundle = TranslationBundle::capture(
+                "i18n/zh.json",
+                r#"{"first":"你好"}"#.as_bytes(),
+                "zh-CN",
+                snapshot,
+            )
+            .unwrap();
+            let input = bundle.fixed_input(project_id).unwrap();
+            let mut runtime = ExecutionRuntime::new(&store).unwrap();
+            runtime.register(Arc::new(TranslationRunner)).unwrap();
+            runtime.submit(&mut store, &input).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                runtime.tick(&mut store).unwrap();
+                let view = store
+                    .execution_attempt(input.envelope().attempt_id, true)
+                    .unwrap();
+                if view.items[0].execution == ExecutionState::Succeeded {
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let page = store
+                .translation_preview(input.envelope().attempt_id, 0, 1, None)
+                .unwrap();
+            let row = &page.rows[0];
+            let action_id = ExecutionId::new();
+            store
+                .prepare_adoption_with_id(
+                    action_id,
+                    input.envelope().attempt_id,
+                    input.envelope().units[0].unit_id,
+                    vec![row.result_id],
+                    serde_json::to_value(TranslationAdoptionConfirmation {
+                        result_digest: row.result_digest.clone(),
+                        source_snapshot_id: snapshot,
+                        occurrence_id: row.occurrence_id.unwrap(),
+                        source_revision_id: row.source_revision_id.unwrap(),
+                        target_unit_id: row.unit_id.unwrap(),
+                        expected_selection_id: None,
+                        decision: TranslationSelectionDecision::SelectIfEmpty,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            store.close().unwrap();
+            let hook = temp.path().join("crash-hook");
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "persistence::translation::tests::translation_adoption_crash_child",
+                    "--nocapture",
+                ])
+                .env("TSUMUGI_TRANSLATION_CRASH_PROJECT", &project)
+                .env("TSUMUGI_TRANSLATION_CRASH_ACTION", action_id.to_string())
+                .env("TSUMUGI_EXECUTION_CRASH", point)
+                .env("TSUMUGI_EXECUTION_HOOK", &hook)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(!status.success());
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("owned translation crash helper timed out");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(std::fs::read_to_string(&hook).unwrap(), point);
+            let mut reopened = ProjectStore::open(&project).unwrap();
+            let before_retry = reopened
+                .translation_history(
+                    ExecutionId::parse(&project_id.to_string()).unwrap(),
+                    row.unit_id.unwrap(),
+                    "zh-CN",
+                    0,
+                    10,
+                )
+                .unwrap();
+            assert_eq!(
+                before_retry.total,
+                if point == "after-adoption-commit" {
+                    1
+                } else {
+                    0
+                }
+            );
+            assert_eq!(
+                before_retry.current.is_some(),
+                point == "after-adoption-commit"
+            );
+            assert_eq!(
+                reopened.adoption_receipt(action_id).unwrap().is_some(),
+                point == "after-adoption-commit"
+            );
+            let receipt = reopened
+                .adopt_execution(
+                    &reopened.adoption_action(action_id).unwrap(),
+                    &TranslationAdoptionHandler,
+                )
+                .unwrap();
+            assert_eq!(receipt.changes.len(), 2);
+            let after_retry = reopened
+                .translation_history(
+                    ExecutionId::parse(&project_id.to_string()).unwrap(),
+                    row.unit_id.unwrap(),
+                    "zh-CN",
+                    0,
+                    10,
+                )
+                .unwrap();
+            assert_eq!(after_retry.total, 1);
+            assert_eq!(after_retry.current.unwrap().sequence, 1);
+            reopened.close().unwrap();
         }
     }
 }
