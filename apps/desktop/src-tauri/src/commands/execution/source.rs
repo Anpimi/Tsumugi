@@ -4,6 +4,7 @@ use tsumugi_core::content::{self, ContentPage, ContentScope, SourceBundle, Sourc
 mod capture;
 #[cfg(test)]
 mod tests;
+pub mod translation;
 
 #[derive(Default)]
 pub(super) struct SourceSession {
@@ -12,6 +13,7 @@ pub(super) struct SourceSession {
     job: Option<ExecutionId>,
     cancel: Cancellation,
     last_start: Option<(ExecutionId, ExecutionId, String)>,
+    translation_last_start: Option<(ExecutionId, ExecutionId, String, String)>,
 }
 impl SourceSession {
     pub fn is_active(&self) -> bool {

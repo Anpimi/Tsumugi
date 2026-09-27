@@ -442,8 +442,10 @@ impl FixedInput {
     pub fn item(&self, id: ExecutionId) -> Result<&InputItem, ExecutionError> {
         self.envelope
             .items
-            .iter()
-            .find(|item| item.item_id == id)
+            .binary_search_by_key(&id, |item| item.item_id)
+            .ok()
+            .and_then(|index| self.envelope.items.get(index))
+            .or_else(|| self.envelope.items.iter().find(|item| item.item_id == id))
             .ok_or_else(|| ExecutionError::new(ErrorCode::ResultMismatch, "item").for_item(id))
     }
     pub fn retry(&self, item_ids: &[ExecutionId]) -> Result<Self, ExecutionError> {

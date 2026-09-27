@@ -314,14 +314,61 @@ pub(super) fn load_input(
         "SELECT CASE WHEN length(input)<=1048576 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", [attempt.to_string()],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
     let input = FixedInput::restore(&bytes, &digest)?;
+    check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
+    Ok(input)
+}
+
+fn check_input_association(
+    input: &FixedInput,
+    attempt: ExecutionId,
+    task: &str,
+    project: &str,
+    previous: Option<&str>,
+) -> Result<(), ExecutionError> {
     let envelope = input.envelope();
     if envelope.attempt_id != attempt
         || envelope.task_id.to_string() != task
         || envelope.project_id.to_string() != project
-        || envelope.previous_attempt_id.map(|id| id.to_string()) != previous
+        || envelope
+            .previous_attempt_id
+            .map(|id| id.to_string())
+            .as_deref()
+            != previous
     {
         return Err(error(ErrorCode::CorruptLedger, "input-association"));
     }
+    Ok(())
+}
+
+fn load_input_cached(
+    connection: &Connection,
+    attempt: ExecutionId,
+) -> Result<FixedInput, ExecutionError> {
+    use std::sync::{Mutex, OnceLock};
+    // Only the live execution path reuses decoded immutable inputs. Full ledger
+    // reads, reconciliation and reopen validation always verify persisted bytes.
+    static CACHE: OnceLock<Mutex<Option<(ExecutionId, String, FixedInput)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let (digest,task,project,previous): (String,String,String,Option<String>) = connection.query_row(
+        "SELECT digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", [attempt.to_string()],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+    let cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|(id, hash, _)| *id == attempt && hash == &digest)
+        .map(|(_, _, input)| input.clone());
+    let input = if let Some(input) = cached {
+        input
+    } else {
+        let input = load_input(connection, attempt)?;
+        *cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((attempt, digest.clone(), input.clone()));
+        input
+    };
+    check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
     Ok(input)
 }
 pub(super) fn load_result(
@@ -742,6 +789,22 @@ impl ProjectStore {
             .map(|row| parse_id(row.map_err(sql_error)?))
             .collect()
     }
+    pub(crate) fn next_queued_execution_item(
+        &self,
+        attempt: ExecutionId,
+    ) -> Result<Option<ExecutionId>, ExecutionError> {
+        self.execution_connection()?
+            .query_row(
+                "SELECT item_id FROM execution_items WHERE attempt_id=?1
+                 AND execution='queued' ORDER BY rowid LIMIT 1",
+                [attempt.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(sql_error)?
+            .map(parse_id)
+            .transpose()
+    }
     pub fn execution_dispatch(
         &self,
         attempt: ExecutionId,
@@ -938,6 +1001,12 @@ impl ProjectStore {
     pub fn execution_input(&self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
         load_input(self.execution_connection()?, attempt)
     }
+    pub(crate) fn execution_input_cached(
+        &self,
+        attempt: ExecutionId,
+    ) -> Result<FixedInput, ExecutionError> {
+        load_input_cached(self.execution_connection()?, attempt)
+    }
     pub fn execution_attempt(
         &self,
         attempt: ExecutionId,
@@ -1021,17 +1090,25 @@ impl ProjectStore {
         item: ExecutionId,
     ) -> Result<DispatchRequest, ExecutionError> {
         let tx = self.execution_write()?;
-        let input = load_input(&tx, attempt)?;
-        let state = read_attempt(&tx, attempt, true)?;
-        let status = state
-            .items
-            .iter()
-            .find(|status| status.item_id == item)
-            .ok_or_else(|| error(ErrorCode::InvalidInput, "item"))?;
-        if status.cancellation_requested {
+        let input = load_input_cached(&tx, attempt)?;
+        let captured: i64 = tx
+            .query_row(
+                "SELECT cancellation_revision FROM execution_attempts WHERE attempt_id=?1",
+                [attempt.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        if cancel_revision(&tx, input.envelope().task_id)?.get() > captured as u64 {
             return Err(error(ErrorCode::Cancelled, "dispatch"));
         }
-        if status.execution != ExecutionState::Queued {
+        let execution: String = tx
+            .query_row(
+                "SELECT execution FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![attempt.to_string(), item.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        if execution != "queued" {
             return Err(error(ErrorCode::OutcomeUnknown, "dispatch"));
         }
         if let Some(locale) = &input.item(item)?.scope.locale {
@@ -1062,7 +1139,7 @@ impl ProjectStore {
     pub fn save_execution_result(&mut self, result: &FixedResult) -> Result<bool, ExecutionError> {
         let tx = self.execution_write()?;
         let envelope = result.envelope();
-        let input = load_input(&tx, envelope.attempt_id)?;
+        let input = load_input_cached(&tx, envelope.attempt_id)?;
         let (token,current,adoption):(Option<String>,Option<String>,String)=tx.query_row("SELECT dispatch_token,current_result_id,adoption FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![envelope.attempt_id.to_string(),envelope.item_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(sql_error)?;
         let token = parse_id(
             token.ok_or_else(|| error(ErrorCode::ResultMismatch, "undispatched-result"))?,
@@ -1138,7 +1215,7 @@ impl ProjectStore {
         result: ExecutionId,
     ) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
-        let input = load_input(&tx, attempt)?;
+        let input = load_input_cached(&tx, attempt)?;
         let output = load_result(&tx, &input, result)?;
         if output.envelope().outcome != ExecutionState::Succeeded {
             return Err(error(ErrorCode::OutputInvalid, "validation"));

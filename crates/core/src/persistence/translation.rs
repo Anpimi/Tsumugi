@@ -24,6 +24,7 @@ pub struct TranslationPreviewRow {
     pub entry: crate::content::TranslationEntry,
     pub item_id: ExecutionId,
     pub result_id: ExecutionId,
+    pub result_digest: String,
     pub unit_id: Option<ExecutionId>,
     pub occurrence_id: Option<ExecutionId>,
     pub source_revision_id: Option<ExecutionId>,
@@ -955,6 +956,7 @@ impl ProjectStore {
                 entry,
                 item_id: item.item_id,
                 result_id,
+                result_digest: result.digest().into(),
                 unit_id: only.map(|row| row.1),
                 occurrence_id: only.map(|row| row.0),
                 source_revision_id: only.map(|row| row.2),
@@ -1768,5 +1770,51 @@ mod tests {
                 .rows,
             changed.rows
         );
+    }
+
+    #[test]
+    fn real_translation_attempt_validates_every_saved_entry() {
+        let (_temp, mut store, _) = project_with_source();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        let bytes = include_bytes!("../../tests/fixtures/stardew-lookup/i18n/zh.json");
+        let bundle = TranslationBundle::capture("i18n/zh.json", bytes, "zh-CN", snapshot).unwrap();
+        let input = bundle
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime.register(Arc::new(TranslationRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            runtime.tick(&mut store).unwrap();
+            let valid: i64 = store.connection().unwrap().query_row(
+                "SELECT COUNT(*) FROM execution_items WHERE attempt_id=?1 AND validation='valid'",
+                [input.envelope().attempt_id.to_string()],
+                |row| row.get(0),
+            ).unwrap();
+            if valid == 532 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "real translation did not complete: {valid}/532"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            store
+                .execution_attempt(input.envelope().attempt_id, true)
+                .unwrap()
+                .items
+                .len(),
+            532
+        );
+        let preview = store
+            .translation_preview(input.envelope().attempt_id, 0, 100, None)
+            .unwrap();
+        assert_eq!(preview.total, 532);
+        assert_eq!(preview.unique + preview.unmatched, 532);
+        assert_eq!(preview.rows.len(), 100);
+        assert_eq!(preview.next_ordinal, Some(100));
     }
 }

@@ -16,7 +16,11 @@ macro_rules! handlers {
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         source::select_source,source::preflight_source,source::start_source_import,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,
-        source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,$($extra),*
+        source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,
+        source::translation::list_translation_files,source::translation::preflight_translation,
+        source::translation::start_translation_import,source::translation::read_translation_preview,
+        source::translation::prepare_translation_adoption,source::translation::read_translation_history,
+        source::translation::save_translation_revision,source::translation::select_translation_revision,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()

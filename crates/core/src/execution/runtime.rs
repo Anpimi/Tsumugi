@@ -260,7 +260,7 @@ impl ExecutionRuntime {
             if self.is_active(attempt) || self.retired.iter().any(|(id, _)| *id == attempt) {
                 continue;
             }
-            let input = store.execution_input(attempt)?;
+            let input = store.execution_input_cached(attempt)?;
             let Some(runner) = self
                 .runners
                 .get(&(
@@ -271,13 +271,10 @@ impl ExecutionRuntime {
             else {
                 continue;
             };
-            let view = store.execution_attempt(attempt, true)?;
-            let Some(item) = view.items.iter().find(|item| {
-                item.execution == ExecutionState::Queued && !item.cancellation_requested
-            }) else {
+            let Some(item) = store.next_queued_execution_item(attempt)? else {
                 continue;
             };
-            let request = store.dispatch_execution_item(attempt, item.item_id)?;
+            let request = store.dispatch_execution_item(attempt, item)?;
             let cancellation = Cancellation::default();
             let signal = cancellation.clone();
             let task = request.clone();
@@ -297,7 +294,7 @@ impl ExecutionRuntime {
                     stop_reason: None,
                 }),
                 Err(_) => {
-                    store.note_execution_unknown(attempt, item.item_id, "runner-start-failed")?;
+                    store.note_execution_unknown(attempt, item, "runner-start-failed")?;
                     return Err(ExecutionError::new(
                         ErrorCode::StorageFailed,
                         "runner-start",

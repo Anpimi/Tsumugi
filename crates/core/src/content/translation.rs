@@ -2,6 +2,7 @@
 
 use super::*;
 use jsonc_parser::ast::ObjectPropName;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 pub const TRANSLATION_OPERATION: &str = "translation-import";
@@ -109,7 +110,7 @@ impl TranslationBundle {
     }
 
     pub fn fixed_input(&self, project: ProjectId) -> Result<FixedInput, ExecutionError> {
-        let entries = extract_translation(self, &Cancellation::default())?;
+        let entries = parsed_translation(self, &Cancellation::default())?;
         let items = if entries.is_empty() {
             vec![InputItem::new(
                 Scope {
@@ -148,6 +149,16 @@ impl TranslationBundle {
     }
 
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
+        static CACHE: OnceLock<Mutex<Option<(String, TranslationBundle)>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(None));
+        if let Some((_, bundle)) = cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|(digest, _)| digest == input.digest())
+        {
+            return Ok(bundle.clone());
+        }
         let envelope = input.envelope();
         if envelope.operation != TRANSLATION_OPERATION
             || envelope.capability_id != TRANSLATION_CAPABILITY
@@ -158,7 +169,7 @@ impl TranslationBundle {
         }
         let bundle: Self = from_value(&envelope.settings)?;
         bundle.validate()?;
-        let entries = extract_translation(&bundle, &Cancellation::default())?;
+        let entries = parsed_translation(&bundle, &Cancellation::default())?;
         if envelope.items.len() != entries.len().max(1) {
             return Err(invalid("invalid-structure"));
         }
@@ -186,6 +197,10 @@ impl TranslationBundle {
         if envelope.units.iter().any(|unit| unit.item_ids.len() != 1) {
             return Err(invalid("invalid-structure"));
         }
+        *cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((input.digest().to_owned(), bundle.clone()));
         Ok(bundle)
     }
 }
@@ -227,7 +242,30 @@ pub fn extract_translation(
     bundle: &TranslationBundle,
     cancel: &Cancellation,
 ) -> Result<Vec<TranslationEntry>, ExecutionError> {
+    Ok(parsed_translation(bundle, cancel)?.as_ref().clone())
+}
+
+fn parsed_translation(
+    bundle: &TranslationBundle,
+    cancel: &Cancellation,
+) -> Result<Arc<Vec<TranslationEntry>>, ExecutionError> {
     bundle.validate()?;
+    if cancel.is_requested() {
+        return Err(failure(ErrorCode::Cancelled, "cancelled"));
+    }
+    // A fixed bundle digest commits to every captured byte and field. Keep only one
+    // parsed bundle, so per-entry EX dispatch and validation do not reparse the
+    // entire file for every item.
+    static CACHE: OnceLock<Mutex<Option<(String, Arc<Vec<TranslationEntry>>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    if let Some((_, entries)) = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|(digest, _)| digest == &bundle.manifest_digest)
+    {
+        return Ok(entries.clone());
+    }
     let deadline = Instant::now() + Duration::from_secs(60);
     let (root, offset) = super::smapi::parse(&bundle.file.utf8, cancel, deadline)?;
     let root = root
@@ -277,6 +315,11 @@ pub fn extract_translation(
             ],
         });
     }
+    let entries = Arc::new(entries);
+    *cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some((bundle.manifest_digest.clone(), entries.clone()));
     Ok(entries)
 }
 
@@ -301,7 +344,7 @@ pub fn validate_translation_output(
     }
     let item = input.item(result.envelope().item_id)?;
     let ordinal: Option<u32> = from_value(&item.payload)?;
-    let entries = extract_translation(&bundle, &Cancellation::default())?;
+    let entries = parsed_translation(&bundle, &Cancellation::default())?;
     let expected = TranslationOutput {
         version: 1,
         bundle_id: bundle.bundle_id,
@@ -342,7 +385,7 @@ impl Runner for TranslationRunner {
             .and_then(|bundle| {
                 let item = input.item(request.item_id)?;
                 let ordinal: Option<u32> = from_value(&item.payload)?;
-                let entries = extract_translation(&bundle, &cancellation)?;
+                let entries = parsed_translation(&bundle, &cancellation)?;
                 Ok(TranslationOutput {
                     version: 1,
                     bundle_id: bundle.bundle_id,
