@@ -6,8 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{
-    content::{MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, SourceBundle},
-    execution::{Cancellation, ErrorCode, ExecutionError},
+    content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, SourceBundle, TranslationBundle},
+    execution::{Cancellation, ErrorCode, ExecutionError, ExecutionId},
 };
 
 fn error(code: ErrorCode, reason: &str) -> ExecutionError {
@@ -143,6 +143,73 @@ impl Selection {
             .to_string_lossy()
             .into()
     }
+    pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
+        self.verify()?;
+        let i18n_path = self.root.join("i18n");
+        let i18n = platform::open(&i18n_path, true)?;
+        if platform::final_path(&i18n)? != i18n_path {
+            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+        }
+        let entries = listing(&i18n_path, &|| Ok(()))?;
+        Ok(entries
+            .into_iter()
+            .filter(|(name, directory)| {
+                !directory && content::declared_locale(&format!("i18n/{name}")).is_ok()
+            })
+            .map(|(name, _)| name)
+            .collect())
+    }
+    pub fn capture_translation(
+        &self,
+        file_name: &str,
+        target_locale: &str,
+        source_snapshot_id: ExecutionId,
+        cancel: &Cancellation,
+    ) -> Result<TranslationBundle, ExecutionError> {
+        self.capture_translation_inner(file_name, target_locale, source_snapshot_id, cancel, || {})
+    }
+    fn capture_translation_inner(
+        &self,
+        file_name: &str,
+        target_locale: &str,
+        source_snapshot_id: ExecutionId,
+        cancel: &Cancellation,
+        opened: impl FnOnce(),
+    ) -> Result<TranslationBundle, ExecutionError> {
+        let logical_path = format!("i18n/{file_name}");
+        content::declared_locale(&logical_path)?;
+        self.verify()?;
+        let started = Instant::now();
+        let check = || {
+            if cancel.is_requested() {
+                Err(error(ErrorCode::Cancelled, "cancelled"))
+            } else if started.elapsed() > Duration::from_secs(30) {
+                Err(error(ErrorCode::Busy, "capture-timeout"))
+            } else {
+                Ok(())
+            }
+        };
+        let i18n_path = self.root.join("i18n");
+        let i18n = platform::open(&i18n_path, true)?;
+        if platform::final_path(&i18n)? != i18n_path {
+            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+        }
+        let before = listing(&i18n_path, &check)?;
+        let path = i18n_path.join(file_name);
+        let mut file = platform::open(&path, false)?;
+        if platform::final_path(&file)? != path {
+            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+        }
+        opened();
+        let bytes = read(&mut file, MAX_SOURCE_BYTES, &check)?;
+        if bytes != read(&mut file, MAX_SOURCE_BYTES, &check)?
+            || before != listing(&i18n_path, &check)?
+        {
+            return Err(error(ErrorCode::DependencyConflict, "source-changed"));
+        }
+        self.verify()?;
+        TranslationBundle::capture(&logical_path, &bytes, target_locale, source_snapshot_id)
+    }
     fn verify(&self) -> Result<(), ExecutionError> {
         if platform::identity(&self.root_file)? != self.identity
             || platform::final_path(&self.root_file)? != self.root
@@ -277,6 +344,18 @@ impl Selection {
     pub fn capture(&self, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
+    pub fn capture_translation(
+        &self,
+        _: &str,
+        _: &str,
+        _: ExecutionId,
+        _: &Cancellation,
+    ) -> Result<TranslationBundle, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -287,7 +366,53 @@ mod tests {
         fs::create_dir(root.path().join("i18n")).unwrap();
         fs::write(root.path().join("manifest.json"), b"{}").unwrap();
         fs::write(root.path().join("i18n/default.json"), br#"{"a":"one"}"#).unwrap();
+        fs::write(
+            root.path().join("i18n/zh.json"),
+            r#"{"a":"你好"}"#.as_bytes(),
+        )
+        .unwrap();
         root
+    }
+    #[test]
+    fn translation_capture_uses_the_authorized_file_and_preserves_fixed_bytes() {
+        let root = fixture();
+        let selection = Selection::authorize(root.path().into()).unwrap();
+        assert_eq!(selection.translation_files().unwrap(), vec!["zh.json"]);
+        let snapshot = ExecutionId::new();
+        let bundle = selection
+            .capture_translation_inner(
+                "zh.json",
+                "zh-CN",
+                snapshot,
+                &Cancellation::default(),
+                || {
+                    assert!(
+                        OpenOptions::new()
+                            .write(true)
+                            .open(root.path().join("i18n/zh.json"))
+                            .is_err()
+                    );
+                    assert!(fs::remove_file(root.path().join("i18n/zh.json")).is_err());
+                },
+            )
+            .unwrap();
+        assert_eq!(bundle.file.utf8, r#"{"a":"你好"}"#);
+        assert_eq!(bundle.source_snapshot_id, snapshot);
+        assert!(
+            selection
+                .capture_translation("../zh.json", "zh-CN", snapshot, &Cancellation::default())
+                .is_err()
+        );
+        assert!(
+            selection
+                .capture_translation("default.json", "zh-CN", snapshot, &Cancellation::default())
+                .is_err()
+        );
+        assert!(
+            selection
+                .capture_translation("zh.json", "ja", snapshot, &Cancellation::default())
+                .is_err()
+        );
     }
     #[test]
     fn capture_holds_both_read_handles_and_keeps_original_bytes() {
@@ -359,7 +484,7 @@ mod tests {
         let root = fixture();
         assert!(Selection::authorize(root.path().join("..").join("outside")).is_err());
         assert!(Selection::authorize(PathBuf::from("relative")).is_err());
-        for n in 0..255 {
+        for n in 0..254 {
             fs::write(root.path().join("i18n").join(format!("extra-{n}")), b"").unwrap();
         }
         let selection = Selection::authorize(root.path().into()).unwrap();

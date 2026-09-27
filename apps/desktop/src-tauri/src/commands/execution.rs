@@ -110,6 +110,9 @@ impl ExecutionHost {
         host.runtime
             .register(Arc::new(tsumugi_core::content::SourceRunner))
             .map_err(map_read)?;
+        host.runtime
+            .register(Arc::new(tsumugi_core::content::TranslationRunner))
+            .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::content::OPERATION.into(),
             Arc::new(tsumugi_core::content::SourceAdoptionHandler),

@@ -1,7 +1,9 @@
 //! Translation revision schema and checked project-local mutations.
 
 use super::ProjectStore;
-use crate::execution::{ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec};
+use crate::execution::{
+    ErrorCode, ExecutionError, ExecutionId, FixedInput, MAX_INPUT_BYTES, codec,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
@@ -142,6 +144,43 @@ pub(super) fn migrate_v4(connection: &mut Connection) -> rusqlite::Result<()> {
     }
     transaction.pragma_update(None, "user_version", super::SCHEMA_VERSION)?;
     transaction.commit()
+}
+
+pub(super) fn record_input(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    if input.envelope().operation != crate::content::TRANSLATION_OPERATION {
+        return Ok(());
+    }
+    let bundle = crate::content::TranslationBundle::from_input(input)?;
+    check_target(
+        connection,
+        input.envelope().project_id,
+        &bundle.target_locale,
+    )?;
+    let row: Option<(String, String)> = connection
+        .query_row(
+            "SELECT s.project_id,s.attempt_id FROM source_snapshots s
+             JOIN content_scope c ON c.current_snapshot=s.snapshot_id
+             WHERE s.snapshot_id=?1",
+            [bundle.source_snapshot_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(super::ledger::sql_error)?;
+    let Some((owner, source_attempt)) = row else {
+        return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+    };
+    if owner != input.envelope().project_id.to_string() {
+        return Err(error(ErrorCode::Unauthorized, "translation-project"));
+    }
+    let original = super::ledger::load_input(connection, id(source_attempt)?)?;
+    let source = crate::content::SourceBundle::from_input(&original)?;
+    if source.format_id != bundle.format_id || source.format_version != bundle.format_version {
+        return Err(error(ErrorCode::DependencyConflict, "translation-format"));
+    }
+    Ok(())
 }
 
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
@@ -800,7 +839,10 @@ mod tests {
     use super::*;
     use crate::{
         ProjectMetadata,
-        content::{SourceAdoptionHandler, SourceBundle, SourceRunner},
+        content::{
+            SourceAdoptionHandler, SourceBundle, SourceRunner, TranslationBundle,
+            TranslationRunner, validate_translation_output,
+        },
         execution::{ExecutionRuntime, ExecutionState},
     };
     use std::{
@@ -1034,5 +1076,70 @@ mod tests {
                 .code(),
             super::super::PersistenceErrorCode::CorruptProject
         );
+    }
+
+    #[test]
+    fn translation_attempt_uses_fixed_bytes_and_reopens_without_the_external_file() {
+        let (temp, mut store, _) = project_with_source();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        let external = temp.path().join("zh.json");
+        std::fs::write(&external, r#"{"first":"你好","second":""}"#.as_bytes()).unwrap();
+        let captured = std::fs::read(&external).unwrap();
+        let bundle =
+            TranslationBundle::capture("i18n/zh.json", &captured, "zh-CN", snapshot).unwrap();
+        let input = bundle
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime.register(Arc::new(TranslationRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            runtime.tick(&mut store).unwrap();
+            let view = store
+                .execution_attempt(input.envelope().attempt_id, true)
+                .unwrap();
+            if view
+                .items
+                .iter()
+                .all(|item| item.execution == ExecutionState::Succeeded)
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        std::fs::write(&external, b"changed").unwrap();
+        for item in &input.envelope().items {
+            let result_id = store
+                .execution_current_result(input.envelope().attempt_id, item.item_id)
+                .unwrap()
+                .unwrap();
+            let result = store
+                .execution_result(input.envelope().attempt_id, result_id)
+                .unwrap();
+            let output = validate_translation_output(&input, &result).unwrap();
+            assert_eq!(output.entry_count, 2);
+        }
+        store.close().unwrap();
+        std::fs::remove_file(&external).unwrap();
+        let store = ProjectStore::open(temp.path().join("project")).unwrap();
+        let saved = store.execution_input(input.envelope().attempt_id).unwrap();
+        assert_eq!(TranslationBundle::from_input(&saved).unwrap(), bundle);
+        for item in &saved.envelope().items {
+            let result_id = store
+                .execution_current_result(saved.envelope().attempt_id, item.item_id)
+                .unwrap()
+                .unwrap();
+            let result = store
+                .execution_result(saved.envelope().attempt_id, result_id)
+                .unwrap();
+            assert_eq!(
+                validate_translation_output(&saved, &result)
+                    .unwrap()
+                    .entry_count,
+                2
+            );
+        }
     }
 }

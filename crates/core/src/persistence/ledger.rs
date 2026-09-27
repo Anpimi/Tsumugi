@@ -927,6 +927,7 @@ impl ProjectStore {
             }
         }
         super::content::record_input(&tx, input)?;
+        super::translation::record_input(&tx, input)?;
         #[cfg(test)]
         crash_hook("before-enqueue-commit");
         commit(tx)?;
@@ -1144,6 +1145,13 @@ impl ProjectStore {
         }
         if input.envelope().operation == crate::content::OPERATION {
             if let Err(failure) = crate::content::validate_output(&input, &output) {
+                tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+        }
+        if input.envelope().operation == crate::content::TRANSLATION_OPERATION {
+            if let Err(failure) = crate::content::validate_translation_output(&input, &output) {
                 tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
                 return Err(failure);

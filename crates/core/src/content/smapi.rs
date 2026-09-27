@@ -18,7 +18,7 @@ fn check(cancel: &Cancellation, deadline: Instant) -> Result<(), ExecutionError>
     }
     Ok(())
 }
-fn parse<'a>(
+pub(super) fn parse<'a>(
     raw: &'a str,
     cancel: &Cancellation,
     deadline: Instant,
@@ -102,7 +102,7 @@ fn string<'a>(o: &'a Object<'a>, key: &str) -> Result<&'a str, ExecutionError> {
         .filter(|s| !s.is_empty())
         .ok_or_else(|| invalid("invalid-structure"))
 }
-fn ascii(s: &str, max: usize) -> bool {
+pub(super) fn ascii(s: &str, max: usize) -> bool {
     !s.is_empty() && s.len() <= max && s.bytes().all(|b| (32..=126).contains(&b))
 }
 

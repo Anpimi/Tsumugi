@@ -18,7 +18,7 @@ use crate::{Locale, ProjectId};
 pub use runner::*;
 pub use runtime::{ExecutionRuntime, OutcomeQuery};
 
-pub const MAX_ITEMS: usize = 256;
+pub const MAX_ITEMS: usize = 2000;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_RESULT_BYTES: usize = 256 * 1024;
 pub const MAX_RESULT_BYTES: usize = 2 * 1024 * 1024;
