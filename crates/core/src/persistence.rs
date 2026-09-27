@@ -953,6 +953,16 @@ fn record_crash_hook(name: &str) {
 }
 
 #[cfg(test)]
+fn migration_crash_hook(point: &str) {
+    if std::env::var("TSUMUGI_MIGRATION_CRASH").as_deref() == Ok(point) {
+        if let Ok(path) = std::env::var("TSUMUGI_MIGRATION_HOOK") {
+            fs::write(path, point).unwrap();
+        }
+        std::process::abort();
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::Locale;
@@ -974,6 +984,70 @@ mod tests {
             .prefix(&format!("tsumugi-{label}-"))
             .tempdir()
             .unwrap()
+    }
+
+    fn downgrade_project_to_schema_v3(project_path: &Path) {
+        let mut connection = Connection::open(project_path.join(DATABASE_FILENAME)).unwrap();
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        transaction
+            .pragma_update(None, "defer_foreign_keys", true)
+            .unwrap();
+        transaction
+            .execute_batch(
+                "CREATE TEMP TABLE execution_results_copy AS SELECT * FROM main.execution_results;
+                 DROP TABLE main.execution_results;",
+            )
+            .unwrap();
+        transaction
+            .execute_batch(ledger::EXECUTION_RESULTS_TABLE_V3)
+            .unwrap();
+        transaction
+            .execute_batch(
+                "INSERT INTO main.execution_results SELECT * FROM temp.execution_results_copy;
+                 DROP TABLE temp.execution_results_copy;
+                 DROP TABLE translation_selections;
+                 DROP TABLE translation_revisions;",
+            )
+            .unwrap();
+        transaction
+            .pragma_update(None, "user_version", 3i64)
+            .unwrap();
+        transaction.commit().unwrap();
+    }
+
+    fn run_migration_crash_child(project_path: &Path, point: &str, hook_path: &Path) {
+        use std::process::Stdio;
+        use std::time::Instant;
+
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "persistence::tests::schema_migration_crash_child",
+                "--nocapture",
+            ])
+            .env("TSUMUGI_MIGRATION_PROJECT", project_path)
+            .env("TSUMUGI_MIGRATION_CRASH", point)
+            .env("TSUMUGI_MIGRATION_HOOK", hook_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(!status.success());
+                break;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("owned migration crash helper timed out");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(fs::read_to_string(hook_path).unwrap(), point);
     }
 
     fn run_crash_child(project_path: &Path, hook_path: &Path, mode: &str) {
@@ -1194,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn translation_migration_crash_child() {
+    fn schema_migration_crash_child() {
         let Ok(project) = std::env::var("TSUMUGI_MIGRATION_PROJECT") else {
             return;
         };
@@ -1204,9 +1278,6 @@ mod tests {
 
     #[test]
     fn schema_four_migration_reopens_across_process_commit_boundaries() {
-        use std::process::Stdio;
-        use std::time::Instant;
-
         for point in [
             "before-translation-migration-commit",
             "after-translation-migration-commit",
@@ -1228,33 +1299,7 @@ mod tests {
             drop(connection);
 
             let hook = parent.path().join("migration-hook");
-            let mut child = Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "persistence::tests::translation_migration_crash_child",
-                    "--nocapture",
-                ])
-                .env("TSUMUGI_MIGRATION_PROJECT", &project_path)
-                .env("TSUMUGI_MIGRATION_CRASH", point)
-                .env("TSUMUGI_MIGRATION_HOOK", &hook)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(10);
-            loop {
-                if let Some(status) = child.try_wait().unwrap() {
-                    assert!(!status.success());
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    child.kill().unwrap();
-                    child.wait().unwrap();
-                    panic!("owned migration crash helper timed out");
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            assert_eq!(fs::read_to_string(&hook).unwrap(), point);
+            run_migration_crash_child(&project_path, point, &hook);
 
             let connection = Connection::open(&database).unwrap();
             let version: i64 = connection
@@ -1321,6 +1366,115 @@ mod tests {
                 SCHEMA_VERSION
             );
             reopened.close().unwrap();
+        }
+    }
+
+    #[test]
+    fn schema_three_migration_reopens_across_process_commit_boundaries() {
+        for (point, expected_version, result_limit) in [
+            ("before-v3-migration-commit", 3i64, 262_144i64),
+            ("after-v3-migration-commit", 4i64, 2_097_152i64),
+        ] {
+            let parent = temporary_directory("schema-three-migration-crash");
+            let project_path = parent.path().join("project");
+            ProjectStore::create(&project_path, metadata())
+                .unwrap()
+                .close()
+                .unwrap();
+            downgrade_project_to_schema_v3(&project_path);
+
+            let database = project_path.join(DATABASE_FILENAME);
+            let hook = parent.path().join("migration-hook");
+            run_migration_crash_child(&project_path, point, &hook);
+
+            let connection = Connection::open(&database).unwrap();
+            let version: i64 = connection
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, expected_version);
+            let result_table: String = connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_results'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(result_table.contains(&format!("BETWEEN 1 AND {result_limit}")));
+            let translation_tables: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('translation_revisions','translation_selections')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(translation_tables, 0);
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            assert_eq!(
+                connection
+                    .query_row("SELECT display_name FROM project_metadata", [], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .unwrap(),
+                "Demo"
+            );
+            drop(connection);
+
+            let v3_backups: Vec<_> = fs::read_dir(&project_path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("project.sqlite3.pre-v3-")
+                })
+                .collect();
+            assert_eq!(v3_backups.len(), 1);
+            let backup =
+                Connection::open_with_flags(&v3_backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY)
+                    .unwrap();
+            assert_eq!(
+                backup
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                3
+            );
+            assert_eq!(
+                backup
+                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            drop(backup);
+
+            let reopened = ProjectStore::open(&project_path).unwrap();
+            assert_eq!(reopened.metadata().unwrap(), metadata());
+            assert_eq!(
+                reopened
+                    .connection()
+                    .unwrap()
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                SCHEMA_VERSION
+            );
+            reopened.close().unwrap();
+
+            let v4_backup_count = fs::read_dir(&project_path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("project.sqlite3.pre-v4-")
+                })
+                .count();
+            assert_eq!(v4_backup_count, if expected_version == 4 { 1 } else { 0 });
         }
     }
 

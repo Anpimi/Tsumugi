@@ -7,7 +7,7 @@ const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
         bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 2097152), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
-const EXECUTION_RESULTS_TABLE_V3: &str = "CREATE TABLE execution_results (
+pub(super) const EXECUTION_RESULTS_TABLE_V3: &str = "CREATE TABLE execution_results (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
         bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
@@ -211,7 +211,12 @@ pub(super) fn migrate_v3_result_limit(connection: &mut Connection) -> rusqlite::
             return Err(rusqlite::Error::InvalidQuery);
         }
         transaction.pragma_update(None, "user_version", 4)?;
-        transaction.commit()
+        #[cfg(test)]
+        super::migration_crash_hook("before-v3-migration-commit");
+        transaction.commit()?;
+        #[cfg(test)]
+        super::migration_crash_hook("after-v3-migration-commit");
+        Ok(())
     })();
     let restore_foreign_keys = connection.pragma_update(None, "foreign_keys", true);
     match migration {

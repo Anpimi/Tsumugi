@@ -217,21 +217,11 @@ pub(super) fn migrate_v4(connection: &mut Connection) -> rusqlite::Result<()> {
     }
     transaction.pragma_update(None, "user_version", super::SCHEMA_VERSION)?;
     #[cfg(test)]
-    migration_crash_hook("before-translation-migration-commit");
+    super::migration_crash_hook("before-translation-migration-commit");
     transaction.commit()?;
     #[cfg(test)]
-    migration_crash_hook("after-translation-migration-commit");
+    super::migration_crash_hook("after-translation-migration-commit");
     Ok(())
-}
-
-#[cfg(test)]
-fn migration_crash_hook(point: &str) {
-    if std::env::var("TSUMUGI_MIGRATION_CRASH").as_deref() == Ok(point) {
-        if let Ok(path) = std::env::var("TSUMUGI_MIGRATION_HOOK") {
-            std::fs::write(path, point).unwrap();
-        }
-        std::process::abort();
-    }
 }
 
 pub(super) fn record_input(
