@@ -18,8 +18,9 @@ mod ledger;
 mod translation;
 pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
 pub use translation::{
-    SaveTranslationRevision, SelectTranslationRevision, TranslationHistory, TranslationRevision,
-    TranslationSelection,
+    SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
+    TranslationAdoptionHandler, TranslationHistory, TranslationMatch, TranslationPreview,
+    TranslationPreviewRow, TranslationRevision, TranslationSelection, TranslationSelectionDecision,
 };
 
 const DATABASE_FILENAME: &str = "project.sqlite3";

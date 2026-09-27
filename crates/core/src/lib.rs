@@ -11,7 +11,9 @@ mod project;
 pub use persistence::{
     AttemptView, PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore,
     Reconciliation, RecoveryPlan, RecoveryUnit, SaveTranslationRevision, SelectTranslationRevision,
-    TaskView, TranslationHistory, TranslationRevision, TranslationSelection,
+    TaskView, TranslationAdoptionConfirmation, TranslationAdoptionHandler, TranslationHistory,
+    TranslationMatch, TranslationPreview, TranslationPreviewRow, TranslationRevision,
+    TranslationSelection, TranslationSelectionDecision,
 };
 
 #[cfg(test)]

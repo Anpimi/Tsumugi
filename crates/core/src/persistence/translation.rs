@@ -2,10 +2,79 @@
 
 use super::ProjectStore;
 use crate::execution::{
-    ErrorCode, ExecutionError, ExecutionId, FixedInput, MAX_INPUT_BYTES, codec,
+    AdoptionAction, AdoptionHandler, AdoptionTransaction, ChangeReference, ErrorCode,
+    ExecutionError, ExecutionId, FixedInput, FixedResult, MAX_INPUT_BYTES, Revision, codec,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TranslationMatch {
+    Unique,
+    Unmatched,
+    Ambiguous,
+    SelectedConflict,
+    SourceChanged,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationPreviewRow {
+    pub entry: crate::content::TranslationEntry,
+    pub item_id: ExecutionId,
+    pub result_id: ExecutionId,
+    pub unit_id: Option<ExecutionId>,
+    pub occurrence_id: Option<ExecutionId>,
+    pub source_revision_id: Option<ExecutionId>,
+    pub source_text: Option<String>,
+    pub current_selection: Option<TranslationSelection>,
+    pub current_text: Option<String>,
+    pub status: TranslationMatch,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationPreview {
+    pub attempt_id: ExecutionId,
+    pub bundle_id: ExecutionId,
+    pub fixed_source_snapshot_id: ExecutionId,
+    pub current_source_snapshot_id: ExecutionId,
+    pub result_digest: String,
+    pub file_digest: String,
+    pub logical_path: String,
+    pub declared_locale: String,
+    pub target_locale: String,
+    pub basis: String,
+    pub total: u32,
+    pub unique: u32,
+    pub unmatched: u32,
+    pub ambiguous: u32,
+    pub selected_conflicts: u32,
+    pub source_changed: u32,
+    pub next_ordinal: Option<u32>,
+    pub rows: Vec<TranslationPreviewRow>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TranslationSelectionDecision {
+    CandidateOnly,
+    SelectIfEmpty,
+    Replace,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationAdoptionConfirmation {
+    pub result_digest: String,
+    pub source_snapshot_id: ExecutionId,
+    pub occurrence_id: ExecutionId,
+    pub source_revision_id: ExecutionId,
+    pub target_unit_id: ExecutionId,
+    pub expected_selection_id: Option<ExecutionId>,
+    pub decision: TranslationSelectionDecision,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -283,9 +352,9 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             }
             connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM adoption_receipts a
-                 JOIN execution_results r ON r.attempt_id=a.attempt_id
+                 JOIN execution_results r ON r.result_id=?3
                  WHERE a.action_id=?1 AND a.attempt_id=?2
-                   AND r.result_id=?3 AND r.item_id=?4)",
+                   AND r.item_id=?4)",
                 params![action, attempt, result, item],
                 |row| row.get(0),
             )?
@@ -537,7 +606,426 @@ fn insert_selection(
     })
 }
 
+pub struct TranslationAdoptionHandler;
+
+impl AdoptionHandler for TranslationAdoptionHandler {
+    fn operation(&self) -> &str {
+        crate::content::TRANSLATION_OPERATION
+    }
+
+    fn apply(
+        &self,
+        tx: &AdoptionTransaction<'_>,
+        input: &FixedInput,
+        action: &AdoptionAction,
+        results: &[FixedResult],
+    ) -> Result<Vec<ChangeReference>, ExecutionError> {
+        if results.len() != 1 {
+            return Err(error(ErrorCode::ResultMismatch, "translation-result"));
+        }
+        let result = &results[0];
+        let output = crate::content::validate_translation_output(input, result)?;
+        let entry = output
+            .entry
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "translation-empty"))?;
+        let bundle = crate::content::TranslationBundle::from_input(input)?;
+        let confirmation: TranslationAdoptionConfirmation =
+            crate::content::from_value(&action.parameters)?;
+        if confirmation.result_digest != result.digest()
+            || action.project_id != input.envelope().project_id
+        {
+            return Err(error(ErrorCode::DependencyConflict, "stale-preview"));
+        }
+        let complete: (i64, i64) = tx.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(execution='succeeded' AND validation='valid'
+                AND current_result_id IS NOT NULL),0)
+             FROM execution_items WHERE attempt_id=?1",
+            [action.attempt_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if complete.0 != input.envelope().items.len() as i64 || complete.0 != complete.1 {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "translation-incomplete",
+            ));
+        }
+        let (project, locales): (String, String) = tx.query_row(
+            "SELECT project_id,target_locales_json FROM project_metadata WHERE row_id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let targets: Vec<String> = serde_json::from_str(&locales)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "translation-project"))?;
+        if project != action.project_id.to_string()
+            || !targets.iter().any(|locale| locale == &bundle.target_locale)
+        {
+            return Err(error(ErrorCode::DependencyConflict, "translation-locale"));
+        }
+        let current: Option<String> = tx.query_row(
+            "SELECT current_snapshot FROM content_scope WHERE row_id=1",
+            [],
+            |row| row.get(0),
+        )?;
+        if current.as_deref() != Some(&bundle.source_snapshot_id.to_string())
+            || confirmation.source_snapshot_id != bundle.source_snapshot_id
+        {
+            return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+        }
+        let (unit, revision, native_key, namespace): (String, String, String, String) = tx
+            .query_row(
+                "SELECT unit_id,revision_id,native_key,namespace FROM source_occurrences
+                 WHERE occurrence_id=?1 AND snapshot_id=?2",
+                rusqlite::params![
+                    confirmation.occurrence_id.to_string(),
+                    bundle.source_snapshot_id.to_string()
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        if unit != confirmation.target_unit_id.to_string()
+            || revision != confirmation.source_revision_id.to_string()
+            || !native_key.eq_ignore_ascii_case(&entry.native_key)
+        {
+            return Err(error(ErrorCode::DependencyConflict, "translation-match"));
+        }
+        let matches: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM source_occurrences
+             WHERE snapshot_id=?1 AND namespace=?2 AND comparison_key=?3",
+            rusqlite::params![
+                bundle.source_snapshot_id.to_string(),
+                namespace,
+                entry.native_key.to_ascii_lowercase()
+            ],
+            |row| row.get(0),
+        )?;
+        if matches != 1 {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "translation-ambiguous",
+            ));
+        }
+        let selected: (Option<String>, Option<i64>) = tx.query_row(
+            "SELECT
+               (SELECT event_id FROM translation_selections WHERE unit_id=?1 AND locale=?2
+                ORDER BY sequence DESC LIMIT 1),
+               (SELECT sequence FROM translation_selections WHERE unit_id=?1 AND locale=?2
+                ORDER BY sequence DESC LIMIT 1)",
+            rusqlite::params![unit, bundle.target_locale],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if selected.0.as_deref()
+            != confirmation
+                .expected_selection_id
+                .map(|id| id.to_string())
+                .as_deref()
+            || matches!(
+                confirmation.decision,
+                TranslationSelectionDecision::SelectIfEmpty
+            ) && selected.0.is_some()
+            || matches!(confirmation.decision, TranslationSelectionDecision::Replace)
+                && selected.0.is_none()
+        {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "translation-selection",
+            ));
+        }
+        let ordinal: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(ordinal),0)+1 FROM translation_revisions
+             WHERE unit_id=?1 AND locale=?2",
+            rusqlite::params![unit, bundle.target_locale],
+            |row| row.get(0),
+        )?;
+        let ordinal = u64::try_from(ordinal)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "translation-ordinal"))?;
+        let revision_id = ExecutionId::new();
+        let digest = action.request_digest(input)?;
+        tx.execute(
+            "INSERT INTO translation_revisions
+             (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,
+              source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,
+              item_id,artifact_id,logical_path,declared_locale,native_key,file_digest)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'import',?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+            rusqlite::params![
+                revision_id.to_string(),
+                project,
+                unit,
+                bundle.target_locale,
+                ordinal as i64,
+                entry.text,
+                bundle.source_snapshot_id.to_string(),
+                revision,
+                action.action_id.to_string(),
+                digest,
+                action.attempt_id.to_string(),
+                result.envelope().result_id.to_string(),
+                result.envelope().item_id.to_string(),
+                entry.artifact_id.to_string(),
+                bundle.file.logical_path,
+                bundle.declared_locale,
+                entry.native_key,
+                bundle.file.sha256,
+            ],
+        )?;
+        let mut changes = vec![ChangeReference {
+            kind: "translation-revision".into(),
+            id: revision_id.to_string(),
+            revision: Revision::new(ordinal)?,
+        }];
+        if confirmation.decision != TranslationSelectionDecision::CandidateOnly {
+            let sequence = selected
+                .1
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| error(ErrorCode::LimitExceeded, "translation-selection"))?;
+            let event = ExecutionId::new();
+            tx.execute(
+                "INSERT INTO translation_selections
+                 (event_id,project_id,unit_id,locale,sequence,revision_id,action_id,
+                  request_digest,previous_event_id)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                rusqlite::params![
+                    event.to_string(),
+                    project,
+                    unit,
+                    bundle.target_locale,
+                    sequence,
+                    revision_id.to_string(),
+                    action.action_id.to_string(),
+                    digest,
+                    selected.0,
+                ],
+            )?;
+            changes.push(ChangeReference {
+                kind: "translation-selection".into(),
+                id: event.to_string(),
+                revision: Revision::new(sequence as u64)?,
+            });
+        }
+        Ok(changes)
+    }
+}
+
 impl ProjectStore {
+    pub fn translation_preview(
+        &self,
+        attempt: ExecutionId,
+        after: u32,
+        limit: u32,
+        expected_basis: Option<&str>,
+    ) -> Result<TranslationPreview, ExecutionError> {
+        use crate::content::{TranslationBundle, TranslationOutput, extract_translation};
+        use crate::execution::ExecutionState;
+        use std::collections::BTreeMap;
+
+        if limit == 0 || limit > 100 {
+            return Err(error(ErrorCode::InvalidInput, "translation-page"));
+        }
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
+        let input = super::ledger::load_input(connection, attempt)?;
+        let bundle = TranslationBundle::from_input(&input)?;
+        check_target(
+            connection,
+            input.envelope().project_id,
+            &bundle.target_locale,
+        )?;
+        let entries = extract_translation(&bundle, &crate::execution::Cancellation::default())?;
+        if after as usize > entries.len() {
+            return Err(error(ErrorCode::InvalidInput, "translation-page"));
+        }
+        let current = self
+            .content_scope()?
+            .current_snapshot
+            .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-source"))?;
+        let source = self.source_content(current, 0, 1)?;
+        let mut matches: BTreeMap<String, Vec<(ExecutionId, ExecutionId, ExecutionId, String)>> =
+            BTreeMap::new();
+        let mut statement = connection
+            .prepare(
+                "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.comparison_key,r.text
+                 FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+                 WHERE o.snapshot_id=?1 AND o.namespace=?2 ORDER BY o.ordinal",
+            )
+            .map_err(super::ledger::sql_error)?;
+        let source_rows = statement
+            .query_map(params![current.to_string(), source.namespace], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(super::ledger::sql_error)?;
+        for row in source_rows {
+            let (occurrence, unit, revision, key, text) = row.map_err(super::ledger::sql_error)?;
+            matches
+                .entry(key)
+                .or_default()
+                .push((id(occurrence)?, id(unit)?, id(revision)?, text));
+        }
+
+        let mut rows = Vec::with_capacity(entries.len());
+        let mut result_evidence = Vec::with_capacity(input.envelope().items.len());
+        let mut selection_evidence = Vec::new();
+        for item in &input.envelope().items {
+            let persisted: (Option<String>, String, String) = connection
+                .query_row(
+                    "SELECT current_result_id,validation,execution FROM execution_items
+                     WHERE attempt_id=?1 AND item_id=?2",
+                    params![attempt.to_string(), item.item_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .map_err(super::ledger::sql_error)?;
+            if persisted.1 != "valid" || persisted.2 != "succeeded" {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "translation-incomplete",
+                ));
+            }
+            let result_id = id(persisted
+                .0
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "translation-result"))?)?;
+            let result = super::ledger::load_result(connection, &input, result_id)?;
+            if result.envelope().item_id != item.item_id
+                || result.envelope().outcome != ExecutionState::Succeeded
+            {
+                return Err(error(ErrorCode::CorruptLedger, "translation-result"));
+            }
+            let ordinal: Option<u32> = crate::content::from_value(&item.payload)?;
+            let expected = TranslationOutput {
+                version: 1,
+                bundle_id: bundle.bundle_id,
+                manifest_digest: bundle.manifest_digest.clone(),
+                file_digest: bundle.file.sha256.clone(),
+                entry_count: entries.len() as u32,
+                entry: ordinal.map(|n| entries[n as usize].clone()),
+            };
+            let actual: TranslationOutput = crate::content::from_value(
+                result
+                    .envelope()
+                    .output
+                    .as_ref()
+                    .ok_or_else(|| error(ErrorCode::CorruptLedger, "translation-result"))?,
+            )?;
+            if actual != expected {
+                return Err(error(ErrorCode::CorruptLedger, "translation-result"));
+            }
+            result_evidence.push((result_id.to_string(), result.digest().to_owned()));
+            let Some(entry) = expected.entry else {
+                continue;
+            };
+            let candidates = matches.get(&entry.native_key.to_ascii_lowercase());
+            let only = candidates.and_then(|rows| (rows.len() == 1).then(|| &rows[0]));
+            let (selection, selected_text) =
+                if let Some((_, unit, _, _)) = only {
+                    let selection = current_selection(connection, *unit, &bundle.target_locale)?;
+                    let text =
+                        if let Some(selected) = &selection {
+                            Some(connection.query_row(
+                        "SELECT text FROM translation_revisions WHERE revision_id=?1",
+                        [selected.revision_id.to_string()],
+                        |row| row.get(0),
+                    ).map_err(super::ledger::sql_error)?)
+                        } else {
+                            None
+                        };
+                    (selection, text)
+                } else {
+                    (None, None)
+                };
+            selection_evidence.push((
+                entry.ordinal,
+                selection.as_ref().map(|s| s.event_id.to_string()),
+            ));
+            let status = if current != bundle.source_snapshot_id {
+                TranslationMatch::SourceChanged
+            } else if candidates.is_none() {
+                TranslationMatch::Unmatched
+            } else if only.is_none() {
+                TranslationMatch::Ambiguous
+            } else if selection.is_some() {
+                TranslationMatch::SelectedConflict
+            } else {
+                TranslationMatch::Unique
+            };
+            rows.push(TranslationPreviewRow {
+                entry,
+                item_id: item.item_id,
+                result_id,
+                unit_id: only.map(|row| row.1),
+                occurrence_id: only.map(|row| row.0),
+                source_revision_id: only.map(|row| row.2),
+                source_text: only.map(|row| row.3.clone()),
+                current_selection: selection,
+                current_text: selected_text,
+                status,
+            });
+        }
+        rows.sort_by_key(|row| row.entry.ordinal);
+        let result_digest = request_digest(&result_evidence)?;
+        let basis = request_digest(&(current, &result_evidence, &selection_evidence))?;
+        if after != 0 && expected_basis != Some(basis.as_str())
+            || expected_basis.is_some_and(|value| value != basis)
+        {
+            return Err(error(ErrorCode::DependencyConflict, "stale-preview"));
+        }
+        let mut page = TranslationPreview {
+            attempt_id: attempt,
+            bundle_id: bundle.bundle_id,
+            fixed_source_snapshot_id: bundle.source_snapshot_id,
+            current_source_snapshot_id: current,
+            result_digest,
+            file_digest: bundle.file.sha256,
+            logical_path: bundle.file.logical_path,
+            declared_locale: bundle.declared_locale,
+            target_locale: bundle.target_locale,
+            basis,
+            total: rows.len() as u32,
+            unique: rows
+                .iter()
+                .filter(|row| row.status == TranslationMatch::Unique)
+                .count() as u32,
+            unmatched: rows
+                .iter()
+                .filter(|row| row.status == TranslationMatch::Unmatched)
+                .count() as u32,
+            ambiguous: rows
+                .iter()
+                .filter(|row| row.status == TranslationMatch::Ambiguous)
+                .count() as u32,
+            selected_conflicts: rows
+                .iter()
+                .filter(|row| row.status == TranslationMatch::SelectedConflict)
+                .count() as u32,
+            source_changed: rows
+                .iter()
+                .filter(|row| row.status == TranslationMatch::SourceChanged)
+                .count() as u32,
+            next_ordinal: None,
+            rows: Vec::new(),
+        };
+        for row in rows.into_iter().skip(after as usize).take(limit as usize) {
+            page.rows.push(row);
+            if codec::encode(&page, crate::content::MAX_CONTENT_PAGE_BYTES).is_err() {
+                page.rows.pop();
+                break;
+            }
+        }
+        let next = after + page.rows.len() as u32;
+        if next < page.total {
+            page.next_ordinal = Some(next);
+        }
+        if page.rows.is_empty() && next < page.total
+            || codec::encode(&page, crate::content::MAX_CONTENT_PAGE_BYTES).is_err()
+        {
+            return Err(error(ErrorCode::LimitExceeded, "translation-page"));
+        }
+        Ok(page)
+    }
+
     pub fn translation_history(
         &self,
         project: ExecutionId,
@@ -1083,7 +1571,11 @@ mod tests {
         let (temp, mut store, _) = project_with_source();
         let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
         let external = temp.path().join("zh.json");
-        std::fs::write(&external, r#"{"first":"你好","second":""}"#.as_bytes()).unwrap();
+        std::fs::write(
+            &external,
+            r#"{"FIRST":"你好","second":"","missing":"same"}"#.as_bytes(),
+        )
+        .unwrap();
         let captured = std::fs::read(&external).unwrap();
         let bundle =
             TranslationBundle::capture("i18n/zh.json", &captured, "zh-CN", snapshot).unwrap();
@@ -1119,8 +1611,136 @@ mod tests {
                 .execution_result(input.envelope().attempt_id, result_id)
                 .unwrap();
             let output = validate_translation_output(&input, &result).unwrap();
-            assert_eq!(output.entry_count, 2);
+            assert_eq!(output.entry_count, 3);
         }
+        let writes_before = store.connection().unwrap().total_changes();
+        let first = store
+            .translation_preview(input.envelope().attempt_id, 0, 1, None)
+            .unwrap();
+        assert_eq!((first.total, first.unique, first.unmatched), (3, 2, 1));
+        assert_eq!(first.rows[0].entry.text, "你好");
+        assert_eq!(first.rows[0].source_text.as_deref(), Some("same"));
+        assert_eq!(first.next_ordinal, Some(1));
+        let second = store
+            .translation_preview(input.envelope().attempt_id, 1, 1, Some(&first.basis))
+            .unwrap();
+        assert_eq!(second.rows[0].entry.text, "");
+        assert_eq!(second.rows[0].status, TranslationMatch::Unique);
+        let third = store
+            .translation_preview(input.envelope().attempt_id, 2, 1, Some(&first.basis))
+            .unwrap();
+        assert_eq!(third.rows[0].status, TranslationMatch::Unmatched);
+        assert!(third.rows[0].unit_id.is_none());
+        assert_eq!(store.connection().unwrap().total_changes(), writes_before);
+        let project_id =
+            ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        store
+            .save_translation_revision(&SaveTranslationRevision {
+                project_id,
+                action_id: ExecutionId::new(),
+                unit_id: first.rows[0].unit_id.unwrap(),
+                locale: "zh-CN".into(),
+                source_revision_id: first.rows[0].source_revision_id.unwrap(),
+                expected_selection_id: None,
+                text: "existing".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .translation_preview(input.envelope().attempt_id, 1, 1, Some(&first.basis))
+                .unwrap_err()
+                .stage,
+            "stale-preview"
+        );
+        let changed = store
+            .translation_preview(input.envelope().attempt_id, 0, 3, None)
+            .unwrap();
+        assert_eq!(changed.selected_conflicts, 1);
+        assert_eq!(changed.rows[0].current_text.as_deref(), Some("existing"));
+        let adopt = |store: &mut ProjectStore,
+                     row: &TranslationPreviewRow,
+                     decision: TranslationSelectionDecision| {
+            let unit = input
+                .envelope()
+                .units
+                .iter()
+                .find(|unit| unit.item_ids == vec![row.item_id])
+                .unwrap();
+            let result = store
+                .execution_result(input.envelope().attempt_id, row.result_id)
+                .unwrap();
+            store
+                .prepare_adoption_with_id(
+                    ExecutionId::new(),
+                    input.envelope().attempt_id,
+                    unit.unit_id,
+                    vec![row.result_id],
+                    serde_json::to_value(TranslationAdoptionConfirmation {
+                        result_digest: result.digest().into(),
+                        source_snapshot_id: snapshot,
+                        occurrence_id: row.occurrence_id.unwrap(),
+                        source_revision_id: row.source_revision_id.unwrap(),
+                        target_unit_id: row.unit_id.unwrap(),
+                        expected_selection_id: row.current_selection.as_ref().map(|s| s.event_id),
+                        decision,
+                    })
+                    .unwrap(),
+                )
+                .unwrap()
+        };
+        let conflict = adopt(
+            &mut store,
+            &changed.rows[0],
+            TranslationSelectionDecision::SelectIfEmpty,
+        );
+        assert_eq!(
+            store
+                .adopt_execution(&conflict, &TranslationAdoptionHandler)
+                .unwrap_err()
+                .stage,
+            "translation-selection"
+        );
+        let candidate = adopt(
+            &mut store,
+            &changed.rows[0],
+            TranslationSelectionDecision::CandidateOnly,
+        );
+        let candidate_receipt = store
+            .adopt_execution(&candidate, &TranslationAdoptionHandler)
+            .unwrap();
+        assert_eq!(candidate_receipt.changes.len(), 1);
+        assert_eq!(
+            store
+                .adopt_execution(&candidate, &TranslationAdoptionHandler)
+                .unwrap(),
+            candidate_receipt
+        );
+        let selected = adopt(
+            &mut store,
+            &changed.rows[1],
+            TranslationSelectionDecision::SelectIfEmpty,
+        );
+        let selected_receipt = store
+            .adopt_execution(&selected, &TranslationAdoptionHandler)
+            .unwrap();
+        assert_eq!(selected_receipt.changes.len(), 2);
+        assert_eq!(
+            store
+                .adopt_execution(&selected, &TranslationAdoptionHandler)
+                .unwrap(),
+            selected_receipt
+        );
+        let history = store
+            .translation_history(project_id, changed.rows[1].unit_id.unwrap(), "zh-CN", 0, 10)
+            .unwrap();
+        assert_eq!(history.rows[0].text, "");
+        assert_eq!(history.rows[0].origin_kind, "import");
+        assert_eq!(history.rows[0].native_key.as_deref(), Some("second"));
+        assert!(history.current.is_some());
+        let changed = store
+            .translation_preview(input.envelope().attempt_id, 0, 3, None)
+            .unwrap();
+        assert_eq!(changed.selected_conflicts, 2);
         store.close().unwrap();
         std::fs::remove_file(&external).unwrap();
         let store = ProjectStore::open(temp.path().join("project")).unwrap();
@@ -1138,8 +1758,15 @@ mod tests {
                 validate_translation_output(&saved, &result)
                     .unwrap()
                     .entry_count,
-                2
+                3
             );
         }
+        assert_eq!(
+            store
+                .translation_preview(input.envelope().attempt_id, 0, 3, None)
+                .unwrap()
+                .rows,
+            changed.rows
+        );
     }
 }

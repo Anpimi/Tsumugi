@@ -117,6 +117,10 @@ impl ExecutionHost {
             tsumugi_core::content::OPERATION.into(),
             Arc::new(tsumugi_core::content::SourceAdoptionHandler),
         );
+        host.handlers.insert(
+            tsumugi_core::content::TRANSLATION_OPERATION.into(),
+            Arc::new(tsumugi_core::TranslationAdoptionHandler),
+        );
         #[cfg(feature = "execution-test-host")]
         {
             host.runtime
