@@ -9,7 +9,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const CHECK_VERSION: &str = "smapi-prebuild-1";
+const CHECK_VERSION: &str = "smapi-prebuild-2";
 const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
@@ -810,7 +810,22 @@ fn target_in(
     } else {
         None
     };
-    let current_waivers = current_waivers(connection, project_id, unit_id, locale, &basis)?;
+    let waivers = current_waivers(connection, project_id, unit_id, locale, &basis)?;
+    let current_waivers = if let Some(check) = &current_check {
+        let current_issues: BTreeSet<&str> = check
+            .rules
+            .iter()
+            .flat_map(|rule| &rule.findings)
+            .filter(|finding| finding.waivable)
+            .map(|finding| finding.issue_id.as_str())
+            .collect();
+        waivers
+            .into_iter()
+            .filter(|waiver| current_issues.contains(waiver.issue_id.as_str()))
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(ReviewTarget {
         unit_id,
         locale: locale.to_owned(),
@@ -1190,7 +1205,7 @@ fn finding(
     waivable: bool,
 ) -> Result<CheckFinding, ExecutionError> {
     Ok(CheckFinding {
-        issue_id: digest(&(target.unit_id, &target.locale, rule, code, detail))?,
+        issue_id: digest(&(CHECK_VERSION, target.unit_id, &target.locale, rule, code, detail))?,
         rule: rule.to_owned(),
         code: code.to_owned(),
         detail: detail.to_owned(),
@@ -2495,6 +2510,103 @@ mod tests {
                 .review_eligibility(project, &["zh-CN".into()])
                 .unwrap()
                 .ready
+        );
+    }
+
+    #[test]
+    fn old_validator_waiver_cannot_clear_a_new_check_of_the_same_warning() {
+        let (_directory, mut store, project, units) = fixture();
+        let unit = units[0];
+        translate(&mut store, project, unit, "zh-CN", "你好 {{name}}");
+        store
+            .save_term(&SaveTerm {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                term_id: None,
+                locale: "zh-CN".into(),
+                source: "Hello".into(),
+                aliases: vec![],
+                target: "欢迎".into(),
+                protected: true,
+                scope_unit_id: Some(unit),
+                expected_revision_id: None,
+                reason: "Preferred term".into(),
+            })
+            .unwrap();
+        let run = check(&mut store, project, unit, "zh-CN");
+        let finding = run
+            .rules
+            .iter()
+            .flat_map(|rule| &rule.findings)
+            .find(|finding| finding.code == "protected-form")
+            .unwrap();
+        let target = store.review_target(project, unit, "zh-CN").unwrap();
+        let waiver = store
+            .waive_review_issue(&WaiverWrite {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: "zh-CN".into(),
+                expected_basis: target.basis,
+                issue_id: finding.issue_id.clone(),
+                grant: true,
+                expected_waiver_id: None,
+                actor: "Reviewer A".into(),
+                reason: "Accepted for this evidence".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            store.review_target(project, unit, "zh-CN").unwrap().current_waivers.len(),
+            1
+        );
+        assert!(
+            store.review_target(project, unit, "fr-FR").unwrap().current_waivers.is_empty()
+        );
+
+        // Simulate evidence written by the previous validator revision. Its
+        // warning text and unit are identical, but its identity predates the
+        // validator component of the issue digest.
+        let legacy_issue = digest(&(
+            unit,
+            "zh-CN",
+            finding.rule.as_str(),
+            finding.code.as_str(),
+            finding.detail.as_str(),
+        ))
+        .unwrap();
+        assert_ne!(finding.issue_id, legacy_issue);
+        let connection = store.connection_mut().unwrap();
+        connection
+            .execute(
+                "UPDATE review_checks SET validator_version='smapi-prebuild-1',
+                 rules_json=replace(rules_json, ?1, ?2) WHERE run_id=?3",
+                params![finding.issue_id, legacy_issue, run.run_id.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE review_waivers SET issue_id=?1 WHERE waiver_id=?2",
+                params![legacy_issue, waiver.waiver_id.to_string()],
+            )
+            .unwrap();
+        let stale = store.review_target(project, unit, "zh-CN").unwrap();
+        assert!(stale.current_check.is_none() && stale.current_waivers.is_empty());
+        let rerun = check(&mut store, project, unit, "zh-CN");
+        assert_eq!(rerun.validator_version, CHECK_VERSION);
+        let current = store.review_target(project, unit, "zh-CN").unwrap();
+        assert!(current.current_waivers.is_empty());
+        assert!(
+            store
+                .review_work_page(project, "zh-CN", 0, 10)
+                .unwrap()
+                .items
+                .iter()
+                .any(|item| item.unit_id == unit
+                    && item.reasons.iter().any(|reason| reason.starts_with("qa-issue:")))
+        );
+        assert_eq!(
+            store.review_history(project, unit, "zh-CN", 0, 10).unwrap().waivers.len(),
+            1
         );
     }
 

@@ -33,6 +33,7 @@ export const zhCN = {
       approvalMissing: "尚无当前人工批准",
       qaMissing: "当前检查未运行或已过期。",
       qaCurrent: "当前确定性检查",
+      qaRun: "确定性检查记录",
       ruleRequired: "必需译文",
       rulePlaceholders: "命名占位符",
       ruleFormat: "文本格式",

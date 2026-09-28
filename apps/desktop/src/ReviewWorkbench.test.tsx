@@ -145,14 +145,16 @@ it("keeps the review open when its translation editor cannot be opened", async (
 });
 
 it("shows historical check findings and exception reasons", async () => {
+  targets.first.currentCheck = { runId: "new-check", actionId: "new-action", unitId: "first", locale: "zh-CN",
+    basis: "basis-first", validatorVersion: "smapi-prebuild-2", outcome: "completed", createdAt: "2026-09-29", rules: [] };
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_review_history") return {
       decisions: [], nextOffset: null,
-      checks: [{ runId: "old-check", actionId: "action", unitId: "first", locale: "zh-CN", basis: "old-basis",
+      checks: [{ runId: "old-check", actionId: "action", unitId: "first", locale: "zh-CN", basis: "basis-first",
         validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "placeholders", status: "findings", reason: null,
           findings: [{ issueId: "old-issue", rule: "placeholders", code: "marker-mismatch", detail: "Names differ", severity: "error", waivable: false }] }] }],
-      waivers: [{ waiverId: "waiver", actionId: "action", unitId: "first", locale: "zh-CN", basis: "old-basis",
+      waivers: [{ waiverId: "waiver", actionId: "action", unitId: "first", locale: "zh-CN", basis: "basis-first",
         issueId: "old-issue", grant: true, previousWaiverId: null, policyVersion: "balanced-1", actor: "Reviewer A",
         reason: "Reviewed original wording", createdAt: "2026-09-28" }],
       fallbacks: [],
@@ -166,7 +168,8 @@ it("shows historical check findings and exception reasons", async () => {
   await user.click(screen.getByText("Decision and check history"));
   expect(await screen.findByText("Named placeholders differ or are malformed")).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toBeVisible();
-  expect(screen.getAllByText(/Earlier evidence/).length).toBeGreaterThan(0);
+  expect(screen.getByText(/Deterministic check run · smapi-prebuild-1 · Earlier evidence/)).toBeVisible();
+  expect(screen.getByText(/Reviewed original wording/)).toHaveTextContent("Earlier evidence");
 });
 
 it("requests cancellation for the active check and reports its persisted outcome", async () => {

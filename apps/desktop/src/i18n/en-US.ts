@@ -31,6 +31,7 @@ export const enUS = {
       approvalMissing: "No current human approval",
       qaMissing: "Current checks have not run or are stale.",
       qaCurrent: "Current deterministic checks",
+      qaRun: "Deterministic check run",
       ruleRequired: "Required translation",
       rulePlaceholders: "Named placeholders",
       ruleFormat: "Text format",
