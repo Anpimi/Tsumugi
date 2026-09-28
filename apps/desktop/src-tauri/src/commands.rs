@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -233,6 +234,16 @@ pub struct CloseProjectView {
 #[derive(Default)]
 pub struct AppState {
     sessions: Arc<Mutex<SessionManager>>,
+    review_check_cancellations: Mutex<
+        BTreeMap<
+            tsumugi_core::execution::ExecutionId,
+            (
+                String,
+                tsumugi_core::execution::ExecutionId,
+                tsumugi_core::execution::Cancellation,
+            ),
+        >,
+    >,
     clock_started: std::sync::atomic::AtomicBool,
 }
 

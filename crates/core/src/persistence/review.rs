@@ -2,7 +2,9 @@
 //! immutable decisions, checks, and the existing translation/resource authorities.
 
 use super::{ProjectStore, resources};
-use crate::execution::{ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec};
+use crate::execution::{
+    Cancellation, ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -10,6 +12,12 @@ use std::collections::{BTreeMap, BTreeSet};
 const CHECK_VERSION: &str = "smapi-prebuild-1";
 const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
+
+#[cfg(test)]
+thread_local! {
+    static CHECK_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CHECK_BARRIER: std::cell::RefCell<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>> = const { std::cell::RefCell::new(None) };
+}
 
 fn failure(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
@@ -134,6 +142,7 @@ pub struct CheckRun {
     pub basis: String,
     pub basis_evidence: ReviewBasis,
     pub validator_version: String,
+    pub outcome: String,
     pub rules: Vec<CheckRuleResult>,
     pub created_at: String,
 }
@@ -573,8 +582,21 @@ fn check_by_action(
             if basis_digest(&basis_evidence)? != basis {
                 return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
             }
-            let rules = serde_json::from_str(&rules_json)
+            let rules: Vec<CheckRuleResult> = serde_json::from_str(&rules_json)
                 .map_err(|_| failure(ErrorCode::CorruptLedger, "review-checks"))?;
+            let outcome = if rules
+                .iter()
+                .all(|rule: &CheckRuleResult| rule.status == "cancelled")
+            {
+                "cancelled"
+            } else if rules
+                .iter()
+                .all(|rule: &CheckRuleResult| rule.status == "failed")
+            {
+                "failed"
+            } else {
+                "completed"
+            };
             Ok((
                 CheckRun {
                     run_id: parse_id(run_id)?,
@@ -584,6 +606,7 @@ fn check_by_action(
                     basis,
                     basis_evidence,
                     validator_version,
+                    outcome: outcome.to_owned(),
                     rules,
                     created_at,
                 },
@@ -1065,6 +1088,25 @@ impl ProjectStore {
         expected_basis: &str,
         action_id: ExecutionId,
     ) -> Result<CheckRun, ExecutionError> {
+        self.run_review_checks_with_cancel(
+            project_id,
+            unit_id,
+            locale,
+            expected_basis,
+            action_id,
+            &Cancellation::default(),
+        )
+    }
+
+    pub fn run_review_checks_with_cancel(
+        &mut self,
+        project_id: ExecutionId,
+        unit_id: ExecutionId,
+        locale: &str,
+        expected_basis: &str,
+        action_id: ExecutionId,
+        cancellation: &Cancellation,
+    ) -> Result<CheckRun, ExecutionError> {
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "review-session"));
         }
@@ -1086,16 +1128,37 @@ impl ProjectStore {
         if target.basis != expected_basis {
             return Err(failure(ErrorCode::DependencyConflict, "review-current"));
         }
-        let terms = resources::resolve_terms_in(&transaction, project_id, unit_id, locale)?;
-        let rules = check_rules(&target, &terms)?;
+        let rules = if cancellation.is_requested() {
+            interrupted_rules("cancelled", "Cancelled before completion")
+        } else {
+            match resources::resolve_terms_in(&transaction, project_id, unit_id, locale)
+                .and_then(|terms| check_rules(&target, &terms))
+            {
+                Ok(rules) => rules,
+                Err(error) => interrupted_rules("failed", &error.stage),
+            }
+        };
+        let rules = if cancellation.is_requested() {
+            interrupted_rules("cancelled", "Cancelled before completion")
+        } else {
+            rules
+        };
         let run_id = ExecutionId::new();
-        let rules_json = serde_json::to_string(&rules)
+        let mut rules_json = serde_json::to_string(&rules)
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
         if rules_json.len() > 65_536 {
-            return Err(failure(ErrorCode::LimitExceeded, "review-check-result"));
+            rules_json = serde_json::to_string(&interrupted_rules("failed", "limit-exceeded"))
+                .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
         }
         let basis_json = serde_json::to_string(&target.basis_evidence)
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-basis"))?;
+        if cancellation.is_requested() {
+            rules_json = serde_json::to_string(&interrupted_rules(
+                "cancelled",
+                "Cancelled before completion",
+            ))
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
+        }
         transaction.execute(
             "INSERT INTO review_checks
              (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest)
@@ -1151,6 +1214,23 @@ fn result(rule: &str, findings: Vec<CheckFinding>, reason: Option<&str>) -> Chec
     }
 }
 
+fn interrupted_rules(status: &str, reason: &str) -> Vec<CheckRuleResult> {
+    [
+        "required-translation",
+        "placeholders",
+        "format",
+        "terminology",
+    ]
+    .into_iter()
+    .map(|rule| CheckRuleResult {
+        rule: rule.to_owned(),
+        status: status.to_owned(),
+        reason: Some(reason.to_owned()),
+        findings: Vec::new(),
+    })
+    .collect()
+}
+
 /// The first bundled format uses named `{{token}}` markers. A malformed marker
 /// is a format finding; a valid marker inventory is compared including counts.
 fn markers(value: &str) -> Result<BTreeMap<String, u32>, ()> {
@@ -1190,6 +1270,22 @@ fn check_rules(
     target: &ReviewTarget,
     terms: &resources::TermResolution,
 ) -> Result<Vec<CheckRuleResult>, ExecutionError> {
+    #[cfg(test)]
+    if CHECK_FAIL.with(|flag| flag.get()) {
+        return Err(failure(
+            ErrorCode::StorageFailed,
+            "review-check-injected-failure",
+        ));
+    }
+    #[cfg(test)]
+    CHECK_BARRIER.with(|barrier| {
+        if let Some((reached, release)) = barrier.borrow_mut().take() {
+            reached.send(()).unwrap();
+            release
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+        }
+    });
     let source_markers = markers(&target.source_text);
     let mut format = Vec::new();
     if source_markers.is_err() {
@@ -2704,6 +2800,77 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    #[test]
+    fn failed_and_cancelled_checks_remain_distinct_nonpassing_evidence_after_reopen() {
+        let (directory, mut store, project, units) = fixture();
+        let unit = units[0];
+        translate(&mut store, project, unit, "zh-CN", "你好 {{name}}");
+        let basis = store.review_target(project, unit, "zh-CN").unwrap().basis;
+        let failed_action = ExecutionId::new();
+        CHECK_FAIL.with(|flag| flag.set(true));
+        let failed = store
+            .run_review_checks(project, unit, "zh-CN", &basis, failed_action)
+            .unwrap();
+        CHECK_FAIL.with(|flag| flag.set(false));
+        assert_eq!(failed.outcome, "failed");
+        assert!(failed.rules.iter().all(|rule| rule.status == "failed"));
+        assert_eq!(
+            store
+                .run_review_checks(project, unit, "zh-CN", &basis, failed_action)
+                .unwrap(),
+            failed
+        );
+
+        let cancellation = Cancellation::default();
+        let (reached, waiting) = std::sync::mpsc::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        CHECK_BARRIER.with(|barrier| *barrier.borrow_mut() = Some((reached, resume)));
+        let signal = cancellation.clone();
+        let canceller = std::thread::spawn(move || {
+            waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+            signal.request();
+            release.send(()).unwrap();
+        });
+        let cancelled = store
+            .run_review_checks_with_cancel(
+                project,
+                unit,
+                "zh-CN",
+                &basis,
+                ExecutionId::new(),
+                &cancellation,
+            )
+            .unwrap();
+        canceller.join().unwrap();
+        assert_eq!(cancelled.outcome, "cancelled");
+        assert!(
+            cancelled
+                .rules
+                .iter()
+                .all(|rule| rule.status == "cancelled")
+        );
+        let work = store.review_work_page(project, "zh-CN", 0, 10).unwrap();
+        assert!(work.items.iter().any(|item| {
+            item.unit_id == unit
+                && item
+                    .reasons
+                    .iter()
+                    .any(|reason| reason == "qa-unavailable:required-translation")
+        }));
+        drop(store);
+
+        let mut store = ProjectStore::open(directory.path().join("project")).unwrap();
+        let current = store.review_target(project, unit, "zh-CN").unwrap();
+        assert_eq!(current.current_check.unwrap().outcome, "cancelled");
+        let history = store.review_history(project, unit, "zh-CN", 0, 10).unwrap();
+        assert_eq!(history.checks.len(), 2);
+        assert_eq!(history.checks[0].outcome, "cancelled");
+        assert_eq!(history.checks[1].outcome, "failed");
+        let passed = check(&mut store, project, unit, "zh-CN");
+        assert_eq!(passed.outcome, "completed");
+        assert!(passed.rules.iter().all(|rule| rule.status == "passed"));
     }
 
     #[test]

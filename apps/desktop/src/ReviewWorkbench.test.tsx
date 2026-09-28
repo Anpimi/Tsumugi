@@ -137,3 +137,26 @@ it("shows historical check findings and exception reasons", async () => {
   expect(screen.getByText(/Reviewed original wording/)).toBeVisible();
   expect(screen.getAllByText(/Earlier evidence/).length).toBeGreaterThan(0);
 });
+
+it("requests cancellation for the active check and reports its persisted outcome", async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "run_review_checks") return pending;
+    if (command === "cancel_review_checks") return Promise.resolve(true);
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await user.click(await screen.findByRole("button", { name: "Cancel current check" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "cancel_review_checks")).toBe(true));
+  const checkRequest = invoke.mock.calls.find(([command]) => command === "run_review_checks")?.[1].request;
+  const cancelRequest = invoke.mock.calls.find(([command]) => command === "cancel_review_checks")?.[1].request;
+  expect(cancelRequest).toMatchObject({ actionId: checkRequest.actionId, projectId: "project", sessionToken: "session" });
+  await act(async () => finish({ outcome: "cancelled" }));
+  expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeInTheDocument();
+});

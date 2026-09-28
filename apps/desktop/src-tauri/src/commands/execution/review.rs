@@ -28,6 +28,9 @@ request!(ReviewCheckRequest {
     expected_basis: String,
     action_id: ExecutionId
 });
+request!(ReviewCancelCheckRequest {
+    action_id: ExecutionId
+});
 request!(WaiverRequest {
     waiver: WaiverWrite
 });
@@ -140,24 +143,76 @@ pub fn run_review_checks(
     state: State<'_, AppState>,
     request: ReviewCheckRequest,
 ) -> Result<CheckRun, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .run_review_checks(
-            request.project_id,
-            request.unit_id,
-            &request.locale,
-            &request.expected_basis,
+    let cancellation = Cancellation::default();
+    {
+        let mut running = state
+            .review_check_cancellations
+            .lock()
+            .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?;
+        if running.contains_key(&request.action_id) {
+            return Err(CommandError::simple(
+                CommandErrorCode::Busy,
+                CommandStage::ExecutionAdopt,
+            ));
+        }
+        running.insert(
             request.action_id,
-        )
-        .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+            (
+                request.session_token.clone(),
+                request.project_id,
+                cancellation.clone(),
+            ),
+        );
+    }
+    let outcome = (|| {
+        let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
+        let active = authorized(
+            &mut sessions,
+            &request.session_token,
+            request.project_id,
+            CommandStage::ExecutionAdopt,
+        )?;
+        let (host, store) = active.execution_parts()?;
+        host.allow_mutation()?;
+        store
+            .run_review_checks_with_cancel(
+                request.project_id,
+                request.unit_id,
+                &request.locale,
+                &request.expected_basis,
+                request.action_id,
+                &cancellation,
+            )
+            .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+    })();
+    state
+        .review_check_cancellations
+        .lock()
+        .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
+        .remove(&request.action_id);
+    outcome
+}
+
+#[tauri::command]
+pub fn cancel_review_checks(
+    state: State<'_, AppState>,
+    request: ReviewCancelCheckRequest,
+) -> Result<bool, CommandError> {
+    let running = state
+        .review_check_cancellations
+        .lock()
+        .map_err(|_| CommandError::unknown(CommandStage::ExecutionCancel))?;
+    let Some((session, project, cancellation)) = running.get(&request.action_id) else {
+        return Ok(false);
+    };
+    if session != &request.session_token || *project != request.project_id {
+        return Err(CommandError::simple(
+            CommandErrorCode::SessionInvalid,
+            CommandStage::ExecutionCancel,
+        ));
+    }
+    cancellation.request();
+    Ok(true)
 }
 
 #[tauri::command]

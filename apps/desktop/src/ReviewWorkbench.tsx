@@ -10,7 +10,7 @@ import { reviewCommands as commands, type Eligibility, type EligibilityReason, t
 type Tab = "review" | "work" | "eligibility";
 type Pending = { kind: "decision"; request: ReviewWrite } | { kind: "check"; request: { unitId: string; locale: string; expectedBasis: string; actionId: string } }
   | { kind: "waiver"; request: WaiverWrite } | { kind: "fallback"; request: FallbackWrite };
-type Notice = "saved" | "unknown" | "conflict" | "error" | null;
+type Notice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "checkCancelled" | "cancelRequested" | null;
 const MAX_BATCH = 100;
 export interface ReviewHandle { allowLeave: () => Promise<boolean> }
 
@@ -54,6 +54,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [leavePrompt, setLeavePrompt] = useState(false);
   const [batchPrompt, setBatchPrompt] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
+  const [activeCheckId, setActiveCheckId] = useState<string | null>(null);
   const [batchStatus, setBatchStatus] = useState<{ applied: number; conflicted: number; failed: number } | null>(null);
   const alive = useRef(false);
   const generation = useRef(0);
@@ -162,12 +163,14 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   async function execute(action: Pending) {
     if (running.current) return;
     running.current = true; setBusy(true); setPending(action); setNotice(null);
+    if (action.kind === "check") setActiveCheckId(action.request.actionId);
     try {
+      let checkOutcome: "completed" | "failed" | "cancelled" | null = null;
       if (action.kind === "decision") await commands.decide(session, action.request);
-      if (action.kind === "check") await commands.check({ ...session, ...action.request });
+      if (action.kind === "check") checkOutcome = (await commands.check({ ...session, ...action.request })).outcome;
       if (action.kind === "waiver") await commands.waive(session, action.request);
       if (action.kind === "fallback") await commands.fallback(session, action.request);
-      setPending(null); setNotice("saved"); setWork(null); setEligibility(null);
+      setPending(null); setNotice(checkOutcome === "failed" ? "checkFailed" : checkOutcome === "cancelled" ? "checkCancelled" : "saved"); setWork(null); setEligibility(null);
       if (action.kind === "decision") {
         setChosen(previous => {
           const key = `${action.request.locale}:${action.request.unitId}`;
@@ -194,7 +197,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       setPending(uncertain ? action : null);
       setNotice(uncertain ? "unknown" : isConflict(error) ? "conflict" : "error");
       setReason(errorReason(error));
-    } finally { running.current = false; if (alive.current) setBusy(false); }
+    } finally { running.current = false; if (alive.current) { setBusy(false); setActiveCheckId(null); } }
   }
   async function decide(kind: ReviewWrite["kind"]) {
     if (!selected || !actor.trim()) { setNotice("error"); setReason("reviewer-required"); return; }
@@ -212,6 +215,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     try {
       const actionId = await executionCommands.identity(session);
       await execute({ kind: "check", request: { actionId, unitId: selected.unitId, locale: selected.locale, expectedBasis: selected.basis } });
+    } catch (error) { setNotice("error"); setReason(errorReason(error)); }
+  }
+  async function cancelCheck() {
+    if (!activeCheckId) return;
+    try {
+      if (await commands.cancelCheck({ ...session, actionId: activeCheckId })) setNotice("cancelRequested");
     } catch (error) { setNotice("error"); setReason(errorReason(error)); }
   }
   async function waive(issueId: string, grant: boolean, expectedWaiverId: string | null) {
@@ -304,6 +313,15 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (rule === "format") return t("review.ruleFormat");
     return t("review.ruleTerminology");
   }
+  function ruleStatusLabel(status: string) {
+    return t(status === "passed" ? "review.passed" : status === "not-applicable" ? "review.notApplicable"
+      : status === "findings" ? "review.findings" : status === "failed" ? "review.checkFailed"
+      : status === "cancelled" ? "review.checkCancelled" : "review.qaUnavailable");
+  }
+  function ruleReasonLabel(status: string) {
+    return t(status === "not-applicable" ? "review.noSelectedTranslationReason" : status === "failed" ? "review.checkFailedHelp"
+      : status === "cancelled" ? "review.checkCancelledHelp" : "review.placeholderUnavailable");
+  }
 
   return <>
     <Dialog.Root open={open} onOpenChange={value => { if (value) setOpen(true); else requestClose(); }}>
@@ -320,7 +338,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
               {t(value === "review" ? "review.reviewTab" : value === "work" ? "review.workTab" : "review.eligibilityTab")}
             </button>)}
           </div>
-          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
+          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
           {pending ? <button className="secondary-button" disabled={busy} onClick={() => void execute(pending)}>{t("review.retry")}</button> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchRunning ? <button className="secondary-button" onClick={() => { cancelBatch.current = true; }}>{t("review.batchCancel")}</button> : null}
@@ -352,17 +370,17 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                 <div className="form-actions"><button className="primary-button" disabled={busy || !selected.selectionId || !actor.trim()} onClick={() => void decide("approve")}>{t("review.approve")}</button>
                   <button className="secondary-button" disabled={busy || !selected.selectionId || !actor.trim()} onClick={() => void decide("request-changes")}>{t("review.requestChanges")}</button>
                   {!selected.selectionId ? <button className="secondary-button" disabled={busy || !actor.trim()} onClick={() => void fallback(!selected.currentFallback)}>{t(selected.currentFallback ? "review.withdrawFallback" : "review.fallback")}</button> : null}</div>
-                <div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => void check()}>{busy ? t("review.checking") : t("review.check")}</button></div>
-                <h4>{t("review.qaCurrent")}</h4>{!selected.currentCheck ? <p>{t("review.qaMissing")}</p> : selected.currentCheck.rules.map(rule => <div key={rule.rule} className="review-rule"><strong>{ruleLabel(rule.rule)}</strong> — {t(rule.status === "passed" ? "review.passed" : rule.status === "not-applicable" ? "review.notApplicable" : rule.status === "findings" ? "review.findings" : "review.qaUnavailable")}
-                  {rule.reason ? <p>{t(rule.status === "not-applicable" ? "review.noSelectedTranslationReason" : "review.placeholderUnavailable")}</p> : null}
+                <div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => void check()}>{busy ? t("review.checking") : t("review.check")}</button>{activeCheckId ? <button className="secondary-button" onClick={() => void cancelCheck()}>{t("review.cancelCheck")}</button> : null}</div>
+                <h4>{t("review.qaCurrent")}</h4>{!selected.currentCheck ? <p>{t("review.qaMissing")}</p> : selected.currentCheck.rules.map(rule => <div key={rule.rule} className="review-rule"><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                  {rule.reason ? <p>{ruleReasonLabel(rule.status)}</p> : null}
                   {rule.findings.map(finding => <div key={finding.issueId}><p>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</p>
                     {selected.currentWaivers.some(waiver => waiver.issueId === finding.issueId) ? <><p>{t("review.waived")}</p><button className="text-button" disabled={busy || !actor.trim()} onClick={() => void waive(finding.issueId, false, selected.currentWaivers.find(waiver => waiver.issueId === finding.issueId)!.waiverId)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={busy || !actor.trim()} onClick={() => void waive(finding.issueId, true, null)}>{t("review.waive")}</button> : null}</div>)}
                 </div>)}
                 <details><summary>{t("review.history")}</summary>{history && history.decisions.length + history.checks.length + history.waivers.length + history.fallbacks.length === 0 ? <p>{t("review.historyEmpty")}</p> : null}
                   {history?.decisions.map(item => <p key={item.decisionId}>{item.createdAt} · {item.actor} · {t(item.kind === "approve" ? "review.currentApproval" : "review.changesRequested")}{item.basis === selected.basis ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
                   {history?.checks.map(item => <div key={item.runId} className="review-history-check"><p>{item.createdAt} · {t("review.qaCurrent")} · {item.validatorVersion}{item.basis === selected.basis ? "" : ` · ${t("review.earlier")}`}</p>
-                    <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{ruleLabel(rule.rule)}</strong> — {t(rule.status === "passed" ? "review.passed" : rule.status === "not-applicable" ? "review.notApplicable" : rule.status === "findings" ? "review.findings" : "review.qaUnavailable")}
-                      {rule.reason ? ` · ${t(rule.status === "not-applicable" ? "review.noSelectedTranslationReason" : "review.placeholderUnavailable")}` : ""}
+                    <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                      {rule.reason ? ` · ${ruleReasonLabel(rule.status)}` : ""}
                       {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</li>)}</ul> : null}
                     </li>)}</ul>
                   </div>)}

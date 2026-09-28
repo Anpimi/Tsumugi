@@ -26,7 +26,7 @@ macro_rules! handlers {
         resource::read_context_revision,resource::save_context,resource::capture_context,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
         review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
-        review::run_review_checks,review::waive_review_issue,review::allow_source_fallback,
+        review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,$($extra),*
     ] };
 }

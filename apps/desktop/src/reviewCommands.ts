@@ -5,7 +5,7 @@ export type DecisionKind = "approve" | "request-changes";
 export interface ReviewDecision { decisionId: string; actionId: string; unitId: string; locale: string; basis: string; selectionId: string; revisionId: string; sourceRevisionId: string; actor: string; kind: DecisionKind; reason: string; createdAt: string }
 export interface CheckFinding { issueId: string; rule: string; code: string; detail: string; severity: string; waivable: boolean }
 export interface CheckRuleResult { rule: string; status: string; reason: string | null; findings: CheckFinding[] }
-export interface CheckRun { runId: string; actionId: string; unitId: string; locale: string; basis: string; validatorVersion: string; rules: CheckRuleResult[]; createdAt: string }
+export interface CheckRun { runId: string; actionId: string; unitId: string; locale: string; basis: string; validatorVersion: string; outcome: "completed" | "failed" | "cancelled"; rules: CheckRuleResult[]; createdAt: string }
 export interface Waiver { waiverId: string; actionId: string; unitId: string; locale: string; basis: string; issueId: string; grant: boolean; previousWaiverId: string | null; policyVersion: string; actor: string; reason: string; createdAt: string }
 export interface FallbackDecision { fallbackId: string; actionId: string; unitId: string; locale: string; sourceRevisionId: string; allow: boolean; previousFallbackId: string | null; policyVersion: string; actor: string; reason: string; createdAt: string }
 export interface ReviewTarget { unitId: string; locale: string; nativeKey: string; sourceSnapshotId: string; sourceRevisionId: string; sourceText: string; selectionId: string | null; revisionId: string | null; translationText: string | null; basis: string; termConflict: boolean; currentDecision: ReviewDecision | null; currentCheck: CheckRun | null; currentFallback: FallbackDecision | null; currentWaivers: Waiver[] }
@@ -26,6 +26,7 @@ export const reviewCommands = {
   history: (request: SessionRequest & { unitId: string; locale: string; offset: number; limit: number }) => invoke<ReviewHistoryPage>("read_review_history", { request }),
   decide: (session: SessionRequest, decision: ReviewWrite) => invoke<ReviewDecision>("write_review_decision", { request: { ...session, decision } }),
   check: (request: SessionRequest & { unitId: string; locale: string; expectedBasis: string; actionId: string }) => invoke<CheckRun>("run_review_checks", { request }),
+  cancelCheck: (request: SessionRequest & { actionId: string }) => invoke<boolean>("cancel_review_checks", { request }),
   waive: (session: SessionRequest, waiver: WaiverWrite) => invoke<Waiver>("waive_review_issue", { request: { ...session, waiver } }),
   fallback: (session: SessionRequest, fallback: FallbackWrite) => invoke<FallbackDecision>("allow_source_fallback", { request: { ...session, fallback } }),
   work: (request: SessionRequest & { locale: string; offset: number; limit: number }) => invoke<WorkPage>("read_review_work", { request }),
