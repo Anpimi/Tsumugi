@@ -139,14 +139,14 @@ pub fn write_review_decision(
 }
 
 #[tauri::command]
-pub fn run_review_checks(
+pub async fn run_review_checks(
     state: State<'_, AppState>,
     request: ReviewCheckRequest,
 ) -> Result<CheckRun, CommandError> {
     let cancellation = Cancellation::default();
+    let running_checks = Arc::clone(&state.review_check_cancellations);
     {
-        let mut running = state
-            .review_check_cancellations
+        let mut running = running_checks
             .lock()
             .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?;
         if running.contains_key(&request.action_id) {
@@ -164,8 +164,13 @@ pub fn run_review_checks(
             ),
         );
     }
-    let outcome = (|| {
-        let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
+    // Keep the desktop event loop free to deliver cancel_review_checks while
+    // this synchronous store operation holds the project session lock.
+    let sessions = Arc::clone(&state.sessions);
+    let outcome = tauri::async_runtime::spawn_blocking(move || {
+        let mut sessions = sessions.lock().map_err(|_| {
+            CommandError::simple(CommandErrorCode::Busy, CommandStage::ExecutionAdopt)
+        })?;
         let active = authorized(
             &mut sessions,
             &request.session_token,
@@ -184,13 +189,13 @@ pub fn run_review_checks(
                 &cancellation,
             )
             .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
-    })();
-    state
-        .review_check_cancellations
+    })
+    .await;
+    running_checks
         .lock()
         .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
         .remove(&request.action_id);
-    outcome
+    outcome.map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
 }
 
 #[tauri::command]

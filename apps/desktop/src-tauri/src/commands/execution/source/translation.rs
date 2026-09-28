@@ -410,30 +410,38 @@ pub fn read_translation_history(
 }
 
 #[tauri::command]
-pub fn save_translation_revision(
+pub async fn save_translation_revision(
     state: State<'_, AppState>,
     request: TranslationSaveRequest,
 ) -> Result<TranslationSelection, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .save_translation_revision(&SaveTranslationRevision {
-            project_id: request.project_id,
-            action_id: request.action_id,
-            unit_id: request.unit_id,
-            locale: request.locale,
-            source_revision_id: request.source_revision_id,
-            expected_selection_id: request.expected_selection_id,
-            text: request.text,
-        })
-        .map_err(map_source)
+    // Let the editor accept newer input while SQLite completes this save.
+    let sessions = Arc::clone(&state.sessions);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sessions = sessions.lock().map_err(|_| {
+            CommandError::simple(CommandErrorCode::Busy, CommandStage::ExecutionAdopt)
+        })?;
+        let active = authorized(
+            &mut sessions,
+            &request.session_token,
+            request.project_id,
+            CommandStage::ExecutionAdopt,
+        )?;
+        let (host, store) = active.execution_parts()?;
+        host.allow_mutation()?;
+        store
+            .save_translation_revision(&SaveTranslationRevision {
+                project_id: request.project_id,
+                action_id: request.action_id,
+                unit_id: request.unit_id,
+                locale: request.locale,
+                source_revision_id: request.source_revision_id,
+                expected_selection_id: request.expected_selection_id,
+                text: request.text,
+            })
+            .map_err(map_source)
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
 }
 
 #[tauri::command]

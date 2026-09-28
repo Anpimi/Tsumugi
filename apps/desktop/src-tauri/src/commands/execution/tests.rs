@@ -153,6 +153,79 @@ fn setup() -> (
         json!({"sessionToken":view["sessionToken"],"projectId":view["metadata"]["projectId"]});
     (temp, app, webview, context)
 }
+
+#[test]
+fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
+    let (_temp, app, _webview, context) = setup();
+    let project_id: ExecutionId = serde_json::from_value(context["projectId"].clone()).unwrap();
+    let session_token = context["sessionToken"].as_str().unwrap().to_owned();
+    let action_id = ExecutionId::new();
+    let state = app.state::<AppState>();
+    let guard = state.sessions.lock().unwrap();
+    let mut check = Box::pin(review::run_review_checks(
+        app.state::<AppState>(),
+        review::ReviewCheckRequest {
+            session_token: session_token.clone(),
+            project_id,
+            unit_id: ExecutionId::new(),
+            locale: "zh-CN".into(),
+            expected_basis: "stale-fixture".into(),
+            action_id,
+        },
+    ));
+    let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(matches!(
+        std::future::Future::poll(check.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    assert_eq!(
+        review::cancel_review_checks(
+            app.state::<AppState>(),
+            review::ReviewCancelCheckRequest {
+                session_token,
+                project_id,
+                action_id,
+            },
+        )
+        .unwrap(),
+        true
+    );
+    assert!(
+        state
+            .review_check_cancellations
+            .lock()
+            .unwrap()
+            .get(&action_id)
+            .unwrap()
+            .2
+            .is_requested()
+    );
+    drop(guard);
+    assert!(tauri::async_runtime::block_on(check).is_err());
+    assert!(state.review_check_cancellations.lock().unwrap().is_empty());
+
+    let guard = state.sessions.lock().unwrap();
+    let mut save = Box::pin(source::translation::save_translation_revision(
+        app.state::<AppState>(),
+        source::translation::TranslationSaveRequest {
+            session_token: context["sessionToken"].as_str().unwrap().to_owned(),
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id: ExecutionId::new(),
+            locale: "zh-CN".into(),
+            source_revision_id: ExecutionId::new(),
+            expected_selection_id: None,
+            text: "newer draft remains editable".into(),
+        },
+    ));
+    assert!(matches!(
+        std::future::Future::poll(save.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    drop(guard);
+    assert!(tauri::async_runtime::block_on(save).is_err());
+}
+
 fn request(context: &Value, extra: Value) -> Value {
     let mut request = context.clone();
     request

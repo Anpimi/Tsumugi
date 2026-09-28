@@ -234,14 +234,16 @@ pub struct CloseProjectView {
 #[derive(Default)]
 pub struct AppState {
     sessions: Arc<Mutex<SessionManager>>,
-    review_check_cancellations: Mutex<
-        BTreeMap<
-            tsumugi_core::execution::ExecutionId,
-            (
-                String,
+    review_check_cancellations: Arc<
+        Mutex<
+            BTreeMap<
                 tsumugi_core::execution::ExecutionId,
-                tsumugi_core::execution::Cancellation,
-            ),
+                (
+                    String,
+                    tsumugi_core::execution::ExecutionId,
+                    tsumugi_core::execution::Cancellation,
+                ),
+            >,
         >,
     >,
     clock_started: std::sync::atomic::AtomicBool,
