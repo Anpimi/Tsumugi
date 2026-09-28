@@ -6,6 +6,7 @@ import { executionCommands as execution, executionContext } from "./executionCom
 import { sourceCommands, type ContentPage, type ContentRow, type SourceSelection } from "./sourceCommands";
 import { translationCommands as commands, type TranslationAdoptRequest, type TranslationHistory, type TranslationPreflight, type TranslationPreview, type TranslationPreviewRow, type TranslationSaveRequest, type TranslationStartRequest } from "./translationCommands";
 import type { TranslationDecision } from "./translationCommands";
+import { resourceCommands, type ContextRevision, type TermResolution } from "./resourceCommands";
 
 export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
 interface BatchOutcome { applied: number; conflicted: number; failed: number; unknown: number }
@@ -65,6 +66,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const [rowAction, setRowAction] = useState<{ row: TranslationPreviewRow; decision: TranslationDecision } | null>(null);
   const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null);
   const [history, setHistory] = useState<TranslationHistory | null>(null);
+  const [editorResources, setEditorResources] = useState<{ terms: TermResolution | null; context: ContextRevision | null; failed: boolean } | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingSave, setPendingSave] = useState<TranslationSaveRequest | null>(null);
   const [newerDraftSaved, setNewerDraftSaved] = useState(false);
@@ -143,7 +145,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }
   function changeTarget(locale: string) {
     setTargetLocale(locale); setPreflight(null); setConfirmed(false); setPreview(null); setAttempt(null); setPendingStart(null);
-    if (editorTarget) { setEditorTarget(null); setHistory(null); setDraft(""); draftRef.current = ""; }
+    if (editorTarget) { setEditorTarget(null); setHistory(null); setEditorResources(null); setDraft(""); draftRef.current = ""; }
   }
   async function chooseFolder(current: () => boolean) {
     const selected = await commands.selectFolder(context);
@@ -269,11 +271,17 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     }
   }
   async function openEditor(target: EditorTarget, current: () => boolean, locale = targetLocale, suggestedText?: string) {
+    setEditorResources(null);
     const first = await commands.history({ ...context, unitId: target.unitId, locale, afterOrdinal: 0, limit: 1 });
     const after = Math.max(0, first.total - 100);
     const next = await commands.history({ ...context, unitId: target.unitId, locale, afterOrdinal: after, limit: 100 });
+    const [terms, note] = await Promise.allSettled([
+      resourceCommands.resolve({ ...context, unitId: target.unitId, locale }),
+      resourceCommands.context({ ...context, unitId: target.unitId, locale }),
+    ]);
     if (current()) {
       setEditorTarget(target); setHistory(next); setPendingSave(null); setNewerDraftSaved(false);
+      setEditorResources({ terms: terms.status === "fulfilled" ? terms.value : null, context: note.status === "fulfilled" ? note.value : null, failed: terms.status === "rejected" || note.status === "rejected" });
       draftRef.current = suggestedText ?? next.currentText ?? ""; setDraft(draftRef.current); setTab("edit");
     }
   }
@@ -385,6 +393,11 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           {tab === "edit" && sourcePage && targetLocale ? <section><h3>{t("translation.editor")}</h3><p>{t("translation.chooseUnit")}</p>{sourcePage.rows.length ? <div className="source-table-scroll"><ul>{sourcePage.rows.map(row => <li key={row.occurrence.ordinal}><button className="text-button" disabled={busy || !row.unitId} onClick={() => { const target = targetFromSource(row); if (target) chooseEditor(target); }}>{row.occurrence.key}</button></li>)}</ul></div> : <p>{t("translation.noUnit")}</p>}
             <div className="execution-actions"><button className="secondary-button" disabled={busy || sourcePage.rows[0]?.occurrence.ordinal === 0} onClick={() => void perform(async current => { const next = await sourceCommands.content({ ...context, snapshotId: sourcePage.snapshotId!, after: 0, limit: 50 }); if (current()) setSourcePage(next); })}>{t("execution.firstPage")}</button>{sourcePage.nextOrdinal !== null ? <button className="secondary-button" disabled={busy} onClick={() => void perform(async current => { const next = await sourceCommands.content({ ...context, snapshotId: sourcePage.snapshotId!, after: sourcePage.nextOrdinal!, limit: 50 }); if (current()) setSourcePage(next); })}>{t("execution.nextPage")}</button> : null}</div>
             {editorTarget && history ? <div className="translation-editor"><h4>{editorTarget.key}</h4><p>{t("translation.sourceText")}: {editorTarget.sourceText === "" ? t("translation.empty") : editorTarget.sourceText}</p><p>{t("translation.current")}: {history.current ? (history.currentText === "" ? t("translation.empty") : history.currentText) : t("translation.noSelection")}</p>
+              <section aria-label={t("resource.editorReference")}><h5>{t("resource.editorReference")}</h5><p>{t("resource.editorReferenceHelp")}</p>
+                {editorResources?.failed ? <p role="status">{t("resource.editorLoadFailed")}</p> : null}
+                {editorResources?.terms ? <><h6>{t("resource.applicableTerms")}</h6>{editorResources.terms.entries.length ? <ul>{editorResources.terms.entries.map(entry => <li key={entry.source}>{entry.source}: {entry.selected ? <>{entry.selected.target} · {entry.selected.originKind === "manual" ? t("resource.manual") : t("resource.external")} · {entry.selected.reason}</> : t("resource.conflict")}</li>)}</ul> : <p>{t("resource.noApplicableTerms")}</p>}</> : null}
+                {editorResources && !editorResources.failed ? <><h6>{t("resource.manualContext")}</h6>{editorResources.context ? <p>{editorResources.context.text} · {editorResources.context.reason}</p> : <p>{t("resource.noManualContext")}</p>}</> : null}
+              </section>
               <label>{t("translation.draft")}<textarea value={draft} onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); setNewerDraftSaved(false); }} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!busy) void perform(saveDraft); } }} /></label><p>{t("translation.draftHelp")}</p>
               <div className="execution-actions"><button className="primary-button" disabled={busy || (!dirty && !pendingSave)} onClick={() => void perform(saveDraft)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => { draftRef.current = history.currentText ?? ""; setDraft(draftRef.current); }}>{t("translation.discardDraft")}</button></div>
               {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}

@@ -24,6 +24,8 @@ beforeEach(async () => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: "snapshot" };
     if (command === "read_source_content") return content;
     if (command === "read_translation_history") return history;
+    if (command === "resolve_terms") return { unitId: "unit", locale: "zh-CN", sourceRevisionId: "source-revision", entries: [{ source: "Original", selected: { revisionId: "term-revision", termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
+    if (command === "read_context_revision") return { revisionId: "context-revision", unitId: "unit", locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
     if (command === "select_source") return { selectionId: "selection", folderName: "Example Mod" };
     if (command === "list_translation_files") return ["zh.json"];
     if (command === "preflight_translation") return { fileName: "zh.json", fileDigest: "file-digest", declaredLocale: "zh", targetLocale: "zh-CN", count: 1, sourceSnapshotId: "snapshot" };
@@ -88,6 +90,19 @@ it("keeps text typed after an earlier save and checks the new selection before s
   expect(invoke.mock.calls.at(-3)?.[1]).toBeDefined();
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
   expect(saves[1][1].request).toMatchObject({ text: "AB", expectedSelectionId: "selected" });
+});
+
+it("shows current adopted terms and context beside the editable translation", async () => {
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(screen.getByRole("button", { name: "Edit translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const reference = await screen.findByRole("region", { name: "Terms and context for this translation" });
+  expect(reference).toHaveTextContent("Original: 原文 · Manual · Project terminology");
+  expect(reference).toHaveTextContent("Used in the opening screen · Translator note");
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toBeEnabled();
+  expect(invoke.mock.calls.find(([name]) => name === "resolve_terms")?.[1].request).toMatchObject({ unitId: "unit", locale: "zh-CN" });
 });
 
 it("saves before leaving and retains an uncertain action for a checked retry", async () => {
