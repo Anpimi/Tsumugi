@@ -1205,7 +1205,14 @@ fn finding(
     waivable: bool,
 ) -> Result<CheckFinding, ExecutionError> {
     Ok(CheckFinding {
-        issue_id: digest(&(CHECK_VERSION, target.unit_id, &target.locale, rule, code, detail))?,
+        issue_id: digest(&(
+            CHECK_VERSION,
+            target.unit_id,
+            &target.locale,
+            rule,
+            code,
+            detail,
+        ))?,
         rule: rule.to_owned(),
         code: code.to_owned(),
         detail: detail.to_owned(),
@@ -2556,11 +2563,19 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            store.review_target(project, unit, "zh-CN").unwrap().current_waivers.len(),
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap()
+                .current_waivers
+                .len(),
             1
         );
         assert!(
-            store.review_target(project, unit, "fr-FR").unwrap().current_waivers.is_empty()
+            store
+                .review_target(project, unit, "fr-FR")
+                .unwrap()
+                .current_waivers
+                .is_empty()
         );
 
         // Simulate evidence written by the previous validator revision. Its
@@ -2602,10 +2617,141 @@ mod tests {
                 .items
                 .iter()
                 .any(|item| item.unit_id == unit
-                    && item.reasons.iter().any(|reason| reason.starts_with("qa-issue:")))
+                    && item
+                        .reasons
+                        .iter()
+                        .any(|reason| reason.starts_with("qa-issue:")))
         );
         assert_eq!(
-            store.review_history(project, unit, "zh-CN", 0, 10).unwrap().waivers.len(),
+            store
+                .review_history(project, unit, "zh-CN", 0, 10)
+                .unwrap()
+                .waivers
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn waiver_stays_with_its_language_policy_and_content_basis() {
+        let (_directory, mut store, project, units) = fixture();
+        let unit = units[0];
+        translate(&mut store, project, unit, "zh-CN", "你好 {{name}}");
+        store
+            .save_term(&SaveTerm {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                term_id: None,
+                locale: "zh-CN".into(),
+                source: "Hello".into(),
+                aliases: vec![],
+                target: "欢迎".into(),
+                protected: true,
+                scope_unit_id: Some(unit),
+                expected_revision_id: None,
+                reason: "Preferred term".into(),
+            })
+            .unwrap();
+        let first = check(&mut store, project, unit, "zh-CN");
+        let issue = first
+            .rules
+            .iter()
+            .flat_map(|rule| &rule.findings)
+            .find(|finding| finding.code == "protected-form")
+            .unwrap()
+            .issue_id
+            .clone();
+        let target = store.review_target(project, unit, "zh-CN").unwrap();
+        let waiver = store
+            .waive_review_issue(&WaiverWrite {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: "zh-CN".into(),
+                expected_basis: target.basis,
+                issue_id: issue.clone(),
+                grant: true,
+                expected_waiver_id: None,
+                actor: "Reviewer A".into(),
+                reason: "Accepted for this translation".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap()
+                .current_waivers
+                .len(),
+            1
+        );
+        assert!(
+            store
+                .review_target(project, unit, "fr-FR")
+                .unwrap()
+                .current_waivers
+                .is_empty()
+        );
+
+        store
+            .connection_mut()
+            .unwrap()
+            .execute(
+                "UPDATE review_waivers SET policy_version='previous-policy' WHERE waiver_id=?1",
+                [waiver.waiver_id.to_string()],
+            )
+            .unwrap();
+        assert!(
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap()
+                .current_waivers
+                .is_empty()
+        );
+        assert!(
+            store
+                .review_work_page(project, "zh-CN", 0, 10)
+                .unwrap()
+                .items
+                .iter()
+                .any(|item| item.unit_id == unit
+                    && item
+                        .reasons
+                        .iter()
+                        .any(|reason| reason.starts_with("qa-issue:")))
+        );
+        store
+            .connection_mut()
+            .unwrap()
+            .execute(
+                "UPDATE review_waivers SET policy_version=?1 WHERE waiver_id=?2",
+                params![POLICY_VERSION, waiver.waiver_id.to_string()],
+            )
+            .unwrap();
+
+        translate(&mut store, project, unit, "zh-CN", "再见 {{name}}");
+        let changed = store.review_target(project, unit, "zh-CN").unwrap();
+        assert!(changed.current_check.is_none() && changed.current_waivers.is_empty());
+        let repeated = check(&mut store, project, unit, "zh-CN");
+        assert!(
+            repeated
+                .rules
+                .iter()
+                .flat_map(|rule| &rule.findings)
+                .any(|finding| finding.issue_id == issue)
+        );
+        assert!(
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap()
+                .current_waivers
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .review_history(project, unit, "zh-CN", 0, 10)
+                .unwrap()
+                .waivers
+                .len(),
             1
         );
     }
@@ -3194,11 +3340,17 @@ mod tests {
             ErrorCode::LimitExceeded
         );
         assert_eq!(
-            store.review_work_page(project, "zh-CN", 0, 50).unwrap_err().code,
+            store
+                .review_work_page(project, "zh-CN", 0, 50)
+                .unwrap_err()
+                .code,
             ErrorCode::LimitExceeded
         );
         assert_eq!(
-            store.review_eligibility(project, &["zh-CN".into()]).unwrap_err().code,
+            store
+                .review_eligibility(project, &["zh-CN".into()])
+                .unwrap_err()
+                .code,
             ErrorCode::LimitExceeded
         );
     }
