@@ -2501,6 +2501,124 @@ mod tests {
     }
 
     #[test]
+    fn successor_source_snapshot_expires_only_the_changed_unit() {
+        let (_directory, mut store, project, units) = fixture();
+        for unit in &units {
+            let text = if *unit == units[0] {
+                "你好 {{name}}"
+            } else {
+                "普通"
+            };
+            translate(&mut store, project, *unit, "zh-CN", text);
+            check(&mut store, project, *unit, "zh-CN");
+            approve(&mut store, project, *unit, "zh-CN");
+        }
+        let changed_before = store.review_target(project, units[0], "zh-CN").unwrap();
+        let unchanged_before = store.review_target(project, units[1], "zh-CN").unwrap();
+        let ready = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(ready.ready);
+
+        // M03 has no successor adoption yet. Inject a successor scope shape to
+        // exercise the M06 read boundary without claiming an M03 mutation path.
+        let next_snapshot = ExecutionId::new().to_string();
+        let next_revision = ExecutionId::new().to_string();
+        let connection = store.connection_mut().unwrap();
+        let transaction = connection.transaction().unwrap();
+        transaction
+            .execute(
+                "INSERT INTO source_snapshots(snapshot_id,project_id,set_id,attempt_id,result_id,source_language,identity_policy)
+                 SELECT ?1,project_id,set_id,attempt_id,result_id,source_language,identity_policy
+                 FROM source_snapshots WHERE snapshot_id=?2",
+                params![next_snapshot, changed_before.source_snapshot_id.to_string()],
+            )
+            .unwrap();
+        transaction
+            .execute(
+                "INSERT INTO source_revisions(revision_id,unit_id,revision,text)
+                 VALUES (?1,?2,2,'Hello again {{name}}')",
+                params![next_revision, units[0].to_string()],
+            )
+            .unwrap();
+        let occurrences: Vec<String> = transaction
+            .prepare("SELECT occurrence_id FROM source_occurrences WHERE snapshot_id=?1 ORDER BY ordinal")
+            .unwrap()
+            .query_map([changed_before.source_snapshot_id.to_string()], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(occurrences.len(), 2);
+        for old_occurrence in occurrences {
+            let new_occurrence = ExecutionId::new().to_string();
+            transaction
+                .execute(
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
+                     SELECT ?1,?2,ordinal,artifact_id,unit_id,
+                            CASE WHEN unit_id=?3 THEN ?4 ELSE revision_id END,
+                            namespace,native_key,comparison_key,key_start,key_end,value_start,value_end
+                     FROM source_occurrences WHERE occurrence_id=?5",
+                    params![new_occurrence, next_snapshot, units[0].to_string(), next_revision, old_occurrence],
+                )
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO source_identity(occurrence_id,policy,basis)
+                     SELECT ?1,policy,basis FROM source_identity WHERE occurrence_id=?2",
+                    params![new_occurrence, old_occurrence],
+                )
+                .unwrap();
+        }
+        transaction
+            .execute(
+                "UPDATE content_scope SET revision=revision+1,current_snapshot=?1 WHERE row_id=1",
+                [next_snapshot],
+            )
+            .unwrap();
+        transaction.commit().unwrap();
+
+        let changed = store.review_target(project, units[0], "zh-CN").unwrap();
+        let unchanged = store.review_target(project, units[1], "zh-CN").unwrap();
+        assert_ne!(
+            changed.source_snapshot_id,
+            changed_before.source_snapshot_id
+        );
+        assert_eq!(changed.source_snapshot_id, unchanged.source_snapshot_id);
+        assert_eq!(changed.source_text, "Hello again {{name}}");
+        assert_ne!(changed.basis, changed_before.basis);
+        assert!(changed.current_decision.is_none() && changed.current_check.is_none());
+        assert_eq!(unchanged.basis, unchanged_before.basis);
+        assert_eq!(
+            unchanged.current_decision,
+            unchanged_before.current_decision
+        );
+        assert_eq!(unchanged.current_check, unchanged_before.current_check);
+        assert_eq!(
+            store
+                .review_history(project, units[0], "zh-CN", 0, 10)
+                .unwrap()
+                .decisions
+                .len(),
+            1
+        );
+        assert!(
+            store
+                .review_work_page(project, "zh-CN", 0, 10)
+                .unwrap()
+                .items
+                .iter()
+                .any(|item| item.unit_id == units[0])
+        );
+        assert_eq!(
+            store
+                .review_eligibility_if_basis(project, &["zh-CN".into()], &ready.basis)
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
+    }
+
+    #[test]
     fn decisions_are_idempotent_checked_and_survive_reopen() {
         let (directory, mut store, project, units) = fixture();
         translate(&mut store, project, units[0], "zh-CN", "你好 {{name}}");
