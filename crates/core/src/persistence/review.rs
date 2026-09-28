@@ -3037,6 +3037,61 @@ mod tests {
     }
 
     #[test]
+    fn oversized_current_source_is_not_reported_as_empty_work_or_ready() {
+        let (_directory, mut store, project, _) = fixture();
+        let connection = store.connection_mut().unwrap();
+        let (snapshot, artifact): (String, String) = connection
+            .query_row(
+                "SELECT snapshot_id,artifact_id FROM source_occurrences LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let transaction = connection.transaction().unwrap();
+        for ordinal in 2..=MAX_SCOPE {
+            let unit = ExecutionId::new().to_string();
+            let revision = ExecutionId::new().to_string();
+            let occurrence = ExecutionId::new().to_string();
+            let key = format!("generated-{ordinal}");
+            transaction
+                .execute(
+                    "INSERT INTO source_units(unit_id,project_id) VALUES (?1,?2)",
+                    params![unit, project.to_string()],
+                )
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO source_revisions(revision_id,unit_id,revision,text) VALUES (?1,?2,1,'Value')",
+                    params![revision, unit],
+                )
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
+                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2)",
+                    params![occurrence, snapshot, ordinal as i64, artifact, unit, revision, key],
+                )
+                .unwrap();
+            if ordinal == MAX_SCOPE - 1 {
+                assert_eq!(all_units(&transaction, project).unwrap().1.len(), MAX_SCOPE);
+            }
+        }
+        transaction.commit().unwrap();
+        assert_eq!(
+            store.review_page(project, "zh-CN", 0, 50).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        assert_eq!(
+            store.review_work_page(project, "zh-CN", 0, 50).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        assert_eq!(
+            store.review_eligibility(project, &["zh-CN".into()]).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+    }
+
+    #[test]
     fn current_views_do_not_write_project_state() {
         let (_directory, mut store, project, units) = fixture();
         let before: i64 = store

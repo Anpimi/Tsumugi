@@ -1422,6 +1422,9 @@ button:focus-visible {
   }
 }
 .review-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.review-header-fields { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.review-header-fields label { display: grid; gap: 0.35rem; flex: 1 1 12rem; max-width: 22rem; }
+.review-header-fields input, .review-header-fields select { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid #aab9d1; border-radius: 8px; font: inherit; }
 .review-columns { display: grid; grid-template-columns: minmax(230px, 0.8fr) minmax(0, 1.4fr); gap: 1.5rem; margin-top: 1rem; }
 .review-columns section { min-width: 0; }
 .review-list { max-height: 48vh; overflow: auto; }

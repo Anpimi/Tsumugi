@@ -91,6 +91,37 @@ it("uses fixed item bases for batch approval and reports a changed item separate
     .toEqual([["first", "basis-first"], ["second", "basis-second"]]);
 });
 
+it("stops a batch after the in-flight approval and keeps later entries selected", async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_page") {
+      return Promise.resolve(args.request.afterOrdinal === 0
+        ? { rows: [targets.first], nextOrdinal: 1, total: 2 }
+        : { rows: [targets.second], nextOrdinal: null, total: 2 });
+    }
+    if (command === "write_review_decision") return pending;
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.click(screen.getByRole("button", { name: "Next page" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: second" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.click(screen.getByRole("button", { name: "Approve selected entries (2)" }));
+  await user.click(screen.getByRole("button", { name: "Confirm approvals" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(1));
+  await user.click(screen.getByRole("button", { name: "Stop after the current entry" }));
+  await act(async () => finish({ decisionId: "decision" }));
+  expect(await screen.findByText(/1 recorded, 0 changed, 0 not confirmed/)).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision").map(([, args]) => args.request.decision.unitId))
+    .toEqual(["first"]);
+  expect(screen.getByRole("checkbox", { name: "Approve selected entries: second" })).toBeChecked();
+});
+
 it("shows a localized reason for each blocked language entry", async () => {
   const user = userEvent.setup();
   render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);

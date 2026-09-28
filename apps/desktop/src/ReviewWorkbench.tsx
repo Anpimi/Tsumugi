@@ -329,10 +329,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog source-dialog review-dialog" onEscapeKeyDown={event => { if (pending || busy) event.preventDefault(); }}>
         <div className="execution-heading"><div><Dialog.Title ref={heading} tabIndex={-1}>{t("review.title")}</Dialog.Title><Dialog.Description>{t("review.description")}</Dialog.Description></div><button className="secondary-button" onClick={requestClose}>{t("execution.back")}</button></div>
         {project.metadata.targetLocales.length === 0 ? <p>{t("review.noLocale")}</p> : <>
-          <label>{t("review.targetLocale")}<select value={locale} disabled={busy} onChange={event => { setLocale(event.target.value); setSelected(null); }}>
-            {project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}
-          </select></label>
-          <label>{t("review.reviewer")}<input value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
+          <div className="review-header-fields">
+            <label>{t("review.targetLocale")}<select value={locale} disabled={busy} onChange={event => { setLocale(event.target.value); setSelected(null); }}>
+              {project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}
+            </select></label>
+            <label>{t("review.reviewer")}<input value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
+          </div>
           <div className="form-actions" role="tablist" aria-label={t("review.title")}>
             {(["review", "work", "eligibility"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => { setTab(value); if (value === "work" && !work) void loadWork(0); }}>
               {t(value === "review" ? "review.reviewTab" : value === "work" ? "review.workTab" : "review.eligibilityTab")}
