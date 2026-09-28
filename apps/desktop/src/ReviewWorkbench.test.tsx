@@ -194,3 +194,20 @@ it("requests cancellation for the active check and reports its persisted outcome
   await act(async () => finish({ outcome: "cancelled" }));
   expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeInTheDocument();
 });
+
+it("does not present a late check reply as current after the selected revision changes", async () => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "run_review_checks" ? pending : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(true));
+  targets.first = { ...targets.first, basis: "new-basis", revisionId: "new-revision", translationText: "新译文", currentCheck: null };
+  await act(async () => finish({ outcome: "completed" }));
+  expect(await screen.findByText("新译文")).toBeVisible();
+  expect(screen.getByText("Current checks have not run or are stale.")).toBeVisible();
+});
