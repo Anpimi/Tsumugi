@@ -112,3 +112,28 @@ it("keeps the review open when its translation editor cannot be opened", async (
   expect(screen.getByRole("dialog", { name: "Review and QA" })).toBeInTheDocument();
   expect(screen.getByText("The translation editor is unavailable. Your review remains open.")).toBeInTheDocument();
 });
+
+it("shows historical check findings and exception reasons", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_history") return {
+      decisions: [], nextOffset: null,
+      checks: [{ runId: "old-check", actionId: "action", unitId: "first", locale: "zh-CN", basis: "old-basis",
+        validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "placeholders", status: "findings", reason: null,
+          findings: [{ issueId: "old-issue", rule: "placeholders", code: "marker-mismatch", detail: "Names differ", severity: "error", waivable: false }] }] }],
+      waivers: [{ waiverId: "waiver", actionId: "action", unitId: "first", locale: "zh-CN", basis: "old-basis",
+        issueId: "old-issue", grant: true, previousWaiverId: null, policyVersion: "balanced-1", actor: "Reviewer A",
+        reason: "Reviewed original wording", createdAt: "2026-09-28" }],
+      fallbacks: [],
+    };
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(screen.getByText("Decision and check history"));
+  expect(await screen.findByText("Named placeholders differ or are malformed")).toBeVisible();
+  expect(screen.getByText(/Reviewed original wording/)).toBeVisible();
+  expect(screen.getAllByText(/Earlier evidence/).length).toBeGreaterThan(0);
+});

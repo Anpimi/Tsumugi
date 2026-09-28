@@ -1039,10 +1039,14 @@ impl ProjectStore {
                 request.actor, match request.kind { ReviewDecisionKind::Approve => "approve",
                     ReviewDecisionKind::RequestChanges => "request-changes" }, request.reason, request_digest],
         ).map_err(sql)?;
+        #[cfg(test)]
+        super::migration_crash_hook("before-review-decision-commit");
         transaction.commit().map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-commit")
         })?;
+        #[cfg(test)]
+        super::migration_crash_hook("after-review-decision-commit");
         decision_by_action(
             self.connection()
                 .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?,
@@ -2179,8 +2183,11 @@ mod tests {
             store.write_review(&changed).unwrap_err().code,
             ErrorCode::ResultMismatch
         );
+        drop(store);
+        let mut store = ProjectStore::open(directory.path().join("project")).unwrap();
         let mut competing = request.clone();
         competing.action_id = ExecutionId::new();
+        competing.actor = "Reviewer B".into();
         competing.kind = ReviewDecisionKind::RequestChanges;
         competing.reason = "Needs work".into();
         assert_eq!(
@@ -2200,6 +2207,92 @@ mod tests {
                 .unwrap(),
             second
         );
+    }
+
+    #[test]
+    fn decision_crash_child() {
+        let Ok(path) = std::env::var("TSUMUGI_M06_DECISION_PROJECT") else {
+            return;
+        };
+        let request: ReviewWrite =
+            serde_json::from_str(&std::env::var("TSUMUGI_M06_DECISION_REQUEST").unwrap()).unwrap();
+        let mut store = ProjectStore::open(path).unwrap();
+        let _ = store.write_review(&request);
+        panic!("review decision crash hook did not abort");
+    }
+
+    #[test]
+    fn review_decision_reconciles_after_process_death_on_each_side_of_commit() {
+        for (point, committed) in [
+            ("before-review-decision-commit", false),
+            ("after-review-decision-commit", true),
+        ] {
+            let (directory, mut store, project, units) = fixture();
+            let unit = units[0];
+            translate(&mut store, project, unit, "zh-CN", "你好 {{name}}");
+            let target = store.review_target(project, unit, "zh-CN").unwrap();
+            let request = ReviewWrite {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: "zh-CN".into(),
+                expected_basis: target.basis,
+                expected_decision_id: None,
+                actor: "Reviewer A".into(),
+                kind: ReviewDecisionKind::Approve,
+                reason: String::new(),
+            };
+            drop(store);
+
+            let path = directory.path().join("project");
+            let hook = directory.path().join("review-decision-hook");
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "persistence::review::tests::decision_crash_child",
+                ])
+                .env("TSUMUGI_M06_DECISION_PROJECT", &path)
+                .env(
+                    "TSUMUGI_M06_DECISION_REQUEST",
+                    serde_json::to_string(&request).unwrap(),
+                )
+                .env("TSUMUGI_MIGRATION_CRASH", point)
+                .env("TSUMUGI_MIGRATION_HOOK", &hook)
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(!status.success());
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("review decision crash child timed out");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(std::fs::read_to_string(hook).unwrap(), point);
+
+            let mut reopened = ProjectStore::open(path).unwrap();
+            let before = reopened
+                .review_history(project, unit, "zh-CN", 0, 10)
+                .unwrap();
+            assert_eq!(before.decisions.len(), usize::from(committed));
+            let receipt = reopened.write_review(&request).unwrap();
+            if committed {
+                assert_eq!(receipt, before.decisions[0]);
+            }
+            assert_eq!(
+                reopened
+                    .review_history(project, unit, "zh-CN", 0, 10)
+                    .unwrap()
+                    .decisions
+                    .len(),
+                1
+            );
+        }
     }
 
     #[test]
@@ -2555,6 +2648,224 @@ mod tests {
                 .decisions
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn deterministic_rules_cover_named_marker_counts_and_malformed_input() {
+        let (_directory, mut store, project, units) = fixture();
+        let unit = units[0];
+        let missing = check(&mut store, project, unit, "zh-CN");
+        assert_eq!(
+            missing
+                .rules
+                .iter()
+                .map(|rule| (rule.rule.as_str(), rule.status.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("required-translation", "findings"),
+                ("placeholders", "not-applicable"),
+                ("format", "passed"),
+                ("terminology", "not-applicable"),
+            ]
+        );
+        for (text, expected_code, expected_status) in [
+            ("你好 {{name}}", None, "passed"),
+            ("你好", Some("marker-mismatch"), "findings"),
+            (
+                "你好 {{name}} {{name}}",
+                Some("marker-mismatch"),
+                "findings",
+            ),
+            ("你好 {{other}}", Some("marker-mismatch"), "findings"),
+            ("你好 {{name", Some("translation-marker"), "unavailable"),
+            ("你好 {{name}}\u{0007}", Some("control-character"), "passed"),
+        ] {
+            translate(&mut store, project, unit, "zh-CN", text);
+            let run = check(&mut store, project, unit, "zh-CN");
+            let repeat = check(&mut store, project, unit, "zh-CN");
+            assert_eq!(
+                run.rules, repeat.rules,
+                "check must be deterministic for {text:?}"
+            );
+            let codes: Vec<_> = run
+                .rules
+                .iter()
+                .flat_map(|rule| rule.findings.iter().map(|finding| finding.code.as_str()))
+                .collect();
+            assert_eq!(codes.first().copied(), expected_code, "{text:?}");
+            assert_eq!(
+                run.rules
+                    .iter()
+                    .find(|rule| rule.rule == "placeholders")
+                    .unwrap()
+                    .status,
+                expected_status,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn issue_identity_keeps_distinct_causes_with_the_same_display_text() {
+        let (_directory, store, project, units) = fixture();
+        let target = store.review_target(project, units[0], "zh-CN").unwrap();
+        let a = finding(
+            &target,
+            "format",
+            "unsupported",
+            "Same message",
+            "error",
+            false,
+        )
+        .unwrap();
+        let repeated = finding(
+            &target,
+            "format",
+            "unsupported",
+            "Same message",
+            "error",
+            false,
+        )
+        .unwrap();
+        let other_rule = finding(
+            &target,
+            "placeholders",
+            "unsupported",
+            "Same message",
+            "error",
+            false,
+        )
+        .unwrap();
+        let other_code =
+            finding(&target, "format", "invalid", "Same message", "error", false).unwrap();
+        assert_eq!(a.issue_id, repeated.issue_id);
+        assert_ne!(a.issue_id, other_rule.issue_id);
+        assert_ne!(a.issue_id, other_code.issue_id);
+        assert_ne!(
+            a.issue_id,
+            finding(
+                &store.review_target(project, units[0], "fr-FR").unwrap(),
+                "format",
+                "unsupported",
+                "Same message",
+                "error",
+                false,
+            )
+            .unwrap()
+            .issue_id
+        );
+    }
+
+    #[test]
+    fn locale_eligibility_matrix_preserves_partial_and_exception_results() {
+        let (_directory, mut store, project, units) = fixture();
+        let initial = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(!initial.ready);
+        assert_eq!(initial.locales[0].checked_units, 2);
+        for (unit, text) in [(units[0], "你好 {{name}}"), (units[1], "普通")] {
+            translate(&mut store, project, unit, "zh-CN", text);
+            check(&mut store, project, unit, "zh-CN");
+            approve(&mut store, project, unit, "zh-CN");
+        }
+        let zh_ready = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(zh_ready.ready);
+        assert!(
+            !store
+                .review_eligibility(project, &["fr-FR".into()])
+                .unwrap()
+                .ready
+        );
+        assert!(
+            !store
+                .review_eligibility(project, &["zh-CN".into(), "fr-FR".into()])
+                .unwrap()
+                .ready
+        );
+
+        for unit in &units {
+            let target = store.review_target(project, *unit, "fr-FR").unwrap();
+            store
+                .allow_source_fallback(&FallbackWrite {
+                    project_id: project,
+                    action_id: ExecutionId::new(),
+                    unit_id: *unit,
+                    locale: "fr-FR".into(),
+                    expected_basis: target.basis,
+                    allow: true,
+                    expected_fallback_id: None,
+                    actor: "Reviewer A".into(),
+                    reason: "Source text is accepted for this unit".into(),
+                })
+                .unwrap();
+            check(&mut store, project, *unit, "fr-FR");
+        }
+        let both = store
+            .review_eligibility(project, &["zh-CN".into(), "fr-FR".into()])
+            .unwrap();
+        assert!(both.ready);
+        assert_eq!(both.locales[0].locale, "fr-FR");
+        assert_eq!(both.locales[0].exception_count, 2);
+        assert_eq!(both.locales[1].exception_count, 0);
+
+        translate(&mut store, project, units[0], "zh-CN", "你好");
+        let after_edit = store
+            .review_eligibility(project, &["zh-CN".into(), "fr-FR".into()])
+            .unwrap();
+        assert!(!after_edit.ready);
+        assert!(after_edit.locales[0].ready);
+        assert!(!after_edit.locales[1].ready);
+        assert_eq!(
+            store
+                .review_eligibility_if_basis(
+                    project,
+                    &["zh-CN".into(), "fr-FR".into()],
+                    &both.basis,
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
+    }
+
+    #[test]
+    fn work_projection_is_repeatable_and_does_not_hide_unknown_impact_coverage() {
+        let (directory, store, project, _) = fixture();
+        let before = store.review_work_page(project, "zh-CN", 0, 1).unwrap();
+        assert_eq!(before.total, 2);
+        assert_eq!(before.items.len(), 1);
+        assert_eq!(before.next_offset, Some(1));
+        assert_eq!(
+            before,
+            store.review_work_page(project, "zh-CN", 0, 1).unwrap()
+        );
+        assert_eq!(
+            store
+                .review_work_page(project, "zh-CN", 0, 101)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+        drop(store);
+        let mut store = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_eq!(
+            before,
+            store.review_work_page(project, "zh-CN", 0, 1).unwrap()
+        );
+        store
+            .connection_mut()
+            .unwrap()
+            .execute("DROP TABLE resource_changes", [])
+            .unwrap();
+        assert!(store.review_work_page(project, "zh-CN", 0, 10).is_err());
+        assert!(
+            store
+                .review_eligibility(project, &["zh-CN".into()])
+                .is_err()
         );
     }
 

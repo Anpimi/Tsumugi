@@ -360,9 +360,14 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                 </div>)}
                 <details><summary>{t("review.history")}</summary>{history && history.decisions.length + history.checks.length + history.waivers.length + history.fallbacks.length === 0 ? <p>{t("review.historyEmpty")}</p> : null}
                   {history?.decisions.map(item => <p key={item.decisionId}>{item.createdAt} · {item.actor} · {t(item.kind === "approve" ? "review.currentApproval" : "review.changesRequested")}{item.basis === selected.basis ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
-                  {history?.checks.map(item => <p key={item.runId}>{item.createdAt} · {t("review.qaCurrent")} · {item.validatorVersion}{item.basis === selected.basis ? "" : ` · ${t("review.earlier")}`}</p>)}
-                  {history?.waivers.map(item => <p key={item.waiverId}>{item.createdAt} · {item.actor} · {t(item.grant ? "review.waived" : "review.revokeWaiver")}{item.basis === selected.basis ? "" : ` · ${t("review.earlier")}`}</p>)}
-                  {history?.fallbacks.map(item => <p key={item.fallbackId}>{item.createdAt} · {item.actor} · {t(item.allow ? "review.fallbackActive" : "review.withdrawFallback")}</p>)}
+                  {history?.checks.map(item => <div key={item.runId} className="review-history-check"><p>{item.createdAt} · {t("review.qaCurrent")} · {item.validatorVersion}{item.basis === selected.basis ? "" : ` · ${t("review.earlier")}`}</p>
+                    <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{ruleLabel(rule.rule)}</strong> — {t(rule.status === "passed" ? "review.passed" : rule.status === "not-applicable" ? "review.notApplicable" : rule.status === "findings" ? "review.findings" : "review.qaUnavailable")}
+                      {rule.reason ? ` · ${t(rule.status === "not-applicable" ? "review.noSelectedTranslationReason" : "review.placeholderUnavailable")}` : ""}
+                      {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</li>)}</ul> : null}
+                    </li>)}</ul>
+                  </div>)}
+                  {history?.waivers.map(item => <p key={item.waiverId}>{item.createdAt} · {item.actor} · {t(item.grant ? "review.waived" : "review.revokeWaiver")}{item.basis === selected.basis ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
+                  {history?.fallbacks.map(item => <p key={item.fallbackId}>{item.createdAt} · {item.actor} · {t(item.allow ? "review.fallbackActive" : "review.withdrawFallback")}{item.reason ? ` · ${item.reason}` : ""}</p>)}
                   <div className="form-actions"><button className="secondary-button" disabled={busy || historyOffset === 0} onClick={() => void loadHistory(0)}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || !history || history.nextOffset === null} onClick={() => void loadHistory(history!.nextOffset!)}>{t("review.historyMore")}</button></div>
                 </details>
               </>}
