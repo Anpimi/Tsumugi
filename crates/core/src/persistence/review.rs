@@ -2026,8 +2026,11 @@ impl ProjectStore {
 mod tests {
     use super::*;
     use crate::{
-        ProjectMetadata, SaveTerm, SaveTranslationRevision, SelectTranslationRevision,
-        content::{SourceAdoptionHandler, SourceBundle, SourceRunner},
+        ProjectMetadata, SaveContext, SaveTerm, SaveTranslationRevision, SelectTranslationRevision,
+        TranslationAdoptionConfirmation, TranslationAdoptionHandler, TranslationSelectionDecision,
+        content::{
+            SourceAdoptionHandler, SourceBundle, SourceRunner, TranslationBundle, TranslationRunner,
+        },
         execution::{ExecutionRuntime, ExecutionState},
     };
     use std::{
@@ -2087,6 +2090,81 @@ mod tests {
             br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
             bytes,
         );
+    }
+
+    fn adopt_translation_files(store: &mut ProjectStore, bytes: &[u8]) {
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        let bundle = TranslationBundle::capture("i18n/zh.json", bytes, "zh-CN", snapshot).unwrap();
+        let input = bundle
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        let mut runtime = ExecutionRuntime::new(store).unwrap();
+        runtime.register(Arc::new(TranslationRunner)).unwrap();
+        runtime.submit(store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            runtime.tick(store).unwrap();
+            let valid: i64 = store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM execution_items WHERE attempt_id=?1 AND validation='valid'",
+                    [input.envelope().attempt_id.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            if valid == 532 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "translation import: {valid}/532");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut rows = Vec::new();
+        let mut offset = 0;
+        let mut basis = None;
+        loop {
+            let page = store
+                .translation_preview(input.envelope().attempt_id, offset, 100, basis.as_deref())
+                .unwrap();
+            assert_eq!((page.total, page.unique, page.unmatched), (532, 532, 0));
+            rows.extend(page.rows);
+            if let Some(next) = page.next_ordinal {
+                offset = next;
+                basis = Some(page.basis);
+            } else {
+                break;
+            }
+        }
+        assert_eq!(rows.len(), 532);
+        for row in rows {
+            let unit = input
+                .envelope()
+                .units
+                .iter()
+                .find(|unit| unit.item_ids == vec![row.item_id])
+                .unwrap();
+            let action = store
+                .prepare_adoption_with_id(
+                    ExecutionId::new(),
+                    input.envelope().attempt_id,
+                    unit.unit_id,
+                    vec![row.result_id],
+                    serde_json::to_value(TranslationAdoptionConfirmation {
+                        result_digest: row.result_digest,
+                        source_snapshot_id: snapshot,
+                        occurrence_id: row.occurrence_id.unwrap(),
+                        source_revision_id: row.source_revision_id.unwrap(),
+                        target_unit_id: row.unit_id.unwrap(),
+                        expected_selection_id: None,
+                        decision: TranslationSelectionDecision::SelectIfEmpty,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            store
+                .adopt_execution(&action, &TranslationAdoptionHandler)
+                .unwrap();
+        }
     }
 
     fn fixture() -> (
@@ -2202,6 +2280,34 @@ mod tests {
             assert_eq!(target.native_key, expected["key"].as_str().unwrap());
             assert_eq!(target.source_text, expected["text"].as_str().unwrap());
         }
+        adopt_translation_files(
+            &mut store,
+            include_bytes!("../../tests/fixtures/stardew-lookup/i18n/zh.json"),
+        );
+        let expected_translations = translation_oracle["entries"].as_array().unwrap();
+        let mut offset = 0;
+        let mut observed = 0;
+        loop {
+            let translated_page = store.review_page(project, "zh-CN", offset, 100).unwrap();
+            for target in translated_page.rows {
+                let expected = expected_translations
+                    .iter()
+                    .find(|entry| entry["key"] == target.native_key)
+                    .unwrap();
+                assert_eq!(
+                    target.translation_text.as_deref(),
+                    expected["text"].as_str()
+                );
+                assert!(target.selection_id.is_some());
+                observed += 1;
+            }
+            if let Some(next) = translated_page.next_ordinal {
+                offset = next;
+            } else {
+                break;
+            }
+        }
+        assert_eq!(observed, 532);
         for key in ["generic.percent", "generic.percent-chance-of"] {
             let target = page
                 .rows
@@ -2214,8 +2320,14 @@ mod tests {
                 .iter()
                 .find(|entry| entry["key"] == key)
                 .unwrap();
-            let translated = expected["text"].as_str().unwrap();
-            translate(&mut store, project, target.unit_id, "zh-CN", translated);
+            assert_eq!(
+                store
+                    .review_target(project, target.unit_id, "zh-CN")
+                    .unwrap()
+                    .translation_text
+                    .as_deref(),
+                expected["text"].as_str()
+            );
             let run = check(&mut store, project, target.unit_id, "zh-CN");
             assert_eq!(run.validator_version, CHECK_VERSION);
             assert_eq!(run.rules.len(), 4);
@@ -3406,6 +3518,85 @@ mod tests {
     }
 
     #[test]
+    fn work_projection_deduplicates_a_unit_and_preserves_distinct_m05_causes() {
+        let (directory, mut store, project, units) = fixture();
+        let unit = units[0];
+        translate(&mut store, project, unit, "zh-CN", "你好 {{name}}");
+        check(&mut store, project, unit, "zh-CN");
+        approve(&mut store, project, unit, "zh-CN");
+        let source_revision_id = store
+            .review_target(project, unit, "zh-CN")
+            .unwrap()
+            .source_revision_id;
+        store
+            .save_context(&SaveContext {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: "zh-CN".into(),
+                source_revision_id,
+                expected_revision_id: None,
+                text: "Greeting shown to the player".into(),
+                reason: "Review context".into(),
+            })
+            .unwrap();
+        store
+            .save_term(&SaveTerm {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                term_id: None,
+                locale: "zh-CN".into(),
+                source: "Hello".into(),
+                aliases: vec![],
+                target: "欢迎".into(),
+                protected: true,
+                scope_unit_id: Some(unit),
+                expected_revision_id: None,
+                reason: "Review terminology".into(),
+            })
+            .unwrap();
+
+        let impacts = store.resource_impacts(project, "zh-CN", 0, 100).unwrap();
+        let impact = impacts
+            .items
+            .iter()
+            .find(|item| item.unit_id == unit)
+            .unwrap();
+        assert_eq!(impact.reasons.len(), 2);
+        let expected: BTreeSet<_> = impact
+            .reasons
+            .iter()
+            .map(|reason| format!("resource-change:{}", reason.change_id))
+            .collect();
+        assert_eq!(expected.len(), 2);
+
+        let work = store.review_work_page(project, "zh-CN", 0, 100).unwrap();
+        let matching: Vec<_> = work
+            .items
+            .iter()
+            .filter(|item| item.unit_id == unit)
+            .collect();
+        assert_eq!(matching.len(), 1);
+        let actual: BTreeSet<_> = matching[0]
+            .reasons
+            .iter()
+            .filter(|reason| reason.starts_with("resource-change:"))
+            .cloned()
+            .collect();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            work,
+            store.review_work_page(project, "zh-CN", 0, 100).unwrap()
+        );
+        drop(store);
+        let store = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_eq!(
+            work,
+            store.review_work_page(project, "zh-CN", 0, 100).unwrap()
+        );
+    }
+
+    #[test]
     fn oversized_current_source_is_not_reported_as_empty_work_or_ready() {
         let (_directory, mut store, project, _) = fixture();
         let connection = store.connection_mut().unwrap();
@@ -3453,6 +3644,82 @@ mod tests {
         assert_eq!(
             store
                 .review_work_page(project, "zh-CN", 0, 50)
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+        assert_eq!(
+            store
+                .review_eligibility(project, &["zh-CN".into()])
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn exceeded_m05_selection_coverage_is_not_reported_as_empty_work_or_ready() {
+        let (_directory, mut store, project, _) = fixture();
+        let connection = store.connection_mut().unwrap();
+        let (snapshot, artifact): (String, String) = connection
+            .query_row(
+                "SELECT snapshot_id,artifact_id FROM source_occurrences LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let transaction = connection.transaction().unwrap();
+        for ordinal in 2..=2_002 {
+            let unit = ExecutionId::new().to_string();
+            let source_revision = ExecutionId::new().to_string();
+            let translation_revision = ExecutionId::new().to_string();
+            let key = format!("selected-{ordinal}");
+            transaction
+                .execute(
+                    "INSERT INTO source_units(unit_id,project_id) VALUES (?1,?2)",
+                    params![unit, project.to_string()],
+                )
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO source_revisions(revision_id,unit_id,revision,text) VALUES (?1,?2,1,'Value')",
+                    params![source_revision, unit],
+                )
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
+                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2)",
+                    params![ExecutionId::new().to_string(), snapshot, ordinal, artifact, unit, source_revision, key],
+                )
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO translation_revisions(revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest)
+                     VALUES (?1,?2,?3,'zh-CN',1,'译文',?4,?5,'manual',?6,?7)",
+                    params![translation_revision, project.to_string(), unit, snapshot, source_revision, ExecutionId::new().to_string(), "0".repeat(64)],
+                )
+                .unwrap();
+            transaction
+                .execute(
+                    "INSERT INTO translation_selections(event_id,project_id,unit_id,locale,sequence,revision_id,action_id,request_digest)
+                     VALUES (?1,?2,?3,'zh-CN',1,?4,?5,?6)",
+                    params![ExecutionId::new().to_string(), project.to_string(), unit, translation_revision, ExecutionId::new().to_string(), "0".repeat(64)],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+
+        assert_eq!(
+            store
+                .resource_impacts(project, "zh-CN", 0, 100)
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+        assert_eq!(
+            store
+                .review_work_page(project, "zh-CN", 0, 100)
                 .unwrap_err()
                 .code,
             ErrorCode::LimitExceeded
