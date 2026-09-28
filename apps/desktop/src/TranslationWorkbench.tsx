@@ -7,11 +7,15 @@ import { sourceCommands, type ContentPage, type ContentRow, type SourceSelection
 import { translationCommands as commands, type TranslationAdoptRequest, type TranslationHistory, type TranslationPreflight, type TranslationPreview, type TranslationPreviewRow, type TranslationSaveRequest, type TranslationStartRequest } from "./translationCommands";
 import type { TranslationDecision } from "./translationCommands";
 
-interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
+export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
 interface BatchOutcome { applied: number; conflicted: number; failed: number; unknown: number }
 interface BatchDetail { key: string; status: "applied" | "conflicted" | "failed" | "unknown" }
 type LeaveIntent = { kind: "close" } | { kind: "project" } | { kind: "switch"; target: EditorTarget };
-export interface TranslationHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean> }
+export interface TranslationHandle {
+  showAttempt: (id: string) => void;
+  openUnit: (target: EditorTarget, locale: string, suggestedText?: string) => boolean;
+  allowLeave: () => Promise<boolean>;
+}
 
 function errorStage(error: unknown): string {
   const value = error as Partial<CommandError> | null;
@@ -107,6 +111,16 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       generation.current++;
       setEditorTarget(null); setHistory(null); setDraft(""); draftRef.current = "";
       setTab("import"); setAttempt(id); setPreview(null); setFailure(null); setBatchOutcome(null); setOpen(true);
+    },
+    openUnit(target, locale, suggestedText) {
+      if (running.current || dirty || pendingSave || uncertain.length) {
+        setOpen(true);
+        return false;
+      }
+      setTargetLocale(locale);
+      setOpen(true);
+      void perform(current => openEditor(target, current, locale, suggestedText));
+      return true;
     },
     allowLeave() {
       if (running.current) { setOpen(true); return Promise.resolve(false); }
@@ -254,13 +268,13 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       throw error;
     }
   }
-  async function openEditor(target: EditorTarget, current: () => boolean) {
-    const first = await commands.history({ ...context, unitId: target.unitId, locale: targetLocale, afterOrdinal: 0, limit: 1 });
+  async function openEditor(target: EditorTarget, current: () => boolean, locale = targetLocale, suggestedText?: string) {
+    const first = await commands.history({ ...context, unitId: target.unitId, locale, afterOrdinal: 0, limit: 1 });
     const after = Math.max(0, first.total - 100);
-    const next = await commands.history({ ...context, unitId: target.unitId, locale: targetLocale, afterOrdinal: after, limit: 100 });
+    const next = await commands.history({ ...context, unitId: target.unitId, locale, afterOrdinal: after, limit: 100 });
     if (current()) {
       setEditorTarget(target); setHistory(next); setPendingSave(null); setNewerDraftSaved(false);
-      draftRef.current = next.currentText ?? ""; setDraft(draftRef.current); setTab("edit");
+      draftRef.current = suggestedText ?? next.currentText ?? ""; setDraft(draftRef.current); setTab("edit");
     }
   }
   function chooseEditor(target: EditorTarget) {

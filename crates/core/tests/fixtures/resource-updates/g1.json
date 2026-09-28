@@ -1,0 +1,13 @@
+{
+  "format": "tsumugi-glossary-v1",
+  "resourceId": "lookup-anything-terms",
+  "revision": "G1",
+  "license": "MIT",
+  "sourceLocale": "en",
+  "targetLocale": "zh-CN",
+  "entries": [
+    { "id": "barrel", "source": "Barrel", "aliases": [], "target": "桶", "protected": false, "nativeKey": "data.item.barrel.name", "reason": "Fixture baseline" },
+    { "id": "box", "source": "Box", "aliases": [], "target": "箱", "protected": false, "nativeKey": "data.item.box.name", "reason": "Fixture baseline" },
+    { "id": "now", "source": "now", "aliases": [], "target": "现在", "protected": false, "nativeKey": "generic.now", "reason": "Fixture baseline" }
+  ]
+}

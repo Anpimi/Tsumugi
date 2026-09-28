@@ -1,0 +1,13 @@
+{
+  "format": "tsumugi-glossary-v1",
+  "resourceId": "lookup-anything-terms",
+  "revision": "G2",
+  "license": "MIT",
+  "sourceLocale": "en",
+  "targetLocale": "zh-CN",
+  "entries": [
+    { "id": "barrel", "source": "Barrel", "aliases": [], "target": "木桶", "protected": false, "nativeKey": "data.item.barrel.name", "reason": "Fixture update" },
+    { "id": "box", "source": "Box", "aliases": [], "target": "箱", "protected": false, "nativeKey": "data.item.box.name", "reason": "Fixture baseline" },
+    { "id": "tomorrow", "source": "tomorrow", "aliases": [], "target": "明天", "protected": false, "nativeKey": "generic.tomorrow", "reason": "Fixture addition" }
+  ]
+}

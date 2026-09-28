@@ -215,7 +215,7 @@ pub(super) fn migrate_v4(connection: &mut Connection) -> rusqlite::Result<()> {
     {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    transaction.pragma_update(None, "user_version", super::SCHEMA_VERSION)?;
+    transaction.pragma_update(None, "user_version", 5)?;
     #[cfg(test)]
     super::migration_crash_hook("before-translation-migration-commit");
     transaction.commit()?;
@@ -775,6 +775,15 @@ impl AdoptionHandler for TranslationAdoptionHandler {
                 bundle.file.sha256,
             ],
         )?;
+        let resource_baseline: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(rowid),0) FROM resource_changes",
+            [],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO translation_resource_baselines VALUES (?1,?2)",
+            rusqlite::params![revision_id.to_string(), resource_baseline],
+        )?;
         let mut changes = vec![ChangeReference {
             kind: "translation-revision".into(),
             id: revision_id.to_string(),
@@ -1201,6 +1210,19 @@ impl ProjectStore {
                     request.action_id.to_string(),
                     digest,
                 ],
+            )
+            .map_err(super::ledger::sql_error)?;
+        let resource_baseline: i64 = transaction
+            .query_row(
+                "SELECT COALESCE(MAX(rowid),0) FROM resource_changes",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(super::ledger::sql_error)?;
+        transaction
+            .execute(
+                "INSERT INTO translation_resource_baselines VALUES (?1,?2)",
+                params![revision.to_string(), resource_baseline],
             )
             .map_err(super::ledger::sql_error)?;
         let selection = insert_selection(

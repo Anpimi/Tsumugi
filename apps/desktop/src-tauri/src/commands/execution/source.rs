@@ -1,7 +1,7 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::content::{self, ContentPage, ContentScope, SourceBundle, SourceConfirmation};
-mod capture;
+pub(super) mod capture;
 #[cfg(test)]
 mod tests;
 pub mod translation;
@@ -10,6 +10,7 @@ pub mod translation;
 pub(super) struct SourceSession {
     selection: Option<(ExecutionId, Arc<capture::Selection>)>,
     picker: Option<ExecutionId>,
+    pub(super) resource_picker: Option<ExecutionId>,
     job: Option<ExecutionId>,
     cancel: Cancellation,
     last_start: Option<(ExecutionId, ExecutionId, String)>,
@@ -30,6 +31,7 @@ impl SourceSession {
         self.cancel.request();
         self.job = None;
         self.picker = None;
+        self.resource_picker = None;
         self.selection = None;
     }
 }

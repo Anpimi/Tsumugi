@@ -9,11 +9,15 @@ mod persistence;
 mod project;
 
 pub use persistence::{
-    AttemptView, PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore,
-    Reconciliation, RecoveryPlan, RecoveryUnit, SaveTranslationRevision, SelectTranslationRevision,
-    TaskView, TranslationAdoptionConfirmation, TranslationAdoptionHandler, TranslationHistory,
-    TranslationMatch, TranslationPreview, TranslationPreviewRow, TranslationRevision,
-    TranslationSelection, TranslationSelectionDecision,
+    AttemptView, CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision,
+    GlossaryCapture, GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason,
+    PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore, Reconciliation,
+    RecoveryPlan, RecoveryUnit, ResourceChangeKind, ResourceDecision, ResourceDecisionKind,
+    ResourceDecisionResult, ResourcePreview, ResourcePreviewRow, SaveContext, SaveTerm,
+    SaveTranslationRevision, SelectTranslationRevision, TaskView, TermResolution,
+    TermResolutionEntry, TermRevision, TmSuggestion, TranslationAdoptionConfirmation,
+    TranslationAdoptionHandler, TranslationHistory, TranslationMatch, TranslationPreview,
+    TranslationPreviewRow, TranslationRevision, TranslationSelection, TranslationSelectionDecision,
 };
 
 #[cfg(test)]

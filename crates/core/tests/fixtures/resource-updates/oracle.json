@@ -1,0 +1,19 @@
+{
+  "updates": [
+    { "id": "barrel", "kind": "edited", "oldTarget": "桶", "newTarget": "木桶" },
+    { "id": "box", "kind": "unchanged" },
+    { "id": "now", "kind": "removed", "oldTarget": "现在" },
+    { "id": "tomorrow", "kind": "added", "newTarget": "明天" }
+  ],
+  "barrelAdoptionImpact": {
+    "targetLocale": "zh-CN",
+    "affectedNativeKeys": ["data.item.barrel.name"],
+    "unaffectedNativeKeys": ["data.item.box.name", "data.item.barrel.description", "data.item.box.description", "generic.now"],
+    "otherLocalesUnaffected": true
+  },
+  "contextEditImpact": {
+    "editedNativeKey": "data.item.barrel.description",
+    "affectedNativeKeys": ["data.item.barrel.description"],
+    "unaffectedNativeKeys": ["data.item.box.description"]
+  }
+}

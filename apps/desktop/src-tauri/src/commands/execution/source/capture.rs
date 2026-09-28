@@ -330,6 +330,39 @@ fn read(
     Ok(bytes)
 }
 
+#[cfg(windows)]
+pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
+    if !path.is_absolute()
+        || path.extension().is_none_or(|extension| extension != "json")
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+    }
+    let mut ancestors = Vec::new();
+    for ancestor in path.ancestors().skip(1) {
+        ancestors.push(platform::open(ancestor, true)?);
+    }
+    let mut file = platform::open(path, false)?;
+    let parent = ancestors
+        .first()
+        .ok_or_else(|| error(ErrorCode::Unauthorized, "unauthorized-selection"))?;
+    if platform::final_path(&file)?.parent() != Some(platform::final_path(parent)?.as_path()) {
+        return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+    }
+    let bytes = read(&mut file, 128 * 1024, &|| Ok(()))?;
+    if file.metadata().map_err(io)?.len() != bytes.len() as u64 {
+        return Err(error(ErrorCode::DependencyConflict, "input-changed"));
+    }
+    Ok(bytes)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn read_resource_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
+    Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+}
+
 // Other platforms are not silently given weaker capture guarantees.
 #[cfg(not(windows))]
 pub struct Selection;
@@ -361,6 +394,25 @@ impl Selection {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    #[test]
+    fn resource_file_capture_is_bounded_and_uses_an_authorized_read_handle() {
+        let root = fixture();
+        let path = root.path().join("terms.json");
+        let bytes = include_bytes!(
+            "../../../../../../../crates/core/tests/fixtures/resource-updates/g1.json"
+        );
+        fs::write(&path, bytes).unwrap();
+        assert_eq!(read_resource_file(&path).unwrap(), bytes);
+        let writer = OpenOptions::new().write(true).open(&path).unwrap();
+        assert_eq!(read_resource_file(&path).unwrap_err().code, ErrorCode::Busy);
+        drop(writer);
+        fs::write(&path, vec![b' '; 128 * 1024 + 1]).unwrap();
+        assert_eq!(
+            read_resource_file(&path).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        assert!(read_resource_file(&root.path().join("terms.txt")).is_err());
+    }
     fn fixture() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("i18n")).unwrap();

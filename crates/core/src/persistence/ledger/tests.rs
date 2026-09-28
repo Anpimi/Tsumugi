@@ -594,6 +594,7 @@ fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
     transaction
         .pragma_update(None, "defer_foreign_keys", true)
         .unwrap();
+    crate::persistence::resources::drop_for_legacy_fixture(&transaction).unwrap();
     transaction
         .execute_batch(
             "CREATE TEMP TABLE execution_results_copy AS SELECT * FROM main.execution_results;

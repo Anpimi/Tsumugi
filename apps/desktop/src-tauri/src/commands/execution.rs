@@ -20,7 +20,11 @@ macro_rules! handlers {
         source::translation::list_translation_files,source::translation::preflight_translation,
         source::translation::start_translation_import,source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
-        source::translation::save_translation_revision,source::translation::select_translation_revision,$($extra),*
+        source::translation::save_translation_revision,source::translation::select_translation_revision,
+        resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
+        resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
+        resource::read_context_revision,resource::save_context,resource::capture_context,
+        resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
@@ -311,6 +315,7 @@ macro_rules! request {
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $(pub $field:$kind,)* }
     }
 }
+mod resource;
 mod source;
 request!(SessionRequest {});
 request!(ListRequest {
