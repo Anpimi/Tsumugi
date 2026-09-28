@@ -3528,10 +3528,11 @@ mod tests {
             .review_target(project, unit, "zh-CN")
             .unwrap()
             .source_revision_id;
+        let context_action = ExecutionId::new();
         store
             .save_context(&SaveContext {
                 project_id: project,
-                action_id: ExecutionId::new(),
+                action_id: context_action,
                 unit_id: unit,
                 locale: "zh-CN".into(),
                 source_revision_id,
@@ -3540,10 +3541,11 @@ mod tests {
                 reason: "Review context".into(),
             })
             .unwrap();
+        let term_action = ExecutionId::new();
         store
             .save_term(&SaveTerm {
                 project_id: project,
-                action_id: ExecutionId::new(),
+                action_id: term_action,
                 term_id: None,
                 locale: "zh-CN".into(),
                 source: "Hello".into(),
@@ -3556,6 +3558,22 @@ mod tests {
             })
             .unwrap();
 
+        let expected: BTreeSet<_> = [context_action, term_action]
+            .into_iter()
+            .map(|action| {
+                let change_id: String = store
+                    .connection()
+                    .unwrap()
+                    .query_row(
+                        "SELECT change_id FROM resource_changes WHERE action_id=?1",
+                        [action.to_string()],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                format!("resource-change:{change_id}")
+            })
+            .collect();
+        assert_eq!(expected.len(), 2);
         let impacts = store.resource_impacts(project, "zh-CN", 0, 100).unwrap();
         let impact = impacts
             .items
@@ -3563,12 +3581,12 @@ mod tests {
             .find(|item| item.unit_id == unit)
             .unwrap();
         assert_eq!(impact.reasons.len(), 2);
-        let expected: BTreeSet<_> = impact
+        let impact_reasons: BTreeSet<_> = impact
             .reasons
             .iter()
             .map(|reason| format!("resource-change:{}", reason.change_id))
             .collect();
-        assert_eq!(expected.len(), 2);
+        assert_eq!(impact_reasons, expected);
 
         let work = store.review_work_page(project, "zh-CN", 0, 100).unwrap();
         let matching: Vec<_> = work
