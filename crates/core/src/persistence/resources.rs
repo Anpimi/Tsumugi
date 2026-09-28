@@ -492,7 +492,7 @@ pub(super) fn migrate_v5(connection: &mut Connection) -> rusqlite::Result<()> {
     {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    transaction.pragma_update(None, "user_version", super::SCHEMA_VERSION)?;
+    transaction.pragma_update(None, "user_version", 6)?;
     #[cfg(test)]
     super::migration_crash_hook("before-resource-migration-commit");
     transaction.commit()?;
@@ -960,7 +960,7 @@ fn source_fact(
     Ok((id(row.0)?, row.1, row.2, row.3))
 }
 
-fn current_context(
+pub(super) fn current_context(
     connection: &Connection,
     project_id: ExecutionId,
     unit_id: ExecutionId,
@@ -2203,7 +2203,7 @@ impl ProjectStore {
     }
 }
 
-fn resolve_terms_in(
+pub(super) fn resolve_terms_in(
     connection: &Connection,
     project_id: ExecutionId,
     unit_id: ExecutionId,

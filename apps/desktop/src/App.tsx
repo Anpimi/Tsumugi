@@ -34,6 +34,7 @@ import { ExecutionTasks } from "./ExecutionTasks";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
 import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
+import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
   clearLastOpenProject,
@@ -338,6 +339,7 @@ function App() {
   const pendingSave = useRef<PendingSave | null>(null);
   const sourceWorkbench = useRef<SourceHandle>(null);
   const resourceWorkbench = useRef<ResourceHandle>(null);
+  const reviewWorkbench = useRef<ReviewHandle>(null);
   const translationWorkbench = useRef<TranslationHandle>(null);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
@@ -551,6 +553,7 @@ function App() {
     if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
     if (translationWorkbench.current && !await translationWorkbench.current.allowLeave()) return false;
     if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
+    if (reviewWorkbench.current && !await reviewWorkbench.current.allowLeave()) return false;
     setOperation("opening");
     setFeedback({ tone: "info", messageKey: "status.opening" });
     try {
@@ -590,6 +593,7 @@ function App() {
     if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
     if (translationWorkbench.current && !await translationWorkbench.current.allowLeave()) return false;
     if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
+    if (reviewWorkbench.current && !await reviewWorkbench.current.allowLeave()) return false;
     if (!project || (busy && !coordinated)) return false;
     setOperation("closing");
     setFeedback({ tone: "info", messageKey: "status.closing" });
@@ -1113,7 +1117,7 @@ function App() {
         </div>
 
         <nav className="navigation" aria-label={t("nav.workspace")}>
-          {project ? <><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ExecutionTasks key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></> : null}
+          {project ? <><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></> : null}
            {navItems.map((item) => (
              <button
                aria-current={item.selected ? "page" : undefined}

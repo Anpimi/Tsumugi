@@ -24,7 +24,10 @@ macro_rules! handlers {
         resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
         resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
         resource::read_context_revision,resource::save_context,resource::capture_context,
-        resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,$($extra),*
+        resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
+        review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
+        review::run_review_checks,review::waive_review_issue,review::allow_source_fallback,
+        review::read_review_work,review::read_review_eligibility,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
@@ -316,6 +319,7 @@ macro_rules! request {
     }
 }
 mod resource;
+mod review;
 mod source;
 request!(SessionRequest {});
 request!(ListRequest {

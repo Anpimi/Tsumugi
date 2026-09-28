@@ -1421,3 +1421,15 @@ button:focus-visible {
     gap: 3px;
   }
 }
+.review-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.review-columns { display: grid; grid-template-columns: minmax(230px, 0.8fr) minmax(0, 1.4fr); gap: 1.5rem; margin-top: 1rem; }
+.review-columns section { min-width: 0; }
+.review-list { max-height: 48vh; overflow: auto; }
+.review-list-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; }
+.review-list-row .text-button { min-width: 0; text-align: left; overflow-wrap: anywhere; }
+.review-rule, .review-work-item, .review-eligibility { border-top: 1px solid var(--border, #ccc); padding: 0.75rem 0; }
+.review-work-item ul, .review-eligibility ul { margin: 0.4rem 0 0.6rem; }
+.review-batch-list { max-height: 12rem; overflow-y: auto; }
+.review-dialog fieldset { display: flex; flex-wrap: wrap; gap: 1rem; }
+.review-dialog fieldset label { display: inline-flex; align-items: center; gap: 0.3rem; }
+@media (max-width: 680px) { .review-columns { grid-template-columns: 1fr; } .review-list { max-height: 25vh; } }

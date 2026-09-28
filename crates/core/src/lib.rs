@@ -9,15 +9,18 @@ mod persistence;
 mod project;
 
 pub use persistence::{
-    AttemptView, CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision,
-    GlossaryCapture, GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason,
-    PersistenceError, PersistenceErrorCode, PersistenceStage, ProjectStore, Reconciliation,
-    RecoveryPlan, RecoveryUnit, ResourceChangeKind, ResourceDecision, ResourceDecisionKind,
-    ResourceDecisionResult, ResourcePreview, ResourcePreviewRow, SaveContext, SaveTerm,
-    SaveTranslationRevision, SelectTranslationRevision, TaskView, TermResolution,
-    TermResolutionEntry, TermRevision, TmSuggestion, TranslationAdoptionConfirmation,
-    TranslationAdoptionHandler, TranslationHistory, TranslationMatch, TranslationPreview,
-    TranslationPreviewRow, TranslationRevision, TranslationSelection, TranslationSelectionDecision,
+    AttemptView, CaptureContext, CheckFinding, CheckRuleResult, CheckRun, ContextCapture,
+    ContextItem, ContextOmission, ContextRevision, Eligibility, EligibilityLocale,
+    EligibilityReason, FallbackDecision, FallbackWrite, GlossaryCapture, GlossaryEntry,
+    GlossaryFile, ImpactItem, ImpactPage, ImpactReason, PersistenceError, PersistenceErrorCode,
+    PersistenceStage, ProjectStore, Reconciliation, RecoveryPlan, RecoveryUnit, ResourceChangeKind,
+    ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourcePreview,
+    ResourcePreviewRow, ReviewBasis, ReviewDecision, ReviewDecisionKind, ReviewHistoryPage,
+    ReviewPage, ReviewTarget, ReviewWrite, SaveContext, SaveTerm, SaveTranslationRevision,
+    SelectTranslationRevision, TaskView, TermResolution, TermResolutionEntry, TermRevision,
+    TmSuggestion, TranslationAdoptionConfirmation, TranslationAdoptionHandler, TranslationHistory,
+    TranslationMatch, TranslationPreview, TranslationPreviewRow, TranslationRevision,
+    TranslationSelection, TranslationSelectionDecision, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 
 #[cfg(test)]

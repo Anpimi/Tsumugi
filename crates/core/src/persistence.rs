@@ -16,6 +16,7 @@ use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 pub(crate) mod content;
 mod ledger;
 mod resources;
+mod review;
 mod translation;
 pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
 pub use resources::{
@@ -24,6 +25,12 @@ pub use resources::{
     ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourcePreview,
     ResourcePreviewRow, SaveContext, SaveTerm, TermResolution, TermResolutionEntry, TermRevision,
     TmSuggestion,
+};
+pub use review::{
+    CheckFinding, CheckRuleResult, CheckRun, Eligibility, EligibilityLocale, EligibilityReason,
+    FallbackDecision, FallbackWrite, ReviewBasis, ReviewDecision, ReviewDecisionKind,
+    ReviewHistoryPage, ReviewPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem,
+    WorkPage,
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
@@ -34,7 +41,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -550,6 +557,8 @@ fn initialize_schema(
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     resources::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    review::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
         .map_err(|error| map_commit_error(error))?;
@@ -756,36 +765,49 @@ fn validate_existing_connection(
         });
     }
     match user_version {
-        SCHEMA_VERSION => validate_schema_shape(connection, false, true, true),
+        SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true),
+        6 => {
+            validate_schema_shape(connection, false, true, true, false)?;
+            backup_before_migration(connection, directory, 6)?;
+            review::migrate_v6(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true)
+        }
         5 => {
-            validate_schema_shape(connection, false, true, false)?;
+            validate_schema_shape(connection, false, true, false, false)?;
             backup_before_migration(connection, directory, 5)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true)
+            review::migrate_v6(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true)
         }
         4 => {
-            validate_schema_shape(connection, false, false, false)?;
+            validate_schema_shape(connection, false, false, false, false)?;
             backup_before_migration(connection, directory, 4)?;
             translation::migrate_v4(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false)?;
+            validate_schema_shape(connection, false, true, false, false)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true)
+            review::migrate_v6(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true)
         }
         3 => {
-            validate_schema_shape(connection, true, false, false)?;
+            validate_schema_shape(connection, true, false, false, false)?;
             backup_before_migration(connection, directory, 3)?;
             ledger::migrate_v3_result_limit(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, false, false)?;
+            validate_schema_shape(connection, false, false, false, false)?;
             translation::migrate_v4(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false)?;
+            validate_schema_shape(connection, false, true, false, false)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true)
+            review::migrate_v6(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true)
         }
         found_version => Err(PersistenceError::UnsupportedSchema {
             found_version,
@@ -831,6 +853,7 @@ fn validate_schema_shape(
     legacy_result_limit: bool,
     has_translation: bool,
     has_resources: bool,
+    has_review: bool,
 ) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -846,6 +869,10 @@ fn validate_schema_shape(
     }
     if has_resources {
         expected_tables.extend(resources::table_names());
+        expected_tables.sort();
+    }
+    if has_review {
+        expected_tables.extend(review::table_names());
         expected_tables.sort();
     }
     if table_names != expected_tables {
@@ -893,6 +920,11 @@ fn validate_schema_shape(
     }
     if has_resources {
         resources::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
+    }
+    if has_review {
+        review::validate(connection).map_err(|_| PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         })?;
     }
@@ -1027,6 +1059,7 @@ mod tests {
         transaction
             .pragma_update(None, "defer_foreign_keys", true)
             .unwrap();
+        review::drop_for_legacy_fixture(&transaction).unwrap();
         resources::drop_for_legacy_fixture(&transaction).unwrap();
         transaction
             .execute_batch(
@@ -1238,6 +1271,7 @@ mod tests {
 
         let database = path.join(DATABASE_FILENAME);
         let connection = Connection::open(&database).unwrap();
+        review::drop_for_legacy_fixture(&connection).unwrap();
         resources::drop_for_legacy_fixture(&connection).unwrap();
         connection
             .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
@@ -1316,6 +1350,7 @@ mod tests {
                 .unwrap();
             let database = project_path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
+            review::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection.pragma_update(None, "user_version", 5).unwrap();
             drop(connection);
@@ -1331,7 +1366,7 @@ mod tests {
                 if point == "before-resource-migration-commit" {
                     5
                 } else {
-                    SCHEMA_VERSION
+                    6
                 }
             );
             assert_eq!(
@@ -1398,6 +1433,7 @@ mod tests {
                 .unwrap();
             let database = project_path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
+            review::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection
                 .execute_batch(
