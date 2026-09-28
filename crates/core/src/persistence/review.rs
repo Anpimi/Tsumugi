@@ -2035,10 +2035,8 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
-        let bundle = SourceBundle::capture(
-            br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
-            bytes, "en").unwrap();
+    fn adopt_source_files(store: &mut ProjectStore, manifest: &[u8], bytes: &[u8]) {
+        let bundle = SourceBundle::capture(manifest, bytes, "en").unwrap();
         let input = bundle
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
@@ -2081,6 +2079,14 @@ mod tests {
         store
             .adopt_execution(&action, &SourceAdoptionHandler)
             .unwrap();
+    }
+
+    fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
+        adopt_source_files(
+            store,
+            br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
+            bytes,
+        );
     }
 
     fn fixture() -> (
@@ -2156,6 +2162,111 @@ mod tests {
         store
             .run_review_checks(project, unit, locale, &target.basis, ExecutionId::new())
             .unwrap()
+    }
+
+    #[test]
+    fn real_lookup_source_and_translation_oracle_cover_the_full_review_scope() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = ProjectStore::create(
+            directory.path().join("project"),
+            ProjectMetadata::create("Lookup review", "en", ["zh-CN"]).unwrap(),
+        )
+        .unwrap();
+        let project = parse_id(store.metadata().unwrap().project_id().to_string()).unwrap();
+        adopt_source_files(
+            &mut store,
+            include_bytes!("../../tests/fixtures/stardew-lookup/manifest.json"),
+            include_bytes!("../../tests/fixtures/stardew-lookup/i18n/default.json"),
+        );
+        let source_oracle: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/stardew-lookup/oracle.json"
+        ))
+        .unwrap();
+        let translation_oracle: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/stardew-lookup/translation-oracle.json"
+        ))
+        .unwrap();
+        assert_eq!(source_oracle["count"].as_u64(), Some(532));
+        assert_eq!(translation_oracle["count"].as_u64(), Some(532));
+
+        let page = store.review_page(project, "zh-CN", 0, 100).unwrap();
+        assert_eq!(page.total, 532);
+        assert_eq!(page.next_ordinal, Some(100));
+        for (target, expected) in page.rows.iter().zip(
+            source_oracle["occurrences"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .take(100),
+        ) {
+            assert_eq!(target.native_key, expected["key"].as_str().unwrap());
+            assert_eq!(target.source_text, expected["text"].as_str().unwrap());
+        }
+        for key in ["generic.percent", "generic.percent-chance-of"] {
+            let target = page
+                .rows
+                .iter()
+                .find(|target| target.native_key == key)
+                .unwrap();
+            let expected = translation_oracle["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["key"] == key)
+                .unwrap();
+            let translated = expected["text"].as_str().unwrap();
+            translate(&mut store, project, target.unit_id, "zh-CN", translated);
+            let run = check(&mut store, project, target.unit_id, "zh-CN");
+            assert_eq!(run.validator_version, CHECK_VERSION);
+            assert_eq!(run.rules.len(), 4);
+            assert!(run.rules.iter().all(|rule| rule.findings.is_empty()));
+            approve(&mut store, project, target.unit_id, "zh-CN");
+        }
+
+        let work = store.review_work_page(project, "zh-CN", 0, 100).unwrap();
+        assert_eq!(work.total, 530);
+        assert_eq!(work.items.len(), 100);
+        assert_eq!(work.next_offset, Some(100));
+        let eligibility = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(!eligibility.ready);
+        assert_eq!(eligibility.locales[0].checked_units, 532);
+        assert_eq!(eligibility.locales[0].blocker_count, 1_060);
+        assert_eq!(eligibility.locales[0].exception_count, 0);
+
+        let affected = page
+            .rows
+            .iter()
+            .find(|target| target.native_key == "generic.percent")
+            .unwrap()
+            .unit_id;
+        store
+            .save_term(&SaveTerm {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                term_id: None,
+                locale: "zh-CN".into(),
+                source: "percent".into(),
+                aliases: vec![],
+                target: "百分比".into(),
+                protected: true,
+                scope_unit_id: Some(affected),
+                expected_revision_id: None,
+                reason: "Review changed terminology for this source entry".into(),
+            })
+            .unwrap();
+        let changed = store.review_target(project, affected, "zh-CN").unwrap();
+        assert!(changed.current_decision.is_none() && changed.current_check.is_none());
+        let updated_work = store.review_work_page(project, "zh-CN", 0, 100).unwrap();
+        assert_eq!(updated_work.total, 531);
+        assert!(updated_work.items.iter().any(|item| {
+            item.unit_id == affected
+                && item
+                    .reasons
+                    .iter()
+                    .any(|reason| reason.starts_with("resource-change:"))
+        }));
     }
 
     #[test]
