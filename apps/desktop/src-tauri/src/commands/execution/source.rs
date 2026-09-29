@@ -1,6 +1,8 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
-use tsumugi_core::content::{self, ContentPage, ContentScope, SourceBundle, SourceConfirmation};
+use tsumugi_core::content::{
+    self, ContentPage, ContentScope, SourceBundle, SourceChangePage, SourceConfirmation,
+};
 pub(super) mod capture;
 #[cfg(test)]
 mod tests;
@@ -67,6 +69,34 @@ request!(PreviewRequest {
 });
 request!(ContentRequest {
     snapshot_id: ExecutionId,
+    after: u32,
+    limit: u32
+});
+request!(ComparisonRequest {
+    attempt_id: ExecutionId,
+    result_id: ExecutionId,
+    base: Option<ExecutionId>,
+    filter: String,
+    after: u32,
+    limit: u32
+});
+request!(HistoryRequest {
+    offset: u32,
+    limit: u32
+});
+request!(HistoryContentRequest {
+    snapshot_id: ExecutionId,
+    query: String,
+    after: u32,
+    limit: u32
+});
+request!(LineageRequest {
+    snapshot_id: ExecutionId,
+    ordinal: u32
+});
+request!(ImpactRequest {
+    snapshot_id: ExecutionId,
+    locale: String,
     after: u32,
     limit: u32
 });
@@ -173,19 +203,8 @@ fn begin(
             "language-conflict",
         )));
     }
-    let (host, store) = active.execution_parts()?;
+    let (host, _) = active.execution_parts()?;
     host.allow_mutation()?;
-    if store
-        .content_scope()
-        .map_err(map_source)?
-        .current_snapshot
-        .is_some()
-    {
-        return Err(map_source(ExecutionError::new(
-            ErrorCode::DependencyConflict,
-            "source-already-present",
-        )));
-    }
     if host.source.is_active() {
         return Err(map_source(ExecutionError::new(
             ErrorCode::Busy,
@@ -432,6 +451,129 @@ pub fn read_source_content(
     .map_err(map_source)
 }
 #[tauri::command]
+pub fn read_source_comparison(
+    state: State<'_, AppState>,
+    request: ComparisonRequest,
+) -> Result<SourceChangePage, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
+    authorized(
+        &mut sessions,
+        &request.session_token,
+        request.project_id,
+        CommandStage::ExecutionRead,
+    )?
+    .store
+    .source_comparison_filtered(
+        request.attempt_id,
+        request.result_id,
+        request.base,
+        &request.filter,
+        request.after,
+        request.limit,
+    )
+    .map_err(map_source)
+}
+#[tauri::command]
+pub fn read_source_history(
+    state: State<'_, AppState>,
+    request: HistoryRequest,
+) -> Result<content::SourceHistory, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
+    authorized(
+        &mut sessions,
+        &request.session_token,
+        request.project_id,
+        CommandStage::ExecutionRead,
+    )?
+    .store
+    .source_history(request.offset, request.limit)
+    .map_err(map_source)
+}
+#[tauri::command]
+pub fn read_source_history_content(
+    state: State<'_, AppState>,
+    request: HistoryContentRequest,
+) -> Result<ContentPage, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
+    authorized(
+        &mut sessions,
+        &request.session_token,
+        request.project_id,
+        CommandStage::ExecutionRead,
+    )?
+    .store
+    .source_history_content(
+        request.snapshot_id,
+        &request.query,
+        request.after,
+        request.limit,
+    )
+    .map_err(map_source)
+}
+#[tauri::command]
+pub fn read_source_lineage(
+    state: State<'_, AppState>,
+    request: LineageRequest,
+) -> Result<Vec<content::LineageEvidence>, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
+    authorized(
+        &mut sessions,
+        &request.session_token,
+        request.project_id,
+        CommandStage::ExecutionRead,
+    )?
+    .store
+    .source_lineage_evidence(request.snapshot_id, request.ordinal)
+    .map_err(map_source)
+}
+#[tauri::command]
+pub async fn estimate_source_update(
+    state: State<'_, AppState>,
+    request: SourceAdoptRequest,
+) -> Result<Vec<content::SourceImpactSummary>, CommandError> {
+    let sessions = Arc::clone(&state.sessions);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut sessions = sessions.lock().map_err(|_| {
+            CommandError::simple(CommandErrorCode::Busy, CommandStage::ExecutionRead)
+        })?;
+        let active = authorized(
+            &mut sessions,
+            &request.session_token,
+            request.project_id,
+            CommandStage::ExecutionRead,
+        )?;
+        #[cfg(feature = "execution-test-host")]
+        test_support::source_fixture_hook(&mut active.store, "estimate").map_err(map_source)?;
+        active
+            .store
+            .source_update_estimate(request.attempt_id, request.result_id, &request.confirmation)
+            .map_err(map_source)
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?
+}
+#[tauri::command]
+pub fn read_source_impact(
+    state: State<'_, AppState>,
+    request: ImpactRequest,
+) -> Result<content::SourceImpactPage, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
+    authorized(
+        &mut sessions,
+        &request.session_token,
+        request.project_id,
+        CommandStage::ExecutionRead,
+    )?
+    .store
+    .source_impact(
+        request.snapshot_id,
+        &request.locale,
+        request.after,
+        request.limit,
+    )
+    .map_err(map_source)
+}
+#[tauri::command]
 pub fn prepare_source_adoption(
     state: State<'_, AppState>,
     request: SourceAdoptRequest,
@@ -445,6 +587,8 @@ pub fn prepare_source_adoption(
     )?;
     let (host, store) = active.execution_parts()?;
     host.allow_mutation()?;
+    #[cfg(feature = "execution-test-host")]
+    test_support::source_fixture_hook(store, "prepare").map_err(map_source)?;
     let input = store
         .execution_input(request.attempt_id)
         .map_err(map_source)?;

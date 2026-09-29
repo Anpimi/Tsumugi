@@ -851,7 +851,9 @@ fn lock_sessions<'a>(
 ) -> Result<MutexGuard<'a, SessionManager>, CommandError> {
     state
         .sessions
-        .lock()
+        // Synchronous commands run on the desktop event thread. A background
+        // projection/check must not block it when a view is reopened or closed.
+        .try_lock()
         .map_err(|_| CommandError::simple(CommandErrorCode::Busy, stage))
 }
 
@@ -1059,6 +1061,31 @@ fn metadata_field_name(field: MetadataField) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn busy_background_session_does_not_block_synchronous_commands() {
+        use tauri::Manager;
+        let app = super::register_commands(tauri::test::mock_builder())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let state = app.state::<super::AppState>();
+        let held = state.sessions.lock().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                let result =
+                    super::lock_sessions(&state, super::CommandStage::ExecutionRead).map(|_| ());
+                send.send(result).unwrap();
+            });
+            let result = receive.recv_timeout(std::time::Duration::from_secs(1));
+            drop(held);
+            worker.join().unwrap();
+            assert_eq!(
+                result.unwrap().unwrap_err().code,
+                super::CommandErrorCode::Busy
+            );
+        });
+        assert!(super::lock_sessions(&state, super::CommandStage::ExecutionRead).is_ok());
+    }
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;

@@ -3,7 +3,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
-import type { ContentPage } from "./sourceCommands";
+import type { ContentPage, SourceChangePage } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 const invoke = vi.hoisted(() => vi.fn());
@@ -24,6 +24,7 @@ beforeEach(async () => {
     if (command === "prepare_source_adoption" || command === "cancel_source_capture") return {};
     if (command === "adopt_execution" || command === "read_execution_receipt") return { changes: [{ kind: "source-snapshot", id: "snapshot", revision: "2" }] };
     if (command === "read_source_content") return { ...preview, snapshotId: "snapshot", scope: { revision: "2", currentSnapshot: "snapshot" } };
+    if (command === "read_source_impact") return { snapshotId: "snapshot", summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null };
     throw new Error(command);
   });
 });
@@ -106,9 +107,29 @@ it("queries a lost acknowledgement without applying a second time", async () => 
   const user = await prepare();
   await user.click(screen.getByRole("checkbox", { name: /Apply all 2/ }));
   await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  expect(await screen.findByRole("alert")).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Keep output and return" })).toBeDisabled();
   await user.click(await screen.findByRole("button", { name: "Check recorded outcome" }));
   await screen.findByRole("heading", { name: "Imported source content" });
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+});
+it("checks each unknown retry before allowing another retry or return", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === "adopt_execution") throw { code: "storage-failed" };
+    if (command === "read_execution_receipt") return null;
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  await user.click(screen.getByRole("checkbox", { name: /Apply all 2/ }));
+  await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  await user.click(await screen.findByRole("button", { name: "Check recorded outcome" }));
+  await user.click(await screen.findByRole("button", { name: "Retry the same application" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Check recorded outcome" })).toBeEnabled());
+  expect(screen.queryByRole("button", { name: "Retry the same application" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Keep output and return" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(2);
 });
 it("ignores a preflight response invalidated by leaving, and supports Chinese labels", async () => {
   await i18n.changeLanguage("zh-CN");
@@ -128,4 +149,68 @@ it("ignores a preflight response invalidated by leaving, and supports Chinese la
   expect(await decision).toBe(true);
   await act(async () => { complete({ namespace: "STALE", count: 1, diagnostics: [] }); });
   await waitFor(() => expect(screen.queryByText(/STALE/)).not.toBeInTheDocument());
+});
+
+function updateComparison(): SourceChangePage {
+  const old = { ...preview.rows[0], occurrenceId: "old", unitId: "unit", sourceRevisionId: "source-revision" };
+  return { scope: { revision: "2", currentSnapshot: "s1" }, attemptId: "update", resultId: "result", previousSnapshotId: "s1", confirmation: { ...preview.confirmation, expectedContentRevision: "2", expectedCurrentSnapshot: "s1", lineageBaseSnapshot: "s1" }, total: 3, filteredTotal: 3, unchanged: 1, moved: 0, changed: 1, added: 0, ambiguous: 0, removed: 1, nextOrdinal: 1, rows: [{ kind: "changed", old, new: { ...old.occurrence, text: "New source {{name}} 世界" }, candidates: [old] }] };
+}
+
+it("keeps identity drafts across filtering and applies the whole range only after reviewing impact", async () => {
+  const ref = createRef<SourceHandle>();
+  const original = invoke.getMockImplementation()!;
+  const comparison = updateComparison();
+  invoke.mockImplementation(async (command: string, args: { request?: { filter?: string } }) => {
+    if (command === "read_content_scope") return comparison.scope;
+    if (command === "read_source_comparison") return { ...comparison, filteredTotal: args.request?.filter ? 1 : 3 };
+    if (command === "estimate_source_update") return [{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }];
+    if (command === "adopt_execution") throw { code: "dependency-conflict", field: "stale-preview" };
+    return original(command, args);
+  });
+  render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  act(() => ref.current!.showAttempt("update"));
+  await screen.findByRole("heading", { name: "Review upstream changes" });
+  const user = userEvent.setup();
+  await user.type(screen.getByRole("textbox", { name: "Reviewer for identity decisions" }), "Maintainer");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), "continue:old");
+  await user.type(screen.getByRole("textbox", { name: "Reason for this decision" }), "Same content identity with updated wording");
+  await user.type(screen.getByRole("textbox", { name: "Find a key, text or change type" }), "hello");
+  await user.click(screen.getByRole("button", { name: "Search" }));
+  expect(await screen.findByText(/1 matching entries; confirmation still covers all 3/)).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Same content identity with updated wording");
+  expect(screen.getByRole("checkbox", { name: /Apply all 3 compared/ })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Review estimated impact" }));
+  await user.click(await screen.findByRole("checkbox", { name: /Apply all 3 compared/ }));
+  await user.click(screen.getByRole("button", { name: "Apply new source snapshot" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Same content identity with updated wording");
+  expect(screen.getByRole("button", { name: "Refresh comparison against current source" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Check recorded outcome" })).not.toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: expect.objectContaining({ confirmation: expect.objectContaining({ expectedCurrentSnapshot: "s1", lineageBaseSnapshot: "s1", lineage: [{ newOrdinal: 0, oldOccurrenceId: "old", decision: "continue", reason: "Same content identity with updated wording" }] }) }) });
+});
+
+it("does not overwrite a newer identity draft after a delayed estimate or project leave", async () => {
+  const ref = createRef<SourceHandle>();
+  const original = invoke.getMockImplementation()!;
+  let complete!: (value: unknown) => void;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === "read_content_scope") return updateComparison().scope;
+    if (command === "read_source_comparison") return updateComparison();
+    if (command === "estimate_source_update") return new Promise(resolve => { complete = resolve; });
+    return original(command, args);
+  });
+  render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  act(() => ref.current!.showAttempt("update"));
+  await screen.findByRole("heading", { name: "Review upstream changes" });
+  const user = userEvent.setup();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), "continue:old");
+  await user.type(screen.getByRole("textbox", { name: "Reason for this decision" }), "Preserved draft");
+  await user.click(screen.getByRole("button", { name: "Review estimated impact" }));
+  expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toBeDisabled();
+  let leave!: Promise<boolean>;
+  act(() => { leave = ref.current!.allowLeave(); });
+  await user.click(screen.getByRole("button", { name: "Stay in project" }));
+  expect(await leave).toBe(false);
+  await act(async () => complete([{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }]));
+  expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Preserved draft");
 });

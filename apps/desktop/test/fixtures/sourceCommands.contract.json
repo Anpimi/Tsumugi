@@ -45,7 +45,11 @@
       "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "identityPolicy": "smapi-native-key/v1",
       "expectedContentRevision": "9007199254740993",
-      "sourceLanguage": "en"
+      "sourceLanguage": "en",
+      "expectedCurrentSnapshot": null,
+      "lineageBaseSnapshot": null,
+      "lineage": [],
+      "actor": null
     }
   },
   "page": {
@@ -60,7 +64,11 @@
       "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "identityPolicy": "smapi-native-key/v1",
       "expectedContentRevision": "9007199254740993",
-      "sourceLanguage": "en"
+      "sourceLanguage": "en",
+      "expectedCurrentSnapshot": null,
+      "lineageBaseSnapshot": null,
+      "lineage": [],
+      "actor": null
     },
     "namespace": "Fixture.Mod",
     "coverage": [

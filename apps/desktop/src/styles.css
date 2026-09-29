@@ -6,6 +6,15 @@
 .source-table th, .source-table td { padding: 10px; vertical-align: top; border-bottom: 1px solid #dce3ee; }
 .source-table th { max-width: 240px; overflow-wrap: anywhere; }
 .source-table pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 180px; font: inherit; }
+.source-comparison-table { min-width: 900px; table-layout: fixed; }
+.source-comparison-table th:first-child { width: 130px; overflow-wrap: normal; }
+.source-comparison-table th:last-child { width: 300px; }
+.source-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.source-field input, .source-field textarea, .source-field select { width: 100%; min-width: 0; padding: 8px; border: 1px solid #a7b5c9; border-radius: 6px; font: inherit; background: white; color: #17233a; }
+.source-field textarea { min-height: 90px; resize: vertical; }
+.source-maintenance-panel { margin: 20px 0; padding-top: 12px; border-top: 1px solid #dce3ee; }
+.source-maintenance-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.source-maintenance-panel code { overflow-wrap: anywhere; }
 .source-dialog code { overflow-wrap: anywhere; font-size: 12px; }
 .source-dialog section { margin: 16px 0; }
 .source-dialog .execution-content p { overflow-wrap: anywhere; }

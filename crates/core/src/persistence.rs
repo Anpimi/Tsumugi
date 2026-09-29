@@ -46,7 +46,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -772,25 +772,36 @@ fn validate_existing_connection(
         });
     }
     match user_version {
-        SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true, true),
+        SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true, true, true),
+        8 => {
+            validate_schema_shape(connection, false, true, true, true, true, false)?;
+            backup_before_migration(connection, directory, 8)?;
+            content::migrate_v8(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true, true)
+        }
         7 => {
-            validate_schema_shape(connection, false, true, true, true, false)?;
+            validate_schema_shape(connection, false, true, true, true, false, false)?;
             backup_before_migration(connection, directory, 7)?;
             release::migrate_v7(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true)
+            content::migrate_v8(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true, true)
         }
         6 => {
-            validate_schema_shape(connection, false, true, true, false, false)?;
+            validate_schema_shape(connection, false, true, true, false, false, false)?;
             backup_before_migration(connection, directory, 6)?;
             review::migrate_v6(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             release::migrate_v7(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true)
+            content::migrate_v8(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true, true)
         }
         5 => {
-            validate_schema_shape(connection, false, true, false, false, false)?;
+            validate_schema_shape(connection, false, true, false, false, false, false)?;
             backup_before_migration(connection, directory, 5)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -798,38 +809,44 @@ fn validate_existing_connection(
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             release::migrate_v7(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true)
+            content::migrate_v8(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true, true)
         }
         4 => {
-            validate_schema_shape(connection, false, false, false, false, false)?;
+            validate_schema_shape(connection, false, false, false, false, false, false)?;
             backup_before_migration(connection, directory, 4)?;
             translation::migrate_v4(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false, false, false)?;
+            validate_schema_shape(connection, false, true, false, false, false, false)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             review::migrate_v6(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             release::migrate_v7(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true)
+            content::migrate_v8(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true, true)
         }
         3 => {
-            validate_schema_shape(connection, true, false, false, false, false)?;
+            validate_schema_shape(connection, true, false, false, false, false, false)?;
             backup_before_migration(connection, directory, 3)?;
             ledger::migrate_v3_result_limit(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, false, false, false, false)?;
+            validate_schema_shape(connection, false, false, false, false, false, false)?;
             translation::migrate_v4(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false, false, false)?;
+            validate_schema_shape(connection, false, true, false, false, false, false)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             review::migrate_v6(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             release::migrate_v7(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true)
+            content::migrate_v8(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true, true)
         }
         found_version => Err(PersistenceError::UnsupportedSchema {
             found_version,
@@ -877,6 +894,7 @@ fn validate_schema_shape(
     has_resources: bool,
     has_review: bool,
     has_release: bool,
+    has_maintenance: bool,
 ) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -900,6 +918,10 @@ fn validate_schema_shape(
     }
     if has_release {
         expected_tables.extend(release::table_names());
+        expected_tables.sort();
+    }
+    if has_maintenance {
+        expected_tables.extend(content::maintenance_table_names());
         expected_tables.sort();
     }
     if table_names != expected_tables {
@@ -1112,6 +1134,9 @@ mod tests {
             )
             .unwrap();
         transaction
+            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+            .unwrap();
+        transaction
             .pragma_update(None, "user_version", 3i64)
             .unwrap();
         transaction.commit().unwrap();
@@ -1310,6 +1335,9 @@ mod tests {
         connection
             .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
             .unwrap();
+        connection
+            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+            .unwrap();
         connection.pragma_update(None, "user_version", 4).unwrap();
         drop(connection);
 
@@ -1381,6 +1409,9 @@ mod tests {
         let database = path.join(DATABASE_FILENAME);
         let connection = Connection::open(&database).unwrap();
         release::drop_for_legacy_fixture(&connection).unwrap();
+        connection
+            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+            .unwrap();
         connection.pragma_update(None, "user_version", 7).unwrap();
         drop(connection);
         let reopened = ProjectStore::open(&path).unwrap();
@@ -1446,6 +1477,9 @@ mod tests {
             let database = path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
+            connection
+                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+                .unwrap();
             connection.pragma_update(None, "user_version", 7).unwrap();
             drop(connection);
 
@@ -1516,6 +1550,9 @@ mod tests {
             review::drop_for_legacy_fixture(&connection).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
+            connection
+                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+                .unwrap();
             connection.pragma_update(None, "user_version", 5).unwrap();
             drop(connection);
 
@@ -1604,6 +1641,9 @@ mod tests {
                 .execute_batch(
                     "DROP TABLE translation_selections; DROP TABLE translation_revisions;",
                 )
+                .unwrap();
+            connection
+                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
                 .unwrap();
             connection.pragma_update(None, "user_version", 4).unwrap();
             drop(connection);

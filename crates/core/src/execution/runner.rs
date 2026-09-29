@@ -85,6 +85,23 @@ impl<'a> AdoptionTransaction<'a> {
             .query_row(sql, params, map)
             .map_err(storage_error)
     }
+    pub fn query_rows<
+        T,
+        P: rusqlite::Params,
+        F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    >(
+        &self,
+        sql: &str,
+        params: P,
+        map: F,
+    ) -> Result<Vec<T>, ExecutionError> {
+        let mut statement = self.transaction.prepare(sql).map_err(storage_error)?;
+        statement
+            .query_map(params, map)
+            .map_err(storage_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(storage_error)
+    }
     pub fn execute<P: rusqlite::Params>(
         &self,
         sql: &str,

@@ -348,6 +348,126 @@ pub struct SourceConfirmation {
     pub identity_policy: String,
     pub expected_content_revision: Revision,
     pub source_language: String,
+    #[serde(default)]
+    pub expected_current_snapshot: Option<ExecutionId>,
+    #[serde(default)]
+    pub lineage: Vec<LineageChoice>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub lineage_base_snapshot: Option<ExecutionId>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageChoice {
+    pub new_ordinal: u32,
+    pub old_occurrence_id: ExecutionId,
+    pub decision: LineageDecision,
+    pub reason: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineageDecision {
+    Continue,
+    Reject,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceChange {
+    pub kind: String,
+    pub old: Option<ContentRow>,
+    pub new: Option<SourceOccurrence>,
+    pub candidates: Vec<ContentRow>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceChangePage {
+    pub scope: ContentScope,
+    pub attempt_id: ExecutionId,
+    pub result_id: ExecutionId,
+    pub previous_snapshot_id: ExecutionId,
+    pub confirmation: SourceConfirmation,
+    pub total: u32,
+    pub filtered_total: u32,
+    pub unchanged: u32,
+    pub moved: u32,
+    pub changed: u32,
+    pub added: u32,
+    pub ambiguous: u32,
+    pub removed: u32,
+    pub next_ordinal: Option<u32>,
+    pub rows: Vec<SourceChange>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceHistory {
+    pub snapshots: Vec<SourceHistoryEntry>,
+    pub next_offset: Option<u32>,
+    pub total: u32,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceHistoryEntry {
+    pub snapshot_id: ExecutionId,
+    pub revision: u64,
+    pub current: bool,
+    pub total: u32,
+    pub action_id: ExecutionId,
+    pub result_digest: String,
+    pub coverage: Vec<FileCoverage>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LineageEvidence {
+    pub old: ContentRow,
+    pub old_snapshot_id: ExecutionId,
+    pub relationship: String,
+    pub decision: String,
+    pub actor: Option<String>,
+    pub reason: Option<String>,
+    pub action_id: ExecutionId,
+    pub policy: String,
+    pub applied_relation: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceImpactBasis {
+    pub basis: String,
+    pub evidence: crate::ReviewBasis,
+    pub action_id: ExecutionId,
+    pub kind: String,
+    pub translation_text: Option<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceImpactSummary {
+    pub locale: String,
+    pub preserved: u32,
+    pub reassess: u32,
+    pub unresolved: u32,
+    pub total: u32,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceImpactRow {
+    pub current: ContentRow,
+    pub previous: Option<ContentRow>,
+    pub previous_bases: Vec<SourceImpactBasis>,
+    pub locale: String,
+    pub status: String,
+    pub reasons: Vec<String>,
+    pub selection_id: Option<ExecutionId>,
+    pub translation_revision_id: Option<ExecutionId>,
+    pub review_basis: String,
+    pub lineage: Vec<LineageEvidence>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceImpactPage {
+    pub snapshot_id: ExecutionId,
+    pub summary: SourceImpactSummary,
+    pub next_ordinal: Option<u32>,
+    pub rows: Vec<SourceImpactRow>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
