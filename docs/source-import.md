@@ -25,4 +25,4 @@ If a start acknowledgement is lost, check or resume that same import. If applyin
 
 After capture, the external Mod can be moved or removed: preview, adoption and reopening use project-owned bytes. Moving the closed project keeps content identities and receipts intact. Corrupt stored evidence and unsupported database schemas are rejected rather than repaired or shown as empty content.
 
-New projects use schema 7. Valid schema 3, 4, 5, and 6 databases receive a SQLite backup in their project directory before automatic upgrade. Other schema versions are rejected without resetting the project. This remains part of the unreleased 0.1.0 batch.
+New projects use schema 8. Valid schema 3 through 7 databases receive a SQLite backup in their project directory before automatic upgrade. Other schema versions are rejected without resetting the project. This remains part of the unreleased 0.1.0 batch.

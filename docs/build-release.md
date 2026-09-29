@@ -1,0 +1,13 @@
+# Local SMAPI language-file build and export
+
+Open a project with a flat SMAPI `i18n/default.json` source snapshot, selected translations, current QA checks, and human approvals. In **Review and QA**, resolve the work queue and check build readiness. Source-text fallback and supported QA waivers require their own recorded decisions.
+
+Choose **Build and export**, select the target languages for this release, and enter an explicit SMAPI file name for each one. For example, a project target of `zh-CN` can be mapped to `i18n/zh.json`. The first build supports flat language files only. It does not package or install a Mod or test the result in Stardew Valley. Review the current policy, source snapshot, coverage, blockers, and exceptions before starting. A change to relevant project state after the readiness check requires another check.
+
+The build runs as a persisted task. Open **Tasks** to inspect each saved result, its entry count and SHA-256, and any failure. Applying all verified results is a separate action that saves one immutable release. The first release policy requires every requested language to pass. A failed or cancelled task remains available for inspection and cannot become a successful release. The build uses saved project text; it does not reread the original Mod or generate new translations.
+
+Return to **Build and export**, refresh releases, and select one. The release detail shows its source snapshot, file mapping and digest. **Release input and checks** expands the fixed input digest, source-file digests, builder and artifact checker versions, review basis, and recorded source fallbacks or QA waivers. Later project edits do not change this release or its stored file bytes.
+
+Choose a local export folder and **Check destination**. The files go into its `i18n` subfolder. Existing matching files are recognized; differing files require an explicit replacement choice. If a file changes after this preview, export stops and asks for a fresh destination check. An interrupted export may leave a pending or uncertain result: select the same folder and use the history's file check before making another attempt. A matching file is confirmed; a missing file can be retried; a differing or unreadable file remains uncertain. Export history records the target, per-file result and observed digest. A failed export does not delete its release. Verify the exported files before placing them in a Mod folder.
+
+New projects use database schema 8. Valid schema 3 through 7 projects receive a SQLite backup before opening with the new schema. The application remains in the unreleased 0.1.0 development batch.

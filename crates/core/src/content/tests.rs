@@ -84,6 +84,78 @@ fn prepare(store: &mut ProjectStore, input: &FixedInput, result: &FixedResult) -
 }
 
 #[test]
+fn oversized_multi_locale_build_is_rejected_before_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = ProjectStore::create(
+        directory.path().join("project"),
+        ProjectMetadata::create("Build failure", "en", ["zh-CN", "fr-FR"]).unwrap(),
+    )
+    .unwrap();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let entries = (0..70)
+        .map(|ordinal| BuildEntry {
+            ordinal,
+            unit_id: ExecutionId::new(),
+            source_revision_id: ExecutionId::new(),
+            native_key: format!("key-{ordinal}"),
+            source_text: "Source".into(),
+            value: "Small".into(),
+            selection_id: Some(ExecutionId::new()),
+            revision_id: Some(ExecutionId::new()),
+            fallback_id: None,
+            decision_id: Some(ExecutionId::new()),
+            check_id: ExecutionId::new(),
+            waiver_ids: vec![],
+        })
+        .collect::<Vec<_>>();
+    let mut oversized = entries.clone();
+    for entry in &mut oversized {
+        entry.value = "\n".repeat(8192);
+    }
+    let manifest = BuildManifest {
+        version: 1,
+        project_id: project,
+        source_snapshot_id: ExecutionId::new(),
+        policy_version: "balanced-1".into(),
+        eligibility_basis: "0".repeat(64),
+        plugin_id: PLUGIN_ID.into(),
+        plugin_version: PLUGIN_VERSION.into(),
+        builder_version: BUILDER_VERSION.into(),
+        validator_version: VALIDATOR_VERSION.into(),
+        source_files: vec![
+            BuildSourceFile {
+                logical_path: MANIFEST_PATH.into(),
+                sha256: "0".repeat(64),
+            },
+            BuildSourceFile {
+                logical_path: SOURCE_PATH.into(),
+                sha256: "0".repeat(64),
+            },
+        ],
+        locales: vec![
+            BuildLocale {
+                locale: "zh-CN".into(),
+                file_name: "i18n/zh.json".into(),
+                entries,
+            },
+            BuildLocale {
+                locale: "fr-FR".into(),
+                file_name: "i18n/fr.json".into(),
+                entries: oversized,
+            },
+        ],
+    };
+    assert_eq!(
+        manifest.fixed_input(ExecutionId::new()).unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+    assert!(store.list_releases(project).unwrap().is_empty());
+    drop(store);
+    let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+    assert!(reopened.list_releases(project).unwrap().is_empty());
+}
+
+#[test]
 fn real_source_matches_independent_oracle_and_keeps_byte_locations() {
     let bundle = bundle();
     let output = extract(&bundle, &Cancellation::default()).unwrap();
