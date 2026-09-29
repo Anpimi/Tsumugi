@@ -874,6 +874,8 @@ impl ProjectStore {
         super::content::validate(connection)?;
         super::translation::validate(connection)
             .map_err(|_| error(ErrorCode::CorruptLedger, "translation"))?;
+        super::release::validate(connection)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "release"))?;
         self.execution_unknown
             .store(false, std::sync::atomic::Ordering::Release);
         Ok(())

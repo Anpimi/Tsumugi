@@ -143,6 +143,10 @@ impl Selection {
             .to_string_lossy()
             .into()
     }
+    pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
+        self.verify()?;
+        Ok(&self.root)
+    }
     pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
         self.verify()?;
         let i18n_path = self.root.join("i18n");
@@ -369,6 +373,9 @@ pub struct Selection;
 #[cfg(not(windows))]
 impl Selection {
     pub fn authorize(_: PathBuf) -> Result<Self, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
+    pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
     pub fn label(&self) -> String {

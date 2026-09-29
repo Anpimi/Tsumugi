@@ -153,7 +153,7 @@ export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, 
       {tasks.length > 0 ? <p>{t("execution.listHelp")}</p> : null}
       <ul className="execution-list">{tasks.map(task => <li key={task.taskId}>
         <button className="secondary-button" onClick={() => selectTask(task.taskId)} disabled={busy}>
-          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
+          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "locale-build" ? "release.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
         </button>
       </li>)}</ul>
       {cursor !== "0" || tasks.length === 50 ? <div className="execution-actions">
@@ -212,7 +212,11 @@ export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, 
           {item.status.cancellationRequested ? <small>{t("execution.cancellationRequested")}</small> : null}
           {output?.itemId === item.status.itemId && output.resultId === item.resultId ? <div className="execution-result" ref={outputRegion} tabIndex={-1} role="region" aria-label={t("execution.resultFor", { name: item.scope.id })}>
             <h4>{t("execution.resultFor", { name: item.scope.id })}</h4>
-            {output.output !== null ? <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
+            {output.output !== null ? detail.operation === "locale-build" ? <p>{t("release.outputSummary", {
+              file: (output.output as { fileName: string }).fileName,
+              count: (output.output as { entryCount: number }).entryCount,
+              digest: (output.output as { sha256: string }).sha256,
+            })}</p> : <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
             {output.diagnostic ? <><p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p>
               <details><summary>{t("execution.diagnostic")}</summary><code>{output.diagnostic.code}</code></details></> : null}
           </div> : null}

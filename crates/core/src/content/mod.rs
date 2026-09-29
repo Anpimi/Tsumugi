@@ -1,7 +1,13 @@
 //! Immutable source bundles, native identity evidence and read-only projections.
+mod build;
 mod smapi;
 mod translation;
 pub use crate::persistence::content::SourceAdoptionHandler;
+pub use build::{
+    BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILD_OPERATION, BUILDER_VERSION, BuildEntry,
+    BuildLocale, BuildManifest, BuildOutput, BuildRunner, BuildSourceFile, VALIDATOR_VERSION,
+    artifact_digest, build_locale, validate_build_output,
+};
 pub use smapi::{SourceRunner, extract};
 pub use translation::{
     TRANSLATION_OPERATION, TranslationBundle, TranslationEntry, TranslationOutput,

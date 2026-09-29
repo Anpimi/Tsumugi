@@ -15,10 +15,15 @@ use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 pub(crate) mod content;
 mod ledger;
+mod release;
 mod resources;
 mod review;
 mod translation;
 pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
+pub use release::{
+    BuildLocaleChoice, DeliveryFile, DeliveryView, ReleaseAdoptionHandler, ReleaseView,
+    ReleasedArtifact,
+};
 pub use resources::{
     CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision, GlossaryCapture,
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
@@ -41,7 +46,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -559,6 +564,8 @@ fn initialize_schema(
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     review::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    release::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
         .map_err(|error| map_commit_error(error))?;
@@ -765,49 +772,64 @@ fn validate_existing_connection(
         });
     }
     match user_version {
-        SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true),
+        SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true, true),
+        7 => {
+            validate_schema_shape(connection, false, true, true, true, false)?;
+            backup_before_migration(connection, directory, 7)?;
+            release::migrate_v7(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true)
+        }
         6 => {
-            validate_schema_shape(connection, false, true, true, false)?;
+            validate_schema_shape(connection, false, true, true, false, false)?;
             backup_before_migration(connection, directory, 6)?;
             review::migrate_v6(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true)
+            release::migrate_v7(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true)
         }
         5 => {
-            validate_schema_shape(connection, false, true, false, false)?;
+            validate_schema_shape(connection, false, true, false, false, false)?;
             backup_before_migration(connection, directory, 5)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             review::migrate_v6(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true)
+            release::migrate_v7(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true)
         }
         4 => {
-            validate_schema_shape(connection, false, false, false, false)?;
+            validate_schema_shape(connection, false, false, false, false, false)?;
             backup_before_migration(connection, directory, 4)?;
             translation::migrate_v4(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false, false)?;
+            validate_schema_shape(connection, false, true, false, false, false)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             review::migrate_v6(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true)
+            release::migrate_v7(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true)
         }
         3 => {
-            validate_schema_shape(connection, true, false, false, false)?;
+            validate_schema_shape(connection, true, false, false, false, false)?;
             backup_before_migration(connection, directory, 3)?;
             ledger::migrate_v3_result_limit(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, false, false, false)?;
+            validate_schema_shape(connection, false, false, false, false, false)?;
             translation::migrate_v4(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false, false)?;
+            validate_schema_shape(connection, false, true, false, false, false)?;
             resources::migrate_v5(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
             review::migrate_v6(connection)
                 .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true)
+            release::migrate_v7(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true)
         }
         found_version => Err(PersistenceError::UnsupportedSchema {
             found_version,
@@ -854,6 +876,7 @@ fn validate_schema_shape(
     has_translation: bool,
     has_resources: bool,
     has_review: bool,
+    has_release: bool,
 ) -> Result<(), PersistenceError> {
     let table_names: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
@@ -873,6 +896,10 @@ fn validate_schema_shape(
     }
     if has_review {
         expected_tables.extend(review::table_names());
+        expected_tables.sort();
+    }
+    if has_release {
+        expected_tables.extend(release::table_names());
         expected_tables.sort();
     }
     if table_names != expected_tables {
@@ -925,6 +952,11 @@ fn validate_schema_shape(
     }
     if has_review {
         review::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
+    }
+    if has_release {
+        release::validate(connection).map_err(|_| PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         })?;
     }
@@ -1060,6 +1092,7 @@ mod tests {
             .pragma_update(None, "defer_foreign_keys", true)
             .unwrap();
         review::drop_for_legacy_fixture(&transaction).unwrap();
+        release::drop_for_legacy_fixture(&transaction).unwrap();
         resources::drop_for_legacy_fixture(&transaction).unwrap();
         transaction
             .execute_batch(
@@ -1272,6 +1305,7 @@ mod tests {
         let database = path.join(DATABASE_FILENAME);
         let connection = Connection::open(&database).unwrap();
         review::drop_for_legacy_fixture(&connection).unwrap();
+        release::drop_for_legacy_fixture(&connection).unwrap();
         resources::drop_for_legacy_fixture(&connection).unwrap();
         connection
             .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
@@ -1337,6 +1371,135 @@ mod tests {
     }
 
     #[test]
+    fn schema_seven_upgrade_adds_release_storage_and_preserves_backup() {
+        let parent = temporary_directory("release-upgrade");
+        let path = parent.path().join("project");
+        ProjectStore::create(&path, metadata())
+            .unwrap()
+            .close()
+            .unwrap();
+        let database = path.join(DATABASE_FILENAME);
+        let connection = Connection::open(&database).unwrap();
+        release::drop_for_legacy_fixture(&connection).unwrap();
+        connection.pragma_update(None, "user_version", 7).unwrap();
+        drop(connection);
+        let reopened = ProjectStore::open(&path).unwrap();
+        assert_eq!(reopened.metadata().unwrap(), metadata());
+        assert_eq!(
+            reopened
+                .connection()
+                .unwrap()
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            SCHEMA_VERSION
+        );
+        assert_eq!(
+            reopened
+                .list_releases(
+                    crate::execution::ExecutionId::parse(&metadata().project_id().to_string())
+                        .unwrap()
+                )
+                .unwrap()
+                .len(),
+            0
+        );
+        reopened.close().unwrap();
+        let backups: Vec<_> = fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|file| {
+                file.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("project.sqlite3.pre-v7-")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        let backup =
+            Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        assert_eq!(
+            backup
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            backup
+                .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+    }
+
+    #[test]
+    fn schema_seven_release_upgrade_recovers_across_process_commit_boundaries() {
+        for (point, expected_version) in [
+            ("before-release-migration-commit", 7),
+            ("after-release-migration-commit", 8),
+        ] {
+            let parent = temporary_directory("release-migration-crash");
+            let path = parent.path().join("project");
+            ProjectStore::create(&path, metadata())
+                .unwrap()
+                .close()
+                .unwrap();
+            let database = path.join(DATABASE_FILENAME);
+            let connection = Connection::open(&database).unwrap();
+            release::drop_for_legacy_fixture(&connection).unwrap();
+            connection.pragma_update(None, "user_version", 7).unwrap();
+            drop(connection);
+
+            run_migration_crash_child(&path, point, &parent.path().join("migration-hook"));
+            let connection = Connection::open(&database).unwrap();
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                expected_version
+            );
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            drop(connection);
+            let backups = fs::read_dir(&path)
+                .unwrap()
+                .map(|item| item.unwrap().path())
+                .filter(|file| {
+                    file.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("project.sqlite3.pre-v7-")
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(backups.len(), 1);
+            let backup =
+                Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            assert_eq!(
+                backup
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                7
+            );
+            drop(backup);
+
+            let reopened = ProjectStore::open(&path).unwrap();
+            assert_eq!(reopened.metadata().unwrap(), metadata());
+            assert_eq!(
+                reopened
+                    .connection()
+                    .unwrap()
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                SCHEMA_VERSION
+            );
+            reopened.close().unwrap();
+        }
+    }
+
+    #[test]
     fn schema_five_resource_upgrade_preserves_project_and_crash_boundaries() {
         for point in [
             "before-resource-migration-commit",
@@ -1351,6 +1514,7 @@ mod tests {
             let database = project_path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             review::drop_for_legacy_fixture(&connection).unwrap();
+            release::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection.pragma_update(None, "user_version", 5).unwrap();
             drop(connection);
@@ -1434,6 +1598,7 @@ mod tests {
             let database = project_path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             review::drop_for_legacy_fixture(&connection).unwrap();
+            release::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection
                 .execute_batch(

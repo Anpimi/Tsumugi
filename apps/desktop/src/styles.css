@@ -990,10 +990,19 @@ button:focus-visible {
   padding: 16px 0 26px;
 }
 
+.project-heading > div {
+  min-width: 0;
+}
+
+.project-heading h1 {
+  overflow-wrap: anywhere;
+}
+
 .project-location {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   max-width: min(680px, 100%);
   margin-top: 9px;
   color: #8793a6;
@@ -1422,6 +1431,14 @@ button:focus-visible {
   }
 }
 .review-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.release-dialog { width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.release-dialog section { margin: 18px 0; }
+.release-dialog fieldset { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.release-locale { display: inline-flex; align-items: center; gap: 6px; }
+.release-mapping { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.release-mapping input { min-width: 130px; padding: 7px; }
+.release-dialog code { overflow-wrap: anywhere; }
+.release-alert { padding: 12px 16px; border: 1px solid var(--danger, #b74d4d); border-radius: 8px; background: #fff3f1; color: #772929; }
 .review-header-fields { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
 .review-header-fields label { display: grid; gap: 0.35rem; flex: 1 1 12rem; max-width: 22rem; }
 .review-header-fields input, .review-header-fields select { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid #aab9d1; border-radius: 8px; font: inherit; }

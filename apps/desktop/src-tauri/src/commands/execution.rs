@@ -27,7 +27,10 @@ macro_rules! handlers {
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
         review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
         review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
-        review::read_review_work,review::read_review_eligibility,$($extra),*
+        review::read_review_work,review::read_review_eligibility,
+        release::start_locale_build,release::list_releases,release::choose_delivery_folder,
+        release::preview_delivery,release::export_release,release::list_deliveries,
+        release::reconcile_delivery,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
@@ -98,6 +101,7 @@ pub(super) struct ExecutionHost {
     quiescing: bool,
     last_error: Option<CommandError>,
     source: source::SourceSession,
+    release: release::ReleaseSession,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -117,12 +121,16 @@ impl ExecutionHost {
             quiescing: false,
             last_error: None,
             source: source::SourceSession::default(),
+            release: release::ReleaseSession::default(),
         };
         host.runtime
             .register(Arc::new(tsumugi_core::content::SourceRunner))
             .map_err(map_read)?;
         host.runtime
             .register(Arc::new(tsumugi_core::content::TranslationRunner))
+            .map_err(map_read)?;
+        host.runtime
+            .register(Arc::new(tsumugi_core::content::BuildRunner))
             .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::content::OPERATION.into(),
@@ -131,6 +139,10 @@ impl ExecutionHost {
         host.handlers.insert(
             tsumugi_core::content::TRANSLATION_OPERATION.into(),
             Arc::new(tsumugi_core::TranslationAdoptionHandler),
+        );
+        host.handlers.insert(
+            tsumugi_core::content::BUILD_OPERATION.into(),
+            Arc::new(tsumugi_core::ReleaseAdoptionHandler),
         );
         #[cfg(feature = "execution-test-host")]
         {
@@ -210,6 +222,7 @@ impl ExecutionHost {
         self.poll_queries(store)?;
         self.quiescing = true;
         self.source.stop();
+        self.release.stop();
         for job in self.queries.drain(..) {
             self.retired_queries.push(job.thread);
         }
@@ -318,6 +331,7 @@ macro_rules! request {
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $(pub $field:$kind,)* }
     }
 }
+mod release;
 mod resource;
 mod review;
 mod source;

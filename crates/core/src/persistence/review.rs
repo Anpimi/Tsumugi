@@ -3144,6 +3144,7 @@ mod tests {
     fn schema_six_migration_keeps_a_recoverable_backup() {
         let (directory, mut store, project, _) = fixture();
         let connection = store.connection_mut().unwrap();
+        crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
         for (name, _) in TABLES.iter().rev() {
             connection
                 .execute_batch(&format!("DROP TABLE {name}"))
@@ -3193,6 +3194,7 @@ mod tests {
             let (directory, mut store, project, _) = fixture();
             let path = directory.path().join("project");
             let connection = store.connection_mut().unwrap();
+            crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
             for (name, _) in TABLES.iter().rev() {
                 connection
                     .execute_batch(&format!("DROP TABLE {name}"))
@@ -3906,5 +3908,800 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a.locales.len(), 2);
         assert!(!a.ready);
+    }
+
+    #[test]
+    fn approved_locale_build_publishes_verified_bytes_and_survives_reopen() {
+        use crate::{
+            BuildLocaleChoice, ReleaseAdoptionHandler,
+            content::{BuildManifest, BuildOutput, BuildRunner, validate_build_output},
+        };
+        let (directory, mut store, project, units) = fixture();
+        let choices = [BuildLocaleChoice {
+            locale: "zh-CN".into(),
+            file_name: "i18n/zh.json".into(),
+        }];
+        let blocked = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(!blocked.ready);
+        assert_eq!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &choices, &blocked.basis)
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
+        for (unit, text) in [(units[0], "你好 {{name}}"), (units[1], "普通")] {
+            translate(&mut store, project, unit, "zh-CN", text);
+            check(&mut store, project, unit, "zh-CN");
+            approve(&mut store, project, unit, "zh-CN");
+        }
+        let ready = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(ready.ready);
+        let attempt = ExecutionId::new();
+        let input = store
+            .prepare_locale_build(project, attempt, &choices, &ready.basis)
+            .unwrap();
+        let manifest = BuildManifest::from_input(&input).unwrap();
+        assert_eq!(
+            manifest.locales[0]
+                .entries
+                .iter()
+                .map(|entry| entry.native_key.as_str())
+                .collect::<Vec<_>>(),
+            ["hello", "plain"]
+        );
+        assert_eq!(
+            manifest.locales[0]
+                .entries
+                .iter()
+                .map(|entry| entry.source_text.as_str())
+                .collect::<Vec<_>>(),
+            ["Hello {{name}}", "Plain"]
+        );
+        assert_eq!(
+            manifest.locales[0]
+                .entries
+                .iter()
+                .map(|entry| entry.value.as_str())
+                .collect::<Vec<_>>(),
+            ["你好 {{name}}", "普通"]
+        );
+        let cancelled = crate::execution::Cancellation::default();
+        cancelled.request();
+        assert_eq!(
+            crate::content::build_locale(&manifest.locales[0], &cancelled)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        let mut oversized = manifest.locales[0].clone();
+        oversized.entries = (0..70)
+            .map(|index| {
+                let mut entry = oversized.entries[0].clone();
+                entry.native_key = format!("key-{index}");
+                entry.value = "x".repeat(16 * 1024);
+                entry
+            })
+            .collect();
+        assert_eq!(
+            crate::content::build_locale(&oversized, &crate::execution::Cancellation::default())
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+        let mut wrong = choices.clone();
+        wrong[0].file_name = "i18n/con.json".into();
+        assert!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &wrong, &ready.basis)
+                .is_err()
+        );
+        wrong[0].file_name = "i18n/fr.json".into();
+        assert!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &wrong, &ready.basis)
+                .is_err()
+        );
+        wrong[0].file_name = "i18n/default.json".into();
+        assert!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &wrong, &ready.basis)
+                .is_err()
+        );
+        translate(&mut store, project, units[0], "zh-CN", "已更改 {{name}}");
+        assert_eq!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &choices, &ready.basis)
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
+
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime.register(Arc::new(BuildRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            runtime.tick(&mut store).unwrap();
+            let item = input.envelope().items[0].item_id;
+            if let Some(result) = store.execution_current_result(attempt, item).unwrap() {
+                break result;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        let saved = store.execution_result(attempt, result).unwrap();
+        let output: BuildOutput =
+            serde_json::from_value(saved.envelope().output.clone().unwrap()).unwrap();
+        validate_build_output(&manifest.locales[0], &output).unwrap();
+        assert_eq!(
+            output.utf8,
+            "{\n  \"hello\": \"你好 {{name}}\",\n  \"plain\": \"普通\"\n}\n"
+        );
+        let mut damaged = output.clone();
+        damaged.utf8.push(' ');
+        assert_eq!(
+            validate_build_output(&manifest.locales[0], &damaged)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutputInvalid
+        );
+        damaged.sha256 = crate::content::artifact_digest(damaged.utf8.as_bytes());
+        assert_eq!(
+            validate_build_output(&manifest.locales[0], &damaged)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutputInvalid
+        );
+        damaged = output.clone();
+        damaged.utf8 = "{\"hello\":\"changed\",\"plain\":\"普通\"}".into();
+        damaged.sha256 = crate::content::artifact_digest(damaged.utf8.as_bytes());
+        assert_eq!(
+            validate_build_output(&manifest.locales[0], &damaged)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutputInvalid
+        );
+        damaged = output.clone();
+        damaged.utf8 = "{\"hello\":\"x\"".into();
+        damaged.sha256 = crate::content::artifact_digest(damaged.utf8.as_bytes());
+        assert_eq!(
+            validate_build_output(&manifest.locales[0], &damaged)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutputInvalid
+        );
+        damaged = output.clone();
+        damaged.locale = "fr-FR".into();
+        assert_eq!(
+            validate_build_output(&manifest.locales[0], &damaged)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutputInvalid
+        );
+        damaged = output.clone();
+        damaged.builder_version = "old-builder".into();
+        assert_eq!(
+            validate_build_output(&manifest.locales[0], &damaged)
+                .unwrap_err()
+                .code,
+            ErrorCode::OutputInvalid
+        );
+        store.validate_execution_result(attempt, result).unwrap();
+        let action_id = ExecutionId::new();
+        let action = store
+            .prepare_adoption_with_id(
+                action_id,
+                attempt,
+                input.envelope().units[0].unit_id,
+                vec![result],
+                serde_json::Value::Null,
+            )
+            .unwrap();
+        let receipt = store
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .unwrap();
+        let again = store
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .unwrap();
+        assert_eq!(receipt, again);
+        let release_id = ExecutionId::parse(&receipt.changes[0].id).unwrap();
+        let (artifact, bytes) = store.release_artifact(release_id, "zh-CN").unwrap();
+        assert_eq!(bytes, output.utf8.as_bytes());
+        assert_eq!(artifact.sha256, output.sha256);
+        let release = store.release_view(release_id).unwrap();
+        assert_eq!(release.manifest_sha256.len(), 64);
+        assert_eq!(release.validator_version, crate::content::VALIDATOR_VERSION);
+        assert!(release.exceptions.is_empty());
+        let delivery_action = ExecutionId::new();
+        let pending = store
+            .begin_delivery(delivery_action, release_id, "C:\\isolated\\export", false)
+            .unwrap();
+        assert_eq!(pending.state, "pending");
+        assert_eq!(
+            store
+                .begin_delivery(delivery_action, release_id, "C:\\isolated\\export", false)
+                .unwrap()
+                .delivery_id,
+            pending.delivery_id
+        );
+        assert!(
+            store
+                .begin_delivery(delivery_action, release_id, "C:\\isolated\\export", true)
+                .is_err()
+        );
+        let mut files = pending.files;
+        files[0].actual_sha256 = Some(artifact.sha256.clone());
+        files[0].state = "succeeded".into();
+        assert_eq!(
+            store.finish_delivery(delivery_action, files).unwrap().state,
+            "succeeded"
+        );
+        assert_eq!(
+            store
+                .finish_delivery(delivery_action, Vec::new())
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
+        drop(runtime);
+        drop(store);
+        let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_eq!(
+            reopened.release_artifact(release_id, "zh-CN").unwrap().1,
+            bytes
+        );
+        assert_eq!(reopened.list_releases(project).unwrap().len(), 1);
+        assert_eq!(
+            reopened.list_deliveries(release_id).unwrap()[0].state,
+            "succeeded"
+        );
+        assert!(!reopened.list_deliveries(release_id).unwrap()[0].overwrite_conflicts);
+        drop(reopened);
+        let moved = directory.path().join("moved-project");
+        std::fs::rename(directory.path().join("project"), &moved).unwrap();
+        let reopened = ProjectStore::open(&moved).unwrap();
+        assert_eq!(
+            reopened.release_artifact(release_id, "zh-CN").unwrap().1,
+            bytes
+        );
+        reopened.connection().unwrap().execute(
+            "UPDATE release_artifacts SET validator_version='old-validator' WHERE release_id=?1",
+            [release_id.to_string()],
+        ).unwrap();
+        assert_eq!(
+            reopened
+                .release_artifact(release_id, "zh-CN")
+                .unwrap_err()
+                .code,
+            ErrorCode::CorruptLedger
+        );
+        reopened
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE release_artifacts SET validator_version=?2 WHERE release_id=?1",
+                rusqlite::params![release_id.to_string(), crate::content::VALIDATOR_VERSION],
+            )
+            .unwrap();
+        let invalid_utf8 = [0xffu8];
+        reopened
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE release_artifacts SET bytes=?2,sha256=?3 WHERE release_id=?1",
+                rusqlite::params![
+                    release_id.to_string(),
+                    invalid_utf8,
+                    crate::content::artifact_digest(&invalid_utf8)
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            reopened
+                .release_artifact(release_id, "zh-CN")
+                .unwrap_err()
+                .code,
+            ErrorCode::CorruptLedger
+        );
+        reopened
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE release_artifacts SET bytes=?2,sha256=?3 WHERE release_id=?1",
+                rusqlite::params![release_id.to_string(), &bytes, artifact.sha256],
+            )
+            .unwrap();
+        let replacement = b"{\"hello\":\"tampered\"}";
+        reopened
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE release_artifacts SET bytes=?2,sha256=?3 WHERE release_id=?1",
+                rusqlite::params![
+                    release_id.to_string(),
+                    replacement,
+                    crate::content::artifact_digest(replacement)
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            reopened
+                .release_artifact(release_id, "zh-CN")
+                .unwrap_err()
+                .code,
+            ErrorCode::CorruptLedger
+        );
+        drop(reopened);
+        assert!(ProjectStore::open(&moved).is_err());
+    }
+
+    #[test]
+    fn multi_locale_build_keeps_explicit_fallbacks_and_language_boundaries() {
+        use crate::{
+            BuildLocaleChoice, ReleaseAdoptionHandler,
+            content::{BuildManifest, BuildRunner, build_locale, validate_build_output},
+        };
+        let (_directory, mut store, project, units) = fixture();
+        for (unit, text) in [(units[0], "你好 {{name}}"), (units[1], "普通")] {
+            translate(&mut store, project, unit, "zh-CN", text);
+            check(&mut store, project, unit, "zh-CN");
+            approve(&mut store, project, unit, "zh-CN");
+        }
+        for unit in &units {
+            let target = store.review_target(project, *unit, "fr-FR").unwrap();
+            store
+                .allow_source_fallback(&FallbackWrite {
+                    project_id: project,
+                    action_id: ExecutionId::new(),
+                    unit_id: *unit,
+                    locale: "fr-FR".into(),
+                    expected_basis: target.basis,
+                    allow: true,
+                    expected_fallback_id: None,
+                    actor: "Reviewer A".into(),
+                    reason: "Source wording is approved for this locale".into(),
+                })
+                .unwrap();
+            check(&mut store, project, *unit, "fr-FR");
+        }
+        let choices = [
+            BuildLocaleChoice {
+                locale: "zh-CN".into(),
+                file_name: "i18n/zh.json".into(),
+            },
+            BuildLocaleChoice {
+                locale: "fr-FR".into(),
+                file_name: "i18n/fr.json".into(),
+            },
+        ];
+        let eligibility = store
+            .review_eligibility(project, &["zh-CN".into(), "fr-FR".into()])
+            .unwrap();
+        assert!(eligibility.ready);
+        let input = store
+            .prepare_locale_build(project, ExecutionId::new(), &choices, &eligibility.basis)
+            .unwrap();
+        let manifest = BuildManifest::from_input(&input).unwrap();
+        assert_eq!(manifest.locales.len(), 2);
+        let conflicting = [
+            choices[0].clone(),
+            BuildLocaleChoice {
+                locale: "fr-FR".into(),
+                file_name: "i18n/ZH.json".into(),
+            },
+        ];
+        assert!(
+            store
+                .prepare_locale_build(
+                    project,
+                    ExecutionId::new(),
+                    &conflicting,
+                    &eligibility.basis
+                )
+                .is_err()
+        );
+        let missing = [BuildLocaleChoice {
+            locale: "zh-CN".into(),
+            file_name: String::new(),
+        }];
+        assert!(
+            store
+                .prepare_locale_build(
+                    project,
+                    ExecutionId::new(),
+                    &missing,
+                    &store
+                        .review_eligibility(project, &["zh-CN".into()])
+                        .unwrap()
+                        .basis
+                )
+                .is_err()
+        );
+        for locale in &manifest.locales {
+            let output = build_locale(locale, &crate::execution::Cancellation::default()).unwrap();
+            validate_build_output(locale, &output).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&output.utf8).unwrap();
+            if locale.locale == "fr-FR" {
+                assert_eq!(parsed["hello"], "Hello {{name}}");
+                assert_eq!(parsed["plain"], "Plain");
+                assert!(
+                    locale
+                        .entries
+                        .iter()
+                        .all(|entry| entry.fallback_id.is_some() && entry.selection_id.is_none())
+                );
+            } else {
+                assert_eq!(parsed["hello"], "你好 {{name}}");
+                assert_eq!(parsed["plain"], "普通");
+                assert!(
+                    locale
+                        .entries
+                        .iter()
+                        .all(|entry| entry.fallback_id.is_none() && entry.selection_id.is_some())
+                );
+            }
+        }
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime.register(Arc::new(BuildRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let results = loop {
+            runtime.tick(&mut store).unwrap();
+            let ready = input
+                .envelope()
+                .items
+                .iter()
+                .map(|item| {
+                    store
+                        .execution_current_result(input.envelope().attempt_id, item.item_id)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            if ready.iter().all(Option::is_some) {
+                break ready.into_iter().map(Option::unwrap).collect::<Vec<_>>();
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        for result in &results {
+            store
+                .validate_execution_result(input.envelope().attempt_id, *result)
+                .unwrap();
+        }
+        assert_eq!(
+            store
+                .prepare_adoption_with_id(
+                    ExecutionId::new(),
+                    input.envelope().attempt_id,
+                    input.envelope().units[0].unit_id,
+                    vec![results[0]],
+                    serde_json::Value::Null
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        assert!(store.list_releases(project).unwrap().is_empty());
+        let action = store
+            .prepare_adoption_with_id(
+                ExecutionId::new(),
+                input.envelope().attempt_id,
+                input.envelope().units[0].unit_id,
+                results,
+                serde_json::Value::Null,
+            )
+            .unwrap();
+        let receipt = store
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .unwrap();
+        let release_id = ExecutionId::parse(&receipt.changes[0].id).unwrap();
+        let release = store.release_view(release_id).unwrap();
+        assert_eq!(release.exceptions.len(), 2);
+        assert!(
+            release
+                .exceptions
+                .iter()
+                .all(|item| item.locale == "fr-FR" && item.kind == "source-fallback")
+        );
+        let second = store
+            .prepare_locale_build(project, ExecutionId::new(), &choices, &eligibility.basis)
+            .unwrap();
+        runtime.submit(&mut store, &second).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let second_results = loop {
+            runtime.tick(&mut store).unwrap();
+            let ready = second
+                .envelope()
+                .items
+                .iter()
+                .map(|item| {
+                    store
+                        .execution_current_result(second.envelope().attempt_id, item.item_id)
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            if ready.iter().all(Option::is_some) {
+                break ready.into_iter().map(Option::unwrap).collect::<Vec<_>>();
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        for result in &second_results {
+            store
+                .validate_execution_result(second.envelope().attempt_id, *result)
+                .unwrap();
+        }
+        let second_action = store
+            .prepare_adoption_with_id(
+                ExecutionId::new(),
+                second.envelope().attempt_id,
+                second.envelope().units[0].unit_id,
+                second_results,
+                serde_json::Value::Null,
+            )
+            .unwrap();
+        let second_receipt = store
+            .adopt_execution(&second_action, &ReleaseAdoptionHandler)
+            .unwrap();
+        let second_release_id = ExecutionId::parse(&second_receipt.changes[0].id).unwrap();
+        assert_ne!(release_id, second_release_id);
+        assert_eq!(store.list_releases(project).unwrap().len(), 2);
+        assert_eq!(
+            store.release_artifact(release_id, "zh-CN").unwrap().1,
+            store
+                .release_artifact(second_release_id, "zh-CN")
+                .unwrap()
+                .1
+        );
+        let action_id = ExecutionId::new();
+        let pending = store
+            .begin_delivery(action_id, release_id, "C:\\isolated\\two-locale", true)
+            .unwrap();
+        assert!(pending.overwrite_conflicts);
+        let mut files = pending.files;
+        files[0].actual_sha256 = Some(files[0].expected_sha256.clone());
+        files[0].state = "succeeded".into();
+        files[1].state = "failed".into();
+        assert_eq!(
+            store.finish_delivery(action_id, files).unwrap().state,
+            "partial"
+        );
+        let uncertain_id = ExecutionId::new();
+        let mut uncertain = store
+            .begin_delivery(uncertain_id, release_id, "C:\\isolated\\two-locale", false)
+            .unwrap()
+            .files;
+        uncertain[0].state = "unknown".into();
+        uncertain[1].state = "failed".into();
+        assert_eq!(
+            store
+                .finish_delivery(uncertain_id, uncertain)
+                .unwrap()
+                .state,
+            "unknown"
+        );
+        assert_eq!(
+            store
+                .begin_delivery(
+                    ExecutionId::new(),
+                    release_id,
+                    "C:\\isolated\\two-locale",
+                    false
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::OutcomeUnknown
+        );
+        let mut observed = store
+            .delivery_by_action(uncertain_id)
+            .unwrap()
+            .unwrap()
+            .files;
+        observed[0].actual_sha256 = Some("0".repeat(64));
+        assert_eq!(
+            store
+                .reconcile_delivery(uncertain_id, observed.clone())
+                .unwrap()
+                .state,
+            "unknown"
+        );
+        observed[0].actual_sha256 = Some(observed[0].expected_sha256.clone());
+        observed[0].state = "succeeded".into();
+        assert_eq!(
+            store
+                .reconcile_delivery(uncertain_id, observed)
+                .unwrap()
+                .state,
+            "partial"
+        );
+        assert_eq!(
+            store
+                .begin_delivery(
+                    ExecutionId::new(),
+                    release_id,
+                    "C:\\isolated\\two-locale",
+                    false
+                )
+                .unwrap()
+                .state,
+            "pending"
+        );
+        let missing_id = ExecutionId::new();
+        let mut missing = store
+            .begin_delivery(missing_id, release_id, "C:\\isolated\\missing", false)
+            .unwrap()
+            .files;
+        missing[0].state = "unknown".into();
+        missing[1].state = "failed".into();
+        store.finish_delivery(missing_id, missing).unwrap();
+        let mut missing = store.delivery_by_action(missing_id).unwrap().unwrap().files;
+        missing[0].state = "failed".into();
+        assert_eq!(
+            store.reconcile_delivery(missing_id, missing).unwrap().state,
+            "failed"
+        );
+        assert_eq!(
+            store
+                .begin_delivery(
+                    ExecutionId::new(),
+                    release_id,
+                    "C:\\isolated\\missing",
+                    false
+                )
+                .unwrap()
+                .state,
+            "pending"
+        );
+        let zh_basis = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap()
+            .basis;
+        let target = store.review_target(project, units[0], "fr-FR").unwrap();
+        store
+            .allow_source_fallback(&FallbackWrite {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: units[0],
+                locale: "fr-FR".into(),
+                expected_basis: target.basis,
+                allow: false,
+                expected_fallback_id: target.current_fallback.map(|item| item.fallback_id),
+                actor: "Reviewer A".into(),
+                reason: "Reopen translation work".into(),
+            })
+            .unwrap();
+        assert!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &choices, &eligibility.basis)
+                .is_err()
+        );
+        assert!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &choices[..1], &zh_basis)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn lookup_fixture_build_preserves_all_532_keys_and_approved_revisions() {
+        use crate::{
+            BuildLocaleChoice,
+            content::{BuildManifest, build_locale, validate_build_output},
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let project_path = std::env::var_os("TSUMUGI_BUILD_FIXTURE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| directory.path().join("project"));
+        let mut store = ProjectStore::create(
+            project_path,
+            ProjectMetadata::create("Lookup build", "en", ["zh-CN"]).unwrap(),
+        )
+        .unwrap();
+        let project = parse_id(store.metadata().unwrap().project_id().to_string()).unwrap();
+        adopt_source_files(
+            &mut store,
+            include_bytes!("../../tests/fixtures/stardew-lookup/manifest.json"),
+            include_bytes!("../../tests/fixtures/stardew-lookup/i18n/default.json"),
+        );
+        adopt_translation_files(
+            &mut store,
+            include_bytes!("../../tests/fixtures/stardew-lookup/i18n/zh.json"),
+        );
+        let source_oracle: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/stardew-lookup/oracle.json"
+        ))
+        .unwrap();
+        let translation_oracle: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/stardew-lookup/translation-oracle.json"
+        ))
+        .unwrap();
+        let marker_corrections = [
+            "location.beach.east-pier",
+            "location.desert.topPond",
+            "location.forest.island-tip",
+            "location.forest.lake",
+            "location.forest.river",
+            "location.town.northmost-bridge",
+        ];
+        let mut after = 0;
+        let mut checked = 0;
+        loop {
+            let page = store.review_page(project, "zh-CN", after, 100).unwrap();
+            for target in page.rows {
+                if marker_corrections.contains(&target.native_key.as_str()) {
+                    let corrected = format!(
+                        "{{{{locationName}}}} {}",
+                        target.translation_text.as_deref().unwrap()
+                    );
+                    translate(&mut store, project, target.unit_id, "zh-CN", &corrected);
+                }
+                let run = check(&mut store, project, target.unit_id, "zh-CN");
+                assert!(
+                    run.rules.iter().all(|rule| rule.findings.is_empty()),
+                    "{}",
+                    target.native_key
+                );
+                approve(&mut store, project, target.unit_id, "zh-CN");
+                checked += 1;
+            }
+            match page.next_ordinal {
+                Some(next) => after = next,
+                None => break,
+            }
+        }
+        assert_eq!(checked, 532);
+        let eligibility = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(eligibility.ready);
+        let input = store
+            .prepare_locale_build(
+                project,
+                ExecutionId::new(),
+                &[BuildLocaleChoice {
+                    locale: "zh-CN".into(),
+                    file_name: "i18n/zh.json".into(),
+                }],
+                &eligibility.basis,
+            )
+            .unwrap();
+        let manifest = BuildManifest::from_input(&input).unwrap();
+        assert_eq!(manifest.locales[0].entries.len(), 532);
+        let output = build_locale(
+            &manifest.locales[0],
+            &crate::execution::Cancellation::default(),
+        )
+        .unwrap();
+        validate_build_output(&manifest.locales[0], &output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output.utf8).unwrap();
+        assert_eq!(parsed.as_object().unwrap().len(), 532);
+        for (index, source) in source_oracle["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let key = source["key"].as_str().unwrap();
+            assert_eq!(manifest.locales[0].entries[index].native_key, key);
+            let expected = translation_oracle["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["key"] == key)
+                .unwrap()["text"]
+                .as_str()
+                .unwrap();
+            let expected = if marker_corrections.contains(&key) {
+                format!("{{{{locationName}}}} {expected}")
+            } else {
+                expected.to_owned()
+            };
+            assert_eq!(parsed[key].as_str(), Some(expected.as_str()), "{key}");
+        }
     }
 }
