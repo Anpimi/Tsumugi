@@ -12,7 +12,7 @@ type Pending = { kind: "decision"; request: ReviewWrite } | { kind: "check"; req
   | { kind: "waiver"; request: WaiverWrite } | { kind: "fallback"; request: FallbackWrite };
 type Notice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "checkCancelled" | "cancelRequested" | null;
 const MAX_BATCH = 100;
-export interface ReviewHandle { allowLeave: () => Promise<boolean> }
+export interface ReviewHandle { allowLeave: () => Promise<boolean>; showWork: () => void }
 
 function errorReason(error: unknown): string {
   const value = error as { field?: string; code?: string } | null;
@@ -64,6 +64,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const leaveToTranslation = useRef<{ target: EditorTarget; locale: string } | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const hasDraft = Object.values(drafts).some(value => value.trim().length > 0);
+  const requestedWork = useRef(false);
 
   useEffect(() => {
     alive.current = true;
@@ -75,11 +76,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const ticket = ++generation.current;
     setSelected(null); setHistory(null); setPage(null); setWork(null); setEligibility(null);
     void commands.page({ ...session, locale, afterOrdinal: 0, limit: 50 })
-      .then(value => { if (alive.current && generation.current === ticket) { setPage(value); setPageAfter(0); } })
+      .then(async value => { if (alive.current && generation.current === ticket) { setPage(value); setPageAfter(0); if (requestedWork.current) { requestedWork.current = false; await loadWork(0); } } })
       .catch(error => { if (alive.current && generation.current === ticket) { setNotice("error"); setReason(errorReason(error)); } });
     return () => { generation.current++; };
   }, [open, locale, project.sessionToken]);
   useImperativeHandle(ref, () => ({
+    showWork() { requestedWork.current = true; setTab("work"); setOpen(true); },
     allowLeave() {
       if (running.current || batchRunning || pending) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); }
       if (!hasDraft && Object.keys(chosen).length === 0) return Promise.resolve(true);

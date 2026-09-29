@@ -1,0 +1,13 @@
+{
+  "moved": "Move me",
+  "stable": "Hello {{name}}",
+  "edited": "New text",
+  "rename-new": "Rename me",
+  "same-text-a": "Open",
+  "same-text-b": "Open",
+  "reuse": "Close",
+  "added": "New one",
+  "split-a": "Shared",
+  "split-b": "Shared",
+  "merge-new": "Pair"
+}

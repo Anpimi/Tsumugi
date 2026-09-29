@@ -7,6 +7,7 @@ use crate::{
     execution::{codec, *},
 };
 use rusqlite::{Connection, params};
+mod maintenance;
 
 const TABLES:&[(&str,&str)]=&[
     ("source_sets","CREATE TABLE source_sets (
@@ -45,6 +46,26 @@ const TABLES:&[(&str,&str)]=&[
         row_id INTEGER PRIMARY KEY CHECK(row_id=1), revision INTEGER NOT NULL CHECK(revision>0),
         current_snapshot TEXT REFERENCES source_snapshots(snapshot_id))"),
 ];
+const LINEAGE_TABLE: &str = "CREATE TABLE source_lineage (
+        occurrence_id TEXT PRIMARY KEY NOT NULL REFERENCES source_occurrences(occurrence_id),
+        predecessor_id TEXT REFERENCES source_occurrences(occurrence_id),
+        relation TEXT NOT NULL CHECK(relation IN ('initial','unchanged','changed','new','unresolved')),
+        CHECK((relation IN ('initial','new') AND predecessor_id IS NULL)
+          OR (relation IN ('unchanged','changed','unresolved') AND predecessor_id IS NOT NULL)))";
+const LINEAGE_EVIDENCE_TABLE: &str = "CREATE TABLE source_lineage_evidence (
+        new_occurrence_id TEXT NOT NULL REFERENCES source_occurrences(occurrence_id),
+        old_occurrence_id TEXT NOT NULL REFERENCES source_occurrences(occurrence_id),
+        relationship TEXT NOT NULL CHECK(relationship IN ('same-key','same-text','manual')),
+        decision TEXT NOT NULL CHECK(decision IN ('candidate','continue','reject')),
+        actor TEXT, reason TEXT,
+        action_id TEXT NOT NULL REFERENCES execution_actions(action_id),
+        policy TEXT NOT NULL,
+        PRIMARY KEY(new_occurrence_id,old_occurrence_id),
+        CHECK((decision='candidate' AND actor IS NULL AND reason IS NULL)
+          OR (decision!='candidate' AND actor IS NOT NULL AND reason IS NOT NULL)))";
+pub(super) fn maintenance_table_names() -> Vec<String> {
+    vec!["source_lineage".into(), "source_lineage_evidence".into()]
+}
 pub(super) fn table_names() -> Vec<String> {
     TABLES.iter().map(|(name, _)| name.to_string()).collect()
 }
@@ -53,6 +74,28 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
         connection.execute_batch(sql)?;
     }
     connection.execute("INSERT INTO content_scope VALUES (1,1,NULL)", [])?;
+    connection.execute_batch(LINEAGE_TABLE)?;
+    connection.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
+    Ok(())
+}
+pub(super) fn migrate_v8(connection: &mut Connection) -> rusqlite::Result<()> {
+    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    tx.execute_batch(LINEAGE_TABLE)?;
+    tx.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
+    tx.execute(
+        "INSERT INTO source_lineage(occurrence_id,relation)
+                SELECT occurrence_id,'initial' FROM source_occurrences",
+        [],
+    )?;
+    if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    tx.pragma_update(None, "user_version", 9)?;
+    #[cfg(test)]
+    super::migration_crash_hook("before-maintenance-migration-commit");
+    tx.commit()?;
+    #[cfg(test)]
+    super::migration_crash_hook("after-maintenance-migration-commit");
     Ok(())
 }
 fn corrupt() -> ExecutionError {
@@ -79,9 +122,9 @@ fn scope(connection: &Connection) -> Result<ContentScope, ExecutionError> {
             |r| r.get(0),
         )
         .map_err(sql_error)?;
-    if snapshots != i64::from(current.is_some())
-        || referenced != snapshots
-        || revision != if snapshots == 0 { 1 } else { 2 }
+    if snapshots != revision - 1
+        || referenced != i64::from(current.is_some())
+        || (snapshots == 0) != current.is_none()
     {
         return Err(corrupt());
     }
@@ -140,12 +183,7 @@ pub(super) fn record_input(
     if bundle.source_language != metadata.source_locale().as_str() {
         return Err(failure(ErrorCode::DependencyConflict, "language-conflict"));
     }
-    if scope(connection)?.current_snapshot.is_some() {
-        return Err(failure(
-            ErrorCode::DependencyConflict,
-            "source-already-present",
-        ));
-    }
+    let _ = scope(connection)?;
     let exists: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM source_sets WHERE set_id=?1)",
@@ -233,13 +271,146 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     let snapshots: i64 = connection
         .query_row("SELECT COUNT(*) FROM source_snapshots", [], |r| r.get(0))
         .map_err(sql_error)?;
-    if snapshots != i64::from(state.current_snapshot.is_some())
-        || state.revision.get() != if snapshots == 0 { 1 } else { 2 }
+    if snapshots != state.revision.get() as i64 - 1
+        || (snapshots == 0) != state.current_snapshot.is_none()
     {
         return Err(corrupt());
     }
+    let has_lineage: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_lineage')", [], |r| r.get(0)).map_err(sql_error)?;
+    if has_lineage {
+        let actual: String = connection
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='source_lineage'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        if actual != LINEAGE_TABLE {
+            return Err(corrupt());
+        }
+        let actual: String = connection.query_row("SELECT sql FROM sqlite_master WHERE type='table' AND name='source_lineage_evidence'", [], |r| r.get(0)).map_err(sql_error)?;
+        if actual != LINEAGE_EVIDENCE_TABLE {
+            return Err(corrupt());
+        }
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM source_lineage", [], |r| r.get(0))
+            .map_err(sql_error)?;
+        let occurrences: i64 = connection
+            .query_row("SELECT COUNT(*) FROM source_occurrences", [], |r| r.get(0))
+            .map_err(sql_error)?;
+        if count != occurrences {
+            return Err(corrupt());
+        }
+    }
+    let mut snapshots_to_check = connection
+        .prepare("SELECT snapshot_id FROM source_snapshots")
+        .map_err(sql_error)?;
+    let mut revisions = std::collections::BTreeSet::new();
+    let mut snapshot_revisions = std::collections::BTreeMap::new();
+    for raw in snapshots_to_check
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(sql_error)?
+    {
+        let snapshot = id(raw.map_err(sql_error)?)?;
+        let (receipt_revision, _) = snapshot_rows(connection, snapshot, has_lineage)?;
+        if !revisions.insert(receipt_revision) {
+            return Err(corrupt());
+        }
+        snapshot_revisions.insert(snapshot, receipt_revision);
+    }
+    if revisions != (2..=state.revision.get()).collect() {
+        return Err(corrupt());
+    }
     if let Some(snapshot) = state.current_snapshot {
-        let _ = snapshot_rows(connection, snapshot)?;
+        let (receipt_revision, _) = snapshot_rows(connection, snapshot, has_lineage)?;
+        if receipt_revision != state.revision.get() {
+            return Err(corrupt());
+        }
+    }
+    if has_lineage {
+        let mut statement = connection.prepare(
+            "SELECT n.snapshot_id,o.snapshot_id,n.namespace,o.namespace,n.unit_id,o.unit_id,n.revision_id,o.revision_id,nr.text,orv.text,l.relation
+             FROM source_lineage l JOIN source_occurrences n ON n.occurrence_id=l.occurrence_id
+             JOIN source_occurrences o ON o.occurrence_id=l.predecessor_id
+             JOIN source_revisions nr ON nr.revision_id=n.revision_id
+             JOIN source_revisions orv ON orv.revision_id=o.revision_id"
+        ).map_err(sql_error)?;
+        for row in statement
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
+                    r.get::<_, String>(10)?,
+                ))
+            })
+            .map_err(sql_error)?
+        {
+            let (
+                next,
+                old,
+                namespace,
+                old_namespace,
+                unit,
+                old_unit,
+                revision,
+                old_revision,
+                text,
+                old_text,
+                relation,
+            ) = row.map_err(sql_error)?;
+            if !matches!((snapshot_revisions.get(&id(old)?),snapshot_revisions.get(&id(next)?)), (Some(old),Some(next)) if old < next)
+                || namespace != old_namespace
+                || (relation == "unchanged"
+                    && (unit != old_unit || revision != old_revision || text != old_text))
+                || (relation == "changed"
+                    && (unit != old_unit || revision == old_revision || text == old_text))
+                || (relation == "unresolved" && unit == old_unit)
+            {
+                return Err(corrupt());
+            }
+        }
+        let mut statement = connection.prepare(
+            "SELECT n.snapshot_id,o.snapshot_id,n.namespace,o.namespace,n.unit_id,o.unit_id,e.decision,e.policy
+             FROM source_lineage_evidence e
+             JOIN source_occurrences n ON n.occurrence_id=e.new_occurrence_id
+             JOIN source_occurrences o ON o.occurrence_id=e.old_occurrence_id"
+        ).map_err(sql_error)?;
+        for edge in statement
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                ))
+            })
+            .map_err(sql_error)?
+        {
+            let (next, old, next_namespace, old_namespace, next_unit, old_unit, decision, policy) =
+                edge.map_err(sql_error)?;
+            let next = id(next)?;
+            let old = id(old)?;
+            if !matches!((snapshot_revisions.get(&old), snapshot_revisions.get(&next)), (Some(old), Some(next)) if old < next)
+                || next_namespace != old_namespace
+                || policy != IDENTITY_POLICY
+                || (decision == "continue" && next_unit != old_unit)
+                || (decision == "reject" && next_unit == old_unit)
+            {
+                return Err(corrupt());
+            }
+        }
     }
     // Reject orphaned units/revisions/identity evidence, not only dangling FKs.
     let orphan:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM source_units u WHERE NOT EXISTS(SELECT 1 FROM source_occurrences o WHERE o.unit_id=u.unit_id)) OR EXISTS(SELECT 1 FROM source_revisions r WHERE NOT EXISTS(SELECT 1 FROM source_occurrences o WHERE o.revision_id=r.revision_id))",[],|r|r.get(0)).map_err(sql_error)?;
@@ -252,7 +423,14 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
 fn snapshot_rows(
     connection: &Connection,
     snapshot: ExecutionId,
-) -> Result<(FixedInput, FixedResult, SourceOutput, Vec<ContentRow>), ExecutionError> {
+    has_lineage: bool,
+) -> Result<
+    (
+        u64,
+        (FixedInput, FixedResult, SourceOutput, Vec<ContentRow>),
+    ),
+    ExecutionError,
+> {
     let (project,set,attempt,result,language,policy):(String,String,String,String,String,String)=connection.query_row("SELECT project_id,set_id,attempt_id,result_id,source_language,identity_policy FROM source_snapshots WHERE snapshot_id=?1",[snapshot.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(sql_error)?;
     let input = load_input(connection, id(attempt)?)?;
     let result = load_result(connection, &input, id(result)?)?;
@@ -294,18 +472,33 @@ fn snapshot_rows(
             || [row.11, row.12] != expected.value_byte_range.map(i64::from)
             || row.13 != IDENTITY_POLICY
             || row.14 != expected.identity_basis
-            || row.15 != 1
+            || row.15 < 1
             || row.16 != row.1
             || !units.insert(row.1.clone())
         {
             return Err(corrupt());
         }
         rows.push(ContentRow {
-            occurrence_id: Some(id(row.0)?),
+            occurrence_id: Some(id(row.0.clone())?),
             unit_id: Some(id(row.1)?),
             source_revision_id: Some(id(row.2)?),
             occurrence: expected.clone(),
         });
+        if has_lineage {
+            let (predecessor, relation): (Option<String>, String) = connection
+                .query_row(
+                    "SELECT predecessor_id,relation FROM source_lineage WHERE occurrence_id=?1",
+                    [&row.0],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(sql_error)?;
+            if (predecessor.is_none() && !matches!(relation.as_str(), "initial" | "new"))
+                || (predecessor.is_some()
+                    && !matches!(relation.as_str(), "unchanged" | "changed" | "unresolved"))
+            {
+                return Err(corrupt());
+            }
+        }
     }
     let action: String = connection
         .query_row(
@@ -318,11 +511,138 @@ fn snapshot_rows(
     if receipt.changes.len() != 1
         || receipt.changes[0].kind != "source-snapshot"
         || receipt.changes[0].id != snapshot.to_string()
-        || receipt.changes[0].revision.get() != 2
+        || receipt.changes[0].revision.get() < 2
     {
         return Err(corrupt());
     }
-    Ok((input, result, output, rows))
+    if has_lineage {
+        let action_bytes: Vec<u8> = connection
+            .query_row(
+                "SELECT request FROM execution_actions WHERE action_id=?1",
+                [receipt.action_id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        let action: AdoptionAction = codec::decode(&action_bytes, MAX_INPUT_BYTES)?;
+        let confirmation: SourceConfirmation = from_value(&action.parameters)?;
+        if confirmation.result_digest != result.digest()
+            || confirmation.identity_policy != policy
+            || confirmation.source_language != language
+            || confirmation.expected_content_revision.get().checked_add(1)
+                != Some(receipt.changes[0].revision.get())
+        {
+            return Err(corrupt());
+        }
+        let mut explicit = std::collections::BTreeSet::new();
+        let mut statement = connection.prepare("SELECT n.ordinal,e.old_occurrence_id,e.decision,e.actor,e.reason,e.action_id FROM source_lineage_evidence e JOIN source_occurrences n ON n.occurrence_id=e.new_occurrence_id WHERE n.snapshot_id=?1").map_err(sql_error)?;
+        for row in statement
+            .query_map([snapshot.to_string()], |r| {
+                Ok((
+                    r.get::<_, u32>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(sql_error)?
+        {
+            let (ordinal, old, decision, actor, reason, evidence_action) =
+                row.map_err(sql_error)?;
+            if evidence_action != receipt.action_id.to_string() {
+                return Err(corrupt());
+            }
+            if decision != "candidate" {
+                let choice = confirmation
+                    .lineage
+                    .iter()
+                    .find(|choice| {
+                        choice.new_ordinal == ordinal && choice.old_occurrence_id.to_string() == old
+                    })
+                    .ok_or_else(corrupt)?;
+                let expected = if choice.decision == LineageDecision::Continue {
+                    "continue"
+                } else {
+                    "reject"
+                };
+                if decision != expected
+                    || actor != confirmation.actor
+                    || reason.as_deref() != Some(choice.reason.as_str())
+                    || !explicit.insert(ordinal)
+                {
+                    return Err(corrupt());
+                }
+            }
+        }
+        if explicit.len() != confirmation.lineage.len() {
+            return Err(corrupt());
+        }
+        // Completeness is part of the immutable evidence contract. Missing
+        // candidate edges must not turn ambiguity into an empty history.
+        if let Some(current) = confirmation.expected_current_snapshot {
+            let base = confirmation.lineage_base_snapshot.unwrap_or(current);
+            let mut old_query = connection.prepare("SELECT o.occurrence_id,o.comparison_key,r.text FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id WHERE o.snapshot_id=?1").map_err(sql_error)?;
+            let old_rows = old_query
+                .query_map([base.to_string()], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(sql_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql_error)?;
+            let keys: std::collections::BTreeSet<_> = output
+                .occurrences
+                .iter()
+                .map(|row| row.key.to_ascii_lowercase())
+                .collect();
+            for row in &rows {
+                let mut expected: std::collections::BTreeSet<String> = old_rows
+                    .iter()
+                    .filter(|(_, key, text)| {
+                        key == &row.occurrence.key.to_ascii_lowercase()
+                            || (text == &row.occurrence.text && !keys.contains(key))
+                    })
+                    .map(|(id, _, _)| id.clone())
+                    .collect();
+                if let Some(choice) = confirmation
+                    .lineage
+                    .iter()
+                    .find(|choice| choice.new_ordinal == row.occurrence.ordinal)
+                {
+                    expected.insert(choice.old_occurrence_id.to_string());
+                }
+                let predecessor: Option<String> = connection
+                    .query_row(
+                        "SELECT predecessor_id FROM source_lineage WHERE occurrence_id=?1",
+                        [row.occurrence_id.unwrap().to_string()],
+                        |r| r.get(0),
+                    )
+                    .map_err(sql_error)?;
+                if let Some(predecessor) = predecessor {
+                    expected.insert(predecessor);
+                }
+                let mut edges = connection.prepare("SELECT old_occurrence_id FROM source_lineage_evidence WHERE new_occurrence_id=?1").map_err(sql_error)?;
+                let actual = edges
+                    .query_map([row.occurrence_id.unwrap().to_string()], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .map_err(sql_error)?
+                    .collect::<Result<std::collections::BTreeSet<_>, _>>()
+                    .map_err(sql_error)?;
+                if actual != expected {
+                    return Err(corrupt());
+                }
+            }
+        }
+    }
+    Ok((
+        receipt.changes[0].revision.get(),
+        (input, result, output, rows),
+    ))
 }
 
 fn page(
@@ -347,6 +667,10 @@ fn page(
             identity_policy: IDENTITY_POLICY.into(),
             expected_content_revision: scope.revision,
             source_language: output.source_language.clone(),
+            expected_current_snapshot: scope.current_snapshot,
+            lineage: Vec::new(),
+            actor: None,
+            lineage_base_snapshot: None,
         },
         scope,
         namespace: output.namespace,
@@ -378,6 +702,76 @@ fn page(
         page.next_ordinal = Some(after + page.rows.len() as u32);
     }
     Ok(page)
+}
+fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChange> {
+    let by_key: std::collections::BTreeMap<_, _> = old
+        .iter()
+        .map(|row| (row.occurrence.key.to_ascii_lowercase(), row))
+        .collect();
+    let new_keys: std::collections::BTreeSet<_> =
+        new.iter().map(|row| row.key.to_ascii_lowercase()).collect();
+    let removed: Vec<_> = old
+        .iter()
+        .filter(|row| !new_keys.contains(&row.occurrence.key.to_ascii_lowercase()))
+        .collect();
+    let mut changes = Vec::with_capacity(old.len() + new.len());
+    for row in new {
+        let previous = by_key.get(&row.key.to_ascii_lowercase()).copied();
+        let (kind, candidate, candidates) = match previous {
+            Some(old)
+                if old.occurrence.text == row.text && old.occurrence.ordinal == row.ordinal =>
+            {
+                ("unchanged", Some(old), vec![old.clone()])
+            }
+            Some(old) if old.occurrence.text == row.text => ("moved", Some(old), vec![old.clone()]),
+            Some(old) => ("changed", Some(old), vec![old.clone()]),
+            None => {
+                let matches: Vec<ContentRow> = removed
+                    .iter()
+                    .filter(|old| old.occurrence.text == row.text)
+                    .map(|old| (*old).clone())
+                    .collect();
+                let successors = new
+                    .iter()
+                    .filter(|next| {
+                        next.text == row.text
+                            && !by_key.contains_key(&next.key.to_ascii_lowercase())
+                    })
+                    .count();
+                if matches.len() == 1 && successors == 1 {
+                    (
+                        "rename-candidate",
+                        Some(
+                            *removed
+                                .iter()
+                                .find(|old| old.occurrence.text == row.text)
+                                .unwrap(),
+                        ),
+                        matches,
+                    )
+                } else if !matches.is_empty() {
+                    ("ambiguous", None, matches)
+                } else {
+                    ("added", None, matches)
+                }
+            }
+        };
+        changes.push(SourceChange {
+            kind: kind.into(),
+            old: candidate.cloned(),
+            new: Some(row.clone()),
+            candidates,
+        });
+    }
+    for old in removed {
+        changes.push(SourceChange {
+            kind: "removed".into(),
+            old: Some(old.clone()),
+            new: None,
+            candidates: Vec::new(),
+        });
+    }
+    changes
 }
 impl ProjectStore {
     pub fn content_scope(&self) -> Result<ContentScope, ExecutionError> {
@@ -434,7 +828,7 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
-        let (input, result, output, rows) = snapshot_rows(connection, snapshot)?;
+        let (_, (input, result, output, rows)) = snapshot_rows(connection, snapshot, true)?;
         page(
             Some(snapshot),
             &input,
@@ -446,6 +840,415 @@ impl ProjectStore {
             limit,
         )
     }
+    pub fn source_comparison(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+        after: u32,
+        limit: u32,
+    ) -> Result<SourceChangePage, ExecutionError> {
+        self.source_comparison_filtered(attempt, result, None, "", after, limit)
+    }
+    pub fn source_comparison_filtered(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+        base: Option<ExecutionId>,
+        filter: &str,
+        after: u32,
+        limit: u32,
+    ) -> Result<SourceChangePage, ExecutionError> {
+        if filter.len() > 256 {
+            return Err(failure(ErrorCode::InvalidInput, "page"));
+        }
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
+        let scope = scope(connection)?;
+        let current = scope
+            .current_snapshot
+            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-missing"))?;
+        let previous = base.unwrap_or(current);
+        let (_, (old_input, _, old_output, old_rows)) = snapshot_rows(connection, previous, true)?;
+        let input = self.execution_input(attempt)?;
+        let result = self.execution_result(attempt, result)?;
+        let output = validate_output(&input, &result)?;
+        if old_input.envelope().project_id != input.envelope().project_id
+            || old_output.namespace != output.namespace
+            || old_output.source_language != output.source_language
+            || old_output.identity_policy != output.identity_policy
+        {
+            return Err(failure(ErrorCode::DependencyConflict, "source-namespace"));
+        }
+        let rows = compare_rows(&old_rows, &output.occurrences);
+        if limit == 0 || limit > 100 {
+            return Err(failure(ErrorCode::InvalidInput, "page"));
+        }
+        let mut page = SourceChangePage {
+            scope: scope.clone(),
+            attempt_id: attempt,
+            result_id: result.envelope().result_id,
+            previous_snapshot_id: previous,
+            confirmation: SourceConfirmation {
+                result_digest: result.digest().into(),
+                identity_policy: IDENTITY_POLICY.into(),
+                expected_content_revision: scope.revision,
+                source_language: output.source_language,
+                expected_current_snapshot: Some(current),
+                lineage: Vec::new(),
+                actor: None,
+                lineage_base_snapshot: Some(previous),
+            },
+            total: rows.len() as u32,
+            filtered_total: 0,
+            unchanged: rows
+                .iter()
+                .filter(|row| row.kind == "unchanged" || row.kind == "moved")
+                .count() as u32,
+            moved: rows.iter().filter(|row| row.kind == "moved").count() as u32,
+            changed: rows.iter().filter(|row| row.kind == "changed").count() as u32,
+            added: rows
+                .iter()
+                .filter(|row| {
+                    row.kind == "added" || row.kind == "rename-candidate" || row.kind == "ambiguous"
+                })
+                .count() as u32,
+            ambiguous: rows.iter().filter(|row| row.kind == "ambiguous").count() as u32,
+            removed: rows.iter().filter(|row| row.kind == "removed").count() as u32,
+            next_ordinal: None,
+            rows: Vec::new(),
+        };
+        let filter = filter.to_lowercase();
+        let rows: Vec<_> = rows
+            .into_iter()
+            .filter(|row| {
+                filter.is_empty()
+                    || row.kind.contains(&filter)
+                    || row.new.as_ref().is_some_and(|r| {
+                        r.key.to_lowercase().contains(&filter)
+                            || r.text.to_lowercase().contains(&filter)
+                    })
+                    || row.old.as_ref().is_some_and(|r| {
+                        r.occurrence.key.to_lowercase().contains(&filter)
+                            || r.occurrence.text.to_lowercase().contains(&filter)
+                    })
+            })
+            .collect();
+        page.filtered_total = rows.len() as u32;
+        if after > page.filtered_total {
+            return Err(failure(ErrorCode::InvalidInput, "page"));
+        }
+        for row in rows.into_iter().skip(after as usize).take(limit as usize) {
+            page.rows.push(row);
+            if codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
+                page.rows.pop();
+                break;
+            }
+        }
+        let next = after + page.rows.len() as u32;
+        if next < page.filtered_total {
+            page.next_ordinal = Some(next);
+        }
+        if page.rows.is_empty() && next < page.filtered_total {
+            return Err(failure(ErrorCode::LimitExceeded, "page"));
+        }
+        while codec::encode(&page, MAX_CONTENT_PAGE_BYTES).is_err() {
+            page.rows
+                .pop()
+                .ok_or_else(|| failure(ErrorCode::LimitExceeded, "page"))?;
+            page.next_ordinal = Some(after + page.rows.len() as u32);
+        }
+        Ok(page)
+    }
+}
+
+fn apply_update(
+    tx: &AdoptionTransaction<'_>,
+    input: &FixedInput,
+    result: &FixedResult,
+    output: &SourceOutput,
+    confirmation: &SourceConfirmation,
+    previous: ExecutionId,
+    current_revision: i64,
+    project: &str,
+    bundle: &SourceBundle,
+    action_id: ExecutionId,
+) -> Result<Vec<ChangeReference>, ExecutionError> {
+    if confirmation.expected_current_snapshot != Some(previous)
+        || confirmation.expected_content_revision.get() != current_revision as u64
+    {
+        return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
+    }
+    let (old_namespace, old_set): (String, String) = tx.query_row(
+        "SELECT o.namespace,s.set_id FROM source_occurrences o JOIN source_snapshots s ON s.snapshot_id=o.snapshot_id WHERE o.snapshot_id=?1 ORDER BY o.ordinal LIMIT 1",
+        [previous.to_string()], |r| Ok((r.get(0)?,r.get(1)?)))?;
+    if old_namespace != output.namespace {
+        return Err(failure(ErrorCode::DependencyConflict, "source-namespace"));
+    }
+    let base = confirmation.lineage_base_snapshot.unwrap_or(previous);
+    let valid_base: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM source_snapshots WHERE snapshot_id=?1 AND project_id=?2 AND source_language=?3 AND identity_policy=?4)",
+        params![base.to_string(),project,output.source_language,IDENTITY_POLICY], |r| r.get(0))?;
+    if !valid_base {
+        return Err(failure(ErrorCode::DependencyConflict, "lineage-choice"));
+    }
+    let previous_files: (String,String) = tx.query_row(
+        "SELECT (SELECT digest FROM source_files WHERE set_id=?1 AND logical_path='manifest.json'),
+                (SELECT digest FROM source_files WHERE set_id=?1 AND logical_path='i18n/default.json')",
+        [old_set], |r| Ok((r.get(0)?,r.get(1)?)))?;
+    if previous_files.0 == bundle.files[0].sha256
+        && previous_files.1 == bundle.files[1].sha256
+        && confirmation.lineage.is_empty()
+    {
+        return Err(failure(ErrorCode::DependencyConflict, "source-unchanged"));
+    }
+    let mut choices = std::collections::BTreeMap::new();
+    let actor = confirmation.actor.as_deref();
+    if !confirmation.lineage.is_empty()
+        && !actor.is_some_and(|value| {
+            value.trim() == value
+                && !value.is_empty()
+                && value.len() <= 128
+                && !value.contains('\0')
+        })
+    {
+        return Err(failure(ErrorCode::InvalidInput, "lineage-actor"));
+    }
+    for choice in &confirmation.lineage {
+        if choice.new_ordinal as usize >= output.occurrences.len()
+            || choices.insert(choice.new_ordinal, choice).is_some()
+            || choice.reason.trim().is_empty()
+            || choice.reason.len() > 4096
+            || choice.reason.contains('\0')
+        {
+            return Err(failure(ErrorCode::InvalidInput, "lineage-choice"));
+        }
+    }
+    let new_keys: std::collections::BTreeSet<_> = output
+        .occurrences
+        .iter()
+        .map(|row| row.key.to_ascii_lowercase())
+        .collect();
+    let mut used_predecessors = std::collections::BTreeSet::new();
+    let snapshot = ExecutionId::new();
+    tx.execute(
+        "INSERT INTO source_snapshots VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![
+            snapshot.to_string(),
+            project,
+            bundle.set_id.to_string(),
+            input.envelope().attempt_id.to_string(),
+            result.envelope().result_id.to_string(),
+            output.source_language,
+            IDENTITY_POLICY
+        ],
+    )?;
+    for row in &output.occurrences {
+        let same_key: (Option<String>,Option<String>,Option<String>,Option<String>,Option<i64>) = tx.query_row(
+            "SELECT o.occurrence_id,o.unit_id,o.revision_id,r.text,r.revision
+             FROM (SELECT 1) seed LEFT JOIN source_occurrences o ON o.snapshot_id=?1 AND o.namespace=?2 AND o.comparison_key=?3
+             LEFT JOIN source_revisions r ON r.revision_id=o.revision_id",
+            params![previous.to_string(),row.namespace,row.key.to_ascii_lowercase()],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
+        let choice = choices.get(&row.ordinal).copied();
+        let mut candidates: Vec<(String, String)> = tx
+            .query_rows(
+                "SELECT o.occurrence_id,o.comparison_key,r.text FROM source_occurrences o
+             JOIN source_revisions r ON r.revision_id=o.revision_id
+             WHERE o.snapshot_id=?1 AND (o.comparison_key=?2 OR r.text=?3)",
+                params![base.to_string(), row.key.to_ascii_lowercase(), row.text],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                    ))
+                },
+            )?
+            .into_iter()
+            .filter_map(|(old_id, old_key, old_text)| {
+                if old_key == row.key.to_ascii_lowercase() {
+                    Some((old_id, "same-key".into()))
+                } else if old_text == row.text && !new_keys.contains(&old_key) {
+                    Some((old_id, "same-text".into()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let chosen_old = if let Some(choice) = choice {
+            let candidate: (String, String, String, String, i64, String) = tx.query_row(
+                "SELECT o.occurrence_id,o.unit_id,o.revision_id,r.text,r.revision,o.namespace
+                 FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+                 WHERE o.snapshot_id=?1 AND o.occurrence_id=?2",
+                params![base.to_string(), choice.old_occurrence_id.to_string()],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                    ))
+                },
+            )?;
+            if candidate.5 != row.namespace {
+                return Err(failure(ErrorCode::DependencyConflict, "source-namespace"));
+            }
+            Some((
+                candidate.0,
+                candidate.1,
+                candidate.2,
+                candidate.3,
+                candidate.4,
+            ))
+        } else {
+            None
+        };
+        let automatic = same_key.0.is_some() && same_key.3.as_deref() == Some(row.text.as_str());
+        let carry = match choice {
+            Some(choice) if choice.decision == LineageDecision::Continue => chosen_old.clone(),
+            Some(_) => None,
+            None if automatic => Some((
+                same_key.0.clone().unwrap(),
+                same_key.1.clone().unwrap(),
+                same_key.2.clone().unwrap(),
+                same_key.3.clone().unwrap(),
+                same_key.4.unwrap(),
+            )),
+            None => None,
+        };
+        let (unit, revision, predecessor, relation) =
+            if let Some((old_id, old_unit, old_revision, old_text, _)) = carry {
+                if !used_predecessors.insert(old_unit.clone()) {
+                    return Err(failure(ErrorCode::DependencyConflict, "lineage-split"));
+                }
+                let unit = id(old_unit)?;
+                let source_revision = if old_text == row.text {
+                    id(old_revision)?
+                } else if same_key.1.as_deref() == Some(unit.to_string().as_str())
+                    && same_key.3.as_deref() == Some(row.text.as_str())
+                {
+                    id(same_key.2.clone().ok_or_else(corrupt)?)?
+                } else {
+                    let latest: i64 = tx.query_row(
+                        "SELECT MAX(revision) FROM source_revisions WHERE unit_id=?1",
+                        [unit.to_string()],
+                        |r| r.get(0),
+                    )?;
+                    let next = latest.checked_add(1).ok_or_else(corrupt)?;
+                    let revision = ExecutionId::new();
+                    tx.execute(
+                        "INSERT INTO source_revisions VALUES (?1,?2,?3,?4)",
+                        params![revision.to_string(), unit.to_string(), next, row.text],
+                    )?;
+                    revision
+                };
+                let relation = if old_text == row.text {
+                    "unchanged"
+                } else {
+                    "changed"
+                };
+                (unit, source_revision, Some(old_id), relation)
+            } else {
+                let unit = ExecutionId::new();
+                let revision = ExecutionId::new();
+                tx.execute(
+                    "INSERT INTO source_units VALUES (?1,?2)",
+                    params![unit.to_string(), project],
+                )?;
+                tx.execute(
+                    "INSERT INTO source_revisions VALUES (?1,?2,1,?3)",
+                    params![revision.to_string(), unit.to_string(), row.text],
+                )?;
+                let predecessor = chosen_old.map(|old| old.0).or(same_key.0);
+                let relation = if predecessor.is_some() {
+                    "unresolved"
+                } else {
+                    "new"
+                };
+                (unit, revision, predecessor, relation)
+            };
+        let occurrence = ExecutionId::new();
+        tx.execute(
+            "INSERT INTO source_occurrences VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            params![
+                occurrence.to_string(),
+                snapshot.to_string(),
+                row.ordinal,
+                row.artifact_id.to_string(),
+                unit.to_string(),
+                revision.to_string(),
+                row.namespace,
+                row.key,
+                row.key.to_ascii_lowercase(),
+                row.key_byte_range[0],
+                row.key_byte_range[1],
+                row.value_byte_range[0],
+                row.value_byte_range[1]
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO source_identity VALUES (?1,?2,?3)",
+            params![occurrence.to_string(), IDENTITY_POLICY, row.identity_basis],
+        )?;
+        tx.execute(
+            "INSERT INTO source_lineage VALUES (?1,?2,?3)",
+            params![occurrence.to_string(), predecessor, relation],
+        )?;
+        if let Some(choice) = choice {
+            if !candidates
+                .iter()
+                .any(|(old_id, _)| old_id == &choice.old_occurrence_id.to_string())
+            {
+                candidates.push((choice.old_occurrence_id.to_string(), "manual".into()));
+            }
+        }
+        if let Some(old_id) = &predecessor {
+            if !candidates.iter().any(|(candidate, _)| candidate == old_id) {
+                candidates.push((old_id.clone(), "same-key".into()));
+            }
+        }
+        for (old_id, relationship) in candidates {
+            let selected = choice.filter(|choice| choice.old_occurrence_id.to_string() == old_id);
+            let decision = match selected.map(|choice| &choice.decision) {
+                Some(LineageDecision::Continue) => "continue",
+                Some(LineageDecision::Reject) => "reject",
+                None => "candidate",
+            };
+            tx.execute(
+                "INSERT INTO source_lineage_evidence VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![
+                    occurrence.to_string(),
+                    old_id,
+                    relationship,
+                    decision,
+                    selected.and(actor),
+                    selected.map(|choice| choice.reason.as_str()),
+                    action_id.to_string(),
+                    IDENTITY_POLICY
+                ],
+            )?;
+        }
+        #[cfg(test)]
+        if std::env::var("TSUMUGI_SOURCE_CRASH").as_deref() == Ok("during-source-adoption") {
+            if let Ok(path) = std::env::var("TSUMUGI_EXECUTION_HOOK") {
+                std::fs::write(path, "during-source-adoption").unwrap();
+            }
+            std::process::abort();
+        }
+    }
+    let next = confirmation.expected_content_revision.next()?;
+    tx.execute(
+        "UPDATE content_scope SET current_snapshot=?1,revision=?2 WHERE row_id=1",
+        params![snapshot.to_string(), next.get() as i64],
+    )?;
+    Ok(vec![ChangeReference {
+        kind: "source-snapshot".into(),
+        id: snapshot.to_string(),
+        revision: next,
+    }])
 }
 
 pub struct SourceAdoptionHandler;
@@ -477,17 +1280,6 @@ impl AdoptionHandler for SourceAdoptionHandler {
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
-        if current.is_some() {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "source-already-present",
-            ));
-        }
-        let snapshots: i64 =
-            tx.query_row("SELECT COUNT(*) FROM source_snapshots", [], |r| r.get(0))?;
-        if snapshots != 0 || revision != 1 {
-            return Err(corrupt());
-        }
         if revision as u64 != confirmation.expected_content_revision.get() {
             return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
         }
@@ -525,6 +1317,28 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 return Err(corrupt());
             }
         }
+        if let Some(previous) = current {
+            return apply_update(
+                tx,
+                input,
+                result,
+                &output,
+                &confirmation,
+                id(previous)?,
+                revision,
+                &project,
+                &bundle,
+                action.action_id,
+            );
+        }
+        if confirmation.expected_current_snapshot.is_some() || !confirmation.lineage.is_empty() {
+            return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
+        }
+        let snapshots: i64 =
+            tx.query_row("SELECT COUNT(*) FROM source_snapshots", [], |r| r.get(0))?;
+        if snapshots != 0 || revision != 1 {
+            return Err(corrupt());
+        }
         let snapshot = ExecutionId::new();
         tx.execute(
             "INSERT INTO source_snapshots VALUES (?1,?2,?3,?4,?5,?6,?7)",
@@ -554,6 +1368,10 @@ impl AdoptionHandler for SourceAdoptionHandler {
             tx.execute(
                 "INSERT INTO source_identity VALUES (?1,?2,?3)",
                 params![occurrence.to_string(), IDENTITY_POLICY, row.identity_basis],
+            )?;
+            tx.execute(
+                "INSERT INTO source_lineage(occurrence_id,relation) VALUES (?1,'initial')",
+                [occurrence.to_string()],
             )?;
             #[cfg(test)]
             if std::env::var("TSUMUGI_SOURCE_CRASH").as_deref() == Ok("during-source-adoption") {

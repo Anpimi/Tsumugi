@@ -15,8 +15,10 @@ macro_rules! handlers {
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         source::select_source,source::preflight_source,source::start_source_import,
-        source::cancel_source_capture,source::read_source_preview,source::read_source_content,
+        source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
         source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,
+        source::read_source_history,source::read_source_history_content,source::read_source_lineage,
+        source::estimate_source_update,source::read_source_impact,
         source::translation::list_translation_files,source::translation::preflight_translation,
         source::translation::start_translation_import,source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
@@ -813,9 +815,18 @@ pub fn adopt_execution(
             CommandStage::ExecutionAdopt,
         )
     })?;
-    store
+    #[cfg(feature = "execution-test-host")]
+    if action.operation == tsumugi_core::content::OPERATION {
+        test_support::source_fixture_hook(store, "adopt-before").map_err(map_adopt)?;
+    }
+    let receipt = store
         .adopt_execution(&action, handler.as_ref())
-        .map_err(map_adopt)
+        .map_err(map_adopt)?;
+    #[cfg(feature = "execution-test-host")]
+    if action.operation == tsumugi_core::content::OPERATION {
+        test_support::source_fixture_hook(store, "adopt-after").map_err(map_adopt)?;
+    }
+    Ok(receipt)
 }
 #[tauri::command]
 pub fn read_execution_receipt(

@@ -1,0 +1,13 @@
+{
+  "namespace": "Example.Maintenance",
+  "s1Count": 11,
+  "s2Count": 11,
+  "unchanged": ["moved", "stable", "same-text-a", "same-text-b"],
+  "changed": ["edited", "reuse"],
+  "added": ["rename-new", "added", "split-a", "split-b", "merge-new"],
+  "removed": ["removed", "rename-old", "split-old", "merge-a", "merge-b"],
+  "uniqueRenameCandidate": {"rename-new": "rename-old"},
+  "unresolved": {"split-a": ["split-old"], "split-b": ["split-old"], "merge-new": ["merge-a", "merge-b"]},
+  "explicitContinuation": {"edited": "edited", "rename-new": "rename-old"},
+  "explicitRejection": {"reuse": "reuse"}
+}

@@ -5,6 +5,93 @@ use serde_json::json;
 use std::time::Duration;
 
 pub const TARGET_SCHEMA: &str = "CREATE TABLE fixture_targets(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, value TEXT NOT NULL)";
+
+/// One-shot native acceptance barriers, available only in the explicit test host.
+/// A competing source uses the ordinary fixed runner and atomic adoption path.
+pub fn source_fixture_hook(store: &mut ProjectStore, stage: &str) -> Result<(), ExecutionError> {
+    let executable = std::env::current_exe()
+        .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "fixture-control"))?;
+    let directory = executable
+        .parent()
+        .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "fixture-control"))?
+        .join("source-fixture-control");
+    let control = directory.join(format!("{stage}.json"));
+    if !control.is_file() {
+        return Ok(());
+    }
+    let settings: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&control)
+            .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "fixture-control"))?,
+    )
+    .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "fixture-control"))?;
+    std::fs::rename(&control, directory.join(format!("{stage}.consumed")))
+        .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "fixture-control"))?;
+    if settings["wait"].as_bool() == Some(true) {
+        let reached = directory.join(format!("{stage}.reached"));
+        std::fs::write(reached, stage)
+            .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "fixture-control"))?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !directory.join(format!("{stage}.release")).is_file() {
+            if std::time::Instant::now() > deadline {
+                return Err(ExecutionError::new(ErrorCode::Busy, "fixture-timeout"));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    if let Some(bundle) = settings.get("source") {
+        let text = |field: &str| {
+            bundle[field]
+                .as_str()
+                .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "fixture-source"))
+        };
+        let bundle = crate::content::SourceBundle::capture(
+            text("manifest")?.as_bytes(),
+            text("strings")?.as_bytes(),
+            text("language")?,
+        )?;
+        let input = bundle.fixed_input(
+            store
+                .metadata()
+                .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "fixture-source"))?
+                .project_id(),
+        )?;
+        let mut runtime = ExecutionRuntime::new(store)?;
+        runtime.register(std::sync::Arc::new(crate::content::SourceRunner))?;
+        runtime.submit(store, &input)?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            runtime.tick(store)?;
+            if let Some(result) = store.execution_current_result(
+                input.envelope().attempt_id,
+                input.envelope().items[0].item_id,
+            )? {
+                break result;
+            }
+            if std::time::Instant::now() > deadline {
+                return Err(ExecutionError::new(ErrorCode::Busy, "fixture-source"));
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        let confirmation = store
+            .source_comparison(input.envelope().attempt_id, result, 0, 1)?
+            .confirmation;
+        let action = store.prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result],
+            serde_json::to_value(confirmation)
+                .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "fixture-source"))?,
+        )?;
+        store.adopt_execution(&action, &crate::content::SourceAdoptionHandler)?;
+    }
+    if settings["fail"].as_bool() == Some(true) {
+        return Err(ExecutionError::new(
+            ErrorCode::StorageFailed,
+            "fixture-response",
+        ));
+    }
+    Ok(())
+}
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FixtureMode {

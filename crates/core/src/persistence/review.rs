@@ -2619,6 +2619,179 @@ mod tests {
     }
 
     #[test]
+    fn adopted_source_update_keeps_unchanged_review_and_expires_changed_review() {
+        let (_directory, mut store, project, units) = fixture();
+        for (unit, text) in [(units[0], "你好 {{name}}"), (units[1], "普通")] {
+            translate(&mut store, project, unit, "zh-CN", text);
+            check(&mut store, project, unit, "zh-CN");
+            approve(&mut store, project, unit, "zh-CN");
+        }
+        let before_changed = store.review_target(project, units[0], "zh-CN").unwrap();
+        let before_same = store.review_target(project, units[1], "zh-CN").unwrap();
+        let old_occurrence: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT occurrence_id FROM source_occurrences WHERE snapshot_id=?1 AND unit_id=?2",
+                params![
+                    before_changed.source_snapshot_id.to_string(),
+                    units[0].to_string()
+                ],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let bundle = SourceBundle::capture(
+            br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
+            br#"{"hello":"Hello again {{name}}","plain":"Plain"}"#,"en").unwrap();
+        let input = bundle
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+        runtime.register(Arc::new(SourceRunner)).unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            runtime.tick(&mut store).unwrap();
+            if store
+                .execution_attempt(input.envelope().attempt_id, true)
+                .unwrap()
+                .items[0]
+                .execution
+                == ExecutionState::Succeeded
+            {
+                break store
+                    .execution_current_result(
+                        input.envelope().attempt_id,
+                        input.envelope().items[0].item_id,
+                    )
+                    .unwrap()
+                    .unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        let comparison = store
+            .source_comparison(input.envelope().attempt_id, result, 0, 10)
+            .unwrap();
+        assert_eq!((comparison.unchanged, comparison.changed), (1, 1));
+        let mut confirmation = comparison.confirmation;
+        confirmation.actor = Some("Reviewer A".into());
+        confirmation.lineage.push(crate::content::LineageChoice {
+            new_ordinal: 0,
+            old_occurrence_id: parse_id(old_occurrence).unwrap(),
+            decision: crate::content::LineageDecision::Continue,
+            reason: "Same message with changed wording".into(),
+        });
+        let estimate = store
+            .source_update_estimate(input.envelope().attempt_id, result, &confirmation)
+            .unwrap();
+        let chinese = estimate
+            .iter()
+            .find(|summary| summary.locale == "zh-CN")
+            .unwrap();
+        assert_eq!(
+            (chinese.preserved, chinese.reassess, chinese.unresolved),
+            (1, 1, 0)
+        );
+        let french_unselected = estimate
+            .iter()
+            .find(|summary| summary.locale == "fr-FR")
+            .unwrap();
+        assert_eq!(
+            (
+                french_unselected.preserved,
+                french_unselected.reassess,
+                french_unselected.unresolved
+            ),
+            (0, 0, 2)
+        );
+        // A later human edit and an independent language remain authoritative.
+        translate(&mut store, project, units[0], "zh-CN", "新编辑 {{name}}");
+        translate(&mut store, project, units[1], "fr-FR", "Simple");
+        check(&mut store, project, units[1], "fr-FR");
+        approve(&mut store, project, units[1], "fr-FR");
+        let newer = store.review_target(project, units[0], "zh-CN").unwrap();
+        let french = store.review_target(project, units[1], "fr-FR").unwrap();
+        let action = store
+            .prepare_adoption_with_id(
+                ExecutionId::new(),
+                input.envelope().attempt_id,
+                input.envelope().units[0].unit_id,
+                vec![result],
+                serde_json::to_value(confirmation).unwrap(),
+            )
+            .unwrap();
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap();
+        let changed = store.review_target(project, units[0], "zh-CN").unwrap();
+        let same = store.review_target(project, units[1], "zh-CN").unwrap();
+        assert_eq!(changed.selection_id, newer.selection_id);
+        assert_eq!(changed.translation_text, newer.translation_text);
+        assert_eq!(
+            store
+                .review_target(project, units[1], "fr-FR")
+                .unwrap()
+                .current_decision,
+            french.current_decision
+        );
+        let impact = store
+            .source_impact(changed.source_snapshot_id, "zh-CN", 0, 10)
+            .unwrap();
+        assert_eq!(
+            (
+                impact.summary.preserved,
+                impact.summary.reassess,
+                impact.summary.unresolved
+            ),
+            (1, 1, 0)
+        );
+        let affected = impact
+            .rows
+            .iter()
+            .find(|row| row.current.unit_id == Some(units[0]))
+            .unwrap();
+        for reason in [
+            "source-changed",
+            "approval-missing-or-stale",
+            "qa-missing-or-stale",
+        ] {
+            assert!(affected.reasons.iter().any(|value| value == reason));
+        }
+        assert_eq!(
+            affected.previous.as_ref().unwrap().source_revision_id,
+            Some(before_changed.source_revision_id)
+        );
+        assert_eq!(affected.previous_bases.len(), 2);
+        assert!(affected.previous_bases.iter().all(|basis| basis.evidence.source_revision_id == before_changed.source_revision_id));
+        assert!(
+            affected
+                .previous_bases
+                .iter()
+                .any(|basis| basis.evidence.selection_id == before_changed.selection_id)
+        );
+        assert_ne!(changed.basis, before_changed.basis);
+        assert!(changed.current_decision.is_none() && changed.current_check.is_none());
+        assert_eq!(same.basis, before_same.basis);
+        assert_eq!(same.current_decision, before_same.current_decision);
+        assert_eq!(same.current_check, before_same.current_check);
+        assert!(
+            store
+                .review_work_page(project, "zh-CN", 0, 10)
+                .unwrap()
+                .items
+                .iter()
+                .any(|item| item.unit_id == units[0])
+        );
+        assert!(
+            !store
+                .review_eligibility(project, &["zh-CN".into()])
+                .unwrap()
+                .ready
+        );
+    }
+
+    #[test]
     fn decisions_are_idempotent_checked_and_survive_reopen() {
         let (directory, mut store, project, units) = fixture();
         translate(&mut store, project, units[0], "zh-CN", "你好 {{name}}");
@@ -3150,6 +3323,9 @@ mod tests {
                 .execute_batch(&format!("DROP TABLE {name}"))
                 .unwrap();
         }
+        connection
+            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+            .unwrap();
         connection.pragma_update(None, "user_version", 6).unwrap();
         drop(store);
         let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
@@ -3200,6 +3376,9 @@ mod tests {
                     .execute_batch(&format!("DROP TABLE {name}"))
                     .unwrap();
             }
+            connection
+                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+                .unwrap();
             connection.pragma_update(None, "user_version", 6).unwrap();
             drop(store);
             let child = std::process::Command::new(std::env::current_exe().unwrap())

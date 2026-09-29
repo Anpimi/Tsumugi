@@ -84,6 +84,775 @@ fn prepare(store: &mut ProjectStore, input: &FixedInput, result: &FixedResult) -
 }
 
 #[test]
+fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let old_bundle = SourceBundle::capture(
+        include_bytes!("../../tests/fixtures/upstream-maintenance/s1/manifest.json"),
+        include_bytes!("../../tests/fixtures/upstream-maintenance/s1/i18n/default.json"),
+        "en",
+    )
+    .unwrap();
+    let (old_input, old_result) = generate(&mut store, old_bundle);
+    let first = prepare(&mut store, &old_input, &old_result);
+    store
+        .adopt_execution(&first, &SourceAdoptionHandler)
+        .unwrap();
+    let first_scope = store.content_scope().unwrap();
+    let old_snapshot = first_scope.current_snapshot.unwrap();
+    let old_page = store.source_content(old_snapshot, 0, 50).unwrap();
+    let old: std::collections::BTreeMap<_, _> = old_page
+        .rows
+        .iter()
+        .map(|row| (row.occurrence.key.as_str(), row))
+        .collect();
+
+    let new_bundle = SourceBundle::capture(
+        include_bytes!("../../tests/fixtures/upstream-maintenance/s2/manifest.json"),
+        include_bytes!("../../tests/fixtures/upstream-maintenance/s2/i18n/default.json"),
+        "en",
+    )
+    .unwrap();
+    let (input, result) = generate(&mut store, new_bundle);
+    let comparison = store
+        .source_comparison(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            50,
+        )
+        .unwrap();
+    let oracle: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../tests/fixtures/upstream-maintenance/oracle.json"
+    ))
+    .unwrap();
+    assert_eq!(comparison.previous_snapshot_id, old_snapshot);
+    assert_eq!(
+        comparison.unchanged as usize,
+        oracle["unchanged"].as_array().unwrap().len()
+    );
+    assert_eq!(
+        comparison.changed as usize,
+        oracle["changed"].as_array().unwrap().len()
+    );
+    assert_eq!(
+        comparison.added as usize,
+        oracle["added"].as_array().unwrap().len()
+    );
+    assert_eq!(
+        comparison.removed as usize,
+        oracle["removed"].as_array().unwrap().len()
+    );
+    assert_eq!(comparison.total, 16);
+    for (kind, keys) in [
+        ("unchanged", "unchanged"),
+        ("changed", "changed"),
+        ("removed", "removed"),
+    ] {
+        for key in oracle[keys].as_array().unwrap() {
+            assert!(comparison.rows.iter().any(|row| {
+                (row.kind == kind || (kind == "unchanged" && row.kind == "moved"))
+                    && row
+                        .new
+                        .as_ref()
+                        .map(|new| new.key.as_str())
+                        .or_else(|| row.old.as_ref().map(|old| old.occurrence.key.as_str()))
+                        == key.as_str()
+            }));
+        }
+    }
+    assert_eq!(comparison.moved, 4);
+    assert!(
+        comparison
+            .rows
+            .iter()
+            .any(|row| row.kind == "moved" && row.new.as_ref().unwrap().key == "moved")
+    );
+    assert_eq!(comparison.ambiguous, 3);
+    for (key, candidates) in [
+        ("split-a", vec!["split-old"]),
+        ("split-b", vec!["split-old"]),
+        ("merge-new", vec!["merge-a", "merge-b"]),
+    ] {
+        let row = comparison
+            .rows
+            .iter()
+            .find(|row| row.new.as_ref().is_some_and(|item| item.key == key))
+            .unwrap();
+        assert_eq!(row.kind, "ambiguous");
+        let actual: Vec<_> = row
+            .candidates
+            .iter()
+            .map(|candidate| candidate.occurrence.key.as_str())
+            .collect();
+        assert_eq!(actual, candidates);
+    }
+    assert!(
+        comparison
+            .rows
+            .iter()
+            .any(|row| row.kind == "rename-candidate"
+                && row.new.as_ref().unwrap().key == "rename-new"
+                && row.old.as_ref().unwrap().occurrence.key == "rename-old")
+    );
+    let mut confirmation = comparison.confirmation;
+    confirmation.actor = Some("Maintainer".into());
+    for (new_key, old_key, decision) in [
+        ("edited", "edited", LineageDecision::Continue),
+        ("rename-new", "rename-old", LineageDecision::Continue),
+        ("reuse", "reuse", LineageDecision::Reject),
+    ] {
+        let new_ordinal = comparison
+            .rows
+            .iter()
+            .find_map(|row| {
+                row.new
+                    .as_ref()
+                    .filter(|item| item.key == new_key)
+                    .map(|item| item.ordinal)
+            })
+            .unwrap();
+        confirmation.lineage.push(LineageChoice {
+            new_ordinal,
+            old_occurrence_id: old[old_key].occurrence_id.unwrap(),
+            decision,
+            reason: format!("Reviewed {new_key} against {old_key}"),
+        });
+    }
+    let action = store
+        .prepare_adoption_with_id(
+            ExecutionId::new(),
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            value(&confirmation).unwrap(),
+        )
+        .unwrap();
+    let receipt = store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    assert_eq!(
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    let scope = store.content_scope().unwrap();
+    assert_eq!(scope.revision.get(), 3);
+    let new_snapshot = scope.current_snapshot.unwrap();
+    let new_page = store.source_content(new_snapshot, 0, 50).unwrap();
+    let new: std::collections::BTreeMap<_, _> = new_page
+        .rows
+        .iter()
+        .map(|row| (row.occurrence.key.as_str(), row))
+        .collect();
+    for key in ["stable", "moved", "same-text-a", "same-text-b"] {
+        assert_eq!(new[key].unit_id, old[key].unit_id);
+        assert_eq!(new[key].source_revision_id, old[key].source_revision_id);
+    }
+    assert_eq!(new["edited"].unit_id, old["edited"].unit_id);
+    assert_ne!(
+        new["edited"].source_revision_id,
+        old["edited"].source_revision_id
+    );
+    assert_eq!(new["rename-new"].unit_id, old["rename-old"].unit_id);
+    assert_eq!(
+        new["rename-new"].source_revision_id,
+        old["rename-old"].source_revision_id
+    );
+    assert_ne!(new["reuse"].unit_id, old["reuse"].unit_id);
+    assert!(!new.contains_key("removed"));
+    assert_eq!(
+        store.source_content(old_snapshot, 0, 50).unwrap().rows,
+        old_page.rows
+    );
+    drop(store);
+    let database = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    let mut query = database
+        .prepare(
+            "SELECT old.native_key,e.decision,e.actor,e.reason FROM source_lineage_evidence e
+         JOIN source_occurrences new ON new.occurrence_id=e.new_occurrence_id
+         JOIN source_occurrences old ON old.occurrence_id=e.old_occurrence_id
+         WHERE new.snapshot_id=?1 AND new.native_key=?2 ORDER BY old.native_key",
+        )
+        .unwrap();
+    for (key, expected) in [
+        ("split-a", vec![("split-old", "candidate", None, None)]),
+        ("split-b", vec![("split-old", "candidate", None, None)]),
+        (
+            "merge-new",
+            vec![
+                ("merge-a", "candidate", None, None),
+                ("merge-b", "candidate", None, None),
+            ],
+        ),
+        (
+            "edited",
+            vec![(
+                "edited",
+                "continue",
+                Some("Maintainer"),
+                Some("Reviewed edited against edited"),
+            )],
+        ),
+        (
+            "reuse",
+            vec![(
+                "reuse",
+                "reject",
+                Some("Maintainer"),
+                Some("Reviewed reuse against reuse"),
+            )],
+        ),
+    ] {
+        let actual: Vec<_> = query
+            .query_map(rusqlite::params![new_snapshot.to_string(), key], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            actual
+                .iter()
+                .map(|(old, decision, actor, reason)| (
+                    old.as_str(),
+                    decision.as_str(),
+                    actor.as_deref(),
+                    reason.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    drop(query);
+    drop(database);
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.source_content(new_snapshot, 0, 50).unwrap(),
+        new_page
+    );
+    assert_eq!(
+        reopened.source_content(old_snapshot, 0, 50).unwrap().rows,
+        old_page.rows
+    );
+    assert_eq!(
+        reopened.source_lineage_evidence(new_snapshot, 0).unwrap()[0]
+            .applied_relation
+            .as_deref(),
+        Some("unchanged")
+    );
+    reopened.close().unwrap();
+    let database = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    database
+        .execute(
+            "DELETE FROM source_lineage_evidence WHERE new_occurrence_id=?1",
+            [new["merge-new"].occurrence_id.unwrap().to_string()],
+        )
+        .unwrap();
+    drop(database);
+    assert!(
+        ProjectStore::open(&path).is_err(),
+        "missing ambiguity evidence must be rejected"
+    );
+}
+
+#[test]
+fn upstream_competing_confirmation_and_split_identity_fail_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = create(&directory.path().join("project"));
+    let (initial, result) = generate(&mut store, small(r#"{"old":"Shared"}"#));
+    let first = prepare(&mut store, &initial, &result);
+    store
+        .adopt_execution(&first, &SourceAdoptionHandler)
+        .unwrap();
+    let original = store
+        .source_content(
+            store.content_scope().unwrap().current_snapshot.unwrap(),
+            0,
+            10,
+        )
+        .unwrap()
+        .rows[0]
+        .clone();
+    let (input, result) = generate(&mut store, small(r#"{"a":"Shared","b":"Shared"}"#));
+    let mut confirmation = store
+        .source_comparison(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            10,
+        )
+        .unwrap()
+        .confirmation;
+    confirmation.actor = Some("Maintainer".into());
+    for ordinal in [0, 1] {
+        confirmation.lineage.push(LineageChoice {
+            new_ordinal: ordinal,
+            old_occurrence_id: original.occurrence_id.unwrap(),
+            decision: LineageDecision::Continue,
+            reason: "Test split cardinality".into(),
+        });
+    }
+    let split = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            value(&confirmation).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .adopt_execution(&split, &SourceAdoptionHandler)
+            .unwrap_err()
+            .stage,
+        "lineage-split"
+    );
+    assert!(store.adoption_receipt(split.action_id).unwrap().is_none());
+    confirmation.lineage.truncate(1);
+    let stale = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            value(&confirmation).unwrap(),
+        )
+        .unwrap();
+    let (competing_input, competing_result) = generate(&mut store, small(r#"{"old":"Updated"}"#));
+    let competing = store
+        .source_comparison(
+            competing_input.envelope().attempt_id,
+            competing_result.envelope().result_id,
+            0,
+            10,
+        )
+        .unwrap()
+        .confirmation;
+    let action = store
+        .prepare_adoption(
+            competing_input.envelope().attempt_id,
+            competing_input.envelope().units[0].unit_id,
+            vec![competing_result.envelope().result_id],
+            value(&competing).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let current = store.content_scope().unwrap();
+    assert_eq!(
+        store
+            .adopt_execution(&stale, &SourceAdoptionHandler)
+            .unwrap_err()
+            .code,
+        ErrorCode::DependencyConflict
+    );
+    assert_eq!(store.content_scope().unwrap(), current);
+    assert!(store.adoption_receipt(stale.action_id).unwrap().is_none());
+    assert_eq!(store.source_history(0, 10).unwrap().total, 2);
+}
+
+#[test]
+fn source_maintenance_migration_child() {
+    if let Ok(path) = std::env::var("TSUMUGI_SOURCE_MIGRATION_CHILD") {
+        let _ = ProjectStore::open(path);
+        panic!("migration hook did not abort");
+    }
+}
+
+#[test]
+fn schema_eight_migration_interruptions_preserve_source_and_backup() {
+    for point in [
+        "before-maintenance-migration-commit",
+        "after-maintenance-migration-commit",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("project");
+        let mut store = create(&path);
+        let (input, result) = generate(&mut store, small(r#"{"key":"Original"}"#));
+        let action = prepare(&mut store, &input, &result);
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap();
+        let original = store.content_scope().unwrap();
+        store.close().unwrap();
+        let database = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+        database.execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;").unwrap();
+        drop(database);
+        let hook = directory.path().join("hook");
+        let result = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "content::tests::source_maintenance_migration_child",
+                "--nocapture",
+            ])
+            .env("TSUMUGI_SOURCE_MIGRATION_CHILD", &path)
+            .env("TSUMUGI_MIGRATION_CRASH", point)
+            .env("TSUMUGI_MIGRATION_HOOK", &hook)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert_eq!(std::fs::read_to_string(hook).unwrap(), point);
+        let reopened = ProjectStore::open(&path).unwrap();
+        assert_eq!(reopened.content_scope().unwrap(), original);
+        assert_eq!(reopened.source_history(0, 10).unwrap().total, 1);
+        reopened.close().unwrap();
+        let backups = std::fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("project.sqlite3.pre-v8-")
+            })
+            .collect::<Vec<_>>();
+        // An interrupted pre-commit migration leaves schema 8 and the next
+        // open takes another independent pre-upgrade backup.
+        assert_eq!(
+            backups.len(),
+            if point == "before-maintenance-migration-commit" {
+                2
+            } else {
+                1
+            }
+        );
+        for path in backups {
+            let backup = rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            assert_eq!(
+                backup
+                    .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
+                    .unwrap(),
+                8
+            );
+            assert_eq!(
+                backup
+                    .query_row("SELECT COUNT(*) FROM source_snapshots", [], |row| row
+                        .get::<_, u32>(0))
+                    .unwrap(),
+                1
+            );
+            assert_eq!(
+                backup
+                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+        }
+    }
+}
+
+#[test]
+fn schema_eight_source_upgrade_keeps_s1_and_a_recoverable_backup() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let (input, result) = generate(&mut store, small(r#"{"greeting":"Hello"}"#));
+    let action = prepare(&mut store, &input, &result);
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    store.close().unwrap();
+    let database = path.join("project.sqlite3");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;",
+        )
+        .unwrap();
+    drop(connection);
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.source_content(snapshot, 0, 50).unwrap().rows[0]
+            .occurrence
+            .key,
+        "greeting"
+    );
+    let backup = std::fs::read_dir(&path)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("project.sqlite3.pre-v8-")
+        })
+        .unwrap();
+    let previous =
+        rusqlite::Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    assert_eq!(
+        previous
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        8
+    );
+    assert_eq!(
+        previous
+            .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+}
+
+#[test]
+fn upstream_filter_correction_and_history_keep_fixed_endpoints_and_full_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("project");
+    let mut store = create(&path);
+    let (first_input, first_result) = generate(&mut store, small(r#"{"a":"Alpha","b":"Beta"}"#));
+    let first_action = prepare(&mut store, &first_input, &first_result);
+    store
+        .adopt_execution(&first_action, &SourceAdoptionHandler)
+        .unwrap();
+    let s1 = store.content_scope().unwrap().current_snapshot.unwrap();
+    let old = store.source_content(s1, 0, 10).unwrap();
+    let successor = r#"{"a":"Changed alpha","c":"Beta","d":"New"}"#;
+    let (input, result) = generate(&mut store, small(successor));
+    let scope = store.content_scope().unwrap();
+    let comparison = store
+        .source_comparison_filtered(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            None,
+            "Changed alpha",
+            0,
+            1,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            comparison.total,
+            comparison.filtered_total,
+            comparison.rows.len()
+        ),
+        (4, 1, 1)
+    );
+    assert_eq!(store.content_scope().unwrap(), scope);
+    let mut confirmation = comparison.confirmation;
+    confirmation.actor = Some("Maintainer".into());
+    confirmation.lineage.push(LineageChoice {
+        new_ordinal: 0,
+        old_occurrence_id: old.rows[0].occurrence_id.unwrap(),
+        decision: LineageDecision::Reject,
+        reason: "Initial key reuse decision".into(),
+    });
+    let action = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            value(&confirmation).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let s2 = store.content_scope().unwrap().current_snapshot.unwrap();
+    let before = store.source_content(s2, 0, 10).unwrap();
+    assert_ne!(before.rows[0].unit_id, old.rows[0].unit_id);
+
+    // Correction is a new fixed attempt and action, preserving the earlier rejection.
+    let (correction_input, correction_result) = generate(&mut store, small(successor));
+    let comparison = store
+        .source_comparison_filtered(
+            correction_input.envelope().attempt_id,
+            correction_result.envelope().result_id,
+            Some(s1),
+            "",
+            0,
+            10,
+        )
+        .unwrap();
+    let mut correction = comparison.confirmation;
+    correction.actor = Some("Second maintainer".into());
+    for (new_ordinal, old_row) in [(0, &old.rows[0]), (1, &old.rows[1])] {
+        correction.lineage.push(LineageChoice {
+            new_ordinal,
+            old_occurrence_id: old_row.occurrence_id.unwrap(),
+            decision: LineageDecision::Continue,
+            reason: "Corrected against historical source evidence".into(),
+        });
+    }
+    let correction_action = store
+        .prepare_adoption(
+            correction_input.envelope().attempt_id,
+            correction_input.envelope().units[0].unit_id,
+            vec![correction_result.envelope().result_id],
+            value(&correction).unwrap(),
+        )
+        .unwrap();
+    let receipt = store
+        .adopt_execution(&correction_action, &SourceAdoptionHandler)
+        .unwrap();
+    assert_eq!(
+        store
+            .adopt_execution(&correction_action, &SourceAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    let s3 = store.content_scope().unwrap().current_snapshot.unwrap();
+    let after = store.source_content(s3, 0, 10).unwrap();
+    assert_eq!(after.rows[0].unit_id, old.rows[0].unit_id);
+    assert_ne!(
+        after.rows[0].source_revision_id,
+        old.rows[0].source_revision_id
+    );
+    assert_eq!(after.rows[1].unit_id, old.rows[1].unit_id);
+    assert_eq!(after.rows[2].unit_id, before.rows[2].unit_id);
+    assert_eq!(store.source_content(s2, 0, 10).unwrap().rows, before.rows);
+    assert_eq!(
+        store.source_lineage_evidence(s2, 0).unwrap()[0].decision,
+        "reject"
+    );
+    assert_eq!(
+        store.source_lineage_evidence(s3, 0).unwrap()[0]
+            .actor
+            .as_deref(),
+        Some("Second maintainer")
+    );
+    assert_eq!(
+        store
+            .source_history_content(s1, "Beta", 0, 10)
+            .unwrap()
+            .rows,
+        vec![old.rows[1].clone()]
+    );
+    let history = store.source_history(0, 2).unwrap();
+    assert_eq!((history.total, history.next_offset), (3, Some(2)));
+    assert_eq!(history.snapshots[0].snapshot_id, s3);
+    assert!(history.snapshots[0].current);
+
+    // A choice from outside its fixed historical source is rejected at the mutation boundary.
+    let (invalid_input, invalid_result) = generate(&mut store, small(successor));
+    let mut invalid = store
+        .source_comparison_filtered(
+            invalid_input.envelope().attempt_id,
+            invalid_result.envelope().result_id,
+            Some(s1),
+            "",
+            0,
+            1,
+        )
+        .unwrap()
+        .confirmation;
+    invalid.actor = Some("Maintainer".into());
+    invalid.lineage.push(LineageChoice {
+        new_ordinal: 0,
+        old_occurrence_id: before.rows[0].occurrence_id.unwrap(),
+        decision: LineageDecision::Continue,
+        reason: "Invalid endpoint".into(),
+    });
+    let invalid_action = store
+        .prepare_adoption(
+            invalid_input.envelope().attempt_id,
+            invalid_input.envelope().units[0].unit_id,
+            vec![invalid_result.envelope().result_id],
+            value(&invalid).unwrap(),
+        )
+        .unwrap();
+    assert!(
+        store
+            .adopt_execution(&invalid_action, &SourceAdoptionHandler)
+            .is_err()
+    );
+    assert_eq!(store.content_scope().unwrap().current_snapshot, Some(s3));
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.source_history(0, 2).unwrap(), history);
+    assert_eq!(reopened.source_content(s1, 0, 10).unwrap().rows, old.rows);
+}
+
+#[test]
+fn real_532_key_source_can_compare_and_adopt_a_controlled_successor() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = create(&temp.path().join("project"));
+    let original = bundle();
+    let source = original.files[1]
+        .utf8
+        .replace("\"generic.now\": \"now\"", "\"generic.now\": \"right now\"");
+    assert_ne!(source, original.files[1].utf8);
+    let successor =
+        SourceBundle::capture(original.files[0].utf8.as_bytes(), source.as_bytes(), "en").unwrap();
+    let (first_input, first_result) = generate(&mut store, original);
+    let first_action = prepare(&mut store, &first_input, &first_result);
+    store
+        .adopt_execution(&first_action, &SourceAdoptionHandler)
+        .unwrap();
+    let first_snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let old = store.source_content(first_snapshot, 0, 10).unwrap();
+    assert_eq!(old.total, 532);
+    let (input, result) = generate(&mut store, successor);
+    let comparison = store
+        .source_comparison(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            10,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            comparison.unchanged,
+            comparison.changed,
+            comparison.added,
+            comparison.removed
+        ),
+        (531, 1, 0, 0)
+    );
+    assert_eq!(comparison.total, 532);
+    assert_eq!(comparison.rows[2].new.as_ref().unwrap().key, "generic.now");
+    let mut confirmation = comparison.confirmation;
+    confirmation.actor = Some("Fixture maintainer".into());
+    confirmation.lineage.push(LineageChoice {
+        new_ordinal: 2,
+        old_occurrence_id: old.rows[2].occurrence_id.unwrap(),
+        decision: LineageDecision::Continue,
+        reason: "Controlled source wording update".into(),
+    });
+    let action = store
+        .prepare_adoption_with_id(
+            ExecutionId::new(),
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            value(&confirmation).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let second_snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let new = store.source_content(second_snapshot, 0, 10).unwrap();
+    assert_eq!(new.total, 532);
+    assert_eq!(new.rows[2].unit_id, old.rows[2].unit_id);
+    assert_ne!(
+        new.rows[2].source_revision_id,
+        old.rows[2].source_revision_id
+    );
+    assert_eq!(
+        new.rows[0].source_revision_id,
+        old.rows[0].source_revision_id
+    );
+    assert_eq!(
+        store.source_content(first_snapshot, 0, 10).unwrap().rows,
+        old.rows
+    );
+}
+
+#[test]
 fn oversized_multi_locale_build_is_rejected_before_execution() {
     let directory = tempfile::tempdir().unwrap();
     let store = ProjectStore::create(
@@ -650,6 +1419,105 @@ fn source_crash_child() {
     store
         .adopt_execution(&action, &SourceAdoptionHandler)
         .unwrap();
+}
+
+#[test]
+fn source_update_crash_child() {
+    let Ok(path) = std::env::var("TSUMUGI_SOURCE_UPDATE_CHILD") else {
+        return;
+    };
+    let mut store = ProjectStore::open(path).unwrap();
+    let (input, result) = generate(&mut store, small(r#"{"a":"Changed","c":"Added"}"#));
+    let confirmation = store
+        .source_comparison(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            10,
+        )
+        .unwrap()
+        .confirmation;
+    let action = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            value(&confirmation).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+}
+
+#[test]
+fn upstream_process_abort_keeps_current_scope_lineage_and_receipt_atomic() {
+    for point in [
+        "during-source-adoption",
+        "before-adoption-commit",
+        "after-adoption-commit",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("project");
+        let mut store = create(&path);
+        let (input, result) = generate(&mut store, small(r#"{"a":"Original","b":"Removed"}"#));
+        let action = prepare(&mut store, &input, &result);
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap();
+        let s1 = store.content_scope().unwrap();
+        let original = store
+            .source_content(s1.current_snapshot.unwrap(), 0, 10)
+            .unwrap()
+            .rows;
+        store.close().unwrap();
+        let hook = directory.path().join("hook");
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "content::tests::source_update_crash_child",
+                "--nocapture",
+            ])
+            .env("TSUMUGI_SOURCE_UPDATE_CHILD", &path)
+            .env("TSUMUGI_EXECUTION_HOOK", &hook)
+            .env(
+                if point == "during-source-adoption" {
+                    "TSUMUGI_SOURCE_CRASH"
+                } else {
+                    "TSUMUGI_EXECUTION_CRASH"
+                },
+                point,
+            )
+            .output()
+            .unwrap();
+        assert!(!status.status.success());
+        assert_eq!(std::fs::read_to_string(hook).unwrap(), point);
+        let reopened = ProjectStore::open(&path).unwrap();
+        let committed = point == "after-adoption-commit";
+        assert_eq!(
+            reopened.content_scope().unwrap().revision.get(),
+            if committed { 3 } else { 2 }
+        );
+        assert_eq!(
+            reopened.source_history(0, 10).unwrap().total,
+            if committed { 2 } else { 1 }
+        );
+        assert_eq!(
+            reopened
+                .source_content(s1.current_snapshot.unwrap(), 0, 10)
+                .unwrap()
+                .rows,
+            original
+        );
+        let database = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+        assert_eq!(
+            database
+                .query_row("SELECT COUNT(*) FROM adoption_receipts", [], |r| r
+                    .get::<_, u32>(0))
+                .unwrap(),
+            if committed { 2 } else { 1 }
+        );
+    }
 }
 
 #[test]
