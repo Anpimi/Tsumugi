@@ -99,6 +99,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
         if (mounted.current && sourceLoad.current === ticket) {
           setSourceMissing(!page);
           setSourcePage(page);
+          if (page?.namespace === "webvtt:source") setTab("edit");
         }
       } catch (error) {
         if (mounted.current && sourceLoad.current === ticket) setFailure(errorStage(error));
@@ -367,9 +368,9 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {sourceMissing ? <p role="status">{t("translation.noSource")}</p> : null}
           {!project.metadata.targetLocales.length ? <p role="status">{t("translation.noTargets")}</p> : null}
-          <div className="execution-actions"><button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} onClick={() => setTab("import")}>{t("translation.importTab")}</button><button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
+          <div className="execution-actions">{sourcePage?.namespace !== "webvtt:source" ? <button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} onClick={() => setTab("import")}>{t("translation.importTab")}</button> : null}<button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
           {sourcePage && project.metadata.targetLocales.length ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pendingSave || uncertain.length > 0} onChange={event => changeTarget(event.target.value)}>{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}
-          {tab === "import" && sourcePage && targetLocale ? <>
+          {tab === "import" && sourcePage && sourcePage.namespace !== "webvtt:source" && targetLocale ? <>
             <section><button className="secondary-button" disabled={busy || uncertain.length > 0} onClick={() => void perform(chooseFolder)}>{t("translation.chooseFolder")}</button>
               {folder ? <><p>{t("translation.folder", { name: folder.folderName })}</p>{files.length ? <label>{t("translation.file")}<select value={fileName} disabled={busy || uncertain.length > 0} onChange={event => { setFileName(event.target.value); setPreflight(null); setConfirmed(false); setAttempt(null); setPreview(null); setPendingStart(null); }}>{files.map(file => <option key={file} value={file}>{file}</option>)}</select></label> : <p role="status">{t("translation.noFiles")}</p>}
                 <button className="secondary-button" disabled={busy || !canImport} onClick={() => void perform(async current => { const checked = await commands.preflight({ ...context, selectionId: folder.selectionId, fileName, targetLocale }); if (current()) { setPreflight(checked); setConfirmed(false); } })}>{t("translation.inspect")}</button>

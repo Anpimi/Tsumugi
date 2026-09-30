@@ -26,6 +26,7 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string) => {
     if (command === "list_releases") return releases;
+    if (command === "read_source_integration") return { id: "stardew-smapi" };
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: "snapshot", basis: "basis", ready: true,
       locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 532, blockerCount: 0, exceptionCount: 0 }] };
     if (command === "create_execution_identity") return "action-id";
@@ -42,6 +43,25 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+it("routes WebVTT builds to a root subtitle filename and preserves an edited mapping", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve({ id: "webvtt" }) : original(command));
+  const user = userEvent.setup();
+  render(<ReleaseWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Build and export" }));
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  const name = await screen.findByRole("textbox", { name: "Subtitle file name for zh-CN" });
+  expect(name).toHaveValue("zh-CN.vtt");
+  await user.clear(name);
+  await user.type(name, "captions-zh.vtt");
+  await user.click(screen.getByRole("button", { name: "Check build readiness" }));
+  await screen.findByText(/Ready to build/);
+  await user.click(screen.getByRole("button", { name: "Start build" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_locale_build", { request: {
+    sessionToken: "session", projectId: "project", attemptId: "action-id", expectedEligibilityBasis: "basis",
+    choices: [{ locale: "zh-CN", fileName: "captions-zh.vtt" }],
+  } }));
+});
 
 it("sends the explicit locale mapping and current eligibility basis to the native build boundary", async () => {
   const user = userEvent.setup();

@@ -95,6 +95,9 @@ ai: {
 },
 
     release: {
+      webvttDescription: "Build verified subtitles from approved translations, then export a saved release to a local folder.",
+      webvttFileName: "Subtitle file name for {{locale}}",
+      webvttScope: "Build a checked WebVTT file from saved caption text and structure. Enter a .vtt name for each language; subtitle exports go directly into the chosen folder.",
       title: "Build and export",
       description: "Build verified SMAPI language files from approved translations, then export a saved release to a local folder.",
       prepare: "Prepare a build",
@@ -437,6 +440,10 @@ ai: {
       }
     },
     source: {
+  "integration": "Source format",
+  "webvttSelect": "Choose subtitle folder",
+  "webvttCompareHelp": "Compare cue IDs, text, timing and layout. Timing or layout changes require review even when the text is unchanged. Matching text under another ID is only a suggestion; confirm any continuation before applying the complete subtitle.",
+  "webvttSupport": "Choose a folder containing source.vtt. Caption profile 1 requires unique ASCII cue IDs and plain text. Timing, supported layout settings and NOTE/STYLE/REGION blocks are preserved. Markup and anonymous cues are not supported.",
   "title": "Source content",
   "description": "Import or update the original strings from a supported SMAPI Mod.",
   "update": "Update source content",
@@ -451,7 +458,7 @@ ai: {
   "mapping": "Identity decision",
   "newIdentity": "New content identity",
   "noMapping": "Removed from current source",
-  "change": { "unchanged": "Unchanged", "moved": "Reordered", "changed": "Text changed", "added": "Added", "removed": "Removed", "rename-candidate": "Possible rename", "ambiguous": "Multiple possible relationships" },
+  "change": { "unchanged": "Unchanged", "moved": "Reordered", "changed": "Source changed", "added": "Added", "removed": "Removed", "rename-candidate": "Possible rename", "ambiguous": "Multiple possible relationships" },
   "candidate": "{{key}} — {{text}}",
   "mappingActor": "Reviewer for identity decisions",
   "mappingReason": "Reason for this decision",
@@ -497,7 +504,7 @@ ai: {
   "updateConfirm": "Apply all {{count}} compared entries, including pages not shown. Preserve the previous source and releases.",
   "updateImpact": "Unchanged work can stay current. Changed, unresolved and new content must be reviewed and checked again before a new release.",
   "applyUpdate": "Apply new source snapshot",
-  "profile": "Bundled integration: Stardew SMAPI {{version}} · {{profile}}",
+  "profile": "Bundled integration: {{name}} {{version}} · {{profile}}",
   "loadingIntegration": "Checking source integration…",
   "unavailable": "New source imports are unavailable on this platform. Saved content and receipts can still be viewed.",
   "support": "Choose one Mod folder containing manifest.json and i18n/default.json. UTF-8 JSON with comments and trailing commas is supported. Split default folders, archives and embedded Content Patcher text are not supported. Nothing is written to your Mod.",
@@ -541,7 +548,8 @@ ai: {
     "duplicate": "The source contains duplicate or case-colliding names. Resolve them before importing.",
     "empty": "No original strings were found. Select a nonempty flat localization file.",
     "timeout": "Reading the source took too long. Check that the folder is accessible and retry.",
-    "format": "This source layout is unsupported. Select a Mod with one flat i18n/default.json.",
+    "webvtt": "This subtitle does not match caption profile 1. Check its explicit cue IDs, times, supported settings and plain-text payloads, then choose the corrected source folder.",
+        "format": "This source layout is unsupported. Select a Mod with one flat i18n/default.json.",
     "missing": "A required file is missing. Check manifest.json and i18n/default.json, then choose the folder again.",
     "language": "The declared language does not match the project. Use a project with the correct source language.",
     "limit": "This input exceeds a supported limit (two files, 128 KiB combined, 2,000 strings). Reduce the source or use a supported input.",

@@ -14,7 +14,7 @@ macro_rules! handlers {
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
-        source::select_source,source::preflight_source,source::start_source_import,
+        source::select_source,source::select_webvtt_source,source::read_webvtt_integration,source::preflight_source,source::start_source_import,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
         source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
@@ -135,6 +135,12 @@ impl ExecutionHost {
             .map_err(map_read)?;
         host.runtime
             .register(Arc::new(tsumugi_core::content::BuildRunner))
+            .map_err(map_read)?;
+        host.runtime
+            .register(Arc::new(tsumugi_core::content::WebvttSourceRunner))
+            .map_err(map_read)?;
+        host.runtime
+            .register(Arc::new(tsumugi_core::content::WebvttBuildRunner))
             .map_err(map_read)?;
         host.runtime
             .register(Arc::new(tsumugi_core::ai::AiRunner::default()))

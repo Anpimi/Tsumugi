@@ -2,13 +2,27 @@
 mod build;
 mod smapi;
 mod translation;
+pub mod webvtt;
 pub use crate::persistence::content::SourceAdoptionHandler;
 pub use build::{
     BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILD_OPERATION, BUILDER_VERSION, BuildEntry,
     BuildLocale, BuildManifest, BuildOutput, BuildRunner, BuildSourceFile, VALIDATOR_VERSION,
-    artifact_digest, build_locale, validate_build_output,
+    WebvttBuildRunner, artifact_digest, build_locale, validate_build_output,
 };
-pub use smapi::{SourceRunner, extract};
+pub use smapi::{SourceRunner, WebvttSourceRunner};
+pub fn extract(
+    bundle: &SourceBundle,
+    cancel: &Cancellation,
+) -> Result<SourceOutput, ExecutionError> {
+    if bundle.plugin_id == webvtt::PLUGIN {
+        webvtt::extract(bundle, cancel)
+    } else {
+        smapi::extract(bundle, cancel)
+    }
+}
+pub fn supported_identity_policy(policy: &str) -> bool {
+    matches!(policy, IDENTITY_POLICY | webvtt::POLICY)
+}
 pub use translation::{
     TRANSLATION_OPERATION, TranslationBundle, TranslationEntry, TranslationOutput,
     TranslationRunner, declared_locale, extract_translation, validate_translation_output,
@@ -61,6 +75,21 @@ pub fn integration_descriptor(capture_available: bool) -> IntegrationDescriptor 
         output_version: 1,
         format_profiles: vec![FORMAT.into()],
         required_files: vec![MANIFEST_PATH.into(), SOURCE_PATH.into()],
+        permissions: vec!["captured-input-only".into()],
+        available: capture_available,
+        reason: (!capture_available).then(|| "unsupported-platform".into()),
+    }
+}
+pub fn webvtt_descriptor(capture_available: bool) -> IntegrationDescriptor {
+    IntegrationDescriptor {
+        id: webvtt::PLUGIN.into(),
+        version: PLUGIN_VERSION.into(),
+        capability_id: webvtt::EXTRACT.into(),
+        capability_version: "1".into(),
+        input_version: 1,
+        output_version: 1,
+        format_profiles: vec![webvtt::PROFILE.into()],
+        required_files: vec![webvtt::PATH.into()],
         permissions: vec!["captured-input-only".into()],
         available: capture_available,
         reason: (!capture_available).then(|| "unsupported-platform".into()),
@@ -123,6 +152,34 @@ pub struct SourceBundle {
     pub files: Vec<CapturedFile>,
 }
 impl SourceBundle {
+    pub fn capture_webvtt(source: &[u8], language: &str) -> Result<Self, ExecutionError> {
+        if source.len() > MAX_SOURCE_BYTES {
+            return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
+        }
+        let locale = Locale::parse(language).map_err(|_| invalid("language-required"))?;
+        let mut bundle = Self {
+            version: 1,
+            plugin_id: webvtt::PLUGIN.into(),
+            plugin_version: PLUGIN_VERSION.into(),
+            set_id: ExecutionId::new(),
+            manifest_digest: String::new(),
+            source_language: locale.as_str().into(),
+            language_evidence: "user-declared".into(),
+            format_id: webvtt::PROFILE.into(),
+            format_version: 1,
+            files: vec![CapturedFile::new(webvtt::PATH, "source", source)?],
+        };
+        bundle.manifest_digest = bundle.calculate_digest()?;
+        bundle.validate()?;
+        Ok(bundle)
+    }
+    pub fn capability(&self) -> &str {
+        if self.plugin_id == webvtt::PLUGIN {
+            webvtt::EXTRACT
+        } else {
+            CAPABILITY
+        }
+    }
     pub fn capture(manifest: &[u8], source: &[u8], language: &str) -> Result<Self, ExecutionError> {
         if manifest.len() > MAX_MANIFEST_BYTES
             || source.len() > MAX_SOURCE_BYTES
@@ -182,11 +239,21 @@ impl SourceBundle {
     }
     pub fn validate(&self) -> Result<(), ExecutionError> {
         if self.version != 1
-            || self.plugin_id != PLUGIN_ID
+            || !matches!(self.plugin_id.as_str(), PLUGIN_ID | webvtt::PLUGIN)
             || self.plugin_version != PLUGIN_VERSION
-            || self.format_id != FORMAT
+            || self.format_id
+                != if self.plugin_id == webvtt::PLUGIN {
+                    webvtt::PROFILE
+                } else {
+                    FORMAT
+                }
             || self.format_version != 1
-            || self.files.len() != 2
+            || self.files.len()
+                != if self.plugin_id == webvtt::PLUGIN {
+                    1
+                } else {
+                    2
+                }
             || self.language_evidence != "user-declared"
         {
             return Err(invalid("unsupported-format"));
@@ -197,10 +264,15 @@ impl SourceBundle {
             return Err(invalid("language-conflict"));
         }
         let mut total = 0usize;
-        for (f, (path, role, max)) in self.files.iter().zip([
-            (MANIFEST_PATH, "companion", MAX_MANIFEST_BYTES),
-            (SOURCE_PATH, "source", MAX_SOURCE_BYTES),
-        ]) {
+        let expected = if self.plugin_id == webvtt::PLUGIN {
+            vec![(webvtt::PATH, "source", MAX_SOURCE_BYTES)]
+        } else {
+            vec![
+                (MANIFEST_PATH, "companion", MAX_MANIFEST_BYTES),
+                (SOURCE_PATH, "source", MAX_SOURCE_BYTES),
+            ]
+        };
+        for (f, (path, role, max)) in self.files.iter().zip(expected) {
             if f.logical_path != path
                 || f.role != role
                 || f.byte_length as usize != f.utf8.len()
@@ -216,7 +288,7 @@ impl SourceBundle {
         if total > MAX_SOURCE_BYTES {
             return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
         }
-        if self.files[0].artifact_id == self.files[1].artifact_id
+        if (self.files.len() == 2 && self.files[0].artifact_id == self.files[1].artifact_id)
             || self.calculate_digest()? != self.manifest_digest
         {
             return Err(invalid("invalid-structure"));
@@ -237,7 +309,7 @@ impl SourceBundle {
         let mut envelope = InputEnvelope::new(
             project,
             OPERATION,
-            CAPABILITY,
+            self.capability(),
             CAPABILITY_VERSION,
             vec![item],
         )?;
@@ -247,7 +319,7 @@ impl SourceBundle {
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let e = input.envelope();
         if e.operation != OPERATION
-            || e.capability_id != CAPABILITY
+            || !matches!(e.capability_id.as_str(), CAPABILITY | webvtt::EXTRACT)
             || e.capability_version != CAPABILITY_VERSION
             || e.items.len() != 1
             || e.units.len() != 1
@@ -259,6 +331,9 @@ impl SourceBundle {
         }
         let b: Self = from_value(&e.items[0].payload)?;
         b.validate()?;
+        if e.capability_id != b.capability() {
+            return Err(invalid("unsupported-format"));
+        }
         if e.items[0].scope
             != (Scope {
                 kind: "source".into(),

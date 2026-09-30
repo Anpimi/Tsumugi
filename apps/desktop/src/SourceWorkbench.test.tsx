@@ -29,6 +29,45 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", "I confirm", "Check source files", "This subtitle does not match caption profile 1."], ["zh-CN", "源内容", "源格式", "选择字幕目录", "我确认", "检查源文件", "字幕不符合 profile 1。"]])("selects WebVTT explicitly and recovers from invalid captions in %s", async (locale, entry, format, choose, declaration, check, message) => {
+  await i18n.changeLanguage(locale);
+  const original = invoke.getMockImplementation()!;
+  let invalid = true;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "read_webvtt_integration") return Promise.resolve({ id: "webvtt", version: "0.1.0", available: true, formatProfiles: ["webvtt-captions"] });
+    if (command === "select_webvtt_source") return Promise.resolve({ selectionId: "captions", folderName: "Captions" });
+    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", field: "vtt-timing" });
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: entry }));
+  await user.selectOptions(await screen.findByRole("combobox", { name: format }), "webvtt");
+  await user.click(await screen.findByRole("button", { name: choose }));
+  expect(invoke).toHaveBeenCalledWith("select_webvtt_source", { request: { sessionToken: "session", projectId: "project" } });
+  await user.click(screen.getByRole("checkbox", { name: new RegExp(declaration) }));
+  await user.click(screen.getByRole("button", { name: check }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  invalid = false;
+  await user.click(screen.getByRole("button", { name: check }));
+  await screen.findByText(/Example\.Mod[:：]/);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("ignores a late domain descriptor after the user returns to SMAPI", async () => {
+  let complete!: (value: unknown) => void;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_webvtt_integration" ? new Promise(resolve => { complete = resolve; }) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  const format = await screen.findByRole("combobox", { name: "Source format" });
+  await user.selectOptions(format, "webvtt");
+  await user.selectOptions(format, "stardew-smapi");
+  await act(async () => complete({ id: "webvtt", version: "0.1.0", available: true, formatProfiles: ["webvtt-captions"] }));
+  expect(format).toHaveValue("stardew-smapi");
+  expect(screen.getByRole("button", { name: "Choose Mod folder" })).toBeEnabled();
+});
 it.each([
   ["en-US", "Source content", "Choose Mod folder", "I confirm", "Check source files", "Every value in i18n/default.json must be a string."],
   ["zh-CN", "源内容", "选择 Mod 文件夹", "我确认", "检查源文件", "i18n/default.json 中的每个值都必须是字符串。"],

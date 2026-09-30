@@ -50,6 +50,44 @@ const TABLES: &[(&str, &str)] = &[
 pub(super) fn table_names() -> impl Iterator<Item = String> {
     TABLES.iter().map(|(name, _)| (*name).to_owned())
 }
+pub(super) fn record_input(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    if input.envelope().operation != BUILD_OPERATION {
+        return Ok(());
+    }
+    let manifest = BuildManifest::from_input(input)?;
+    let (set, project): (String, String) = connection
+        .query_row(
+            "SELECT set_id,project_id FROM source_snapshots WHERE snapshot_id=?1",
+            [manifest.source_snapshot_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(sql)?;
+    let bundle = super::content::read_bundle(connection, ExecutionId::parse(&set)?)?;
+    if project != manifest.project_id.to_string()
+        || bundle.plugin_id != manifest.plugin_id
+        || bundle.plugin_version != manifest.plugin_version
+        || bundle.files.len() != manifest.source_files.len()
+        || bundle
+            .files
+            .iter()
+            .zip(&manifest.source_files)
+            .any(|(actual, fixed)| {
+                actual.logical_path != fixed.logical_path || actual.sha256 != fixed.sha256
+            })
+        || manifest.locales.iter().any(|locale| {
+            locale
+                .source_template
+                .as_ref()
+                .is_some_and(|template| template != &bundle.files[0].utf8)
+        })
+    {
+        return Err(failure(ErrorCode::OutputInvalid, "build-source-template"));
+    }
+    Ok(())
+}
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (_, definition) in TABLES {
         connection.execute_batch(definition)?;
@@ -158,9 +196,9 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
                 utf8,
                 sha256,
                 entry_count: count,
-                builder_version: BUILDER_VERSION.into(),
+                builder_version: manifest.builder_version.clone(),
             };
-            if validator != VALIDATOR_VERSION
+            if validator != manifest.validator_version
                 || !seen.insert(locale)
                 || validate_build_output(expected, &output).is_err()
             {
@@ -611,6 +649,8 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?;
+        let source_bundle = self.source_bundle(eligibility.source_snapshot_id)?;
+        let vtt = source_bundle.plugin_id == crate::content::webvtt::PLUGIN;
         let mut files = connection
             .prepare(
                 "SELECT f.logical_path,f.digest FROM source_files f
@@ -679,6 +719,7 @@ impl ProjectStore {
                 locale: choice.locale.clone(),
                 file_name: choice.file_name.clone(),
                 entries,
+                source_template: vtt.then(|| source_bundle.files[0].utf8.clone()),
             });
         }
         // Review pages are read separately. Reject a capture if another writer
@@ -690,10 +731,20 @@ impl ProjectStore {
             source_snapshot_id: eligibility.source_snapshot_id,
             policy_version: eligibility.policy_version,
             eligibility_basis: eligibility.basis,
-            plugin_id: crate::content::PLUGIN_ID.into(),
+            plugin_id: source_bundle.plugin_id.clone(),
             plugin_version: crate::content::PLUGIN_VERSION.into(),
-            builder_version: BUILDER_VERSION.into(),
-            validator_version: VALIDATOR_VERSION.into(),
+            builder_version: if vtt {
+                crate::content::webvtt::BUILDER
+            } else {
+                BUILDER_VERSION
+            }
+            .into(),
+            validator_version: if vtt {
+                crate::content::webvtt::CHECKER
+            } else {
+                VALIDATOR_VERSION
+            }
+            .into(),
             source_files: files,
             locales: manifest_locales,
         }
@@ -839,7 +890,7 @@ impl ProjectStore {
             entry_count: summary.entry_count,
             builder_version: manifest.builder_version,
         };
-        if validator != VALIDATOR_VERSION
+        if validator != manifest.validator_version
             || codec::digest(&bytes) != summary.sha256
             || validate_build_output(expected, &output).is_err()
         {
@@ -909,7 +960,7 @@ impl AdoptionHandler for ReleaseAdoptionHandler {
                     &output.file_name,
                     output.utf8.as_bytes(),
                     &output.sha256,
-                    VALIDATOR_VERSION,
+                    manifest.validator_version,
                     output.entry_count,
                 ],
             )?;

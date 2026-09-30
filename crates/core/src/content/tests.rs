@@ -31,6 +31,7 @@ fn generate(store: &mut ProjectStore, bundle: SourceBundle) -> (FixedInput, Fixe
         .unwrap();
     let mut runtime = ExecutionRuntime::new(store).unwrap();
     runtime.register(Arc::new(SourceRunner)).unwrap();
+    runtime.register(Arc::new(WebvttSourceRunner)).unwrap();
     runtime.submit(store, &input).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -905,11 +906,13 @@ fn oversized_multi_locale_build_is_rejected_before_execution() {
         ],
         locales: vec![
             BuildLocale {
+                source_template: None,
                 locale: "zh-CN".into(),
                 file_name: "i18n/zh.json".into(),
                 entries,
             },
             BuildLocale {
+                source_template: None,
                 locale: "fr-FR".into(),
                 file_name: "i18n/fr.json".into(),
                 entries: oversized,
@@ -1585,3 +1588,6 @@ fn process_abort_preserves_capture_output_and_adoption_boundaries() {
         );
     }
 }
+
+#[path = "webvtt_tests.rs"]
+mod webvtt_tests;

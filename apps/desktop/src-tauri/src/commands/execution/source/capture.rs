@@ -107,6 +107,7 @@ mod platform {
 
 #[cfg(windows)]
 pub struct Selection {
+    webvtt: bool,
     root: PathBuf,
     root_file: File,
     identity: platform::Identity,
@@ -130,6 +131,7 @@ impl Selection {
         let root = platform::final_path(&root_file)?;
         let identity = platform::identity(&root_file)?;
         Ok(Self {
+            webvtt: false,
             root,
             root_file,
             identity,
@@ -142,6 +144,11 @@ impl Selection {
             .unwrap_or(self.root.as_os_str())
             .to_string_lossy()
             .into()
+    }
+    pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
+        let mut selected = Self::authorize(path)?;
+        selected.webvtt = true;
+        Ok(selected)
     }
     pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         self.verify()?;
@@ -236,6 +243,31 @@ impl Selection {
         opened: impl FnOnce(),
     ) -> Result<SourceBundle, ExecutionError> {
         self.verify()?;
+        if self.webvtt {
+            let path = self.root.join(content::webvtt::PATH);
+            let mut file = platform::open(&path, false)?;
+            if platform::final_path(&file)? != path {
+                return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+            }
+            let started = Instant::now();
+            let check = || {
+                if cancel.is_requested() {
+                    Err(error(ErrorCode::Cancelled, "cancelled"))
+                } else if started.elapsed() > Duration::from_secs(30) {
+                    Err(error(ErrorCode::Busy, "capture-timeout"))
+                } else {
+                    Ok(())
+                }
+            };
+            opened();
+            check()?;
+            let bytes = read(&mut file, MAX_SOURCE_BYTES, &check)?;
+            if bytes != read(&mut file, MAX_SOURCE_BYTES, &check)? {
+                return Err(error(ErrorCode::DependencyConflict, "source-changed"));
+            }
+            self.verify()?;
+            return SourceBundle::capture_webvtt(&bytes, language);
+        }
         let started = Instant::now();
         let check = || {
             if cancel.is_requested() {
@@ -375,6 +407,9 @@ impl Selection {
     pub fn authorize(_: PathBuf) -> Result<Self, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
+        Self::authorize(path)
+    }
     pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
@@ -401,6 +436,57 @@ impl Selection {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    #[test]
+    fn webvtt_capture_keeps_fixed_bytes_and_rejects_cancel_links_and_busy_input() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(content::webvtt::PATH);
+        let bytes = include_bytes!("../../../../../../../crates/core/tests/fixtures/webvtt/s1.vtt");
+        fs::write(&path, bytes).unwrap();
+        let selected = Selection::authorize_webvtt(root.path().into()).unwrap();
+        let bundle = selected.capture("en", &Cancellation::default()).unwrap();
+        assert_eq!(bundle.files.len(), 1);
+        assert_eq!(bundle.files[0].utf8.as_bytes(), bytes);
+        let cancel = Cancellation::default();
+        cancel.request();
+        assert_eq!(
+            selected.capture("en", &cancel).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+        let writer = OpenOptions::new().write(true).open(&path).unwrap();
+        assert_eq!(
+            selected
+                .capture("en", &Cancellation::default())
+                .unwrap_err()
+                .code,
+            ErrorCode::Busy
+        );
+        drop(writer);
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            content::extract(&bundle, &Cancellation::default())
+                .unwrap()
+                .occurrences
+                .len(),
+            6
+        );
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("other.vtt"), bytes).unwrap();
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&path)
+            .arg(outside.path())
+            .output()
+            .unwrap();
+        assert!(status.status.success(), "junction fixture creation failed");
+        assert_eq!(
+            selected
+                .capture("en", &Cancellation::default())
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        fs::remove_dir(&path).unwrap();
+    }
     #[test]
     fn resource_file_capture_is_bounded_and_uses_an_authorized_read_handle() {
         let root = fixture();
