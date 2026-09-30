@@ -110,6 +110,12 @@ impl ExecutionRuntime {
             return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
         }
         let input = store.execution_retry_input(attempt, items)?;
+        if input.envelope().operation == crate::ai::OPERATION {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "ai-new-consent",
+            ));
+        }
         self.submit(store, &input)?;
         Ok(input.envelope().attempt_id)
     }
@@ -257,7 +263,7 @@ impl ExecutionRuntime {
             if self.workers.len() + self.retired.len() >= CONCURRENCY {
                 break;
             }
-            if self.is_active(attempt) || self.retired.iter().any(|(id, _)| *id == attempt) {
+            if self.retired.iter().any(|(id, _)| *id == attempt) {
                 continue;
             }
             let input = store.execution_input_cached(attempt)?;
@@ -271,6 +277,15 @@ impl ExecutionRuntime {
             else {
                 continue;
             };
+            if self
+                .workers
+                .iter()
+                .filter(|worker| worker.request.input.envelope().attempt_id == attempt)
+                .count()
+                >= runner.concurrency_limit(&input).clamp(1, CONCURRENCY)
+            {
+                continue;
+            }
             let Some(item) = store.next_queued_execution_item(attempt)? else {
                 continue;
             };

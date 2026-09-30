@@ -7,7 +7,7 @@ import { projectCommands } from "./projectCommands";
 import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type Task, type PrepareRequest, type ResultEnvelope } from "./executionCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string };
-export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void }) {
+export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [dismissBlocked, setDismissBlocked] = useState(false);
@@ -15,12 +15,12 @@ export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslati
     <Dialog.Trigger className="navigation-item" disabled={disabled}>{t("execution.title")}</Dialog.Trigger>
     <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog" onEscapeKeyDown={event => { if (dismissBlocked) event.preventDefault(); }}>
       <div className="execution-heading"><div><Dialog.Title>{t("execution.title")}</Dialog.Title><Dialog.Description>{project.metadata.displayName}</Dialog.Description></div><Dialog.Close className="secondary-button" disabled={dismissBlocked}>{t("execution.back")}</Dialog.Close></div>
-      {open ? <TaskContent key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
+      {open ? <TaskContent onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>;
 }
 
-export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, onTranslationPreview }: { project: ProjectView; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void }) {
+export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview }: { project: ProjectView; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -153,7 +153,7 @@ export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, 
       {tasks.length > 0 ? <p>{t("execution.listHelp")}</p> : null}
       <ul className="execution-list">{tasks.map(task => <li key={task.taskId}>
         <button className="secondary-button" onClick={() => selectTask(task.taskId)} disabled={busy}>
-          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "locale-build" ? "release.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
+          {t(task.operation === "source-import" ? "source.title" : task.operation === "translation-import" ? "translation.title" : task.operation === "ai-translation" ? "ai.title" : task.operation === "locale-build" ? "release.title" : task.operation === "sample-update" ? "execution.sampleOperation" : "execution.operation")} · {t("execution.taskNumber", { number: task.sequence })}
         </button>
       </li>)}</ul>
       {cursor !== "0" || tasks.length === 50 ? <div className="execution-actions">
@@ -193,11 +193,11 @@ export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, 
             ) : <button className={action === "adopt-result" || action === "retry-safe-failure" || action === "resume-undispatched" ? "primary-button" : "secondary-button"} key={action} disabled={busy || pendingAction !== null} onClick={() => {
               if (action === "adopt-result" && detail.operation === "source-import") onSourcePreview?.(detail.attemptId);
               else if (action === "adopt-result" && detail.operation === "translation-import") onTranslationPreview?.(detail.attemptId);
-              else if (action === "view-receipt") void execute({ action, unit }); else confirm({ action, unit });
+              else if (action === "adopt-result" && detail.operation === "ai-translation") onAiPreview?.(detail.attemptId); else if (action === "view-receipt") void execute({ action, unit }); else confirm({ action, unit });
             }}>{t(action === "adopt-result" && detail.operation === "source-import" ? "source.preview" : action === "adopt-result" && detail.operation === "translation-import" ? "translation.preview" : `execution.actions.${action}`)}</button>)}</div>
           </section>)}
         </section>
-        <h3>{t("execution.itemResults")}</h3>
+        <h3>{t("execution.itemResults")}</h3>{detail.operation === "ai-translation" ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onAiPreview?.(detail.attemptId)}>{t("ai.results")}</button> : null}
         {detail.operation === "source-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onSourcePreview?.(detail.attemptId)}>{t("source.preview")}</button> : null}
         {detail.operation === "translation-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onTranslationPreview?.(detail.attemptId)}>{t("translation.preview")}</button> : null}
         <ul className="execution-list">{detail.items.map(item => <li key={item.status.itemId}>

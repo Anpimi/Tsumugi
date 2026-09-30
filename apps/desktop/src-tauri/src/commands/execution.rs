@@ -32,7 +32,7 @@ macro_rules! handlers {
         review::read_review_work,review::read_review_eligibility,
         release::start_locale_build,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
-        release::reconcile_delivery,$($extra),*
+        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
@@ -104,6 +104,7 @@ pub(super) struct ExecutionHost {
     last_error: Option<CommandError>,
     source: source::SourceSession,
     release: release::ReleaseSession,
+    ai: ai::AiSession,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -124,6 +125,7 @@ impl ExecutionHost {
             last_error: None,
             source: source::SourceSession::default(),
             release: release::ReleaseSession::default(),
+            ai: ai::AiSession::default(),
         };
         host.runtime
             .register(Arc::new(tsumugi_core::content::SourceRunner))
@@ -134,6 +136,13 @@ impl ExecutionHost {
         host.runtime
             .register(Arc::new(tsumugi_core::content::BuildRunner))
             .map_err(map_read)?;
+        host.runtime
+            .register(Arc::new(tsumugi_core::ai::AiRunner::default()))
+            .map_err(map_read)?;
+        host.handlers.insert(
+            tsumugi_core::ai::OPERATION.into(),
+            Arc::new(tsumugi_core::AiAdoptionHandler),
+        );
         host.handlers.insert(
             tsumugi_core::content::OPERATION.into(),
             Arc::new(tsumugi_core::content::SourceAdoptionHandler),
@@ -333,6 +342,7 @@ macro_rules! request {
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $(pub $field:$kind,)* }
     }
 }
+mod ai;
 mod release;
 mod resource;
 mod review;
@@ -548,15 +558,25 @@ pub fn read_execution_attempt(
         CommandStage::ExecutionRead,
     )?;
     let (host, store) = active.execution_parts()?;
-    let view = host
-        .runtime
-        .attempt(store, request.attempt_id)
-        .map_err(map_read)?;
-    let input = store
-        .execution_input(request.attempt_id)
-        .map_err(map_read)?;
+    attempt_detail(
+        host,
+        store,
+        request.attempt_id,
+        request.offset,
+        request.limit,
+    )
+}
+fn attempt_detail(
+    host: &ExecutionHost,
+    store: &ProjectStore,
+    attempt_id: ExecutionId,
+    offset: u32,
+    limit: u32,
+) -> Result<AttemptDetail, CommandError> {
+    let view = host.runtime.attempt(store, attempt_id).map_err(map_read)?;
+    let input = store.execution_input(attempt_id).map_err(map_read)?;
     let total = view.items.len();
-    if request.offset as usize > total {
+    if offset as usize > total {
         return Err(CommandError::invalid_input(
             CommandStage::ExecutionRead,
             Some("offset"),
@@ -565,23 +585,20 @@ pub fn read_execution_attempt(
     let items = view
         .items
         .into_iter()
-        .skip(request.offset as usize)
-        .take(request.limit as usize)
+        .skip(offset as usize)
+        .take(limit as usize)
         .map(|status| {
             Ok(ItemView {
                 scope: input.item(status.item_id).map_err(map_read)?.scope.clone(),
                 result_id: store
-                    .execution_current_result(request.attempt_id, status.item_id)
+                    .execution_current_result(attempt_id, status.item_id)
                     .map_err(map_read)?,
                 status,
             })
         })
         .collect::<Result<Vec<_>, CommandError>>()?;
     let mut recovery = store
-        .execution_recovery(
-            request.attempt_id,
-            host.runtime.is_active(request.attempt_id),
-        )
+        .execution_recovery(attempt_id, host.runtime.is_active(attempt_id))
         .map_err(map_read)?;
     // A unit can span pages. Return it on each page containing a member so its
     // full scope remains explicit before an action is requested.
@@ -590,7 +607,17 @@ pub fn read_execution_attempt(
             .iter()
             .any(|item| unit.item_ids.contains(&item.status.item_id))
     });
-    let end = request.offset + items.len() as u32;
+    if view.operation == tsumugi_core::ai::OPERATION {
+        for unit in &mut recovery.units {
+            unit.actions.retain(|a| {
+                !matches!(
+                    a,
+                    RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                )
+            });
+        }
+    }
+    let end = offset + items.len() as u32;
     Ok(AttemptDetail {
         attempt_id: view.attempt_id,
         task_id: view.task_id,

@@ -3326,6 +3326,7 @@ mod tests {
         connection
             .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
             .unwrap();
+        crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
         connection.pragma_update(None, "user_version", 6).unwrap();
         drop(store);
         let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
@@ -3379,6 +3380,7 @@ mod tests {
             connection
                 .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
                 .unwrap();
+            crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
             connection.pragma_update(None, "user_version", 6).unwrap();
             drop(store);
             let child = std::process::Command::new(std::env::current_exe().unwrap())
@@ -4090,7 +4092,7 @@ mod tests {
     }
 
     #[test]
-    fn approved_locale_build_publishes_verified_bytes_and_survives_reopen() {
+    fn approved_locale_build_preserves_history_across_schema_nine_upgrade_and_reopen() {
         use crate::{
             BuildLocaleChoice, ReleaseAdoptionHandler,
             content::{BuildManifest, BuildOutput, BuildRunner, validate_build_output},
@@ -4327,9 +4329,46 @@ mod tests {
                 .code,
             ErrorCode::DependencyConflict
         );
+        let history_tables = [
+            "translation_revisions",
+            "translation_selections",
+            "review_decisions",
+            "review_checks",
+            "release_records",
+            "release_artifacts",
+            "release_deliveries",
+            "adoption_receipts",
+        ];
+        let history_rows = |connection: &Connection| {
+            history_tables
+                .iter()
+                .map(|table| {
+                    let mut statement = connection
+                        .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                        .unwrap();
+                    let columns = statement.column_count();
+                    statement
+                        .query_map([], |row| {
+                            (0..columns)
+                                .map(|column| row.get::<_, rusqlite::types::Value>(column))
+                                .collect::<rusqlite::Result<Vec<_>>>()
+                        })
+                        .unwrap()
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        let before_upgrade = history_rows(store.connection().unwrap());
+        assert!(before_upgrade.iter().all(|rows| !rows.is_empty()));
         drop(runtime);
         drop(store);
+        let legacy = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+        crate::persistence::restore_legacy_translation_fixture(&legacy).unwrap();
+        legacy.pragma_update(None, "user_version", 9).unwrap();
+        drop(legacy);
         let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_eq!(history_rows(reopened.connection().unwrap()), before_upgrade);
         assert_eq!(
             reopened.release_artifact(release_id, "zh-CN").unwrap().1,
             bytes

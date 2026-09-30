@@ -61,7 +61,7 @@ export interface ContextCapture {
 export interface TmSuggestion {
   unitId: string; sourceRevisionId: string; sourceText: string;
   translationRevisionId: string; translationText: string; targetLocale: string;
-  originKind: "manual" | "import"; isCurrentSelection: boolean;
+  originKind: "manual" | "import" | "ai"; isCurrentSelection: boolean;
   hasHumanApproval: boolean; matchKind: "exact" | "fuzzy"; scorePercent: number;
 }
 export interface ImpactReason {

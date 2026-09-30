@@ -154,6 +154,178 @@ fn setup() -> (
     (temp, app, webview, context)
 }
 
+fn call_when_ready(
+    webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    command: &str,
+    request: Value,
+) -> Result<Value, Value> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match call(webview, command, request.clone()) {
+            Err(e) if e["code"] == "busy" && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            result => return result,
+        }
+    }
+}
+
+#[test]
+fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
+    let (temp, app, webview, context) = setup();
+    let units = {
+        let state = app.state::<AppState>();
+        let mut sessions = state.sessions.lock().unwrap();
+        let active = authorized(
+            &mut sessions,
+            context["sessionToken"].as_str().unwrap(),
+            serde_json::from_value(context["projectId"].clone()).unwrap(),
+            CommandStage::ExecutionRead,
+        )
+        .unwrap();
+        let (host, store) = active.execution_parts().unwrap();
+        let bundle=tsumugi_core::content::SourceBundle::capture(br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,br#"{"first":"Hello"}"#,"en-US").unwrap();
+        let input = bundle
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.active(store).unwrap() {
+            host.tick(store).unwrap();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let result = store
+            .execution_current_result(
+                input.envelope().attempt_id,
+                input.envelope().items[0].item_id,
+            )
+            .unwrap()
+            .unwrap();
+        let preview = store
+            .source_preview(input.envelope().attempt_id, result, 0, 10)
+            .unwrap();
+        let action = store
+            .prepare_adoption_with_id(
+                ExecutionId::new(),
+                input.envelope().attempt_id,
+                input.envelope().units[0].unit_id,
+                vec![result],
+                serde_json::to_value(preview.confirmation).unwrap(),
+            )
+            .unwrap();
+        store
+            .adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler)
+            .unwrap();
+        store
+            .source_content(
+                store.content_scope().unwrap().current_snapshot.unwrap(),
+                0,
+                10,
+            )
+            .unwrap()
+            .rows
+            .iter()
+            .map(|r| r.unit_id.unwrap())
+            .collect::<Vec<_>>()
+    };
+    let config = tsumugi_core::ai::AiConfig {
+        endpoint: "http://127.0.0.1:65534/v1/chat/completions".into(),
+        model: "test-model".into(),
+        credential_env: "TSUMUGI_NONEXISTENT_AI_ACCEPTANCE_CREDENTIAL".into(),
+        ..Default::default()
+    };
+    let database = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    let before = database
+        .query_row("SELECT COUNT(*) FROM execution_attempts", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap();
+    let prepared = call(
+        &webview,
+        "preview_ai_translation",
+        request(
+            &context,
+            json!({"config":config,"locale":"zh-CN","unitIds":units}),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        database
+            .query_row("SELECT COUNT(*) FROM execution_attempts", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        before
+    );
+    let start = json!({"attemptId":prepared["attemptId"],"digest":prepared["preview"]["digest"],"confirmed":true});
+    assert_eq!(call(&webview,"start_ai_translation",request(&context,json!({"attemptId":prepared["attemptId"],"digest":prepared["preview"]["digest"],"confirmed":false}))).unwrap_err()["field"],"ai-consent");
+    assert!(
+        call(
+            &webview,
+            "start_ai_translation",
+            request(
+                &context,
+                json!({"attemptId":prepared["attemptId"],"digest":"wrong","confirmed":true})
+            )
+        )
+        .is_err()
+    );
+    let mut stale = context.clone();
+    stale["sessionToken"] = "stale".into();
+    assert!(
+        call(
+            &webview,
+            "start_ai_translation",
+            request(&stale, start.clone())
+        )
+        .is_err()
+    );
+    let mut foreign = context.clone();
+    foreign["projectId"] = ExecutionId::new().to_string().into();
+    assert!(
+        call(
+            &webview,
+            "start_ai_translation",
+            request(&foreign, start.clone())
+        )
+        .is_err()
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "start_ai_translation",
+            request(&context, start.clone())
+        )
+        .unwrap(),
+        prepared["attemptId"]
+    );
+    assert_eq!(
+        call(&webview, "start_ai_translation", request(&context, start)).unwrap(),
+        prepared["attemptId"]
+    );
+    settled(&webview, &context);
+    let saved = call(
+        &webview,
+        "read_ai_translation",
+        request(&context, json!({"attemptId":prepared["attemptId"]})),
+    )
+    .unwrap();
+    assert_eq!(saved["detail"]["progress"]["failed"], 1);
+    assert_eq!(
+        saved["detail"]["items"][0]["status"]["diagnostic"],
+        "ai-credential"
+    );
+    assert!(!saved.to_string().contains("resume-undispatched"));
+    assert!(!saved.to_string().contains("retry-safe-failure"));
+    assert_eq!(
+        database
+            .query_row("SELECT COUNT(*) FROM execution_attempts", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        before + 1
+    );
+}
+
 #[test]
 fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     let (_temp, app, _webview, context) = setup();
@@ -237,7 +409,14 @@ fn request(context: &Value, extra: Value) -> Value {
 fn settled(webview: &tauri::WebviewWindow<tauri::test::MockRuntime>, context: &Value) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        let status = call(webview, "execution_status", context.clone()).unwrap();
+        let status = match call(webview, "execution_status", context.clone()) {
+            Err(e) if e["code"] == "busy" => {
+                assert!(Instant::now() < deadline, "status remained busy");
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            result => result.unwrap(),
+        };
         assert_eq!(status["error"], Value::Null, "{status}");
         if status["active"] == false {
             return;
@@ -254,7 +433,7 @@ fn detail(
     context: &Value,
     attempt: &Value,
 ) -> Value {
-    call(
+    call_when_ready(
         webview,
         "read_execution_attempt",
         request(context, json!({"attemptId":attempt,"offset":0,"limit":100})),
@@ -309,11 +488,14 @@ fn invoke_recovers_grouped_partial_work_and_receipt_survives_reopen() {
     );
     let mut renewed = prepare;
     renewed["actionId"] = json!(ExecutionId::new());
-    let action = call(&webview, "prepare_execution_adoption", renewed).unwrap();
+    let action = call_when_ready(&webview, "prepare_execution_adoption", renewed).unwrap();
     let apply = request(&context, json!({"actionId":action["actionId"]}));
-    let receipt = call(&webview, "adopt_execution", apply.clone()).unwrap();
+    let receipt = call_when_ready(&webview, "adopt_execution", apply.clone()).unwrap();
     assert_eq!(receipt["changes"].as_array().unwrap().len(), 3);
-    assert_eq!(call(&webview, "adopt_execution", apply).unwrap(), receipt);
+    assert_eq!(
+        call_when_ready(&webview, "adopt_execution", apply).unwrap(),
+        receipt
+    );
     call(
         &webview,
         "close_project",

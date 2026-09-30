@@ -706,6 +706,14 @@ impl ProjectStore {
                     entry.blocked_reason = Some("retry-not-safe".into());
                 }
             }
+            if input.envelope().operation == crate::ai::OPERATION {
+                entry.actions.retain(|a| {
+                    !matches!(
+                        a,
+                        RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                    )
+                });
+            }
             units.push(entry);
         }
         Ok(RecoveryPlan {
