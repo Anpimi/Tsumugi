@@ -148,7 +148,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
   const warnings = page?.diagnostics ?? preflight?.diagnostics ?? [];
   return <>
     <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger className="navigation-item" disabled={disabled} onClick={() => { if (!attempt && !page) void perform(loadCurrent); }}>{t("source.title")}</Dialog.Trigger>
+      <Dialog.Trigger className="navigation-item" disabled={disabled} onClick={() => { if (!attempt && !page && !selection && !updating) void perform(loadCurrent); }}>{t("source.title")}</Dialog.Trigger>
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog source-dialog">
         <div className="execution-heading"><div><Dialog.Title>{t("source.title")}</Dialog.Title><Dialog.Description>{t("source.description")}</Dialog.Description></div><Dialog.Close className="secondary-button">{t("execution.back")}</Dialog.Close></div>
         <div className="execution-content" aria-busy={busy}>

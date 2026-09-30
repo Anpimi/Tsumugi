@@ -446,7 +446,7 @@ ai: {
   "webvttCompareHelp": "Compare cue IDs, text, timing and layout. Timing or layout changes require review even when the text is unchanged. Matching text under another ID is only a suggestion; confirm any continuation before applying the complete subtitle.",
   "webvttSupport": "Choose a folder containing source.vtt. Caption profile 1 requires unique ASCII cue IDs and plain text. Timing, supported layout settings and NOTE/STYLE/REGION blocks are preserved. Markup and anonymous cues are not supported.",
   "title": "Source content",
-  "description": "Import or update the original strings from a supported SMAPI Mod.",
+  "description": "Import or update original text from supported Mod or caption files.",
   "update": "Update source content",
   "updateIntro": "Choose a complete new source package. The current source and earlier releases stay available until you apply the comparison.",
   "compareTitle": "Review upstream changes",

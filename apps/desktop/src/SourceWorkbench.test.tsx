@@ -56,6 +56,23 @@ it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it("retains an update selection when reopening an already imported project", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_content_scope" ? Promise.resolve({ revision: "2", currentSnapshot: "snapshot" }) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  await user.click(await screen.findByRole("button", { name: "Update source content" }));
+  await user.click(screen.getByRole("button", { name: "Choose Mod folder" }));
+  await screen.findByText("Example Mod");
+  const contentReads = invoke.mock.calls.filter(([name]) => name === "read_source_content").length;
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  expect(screen.getByText("Example Mod")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check source files" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_source_content")).toHaveLength(contentReads);
+});
+
 it("ignores a late domain descriptor after the user returns to SMAPI", async () => {
   let complete!: (value: unknown) => void;
   const original = invoke.getMockImplementation()!;
