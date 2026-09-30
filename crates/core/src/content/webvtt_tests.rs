@@ -52,7 +52,7 @@ fn caption_parser_and_reconstruction_match_independent_oracle_for_line_endings()
                     .map(|c| (c.key.as_str(), c.text.as_str()))
                     .collect::<Vec<_>>(),
                 [
-                    ("keep", "Hello\nWorld"),
+                    ("keep", "Hello 世界\nWorld"),
                     ("timed", "Wait"),
                     ("word", "Old"),
                     ("layout", "Layout"),
