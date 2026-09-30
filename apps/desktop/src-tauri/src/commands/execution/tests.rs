@@ -327,6 +327,220 @@ fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
 }
 
 #[test]
+fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction() {
+    let call = call_when_ready;
+    let (temp, app, webview, context) = setup();
+    let project: ExecutionId = serde_json::from_value(context["projectId"].clone()).unwrap();
+    let (unit, source) = {
+        let state = app.state::<AppState>();
+        let mut sessions = state.sessions.lock().unwrap();
+        let active = authorized(
+            &mut sessions,
+            context["sessionToken"].as_str().unwrap(),
+            project,
+            CommandStage::ExecutionRead,
+        )
+        .unwrap();
+        let (host, store) = active.execution_parts().unwrap();
+        let bundle = tsumugi_core::content::SourceBundle::capture(br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"Hello {name}"}"#, "en-US").unwrap();
+        let input = bundle
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.active(store).unwrap() {
+            host.tick(store).unwrap();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let result = store
+            .execution_current_result(
+                input.envelope().attempt_id,
+                input.envelope().items[0].item_id,
+            )
+            .unwrap()
+            .unwrap();
+        let preview = store
+            .source_preview(input.envelope().attempt_id, result, 0, 10)
+            .unwrap();
+        let action = store
+            .prepare_adoption_with_id(
+                ExecutionId::new(),
+                input.envelope().attempt_id,
+                input.envelope().units[0].unit_id,
+                vec![result],
+                serde_json::to_value(preview.confirmation).unwrap(),
+            )
+            .unwrap();
+        store
+            .adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler)
+            .unwrap();
+        let row = store
+            .source_content(
+                store.content_scope().unwrap().current_snapshot.unwrap(),
+                0,
+                10,
+            )
+            .unwrap()
+            .rows
+            .remove(0);
+        (row.unit_id.unwrap(), row.source_revision_id.unwrap())
+    };
+    let a = tsumugi_core::ai::AiConfig {
+        endpoint: "http://127.0.0.1:65534/v1/chat/completions".into(),
+        model: "first-model-private-to-blind-view".into(),
+        credential_env: "TSUMUGI_NONEXISTENT_AI_ACCEPTANCE_CREDENTIAL".into(),
+        share_context: true,
+        ..Default::default()
+    };
+    let mut config = tsumugi_core::ai::arena::ArenaConfig {
+        variants: vec![a.clone(), a],
+        max_items: 20,
+        max_requests: 40,
+        concurrency: 1,
+        blind: true,
+        parent_attempt_id: None,
+    };
+    let database = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    let counts = || {
+        [
+            "execution_attempts",
+            "translation_revisions",
+            "translation_selections",
+            "arena_comparisons",
+            "arena_entries",
+        ]
+        .map(|table| {
+            database
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .unwrap()
+        })
+    };
+    let before = counts();
+    let first = call(
+        &webview,
+        "preview_arena_translation",
+        request(
+            &context,
+            json!({"config":config,"locale":"zh-CN","unitIds":[unit]}),
+        ),
+    )
+    .unwrap();
+    assert_eq!(counts(), before); // No credential was read: that variable is absent.
+    config.variants[1].model = "second-model-private-to-blind-view".into();
+    let second = call(
+        &webview,
+        "preview_arena_translation",
+        request(
+            &context,
+            json!({"config":config,"locale":"zh-CN","unitIds":[unit]}),
+        ),
+    )
+    .unwrap();
+    assert_ne!(first["preview"]["digest"], second["preview"]["digest"]);
+    let start = |p: &Value, confirmed: bool| {
+        request(
+            &context,
+            json!({"attemptId":p["attemptId"],"digest":p["preview"]["digest"],"confirmed":confirmed}),
+        )
+    };
+    assert!(call(&webview, "start_arena_translation", start(&first, true)).is_err());
+    assert_eq!(
+        call(&webview, "start_arena_translation", start(&second, false)).unwrap_err()["field"],
+        "arena-consent"
+    );
+    let mut forged = start(&second, true);
+    forged["digest"] = "wrong".into();
+    assert!(call(&webview, "start_arena_translation", forged).is_err());
+    let mut stale = start(&second, true);
+    stale["sessionToken"] = "stale".into();
+    assert!(call(&webview, "start_arena_translation", stale).is_err());
+    let mut foreign = start(&second, true);
+    foreign["projectId"] = ExecutionId::new().to_string().into();
+    assert!(call(&webview, "start_arena_translation", foreign).is_err());
+    {
+        let state = app.state::<AppState>();
+        let mut sessions = state.sessions.lock().unwrap();
+        let active = authorized(
+            &mut sessions,
+            context["sessionToken"].as_str().unwrap(),
+            project,
+            CommandStage::ExecutionRead,
+        )
+        .unwrap();
+        active
+            .store
+            .save_context(&tsumugi_core::SaveContext {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: "zh-CN".into(),
+                source_revision_id: source,
+                expected_revision_id: None,
+                reason: "Synthetic change".into(),
+                text: "Updated context".into(),
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        call(&webview, "start_arena_translation", start(&second, true)).unwrap_err()["field"],
+        "arena-preview"
+    );
+    assert_eq!(counts(), before);
+    let prepared = call(
+        &webview,
+        "preview_arena_translation",
+        request(
+            &context,
+            json!({"config":config,"locale":"zh-CN","unitIds":[unit]}),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        call(&webview, "start_arena_translation", start(&prepared, true)).unwrap(),
+        prepared["attemptId"]
+    );
+    assert_eq!(
+        call(&webview, "start_arena_translation", start(&prepared, true)).unwrap(),
+        prepared["attemptId"]
+    );
+    settled(&webview, &context);
+    let read = || {
+        call(
+            &webview,
+            "read_arena_translation",
+            request(&context, json!({"attemptId":prepared["attemptId"]})),
+        )
+        .unwrap()
+    };
+    let view = read();
+    assert_eq!(view["detail"]["progress"]["failed"], 2);
+    assert!(view["variants"].is_null());
+    assert_eq!(view["rows"].as_array().unwrap().len(), 2);
+    assert!(!view.to_string().contains("private-to-blind-view"));
+    assert!(!view.to_string().contains("resume-undispatched"));
+    call(
+        &webview,
+        "reveal_arena_identity",
+        request(
+            &context,
+            json!({"comparisonId":prepared["attemptId"],"actionId":ExecutionId::new()}),
+        ),
+    )
+    .unwrap();
+    let revealed = read();
+    assert_eq!(revealed["revealed"], true);
+    assert_eq!(revealed["variants"].as_array().unwrap().len(), 2);
+    assert_eq!(view["rows"], revealed["rows"]);
+    let mut expected = before;
+    expected[0] += 1;
+    assert_eq!(counts(), expected);
+}
+
+#[test]
 fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     let (_temp, app, _webview, context) = setup();
     let project_id: ExecutionId = serde_json::from_value(context["projectId"].clone()).unwrap();
@@ -396,6 +610,30 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     ));
     drop(guard);
     assert!(tauri::async_runtime::block_on(save).is_err());
+    let guard = state.sessions.lock().unwrap();
+    let mut merge = Box::pin(arena::save_arena_merge(
+        app.state::<AppState>(),
+        arena::MergeRequest {
+            session_token: context["sessionToken"].as_str().unwrap().to_owned(),
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id: ExecutionId::new(),
+            locale: "zh-CN".into(),
+            source_revision_id: ExecutionId::new(),
+            expected_selection_id: None,
+            text: "newer merge draft remains editable".into(),
+            merge: tsumugi_core::MergeBasis {
+                contributors: vec![ExecutionId::new(), ExecutionId::new()],
+                expected_basis: "stale".into(),
+            },
+        },
+    ));
+    assert!(matches!(
+        std::future::Future::poll(merge.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    drop(guard);
+    assert!(tauri::async_runtime::block_on(merge).is_err());
 }
 
 fn request(context: &Value, extra: Value) -> Value {

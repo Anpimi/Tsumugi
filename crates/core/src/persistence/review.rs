@@ -744,7 +744,7 @@ fn current_waivers(
     Ok(current.into_values().collect())
 }
 
-fn target_in(
+pub(super) fn target_in(
     connection: &Connection,
     project_id: ExecutionId,
     unit_id: ExecutionId,

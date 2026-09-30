@@ -321,12 +321,16 @@ impl InputEnvelope {
         label(&self.operation)?;
         label(&self.capability_id)?;
         label(&self.capability_version)?;
-        self.limits
-            .validate(if self.operation == crate::ai::OPERATION {
+        self.limits.validate(
+            if matches!(
+                self.operation.as_str(),
+                crate::ai::OPERATION | crate::ai::arena::OPERATION
+            ) {
                 600_000
             } else {
                 60_000
-            })?;
+            },
+        )?;
         if self.items.is_empty()
             || self.items.len() > MAX_ITEMS
             || self.units.is_empty()

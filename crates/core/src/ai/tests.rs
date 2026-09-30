@@ -1,4 +1,6 @@
 use super::*;
+#[path = "arena_tests.rs"]
+mod arena_tests;
 use crate::{ProjectMetadata, ProjectStore, content::*};
 use std::{
     io::{Read, Write},

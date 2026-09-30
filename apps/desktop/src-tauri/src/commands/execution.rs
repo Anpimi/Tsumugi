@@ -22,6 +22,7 @@ macro_rules! handlers {
         source::translation::list_translation_files,source::translation::preflight_translation,
         source::translation::start_translation_import,source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
+        source::translation::read_translation_action,
         source::translation::save_translation_revision,source::translation::select_translation_revision,
         resource::choose_resource_file,resource::list_resource_captures,resource::read_resource_preview,resource::decide_resource_entry,
         resource::save_term,resource::read_terms,resource::read_term_history,resource::resolve_terms,
@@ -32,7 +33,10 @@ macro_rules! handlers {
         review::read_review_work,review::read_review_eligibility,
         release::start_locale_build,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
-        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,$($extra),*
+        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,
+        arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
+        arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
+        arena::reveal_arena_identity,arena::save_arena_merge,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
@@ -105,6 +109,7 @@ pub(super) struct ExecutionHost {
     source: source::SourceSession,
     release: release::ReleaseSession,
     ai: ai::AiSession,
+    arena: arena::ArenaSession,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -126,6 +131,7 @@ impl ExecutionHost {
             source: source::SourceSession::default(),
             release: release::ReleaseSession::default(),
             ai: ai::AiSession::default(),
+            arena: arena::ArenaSession::default(),
         };
         host.runtime
             .register(Arc::new(tsumugi_core::content::SourceRunner))
@@ -148,6 +154,13 @@ impl ExecutionHost {
         host.handlers.insert(
             tsumugi_core::ai::OPERATION.into(),
             Arc::new(tsumugi_core::AiAdoptionHandler),
+        );
+        host.runtime
+            .register(Arc::new(tsumugi_core::ai::arena::ArenaRunner::default()))
+            .map_err(map_read)?;
+        host.handlers.insert(
+            tsumugi_core::ai::arena::OPERATION.into(),
+            Arc::new(tsumugi_core::ArenaAdoptionHandler),
         );
         host.handlers.insert(
             tsumugi_core::content::OPERATION.into(),
@@ -349,6 +362,7 @@ macro_rules! request {
     }
 }
 mod ai;
+mod arena;
 mod release;
 mod resource;
 mod review;

@@ -110,7 +110,10 @@ impl ExecutionRuntime {
             return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
         }
         let input = store.execution_retry_input(attempt, items)?;
-        if input.envelope().operation == crate::ai::OPERATION {
+        if matches!(
+            input.envelope().operation.as_str(),
+            crate::ai::OPERATION | crate::ai::arena::OPERATION
+        ) {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
                 "ai-new-consent",

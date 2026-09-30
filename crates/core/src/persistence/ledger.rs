@@ -706,7 +706,10 @@ impl ProjectStore {
                     entry.blocked_reason = Some("retry-not-safe".into());
                 }
             }
-            if input.envelope().operation == crate::ai::OPERATION {
+            if matches!(
+                input.envelope().operation.as_str(),
+                crate::ai::OPERATION | crate::ai::arena::OPERATION
+            ) {
                 entry.actions.retain(|a| {
                     !matches!(
                         a,

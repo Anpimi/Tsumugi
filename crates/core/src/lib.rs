@@ -9,7 +9,10 @@ pub mod execution;
 mod persistence;
 mod project;
 
-pub use persistence::AiAdoptionHandler;
+pub use persistence::{
+    AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
+    ComparisonView, MergeBasis,
+};
 pub use persistence::{
     AttemptView, BuildLocaleChoice, CaptureContext, CheckFinding, CheckRuleResult, CheckRun,
     ContextCapture, ContextItem, ContextOmission, ContextRevision, DeliveryFile, DeliveryView,

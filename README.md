@@ -134,7 +134,9 @@ The Source content view imports a SMAPI Mod's `manifest.json` and flat `i18n/def
 
 AI translation supports an editable OpenAI-compatible Chat Completions endpoint, model, credential environment variable name, and budget. Connection presets remain editable. Source text is required; terms and context are shared only when enabled. Preview and confirm the exact data before sending. Successful results can be saved as candidates, then compared and selected in Translations. Partial failures retain successful results; starting new requests requires a fresh preview and budget. See [direct AI translation](docs/ai-translation.md).
 
-New projects use database schema 10. Valid schema 3 through 9 projects are backed up in their project directory and upgraded when opened. Other schema versions are rejected without resetting the directory. The application remains in the unreleased 0.1.0 development batch.
+Arena comparison generates two to four schemes under a shared round budget or compares saved revisions offline. Optional blind comparison keeps fixed anonymous labels until an explicit reveal. Save candidates, select a revision or edit an atomic manual merge with contributing provenance, then continue normal Review and QA. See [AI translation and Arena comparison](docs/ai-translation.md).
+
+New projects use database schema 11. Valid schema 3 through 10 projects are backed up in their project directory and upgraded when opened. Other schema versions are rejected without resetting the directory. The application remains in the unreleased 0.1.0 development batch.
 
 The bundled WebVTT integration supports a limited plain-text caption profile with explicit cue IDs. It preserves timing, layout and original non-text structure through import, translation, source maintenance and checked local subtitle export. See [bundled integrations and compatibility](docs/integrations.md) for supported syntax and interface maturity.
 

@@ -14,13 +14,17 @@ use rusqlite::{Connection, OpenFlags, params};
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 mod ai;
+mod arena;
 pub(crate) mod content;
 mod ledger;
 mod release;
 mod resources;
 mod review;
 mod translation;
-pub use ai::AiAdoptionHandler;
+pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
+pub use arena::{
+    ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
+};
 pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
 pub use release::{
     BuildLocaleChoice, DeliveryFile, DeliveryView, ReleaseAdoptionHandler, ReleaseView,
@@ -48,9 +52,10 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 #[cfg(test)]
 pub(crate) fn restore_legacy_translation_fixture(connection: &Connection) -> rusqlite::Result<()> {
+    arena::drop_for_legacy_fixture(connection)?;
     translation::legacy_fixture(connection)
 }
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
@@ -572,6 +577,7 @@ fn initialize_schema(
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     release::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    arena::initialize(&transaction).map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
         .map_err(|error| map_commit_error(error))?;
@@ -779,6 +785,7 @@ fn validate_existing_connection(
     }
     match user_version {
         SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true, true, true),
+        10 => validate_schema_shape(connection, false, true, true, true, true, true),
         9 => {
             validate_schema_shape(connection, false, true, true, true, true, true)?;
             backup_before_migration(connection, directory, 9)?;
@@ -871,6 +878,13 @@ fn validate_existing_connection(
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         validate_schema_shape(connection, false, true, true, true, true, true)?;
     }
+    if user_version < SCHEMA_VERSION {
+        if user_version == 10 {
+            backup_before_migration(connection, directory, 10)?;
+        }
+        arena::migrate(connection).map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        validate_schema_shape(connection, false, true, true, true, true, true)?;
+    }
     Ok(())
 }
 
@@ -943,6 +957,13 @@ fn validate_schema_shape(
         expected_tables.extend(content::maintenance_table_names());
         expected_tables.sort();
     }
+    let version: i64 = connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| map_sqlite(e, PersistenceStage::Open))?;
+    if version >= 11 {
+        expected_tables.extend(arena::table_names());
+        expected_tables.sort();
+    }
     if table_names != expected_tables {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
@@ -998,6 +1019,11 @@ fn validate_schema_shape(
     }
     if has_release {
         release::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
+    }
+    if version >= 11 {
+        arena::validate(connection).map_err(|_| PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         })?;
     }
@@ -1133,6 +1159,7 @@ mod tests {
             .pragma_update(None, "defer_foreign_keys", true)
             .unwrap();
         review::drop_for_legacy_fixture(&transaction).unwrap();
+        arena::drop_for_legacy_fixture(&transaction).unwrap();
         release::drop_for_legacy_fixture(&transaction).unwrap();
         resources::drop_for_legacy_fixture(&transaction).unwrap();
         transaction
@@ -1349,6 +1376,7 @@ mod tests {
         let database = path.join(DATABASE_FILENAME);
         let connection = Connection::open(&database).unwrap();
         review::drop_for_legacy_fixture(&connection).unwrap();
+        arena::drop_for_legacy_fixture(&connection).unwrap();
         release::drop_for_legacy_fixture(&connection).unwrap();
         resources::drop_for_legacy_fixture(&connection).unwrap();
         connection
@@ -1427,6 +1455,7 @@ mod tests {
             .unwrap();
         let database = path.join(DATABASE_FILENAME);
         let connection = Connection::open(&database).unwrap();
+        arena::drop_for_legacy_fixture(&connection).unwrap();
         release::drop_for_legacy_fixture(&connection).unwrap();
         connection
             .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
@@ -1496,6 +1525,7 @@ mod tests {
                 .unwrap();
             let database = path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
+            arena::drop_for_legacy_fixture(&connection).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
             connection
                 .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
@@ -1569,6 +1599,7 @@ mod tests {
             let database = project_path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             review::drop_for_legacy_fixture(&connection).unwrap();
+            arena::drop_for_legacy_fixture(&connection).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection
@@ -1672,6 +1703,119 @@ mod tests {
     }
 
     #[test]
+    fn schema_ten_arena_upgrade_recovers_across_process_commit_boundaries() {
+        for (point, expected) in [
+            ("before-arena-migration-commit", 10),
+            ("after-arena-migration-commit", 11),
+        ] {
+            let parent = temporary_directory("arena-migration-crash");
+            let path = parent.path().join("project");
+            ProjectStore::create(&path, metadata())
+                .unwrap()
+                .close()
+                .unwrap();
+            let database = path.join(DATABASE_FILENAME);
+            let connection = Connection::open(&database).unwrap();
+            arena::drop_for_legacy_fixture(&connection).unwrap();
+            connection.pragma_update(None, "user_version", 10).unwrap();
+            drop(connection);
+            run_migration_crash_child(&path, point, &parent.path().join("migration-hook"));
+            let connection = Connection::open(&database).unwrap();
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            drop(connection);
+            let reopened = ProjectStore::open(&path).unwrap();
+            assert_eq!(reopened.metadata().unwrap(), metadata());
+            reopened.close().unwrap();
+            let backup = fs::read_dir(&path)
+                .unwrap()
+                .map(|p| p.unwrap().path())
+                .find(|p| {
+                    p.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("project.sqlite3.pre-v10-")
+                })
+                .unwrap();
+            let connection =
+                Connection::open_with_flags(backup, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                10
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_arena_schema_and_future_version_are_rejected_without_repair() {
+        for future in [false, true] {
+            let parent = temporary_directory("arena-schema-rejection");
+            let path = parent.path().join("project");
+            ProjectStore::create(&path, metadata())
+                .unwrap()
+                .close()
+                .unwrap();
+            let database = path.join(DATABASE_FILENAME);
+            let connection = Connection::open(&database).unwrap();
+            if future {
+                connection.pragma_update(None, "user_version", 12).unwrap();
+            } else {
+                connection
+                    .execute_batch(
+                        "ALTER TABLE translation_contributors ADD COLUMN unexpected TEXT",
+                    )
+                    .unwrap();
+            }
+            let schema: String = connection
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name='translation_contributors'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            drop(connection);
+            assert!(ProjectStore::open(&path).is_err());
+            let connection =
+                Connection::open_with_flags(&database, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                if future { 12 } else { 11 }
+            );
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT sql FROM sqlite_master WHERE name='translation_contributors'",
+                        [],
+                        |r| r.get::<_, String>(0)
+                    )
+                    .unwrap(),
+                schema
+            );
+            assert_eq!(read_metadata_from(&connection).unwrap(), metadata());
+            assert!(!fs::read_dir(&path).unwrap().any(|p| {
+                p.unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("project.sqlite3.pre-")
+            }));
+        }
+    }
+
+    #[test]
     fn schema_migration_crash_child() {
         let Ok(project) = std::env::var("TSUMUGI_MIGRATION_PROJECT") else {
             return;
@@ -1695,6 +1839,7 @@ mod tests {
             let database = project_path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             review::drop_for_legacy_fixture(&connection).unwrap();
+            arena::drop_for_legacy_fixture(&connection).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection

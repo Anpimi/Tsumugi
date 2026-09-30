@@ -10,6 +10,55 @@ const MAX_RESOURCE_BYTES: usize = 128 * 1024;
 const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
+fn change_targets_source(
+    unit: &str,
+    text: &str,
+    scope: Option<&str>,
+    old_scope: Option<&str>,
+    phrase: Option<&str>,
+    old_phrase: Option<&str>,
+) -> (bool, bool) {
+    let direct = scope == Some(unit) || old_scope == Some(unit);
+    let lexical = (scope.is_none() && phrase.is_some_and(|p| text.contains(p)))
+        || (old_scope.is_none() && old_phrase.is_some_and(|p| text.contains(p)));
+    (direct, lexical)
+}
+pub(super) fn revision_resources_changed(
+    connection: &Connection,
+    revision: ExecutionId,
+    unit: ExecutionId,
+    locale: &str,
+    text: &str,
+) -> Result<bool, ExecutionError> {
+    let mut statement=connection.prepare("SELECT scope_unit_id,old_scope_unit_id,source_phrase,old_source_phrase FROM resource_changes WHERE locale=?2 AND rowid>COALESCE((SELECT last_change_rowid FROM translation_resource_baselines WHERE revision_id=?1),0)").map_err(sql)?;
+    let rows = statement
+        .query_map(params![revision.to_string(), locale], |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(sql)?;
+    let unit = unit.to_string();
+    for row in rows {
+        let (scope, old_scope, phrase, old_phrase) = row.map_err(sql)?;
+        let (direct, lexical) = change_targets_source(
+            &unit,
+            text,
+            scope.as_deref(),
+            old_scope.as_deref(),
+            phrase.as_deref(),
+            old_phrase.as_deref(),
+        );
+        if direct || lexical {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn failure(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
 }
@@ -1131,16 +1180,14 @@ impl ProjectStore {
                 if *rowid <= baseline {
                     continue;
                 }
-                let direct = scope_unit.as_deref() == Some(&unit)
-                    || old_scope_unit.as_deref() == Some(&unit);
-                let lexical = (scope_unit.is_none()
-                    && source_phrase
-                        .as_deref()
-                        .is_some_and(|phrase| source_text.contains(phrase)))
-                    || (old_scope_unit.is_none()
-                        && old_source_phrase
-                            .as_deref()
-                            .is_some_and(|phrase| source_text.contains(phrase)));
+                let (direct, lexical) = change_targets_source(
+                    &unit,
+                    &source_text,
+                    scope_unit.as_deref(),
+                    old_scope_unit.as_deref(),
+                    source_phrase.as_deref(),
+                    old_source_phrase.as_deref(),
+                );
                 if !direct && !lexical {
                     continue;
                 }

@@ -1463,3 +1463,6 @@ button:focus-visible {
 .review-dialog fieldset label { display: inline-flex; align-items: center; gap: 0.3rem; }
 @media (max-width: 680px) { .review-columns { grid-template-columns: 1fr; } .review-list { max-height: 25vh; } }
 .ai-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; } .ai-dialog fieldset { display: grid; gap: 12px; border: 1px solid #d7e0ef; border-radius: 10px; padding: 16px; } .ai-dialog article { border-top: 1px solid #d7e0ef; padding: 12px 0; } .ai-dialog .source-check { display: flex; align-items: center; justify-content: flex-start; gap: 8px; } .ai-dialog ul { list-style: none; padding: 0; } .ai-dialog button { margin: 4px 8px 4px 0; }
+
+
+.arena-dialog { width: min(1120px, calc(100vw - 32px)); }.arena-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }.arena-columns article { min-width: 0; border: 1px solid var(--border); padding: 12px; }.arena-history { display: flex; gap: 8px; padding: 8px 0; }.arena-dialog textarea { min-height: 140px; }.arena-dialog button { margin: 4px; }.arena-dialog fieldset details { margin: 12px 0; }

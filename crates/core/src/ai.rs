@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, io::Read, sync::Mutex, time::Duration};
 
+pub mod arena;
+
 pub const OPERATION: &str = "ai-translation";
 pub const CAPABILITY: &str = "openai-compatible.translation";
 pub const RECIPE: &str = "direct-translation-1";
@@ -228,6 +230,12 @@ pub fn validate_output(
 ) -> Result<AiOutput, ExecutionError> {
     settings(input)?;
     let item = item_payload(input, result.envelope().item_id)?;
+    validate_item_output(&item, result)
+}
+pub(super) fn validate_item_output(
+    item: &AiItem,
+    result: &FixedResult,
+) -> Result<AiOutput, ExecutionError> {
     let out: AiOutput = codec::decode(&codec::encode(&result.envelope().output, 65536)?, 65536)?;
     if out.unit_id != item.unit_id
         || out.target_locale != item.target_locale
@@ -251,23 +259,32 @@ impl AiRunner {
     ) -> Result<AiOutput, ExecutionError> {
         let s = settings(&request.input)?;
         let item = item_payload(&request.input, request.item_id)?;
+        self.execute_config(request, cancel, &s.config, &item)
+    }
+    pub(super) fn execute_config(
+        &self,
+        request: &DispatchRequest,
+        cancel: &Cancellation,
+        config: &AiConfig,
+        item: &AiItem,
+    ) -> Result<AiOutput, ExecutionError> {
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(s.config.timeout_seconds as u64))
+            .timeout(Duration::from_secs(config.timeout_seconds as u64))
             .build()
             .map_err(|_| error(ErrorCode::InvalidInput, "ai-client"))?;
-        let key = if s.config.credential_env.is_empty() {
+        let key = if config.credential_env.is_empty() {
             None
         } else {
             Some(
-                std::env::var(&s.config.credential_env)
+                std::env::var(&config.credential_env)
                     .ok()
                     .filter(|v| !v.is_empty())
                     .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-credential"))?,
             )
         };
-        let body = request_body(&s.config, &item)?;
-        for retry in 0..=s.config.max_retries {
+        let body = request_body(config, item)?;
+        for retry in 0..=config.max_retries {
             if cancel.is_requested() {
                 return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
             }
@@ -279,12 +296,12 @@ impl AiRunner {
                 let used = budgets
                     .entry(request.input.envelope().attempt_id)
                     .or_default();
-                if *used >= s.config.max_requests {
+                if *used >= config.max_requests {
                     return Err(error(ErrorCode::LimitExceeded, "ai-budget"));
                 }
                 *used += 1;
             }
-            let mut call = client.post(&s.config.endpoint).json(&body);
+            let mut call = client.post(&config.endpoint).json(&body);
             if let Some(key) = &key {
                 call = call.bearer_auth(key);
             }
@@ -298,7 +315,7 @@ impl AiRunner {
                 ));
             }
             let status = response.status();
-            if (status.as_u16() == 429 || status.as_u16() == 503) && retry < s.config.max_retries {
+            if (status.as_u16() == 429 || status.as_u16() == 503) && retry < config.max_retries {
                 for _ in 0..10 {
                     if cancel.is_requested() {
                         return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
@@ -354,7 +371,7 @@ impl AiRunner {
                 value["usage"]["completion_tokens"].as_u64(),
             ) {
                 (Some(p), Some(c))
-                    if p <= i64::MAX as u64 && c <= s.config.max_output_tokens as u64 =>
+                    if p <= i64::MAX as u64 && c <= config.max_output_tokens as u64 =>
                 {
                     Some(Usage {
                         prompt_tokens: p,
@@ -394,46 +411,53 @@ impl Runner for AiRunner {
         results: ResultSender,
     ) -> Result<(), ExecutionError> {
         let outcome = self.execute(&request, &cancel);
-        let (state, output, diagnostic) = match outcome {
-            Ok(value) => (
-                ExecutionState::Succeeded,
-                Some(
-                    serde_json::to_value(value)
-                        .map_err(|_| error(ErrorCode::OutputInvalid, "ai-output"))?,
-                ),
-                None,
-            ),
-            Err(e) => (
-                if e.code == ErrorCode::OutcomeUnknown {
-                    ExecutionState::Unknown
-                } else {
-                    ExecutionState::Failed
-                },
-                None,
-                Some(Diagnostic {
-                    code: e.stage,
-                    retry_safe: false,
-                }),
-            ),
-        };
-        results.send(FixedResult::capture(
-            ResultEnvelope {
-                project_id: request.input.envelope().project_id,
-                attempt_id: request.input.envelope().attempt_id,
-                item_id: request.item_id,
-                result_id: ExecutionId::new(),
-                supersedes: None,
-                dispatch_token: request.dispatch_token,
-                capability_id: CAPABILITY.into(),
-                capability_version: "1".into(),
-                outcome: state,
-                output,
-                diagnostic,
-            },
-            &request.input,
-            request.dispatch_token,
-        )?)
+        send_outcome(request, results, outcome)
     }
+}
+pub(super) fn send_outcome(
+    request: DispatchRequest,
+    results: ResultSender,
+    outcome: Result<AiOutput, ExecutionError>,
+) -> Result<(), ExecutionError> {
+    let (state, output, diagnostic) = match outcome {
+        Ok(value) => (
+            ExecutionState::Succeeded,
+            Some(
+                serde_json::to_value(value)
+                    .map_err(|_| error(ErrorCode::OutputInvalid, "ai-output"))?,
+            ),
+            None,
+        ),
+        Err(e) => (
+            if e.code == ErrorCode::OutcomeUnknown {
+                ExecutionState::Unknown
+            } else {
+                ExecutionState::Failed
+            },
+            None,
+            Some(Diagnostic {
+                code: e.stage,
+                retry_safe: false,
+            }),
+        ),
+    };
+    results.send(FixedResult::capture(
+        ResultEnvelope {
+            project_id: request.input.envelope().project_id,
+            attempt_id: request.input.envelope().attempt_id,
+            item_id: request.item_id,
+            result_id: ExecutionId::new(),
+            supersedes: None,
+            dispatch_token: request.dispatch_token,
+            capability_id: request.input.envelope().capability_id.clone(),
+            capability_version: "1".into(),
+            outcome: state,
+            output,
+            diagnostic,
+        },
+        &request.input,
+        request.dispatch_token,
+    )?)
 }
 
 #[cfg(test)]

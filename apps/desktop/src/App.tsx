@@ -37,6 +37,7 @@ import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
 import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import { ReleaseWorkbench } from "./ReleaseWorkbench";
 import { AiWorkbench, type AiHandle } from "./AiWorkbench";
+import { ArenaWorkbench } from "./ArenaWorkbench";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
   clearLastOpenProject,
@@ -343,6 +344,7 @@ function App() {
   const resourceWorkbench = useRef<ResourceHandle>(null);
   const reviewWorkbench = useRef<ReviewHandle>(null);
   const aiWorkbench = useRef<AiHandle>(null);
+  const arenaWorkbench = useRef<AiHandle>(null);
   const translationWorkbench = useRef<TranslationHandle>(null);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
@@ -558,6 +560,7 @@ function App() {
     if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
     if (reviewWorkbench.current && !await reviewWorkbench.current.allowLeave()) return false;
     if (aiWorkbench.current && !await aiWorkbench.current.allowLeave()) return false;
+    if (arenaWorkbench.current && !await arenaWorkbench.current.allowLeave()) return false;
     setOperation("opening");
     setFeedback({ tone: "info", messageKey: "status.opening" });
     try {
@@ -599,6 +602,7 @@ function App() {
     if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
     if (reviewWorkbench.current && !await reviewWorkbench.current.allowLeave()) return false;
     if (aiWorkbench.current && !await aiWorkbench.current.allowLeave()) return false;
+    if (arenaWorkbench.current && !await arenaWorkbench.current.allowLeave()) return false;
     if (!project || (busy && !coordinated)) return false;
     setOperation("closing");
     setFeedback({ tone: "info", messageKey: "status.closing" });
@@ -1122,7 +1126,7 @@ function App() {
         </div>
 
         <nav className="navigation" aria-label={t("nav.workspace")}>
-          {project ? <><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></> : null}
+          {project ? <><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></> : null}
            {navItems.map((item) => (
              <button
                aria-current={item.selected ? "page" : undefined}

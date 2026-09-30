@@ -48,6 +48,11 @@ request!(TranslationSaveRequest {
     expected_selection_id: Option<ExecutionId>,
     text: String,
 });
+request!(TranslationActionRequest {
+    action_id: ExecutionId,
+    unit_id: ExecutionId,
+    locale: String,
+});
 request!(TranslationSelectRequest {
     action_id: ExecutionId,
     unit_id: ExecutionId,
@@ -405,6 +410,28 @@ pub fn read_translation_history(
         &request.locale,
         request.after_ordinal,
         request.limit,
+    )
+    .map_err(map_source)
+}
+
+#[tauri::command]
+pub fn read_translation_action(
+    state: State<'_, AppState>,
+    request: TranslationActionRequest,
+) -> Result<Option<TranslationSelection>, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
+    authorized(
+        &mut sessions,
+        &request.session_token,
+        request.project_id,
+        CommandStage::ExecutionRead,
+    )?
+    .store
+    .translation_selection_by_action(
+        request.project_id,
+        request.unit_id,
+        &request.locale,
+        request.action_id,
     )
     .map_err(map_source)
 }

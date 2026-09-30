@@ -135,6 +135,7 @@ pub struct TranslationRevision {
     pub declared_locale: Option<String>,
     pub native_key: Option<String>,
     pub file_digest: Option<String>,
+    pub contributors: Vec<ExecutionId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1177,7 +1178,8 @@ impl ProjectStore {
                 break;
             }
             let raw = RawRevision::from_row(row).map_err(super::ledger::sql_error)?;
-            let revision = raw.parse()?;
+            let mut revision = raw.parse()?;
+            revision.contributors = super::arena::contributors(connection, revision.revision_id)?;
             if revision.unit_id != unit || revision.locale != locale {
                 return Err(error(ErrorCode::CorruptLedger, "translation-scope"));
             }
@@ -1198,9 +1200,46 @@ impl ProjectStore {
         Ok(history)
     }
 
+    /// Read the durable result of an action even after a newer selection or source update.
+    pub fn translation_selection_by_action(
+        &self,
+        project: ExecutionId,
+        unit: ExecutionId,
+        locale: &str,
+        action: ExecutionId,
+    ) -> Result<Option<TranslationSelection>, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
+        let owned: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM source_units WHERE unit_id=?1 AND project_id=?2 AND project_id=(SELECT project_id FROM project_metadata WHERE row_id=1))",
+            params![unit.to_string(), project.to_string()], |r| r.get(0),
+        ).map_err(super::ledger::sql_error)?;
+        if !owned {
+            return Err(error(ErrorCode::Unauthorized, "translation-project"));
+        }
+        Ok(selection_by_action(connection, action)?
+            .map(|(selection, _)| selection)
+            .filter(|selection| selection.unit_id == unit && selection.locale == locale))
+    }
+
     pub fn save_translation_revision(
         &mut self,
         request: &SaveTranslationRevision,
+    ) -> Result<TranslationSelection, ExecutionError> {
+        self.save_revision(request, None)
+    }
+    pub fn save_merged_translation(
+        &mut self,
+        request: &SaveTranslationRevision,
+        merge: &super::arena::MergeBasis,
+    ) -> Result<TranslationSelection, ExecutionError> {
+        self.save_revision(request, Some(merge))
+    }
+    fn save_revision(
+        &mut self,
+        request: &SaveTranslationRevision,
+        merge: Option<&super::arena::MergeBasis>,
     ) -> Result<TranslationSelection, ExecutionError> {
         if request.text.len() > 16 * 1024 {
             return Err(error(ErrorCode::LimitExceeded, "translation-text"));
@@ -1208,7 +1247,10 @@ impl ProjectStore {
         if self.is_reconciling() {
             return Err(error(ErrorCode::OutcomeUnknown, "translation-session"));
         }
-        let digest = request_digest(request)?;
+        let digest = match merge {
+            Some(value) => request_digest(&(request, value))?,
+            None => request_digest(request)?,
+        };
         let unknown = self.execution_unknown.clone();
         let transaction = self
             .connection_mut()
@@ -1225,6 +1267,9 @@ impl ProjectStore {
             };
         }
         check_target(&transaction, request.project_id, &request.locale)?;
+        if let Some(merge) = merge {
+            super::arena::check_merge(&transaction, request, merge)?;
+        }
         let (snapshot, current_source) =
             source_basis(&transaction, request.project_id, request.unit_id)?;
         if current_source != request.source_revision_id {
@@ -1284,10 +1329,23 @@ impl ProjectStore {
             current,
             next_sequence,
         )?;
+        if let Some(merge) = merge {
+            for (index, parent) in merge.contributors.iter().enumerate() {
+                transaction.execute("INSERT INTO translation_contributors (revision_id,parent_revision_id,ordinal) VALUES (?1,?2,?3)", params![revision.to_string(), parent.to_string(), index as i64]).map_err(super::ledger::sql_error)?;
+            }
+        }
+        #[cfg(test)]
+        if merge.is_some() {
+            super::migration_crash_hook("before-arena-merge-commit");
+        }
         transaction.commit().map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "translation-commit")
         })?;
+        #[cfg(test)]
+        if merge.is_some() {
+            super::migration_crash_hook("after-arena-merge-commit");
+        }
         Ok(selection)
     }
 
@@ -1419,6 +1477,7 @@ impl RawRevision {
             declared_locale: self.declared_locale,
             native_key: self.native_key,
             file_digest: self.file_digest,
+            contributors: vec![],
         })
     }
 }
