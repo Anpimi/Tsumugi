@@ -79,6 +79,7 @@ fn caption_profile_rejects_ambiguous_malformed_and_injected_structure() {
         S1.replace("00:01.000", "00:60.000"),
         S1.replace("00:01.000", "00:05.000"),
         S1.replace("00:02.000", "00:00.000"),
+        S1.replace("00:03.000 --> 00:04.000", "00:00.500 --> 00:04.000"),
         S1.replace("align:center", "align:bogus"),
         S1.replace("align:center", "vertical:rl"),
         S1.replace("align:center", "size:101%"),
@@ -98,6 +99,25 @@ fn caption_profile_rejects_ambiguous_malformed_and_injected_structure() {
     }
     assert!(SourceBundle::capture_webvtt(&[0xff], "en").is_err());
     assert!(SourceBundle::capture_webvtt(&vec![b'a'; MAX_SOURCE_BYTES + 1], "en").is_err());
+    assert!(
+        extract(
+            &vtt(&S1.replace("Wait", &"a".repeat(MAX_TEXT_BYTES + 1))),
+            &Cancellation::default(),
+        )
+        .is_err()
+    );
+    for count in [MAX_OCCURRENCES, MAX_OCCURRENCES + 1] {
+        let source = format!(
+            "WEBVTT\n\n{}",
+            (0..count)
+                .map(|index| format!("cue-{index}\n00:00.000 --> 00:01.000\nx\n\n"))
+                .collect::<String>()
+        );
+        assert_eq!(
+            extract(&vtt(&source), &Cancellation::default()).is_ok(),
+            count == MAX_OCCURRENCES,
+        );
+    }
     let cancel = Cancellation::default();
     cancel.request();
     assert_eq!(
