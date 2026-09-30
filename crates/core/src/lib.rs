@@ -3,11 +3,13 @@
 //! The crate owns metadata rules and the durable project boundary while
 //! remaining independent of the desktop webview.
 
+pub mod ai;
 pub mod content;
 pub mod execution;
 mod persistence;
 mod project;
 
+pub use persistence::AiAdoptionHandler;
 pub use persistence::{
     AttemptView, BuildLocaleChoice, CaptureContext, CheckFinding, CheckRuleResult, CheckRun,
     ContextCapture, ContextItem, ContextOmission, ContextRevision, DeliveryFile, DeliveryView,

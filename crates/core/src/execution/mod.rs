@@ -232,9 +232,9 @@ impl Default for ExecutionLimits {
     }
 }
 impl ExecutionLimits {
-    fn validate(&self) -> Result<(), ExecutionError> {
+    fn validate(&self, max_timeout_ms: u32) -> Result<(), ExecutionError> {
         if self.timeout_ms == 0
-            || self.timeout_ms > 60_000
+            || self.timeout_ms > max_timeout_ms
             || self.cancel_wait_ms > 5_000
             || self.max_result_bytes == 0
             || self.max_result_bytes as usize > MAX_RESULT_BYTES
@@ -321,7 +321,12 @@ impl InputEnvelope {
         label(&self.operation)?;
         label(&self.capability_id)?;
         label(&self.capability_version)?;
-        self.limits.validate()?;
+        self.limits
+            .validate(if self.operation == crate::ai::OPERATION {
+                600_000
+            } else {
+                60_000
+            })?;
         if self.items.is_empty()
             || self.items.len() > MAX_ITEMS
             || self.units.is_empty()

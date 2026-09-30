@@ -195,20 +195,62 @@ const TABLES: &[(&str, &str)] = &[
     ),
 ];
 
+fn current_sql(name: &str, sql: &str) -> String {
+    if name != "translation_revisions" {
+        return sql.to_owned();
+    }
+    sql.replace("IN ('import','manual')", "IN ('import','manual','ai')")
+       .replace("file_digest IS NOT NULL)))", "file_digest IS NOT NULL) OR (origin_kind='ai' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)))")
+}
+
+#[cfg(test)]
+pub(super) fn legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
+    connection.execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE; CREATE TEMP TABLE translation_fixture AS SELECT * FROM translation_revisions; DROP TABLE translation_revisions;")?;
+    connection.execute_batch(TABLES[0].1)?;
+    connection.execute_batch("INSERT INTO translation_revisions SELECT * FROM translation_fixture; DROP TABLE translation_fixture; COMMIT; PRAGMA foreign_keys=ON;")
+}
+
+pub(super) fn migrate_v9(connection: &mut Connection) -> rusqlite::Result<()> {
+    // Recreate the owning table with unchanged columns and relaxed origin CHECK.
+    // Foreign keys are restored even when the transaction fails; no dependent
+    // selection/review/release records are rebuilt or discarded.
+    connection.pragma_update(None, "foreign_keys", false)?;
+    let outcome = (|| {
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch("CREATE TEMP TABLE translation_copy AS SELECT * FROM translation_revisions; DROP TABLE translation_revisions;")?;
+        tx.execute_batch(&current_sql(TABLES[0].0, TABLES[0].1))?;
+        tx.execute_batch("INSERT INTO translation_revisions SELECT * FROM translation_copy; DROP TABLE translation_copy;")?;
+        if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        tx.pragma_update(None, "user_version", 10)?;
+        #[cfg(test)]
+        super::migration_crash_hook("before-ai-migration-commit");
+        tx.commit()?;
+        #[cfg(test)]
+        super::migration_crash_hook("after-ai-migration-commit");
+        Ok(())
+    })();
+    connection.pragma_update(None, "foreign_keys", true)?;
+    outcome
+}
+
 pub(super) fn table_names() -> impl Iterator<Item = String> {
     TABLES.iter().map(|(name, _)| (*name).to_owned())
 }
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
-    for (_, sql) in TABLES {
-        connection.execute_batch(sql)?;
+    for (name, sql) in TABLES {
+        connection.execute_batch(&current_sql(name, sql))?;
     }
     Ok(())
 }
 
 pub(super) fn migrate_v4(connection: &mut Connection) -> rusqlite::Result<()> {
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&transaction)?;
+    for (_, sql) in TABLES {
+        transaction.execute_batch(sql)?;
+    }
     if transaction
         .prepare("PRAGMA foreign_key_check")?
         .exists([])?
@@ -262,13 +304,19 @@ pub(super) fn record_input(
 }
 
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
             [name],
             |row| row.get(0),
         )?;
-        if actual != *expected {
+        let expected = if version >= 10 {
+            current_sql(name, expected)
+        } else {
+            (*expected).to_owned()
+        };
+        if actual != expected {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
@@ -349,7 +397,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
                 params![action, revision],
                 |row| row.get(0),
             )?
-        } else if kind == "import" {
+        } else if kind == "import" || kind == "ai" {
             let (Some(attempt), Some(result), Some(item)) = (attempt, result, item) else {
                 return Err(rusqlite::Error::InvalidQuery);
             };

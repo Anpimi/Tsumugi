@@ -484,6 +484,7 @@ fn schema_eight_migration_interruptions_preserve_source_and_backup() {
         let original = store.content_scope().unwrap();
         store.close().unwrap();
         let database = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+        crate::persistence::restore_legacy_translation_fixture(&database).unwrap();
         database.execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;").unwrap();
         drop(database);
         let hook = directory.path().join("hook");
@@ -567,6 +568,7 @@ fn schema_eight_source_upgrade_keeps_s1_and_a_recoverable_backup() {
     store.close().unwrap();
     let database = path.join("project.sqlite3");
     let connection = rusqlite::Connection::open(&database).unwrap();
+    crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
     connection
         .execute_batch(
             "DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;",

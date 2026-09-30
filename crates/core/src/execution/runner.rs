@@ -36,6 +36,9 @@ pub enum QueryOutcome {
 pub trait Runner: Send + Sync + 'static {
     fn capability_id(&self) -> &str;
     fn capability_version(&self) -> &str;
+    fn concurrency_limit(&self, _input: &FixedInput) -> usize {
+        1
+    }
     fn run(
         &self,
         request: DispatchRequest,

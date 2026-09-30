@@ -13,12 +13,14 @@ use rusqlite::{Connection, OpenFlags, params};
 
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
+mod ai;
 pub(crate) mod content;
 mod ledger;
 mod release;
 mod resources;
 mod review;
 mod translation;
+pub use ai::AiAdoptionHandler;
 pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
 pub use release::{
     BuildLocaleChoice, DeliveryFile, DeliveryView, ReleaseAdoptionHandler, ReleaseView,
@@ -46,7 +48,11 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
+#[cfg(test)]
+pub(crate) fn restore_legacy_translation_fixture(connection: &Connection) -> rusqlite::Result<()> {
+    translation::legacy_fixture(connection)
+}
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -773,6 +779,13 @@ fn validate_existing_connection(
     }
     match user_version {
         SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true, true, true),
+        9 => {
+            validate_schema_shape(connection, false, true, true, true, true, true)?;
+            backup_before_migration(connection, directory, 9)?;
+            translation::migrate_v9(connection)
+                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+            validate_schema_shape(connection, false, true, true, true, true, true)
+        }
         8 => {
             validate_schema_shape(connection, false, true, true, true, true, false)?;
             backup_before_migration(connection, directory, 8)?;
@@ -852,7 +865,13 @@ fn validate_existing_connection(
             found_version,
             stage: PersistenceStage::Open,
         }),
+    }?;
+    if user_version < 9 && user_version >= 3 {
+        translation::migrate_v9(connection)
+            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        validate_schema_shape(connection, false, true, true, true, true, true)?;
     }
+    Ok(())
 }
 
 fn backup_before_migration(
@@ -1412,6 +1431,7 @@ mod tests {
         connection
             .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
             .unwrap();
+        crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
         connection.pragma_update(None, "user_version", 7).unwrap();
         drop(connection);
         let reopened = ProjectStore::open(&path).unwrap();
@@ -1480,6 +1500,7 @@ mod tests {
             connection
                 .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
                 .unwrap();
+            crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
             connection.pragma_update(None, "user_version", 7).unwrap();
             drop(connection);
 
@@ -1553,6 +1574,7 @@ mod tests {
             connection
                 .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
                 .unwrap();
+            crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
             connection.pragma_update(None, "user_version", 5).unwrap();
             drop(connection);
 
@@ -1608,6 +1630,44 @@ mod tests {
                     .unwrap(),
                 5
             );
+        }
+    }
+
+    #[test]
+    fn schema_nine_ai_upgrade_recovers_across_process_commit_boundaries() {
+        for (point, expected) in [
+            ("before-ai-migration-commit", 9),
+            ("after-ai-migration-commit", 10),
+        ] {
+            let parent = temporary_directory("ai-migration-crash");
+            let path = parent.path().join("project");
+            ProjectStore::create(&path, metadata())
+                .unwrap()
+                .close()
+                .unwrap();
+            let database = path.join(DATABASE_FILENAME);
+            let connection = Connection::open(&database).unwrap();
+            restore_legacy_translation_fixture(&connection).unwrap();
+            connection.pragma_update(None, "user_version", 9).unwrap();
+            drop(connection);
+            run_migration_crash_child(&path, point, &parent.path().join("migration-hook"));
+            let connection = Connection::open(&database).unwrap();
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(
+                connection
+                    .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
+                    .unwrap(),
+                "ok"
+            );
+            drop(connection);
+            let reopened = ProjectStore::open(&path).unwrap();
+            assert_eq!(reopened.metadata().unwrap(), metadata());
+            reopened.close().unwrap();
         }
     }
 
