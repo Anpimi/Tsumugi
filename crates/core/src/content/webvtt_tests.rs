@@ -294,6 +294,21 @@ fn caption_project_maintains_timing_basis_reviews_releases_and_receipts_on_reope
             });
         }
     }
+    let estimate = store
+        .source_update_estimate(
+            next.envelope().attempt_id,
+            next_result.envelope().result_id,
+            &confirmation,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            estimate[0].preserved,
+            estimate[0].reassess,
+            estimate[0].unresolved
+        ),
+        (1, 3, 2),
+    );
     let change = store
         .prepare_adoption_with_id(
             ExecutionId::new(),

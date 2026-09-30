@@ -164,8 +164,8 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
               <h5>{t("release.exceptions")}</h5>{chosen.exceptions.length === 0 ? <p>{t("release.noExceptions")}</p> : <ul>{chosen.exceptions.map((item, index) => <li key={`${item.locale}:${item.nativeKey}:${index}`}>{item.locale} · {item.nativeKey} · {t(`release.exceptionKind.${item.kind}`)}</li>)}</ul>}
             </details>
             <div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => void chooseFolder()}>{t("release.chooseFolder")}</button>{selection ? <button className="secondary-button" disabled={busy} onClick={() => void previewFolder()}>{t("release.preview")}</button> : null}</div>
-            {selection ? <p>{t("release.destination", { name: selection.folderName })}</p> : null}
-            {preview ? <div><h4>{t("release.previewTitle")}</h4><p>{t("release.destination", { name: preview.folderName })}</p><ul>{preview.files.map(file => <li key={file.locale}>{file.fileName} · {t(`release.fileState.${file.state}`)} · <code>{file.expectedSha256}</code></li>)}</ul>
+            {selection ? <p>{t(vtt ? "release.webvttDestination" : "release.destination", { name: selection.folderName })}</p> : null}
+            {preview ? <div><h4>{t("release.previewTitle")}</h4><p>{t(vtt ? "release.webvttDestination" : "release.destination", { name: preview.folderName })}</p><ul>{preview.files.map(file => <li key={file.locale}>{file.fileName} · {t(`release.fileState.${file.state}`)} · <code>{file.expectedSha256}</code></li>)}</ul>
               {hasConflict ? <label><input type="checkbox" checked={overwrite} disabled={busy} onChange={event => setOverwrite(event.target.checked)} />{t("release.overwrite")}</label> : null}
               <div className="form-actions"><button className="primary-button" disabled={busy || (hasConflict && !overwrite)} onClick={() => void exportFiles()}>{t("release.export")}</button></div></div> : null}
             {result ? <p role="status">{t(`release.deliveryState.${result.state}`)}</p> : null}

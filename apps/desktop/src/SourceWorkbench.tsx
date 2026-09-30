@@ -156,7 +156,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details></div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {warnings.includes("source-template") ? <p role="status">{t("source.templateWarning")}</p> : null}
-          {!page && !comparison && !attempt ? <section aria-label={t("source.select")}>
+          {!page && !comparison && !attempt ? <section aria-label={t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}>
             <label className="source-field">{t("source.integration")}<select disabled={locked || updating} value={domain} onChange={event => { sequence.current++; setDomain(event.target.value); setIntegration(null); setSelection(null); setPreflight(null); setDeclared(false); setFailure(null); }}><option value="stardew-smapi">Stardew SMAPI</option><option value="webvtt">WebVTT</option></select></label>
             {updating ? <p role="status">{t("source.updateIntro")}</p> : null}
             <p>{t(domain === "webvtt" ? "source.webvttSupport" : "source.support")}</p>
@@ -167,7 +167,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
             {selection ? <>
               <p>{selection.folderName}</p>
               <label className="source-check"><input type="checkbox" checked={declared} disabled={locked} onChange={event => { setDeclared(event.target.checked); setPreflight(null); }} />{t("source.language", { language: project.metadata.sourceLocale })}</label>
-              <p>{t("source.languageHelp")}</p>
+              <p>{t("source.languageHelp", { file: domain === "webvtt" ? "source.vtt" : "default.json" })}</p>
               <button className="secondary-button" disabled={locked || !declared} onClick={() => void perform(async current => {
                 const result = await commands.preflight({ ...context, selectionId: selection.selectionId, sourceLanguage: project.metadata.sourceLocale });
                 if (current()) setPreflight(result);

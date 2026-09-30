@@ -44,6 +44,8 @@ it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", 
   await user.click(screen.getByRole("button", { name: entry }));
   await user.selectOptions(await screen.findByRole("combobox", { name: format }), "webvtt");
   await user.click(await screen.findByRole("button", { name: choose }));
+  expect(screen.getByRole("region", { name: choose })).toBeInTheDocument();
+  expect(screen.queryByText(/The name default\.json|default\.json 文件名/)).not.toBeInTheDocument();
   expect(invoke).toHaveBeenCalledWith("select_webvtt_source", { request: { sessionToken: "session", projectId: "project" } });
   await user.click(screen.getByRole("checkbox", { name: new RegExp(declaration) }));
   await user.click(screen.getByRole("button", { name: check }));

@@ -43,6 +43,20 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+it.each(["en-US", "zh-CN"])("describes root caption delivery in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  releases = [{ ...release, artifacts: [{ locale: "zh-CN", fileName: "zh-CN.vtt", sha256: "hash", entryCount: 2 }] }];
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve({ id: "webvtt" }) : original(command));
+  const user = userEvent.setup();
+  render(<ReleaseWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await user.click(await screen.findByRole("button", { name: /2026-09-29/ }));
+  await user.click(screen.getByRole("button", { name: i18n.t("release.chooseFolder") }));
+  expect(await screen.findByText(i18n.t("release.webvttDestination", { name: "export" }))).toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("release.destination", { name: "export" }))).not.toBeInTheDocument();
+});
+
 it("routes WebVTT builds to a root subtitle filename and preserves an edited mapping", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve({ id: "webvtt" }) : original(command));
