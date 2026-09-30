@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { ProjectView } from "./projectCommands";
 import { executionCommands, executionContext } from "./executionCommands";
 import { reviewCommands, type Eligibility } from "./reviewCommands";
+import { sourceCommands } from "./sourceCommands";
 import { releaseCommands, type DeliveryPreview, type DeliverySelection, type DeliveryView, type ReleaseView } from "./releaseCommands";
 
 function suggestedFile(locale: string) { return locale === "zh-CN" ? "zh.json" : ""; }
@@ -22,6 +23,7 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
   const { t } = useTranslation();
   const session = executionContext(project);
   const [open, setOpen] = useState(false);
+  const [domain, setDomain] = useState<string | null>(null);
   const [languages, setLanguages] = useState<string[]>([]);
   const [names, setNames] = useState<Record<string, string>>(() => Object.fromEntries(project.metadata.targetLocales.map(locale => [locale, suggestedFile(locale)])));
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
@@ -44,11 +46,12 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
   useEffect(() => {
     if (!open) return;
     const ticket = ++generation.current;
-    void releaseCommands.releases(session).then(rows => {
-      if (mounted.current && ticket === generation.current) setReleases(rows);
+    void Promise.all([releaseCommands.releases(session), sourceCommands.integration(session)]).then(([rows, integration]) => {
+      if (mounted.current && ticket === generation.current) { setReleases(rows); setDomain(integration.id); if (integration.id === "webvtt") setNames(previous => Object.fromEntries(Object.entries(previous).map(([locale, name]) => [locale, name === suggestedFile(locale) ? `${locale}.vtt` : name]))); }
     }).catch(failure => { if (mounted.current && ticket === generation.current) setError(errorCode(failure)); });
     return () => { generation.current++; };
   }, [open, project.sessionToken]);
+  const vtt = domain === "webvtt";
   const chosen = releases.find(item => item.releaseId === selected) ?? null;
 
   async function run(work: (ticket: number) => Promise<void>) {
@@ -75,7 +78,7 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
       const attemptId = await executionCommands.identity(session);
       try {
         await releaseCommands.start({ ...session, attemptId, expectedEligibilityBasis: eligibility.basis,
-          choices: languages.map(locale => ({ locale, fileName: `i18n/${names[locale].trim()}` })) });
+          choices: languages.map(locale => ({ locale, fileName: vtt ? names[locale].trim() : `i18n/${names[locale].trim()}` })) });
       } catch (failure) {
         if (current(ticket)) setEligibility(null);
         throw failure;
@@ -137,14 +140,14 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
   return <Dialog.Root open={open} onOpenChange={next => { if (!busy) setOpen(next); }}>
     <Dialog.Trigger className="navigation-item" disabled={disabled}>{t("release.title")}</Dialog.Trigger>
     <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog release-dialog" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
-      <div className="execution-heading"><div><Dialog.Title>{t("release.title")}</Dialog.Title><Dialog.Description>{t("release.description")}</Dialog.Description></div><Dialog.Close className="secondary-button" disabled={busy}>{t("execution.back")}</Dialog.Close></div>
+      <div className="execution-heading"><div><Dialog.Title>{t("release.title")}</Dialog.Title><Dialog.Description>{t(vtt ? "release.webvttDescription" : "release.description")}</Dialog.Description></div><Dialog.Close className="secondary-button" disabled={busy}>{t("execution.back")}</Dialog.Close></div>
       <div className="execution-content" aria-busy={busy}>
         {error ? <p className="release-alert" role="alert" ref={errorRegion} tabIndex={-1}>{t("release.error", { reason: t(errorReasons[error as keyof typeof errorReasons] ?? "release.errorUnknown") })}</p> : null}
-        <section><h3>{t("release.prepare")}</h3><p>{t("release.scope")}</p>
+        <section><h3>{t("release.prepare")}</h3><p>{t(vtt ? "release.webvttScope" : "release.scope")}</p>
           <fieldset><legend>{t("release.languages")}</legend>{project.metadata.targetLocales.map(locale => <label key={locale} className="release-locale"><input type="checkbox" checked={languages.includes(locale)} disabled={busy} onChange={event => setLanguage(locale, event.target.checked)} />{locale}</label>)}</fieldset>
-          {languages.map(locale => <label className="release-mapping" key={locale}>{t("release.fileName", { locale })}<span>i18n/</span><input aria-label={t("release.fileName", { locale })} value={names[locale] ?? ""} disabled={busy} onChange={event => { setNames(previous => ({ ...previous, [locale]: event.target.value })); setEligibility(null); }} placeholder="zh.json" /></label>)}
+          {languages.map(locale => <label className="release-mapping" key={locale}>{t(vtt ? "release.webvttFileName" : "release.fileName", { locale })}<span>{vtt ? "" : "i18n/"}</span><input aria-label={t(vtt ? "release.webvttFileName" : "release.fileName", { locale })} value={names[locale] ?? ""} disabled={busy || !domain} onChange={event => { setNames(previous => ({ ...previous, [locale]: event.target.value })); setEligibility(null); }} placeholder={vtt ? "zh-CN.vtt" : "zh.json"} /></label>)}
           <p>{t("release.policy")}</p>
-          <div className="form-actions"><button className="secondary-button" disabled={busy || !mappingReady} onClick={() => void assess()}>{t("release.check")}</button><button className="primary-button" disabled={busy || !mappingReady || !eligibility?.ready} onClick={() => void build()}>{t("release.build")}</button></div>
+          <div className="form-actions"><button className="secondary-button" disabled={busy || !mappingReady || !domain} onClick={() => void assess()}>{t("release.check")}</button><button className="primary-button" disabled={busy || !mappingReady || !eligibility?.ready || !domain} onClick={() => void build()}>{t("release.build")}</button></div>
           {eligibility ? <div role="status"><p>{t(eligibility.ready ? "release.ready" : "release.blocked", { count: eligibility.locales.reduce((sum, item) => sum + item.blockerCount, 0) })}</p><p>{t("release.source", { id: eligibility.sourceSnapshotId })} · {eligibility.policyVersion}</p>
             {eligibility.locales.map(item => <div key={item.locale}><strong>{item.locale}</strong>: {t("release.coverage", { count: item.checkedUnits })}{item.blockers.map((reason, index) => <p key={`${reason.unitId}:${index}`}>{reason.nativeKey}: {reason.code}</p>)}{item.exceptions.map((reason, index) => <p key={`exception:${reason.unitId}:${index}`}>{t("release.exception", { key: reason.nativeKey, reason: reason.code })}</p>)}</div>)}
           </div> : null}
@@ -161,8 +164,8 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
               <h5>{t("release.exceptions")}</h5>{chosen.exceptions.length === 0 ? <p>{t("release.noExceptions")}</p> : <ul>{chosen.exceptions.map((item, index) => <li key={`${item.locale}:${item.nativeKey}:${index}`}>{item.locale} · {item.nativeKey} · {t(`release.exceptionKind.${item.kind}`)}</li>)}</ul>}
             </details>
             <div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => void chooseFolder()}>{t("release.chooseFolder")}</button>{selection ? <button className="secondary-button" disabled={busy} onClick={() => void previewFolder()}>{t("release.preview")}</button> : null}</div>
-            {selection ? <p>{t("release.destination", { name: selection.folderName })}</p> : null}
-            {preview ? <div><h4>{t("release.previewTitle")}</h4><p>{t("release.destination", { name: preview.folderName })}</p><ul>{preview.files.map(file => <li key={file.locale}>{file.fileName} · {t(`release.fileState.${file.state}`)} · <code>{file.expectedSha256}</code></li>)}</ul>
+            {selection ? <p>{t(vtt ? "release.webvttDestination" : "release.destination", { name: selection.folderName })}</p> : null}
+            {preview ? <div><h4>{t("release.previewTitle")}</h4><p>{t(vtt ? "release.webvttDestination" : "release.destination", { name: preview.folderName })}</p><ul>{preview.files.map(file => <li key={file.locale}>{file.fileName} · {t(`release.fileState.${file.state}`)} · <code>{file.expectedSha256}</code></li>)}</ul>
               {hasConflict ? <label><input type="checkbox" checked={overwrite} disabled={busy} onChange={event => setOverwrite(event.target.checked)} />{t("release.overwrite")}</label> : null}
               <div className="form-actions"><button className="primary-button" disabled={busy || (hasConflict && !overwrite)} onClick={() => void exportFiles()}>{t("release.export")}</button></div></div> : null}
             {result ? <p role="status">{t(`release.deliveryState.${result.state}`)}</p> : null}

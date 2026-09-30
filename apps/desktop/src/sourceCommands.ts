@@ -24,8 +24,8 @@ export interface CaptureRequest extends SessionRequest { selectionId: string; so
 export interface StartRequest extends CaptureRequest { attemptId: string }
 export interface SourceAdoptRequest extends SessionRequest { attemptId: string; resultId: string; actionId: string; confirmation: SourceConfirmation }
 export const sourceCommands = {
-  integration: (request: SessionRequest) => invoke<IntegrationDescriptor>("read_source_integration", { request }),
-  select: (request: SessionRequest) => invoke<SourceSelection | null>("select_source", { request }),
+  integration: (request: SessionRequest, integrationId = "stardew-smapi") => invoke<IntegrationDescriptor>(integrationId === "webvtt" ? "read_webvtt_integration" : "read_source_integration", { request }),
+  select: (request: SessionRequest, integrationId = "stardew-smapi") => invoke<SourceSelection | null>(integrationId === "webvtt" ? "select_webvtt_source" : "select_source", { request }),
   preflight: (request: CaptureRequest) => invoke<Preflight>("preflight_source", { request }),
   start: (request: StartRequest) => invoke<string>("start_source_import", { request }),
   cancelCapture: (request: SessionRequest) => invoke<void>("cancel_source_capture", { request }),

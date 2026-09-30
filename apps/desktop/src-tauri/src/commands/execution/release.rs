@@ -252,6 +252,17 @@ fn current_digest(path: &Path) -> Result<Option<String>, CommandError> {
     }
     Ok(Some(artifact_digest(&bytes)))
 }
+fn delivery_name(path: &str) -> Result<&str, CommandError> {
+    if let Some(name) = path.strip_prefix("i18n/") {
+        if tsumugi_core::content::declared_locale(path).is_ok() {
+            return Ok(name);
+        }
+    }
+    if tsumugi_core::content::webvtt::file_name(path) {
+        return Ok(path);
+    }
+    Err(invalid(CommandStage::ExecutionRead, "delivery-file"))
+}
 fn preview_files(
     store: &ProjectStore,
     release_id: ExecutionId,
@@ -266,11 +277,13 @@ fn preview_files(
         .artifacts
         .into_iter()
         .map(|artifact| {
-            let name = artifact
-                .file_name
-                .strip_prefix("i18n/")
-                .ok_or_else(|| invalid(CommandStage::ExecutionRead, "delivery-file"))?;
-            let current_sha256 = current_digest(&i18n.join(name))?;
+            let name = delivery_name(&artifact.file_name)?;
+            let destination = if artifact.file_name.starts_with("i18n/") {
+                &i18n
+            } else {
+                root
+            };
+            let current_sha256 = current_digest(&destination.join(name))?;
             let state = match &current_sha256 {
                 None => "absent",
                 Some(current) if *current == artifact.sha256 => "same",
@@ -362,10 +375,7 @@ fn export_one_with_digest(
     overwrite: bool,
     digest: impl Fn(&Path) -> Result<Option<String>, CommandError>,
 ) -> Result<DeliveryFile, CommandError> {
-    let name = file
-        .file_name
-        .strip_prefix("i18n/")
-        .ok_or_else(|| invalid(CommandStage::ExecutionAdopt, "delivery-file"))?;
+    let name = delivery_name(&file.file_name)?;
     let target = i18n.join(name);
     let current = digest(&target)?;
     if current != file.current_sha256 {
@@ -543,7 +553,15 @@ pub fn export_release(
             CommandStage::ExecutionAdopt,
         ));
     }
-    let i18n = root.join("i18n");
+    let i18n = if preview
+        .files
+        .iter()
+        .all(|file| file.file_name.starts_with("i18n/"))
+    {
+        root.join("i18n")
+    } else {
+        root.clone()
+    };
     if !i18n.exists() {
         fs::create_dir(&i18n).map_err(|_| {
             CommandError::simple(
@@ -603,10 +621,7 @@ fn observe_delivery_files(
             if file.state != "pending" && file.state != "unknown" {
                 return Ok(file);
             }
-            let name = file
-                .file_name
-                .strip_prefix("i18n/")
-                .ok_or_else(|| invalid(CommandStage::ExecutionRecover, "delivery-file"))?;
+            let name = delivery_name(&file.file_name)?;
             let observation = current_digest(&i18n.join(name));
             file.state = match &observation {
                 Ok(Some(digest)) if digest == &file.expected_sha256 => "succeeded",
@@ -651,7 +666,16 @@ pub fn reconcile_delivery(
     if !matches!(current.state.as_str(), "pending" | "unknown") {
         return Ok(current);
     }
-    let files = observe_delivery_files(&root.join("i18n"), current.files)?;
+    let folder = if current
+        .files
+        .iter()
+        .all(|file| file.file_name.starts_with("i18n/"))
+    {
+        root.join("i18n")
+    } else {
+        root.clone()
+    };
+    let files = observe_delivery_files(&folder, current.files)?;
     store
         .reconcile_delivery(request.action_id, files)
         .map_err(map_recover)
@@ -660,6 +684,37 @@ pub fn reconcile_delivery(
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    #[test]
+    fn webvtt_delivery_uses_verified_root_file_and_keeps_conflict_checks() {
+        let root = tempfile::tempdir().unwrap();
+        let bytes = include_bytes!(
+            "../../../../../../crates/core/tests/fixtures/webvtt/expected-zh-CN.vtt"
+        );
+        let file = PreviewFile {
+            locale: "zh-CN".into(),
+            file_name: "zh-CN.vtt".into(),
+            expected_sha256: artifact_digest(bytes),
+            current_sha256: None,
+            state: "absent".into(),
+        };
+        assert_eq!(
+            export_one(root.path(), &file, bytes, false).unwrap().state,
+            "succeeded"
+        );
+        assert_eq!(fs::read(root.path().join("zh-CN.vtt")).unwrap(), bytes);
+        assert!(!root.path().join("i18n").exists());
+        assert!(export_one(root.path(), &file, bytes, true).is_err());
+        let same = PreviewFile {
+            current_sha256: Some(artifact_digest(bytes)),
+            state: "same".into(),
+            ..file
+        };
+        assert_eq!(
+            export_one(root.path(), &same, bytes, false).unwrap().state,
+            "succeeded"
+        );
+        assert!(delivery_name("../zh-CN.vtt").is_err());
+    }
 
     fn preview(state: &str, current_sha256: Option<String>, bytes: &[u8]) -> PreviewFile {
         PreviewFile {

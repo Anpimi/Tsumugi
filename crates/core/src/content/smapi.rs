@@ -213,6 +213,23 @@ pub fn extract(
 }
 
 pub struct SourceRunner;
+pub struct WebvttSourceRunner;
+impl Runner for WebvttSourceRunner {
+    fn capability_id(&self) -> &str {
+        webvtt::EXTRACT
+    }
+    fn capability_version(&self) -> &str {
+        CAPABILITY_VERSION
+    }
+    fn run(
+        &self,
+        request: DispatchRequest,
+        cancellation: Cancellation,
+        sender: ResultSender,
+    ) -> Result<(), ExecutionError> {
+        run_source(request, cancellation, sender)
+    }
+}
 impl Runner for SourceRunner {
     fn capability_id(&self) -> &str {
         CAPABILITY
@@ -226,51 +243,58 @@ impl Runner for SourceRunner {
         cancellation: Cancellation,
         sender: ResultSender,
     ) -> Result<(), ExecutionError> {
-        let input = &request.input;
-        let outcome = SourceBundle::from_input(input)
-            .and_then(|b| extract(&b, &cancellation))
-            .and_then(|o| value(&o));
-        let mut envelope = ResultEnvelope {
-            project_id: input.envelope().project_id,
-            attempt_id: input.envelope().attempt_id,
-            item_id: request.item_id,
-            result_id: ExecutionId::new(),
-            supersedes: None,
-            dispatch_token: request.dispatch_token,
-            capability_id: CAPABILITY.into(),
-            capability_version: CAPABILITY_VERSION.into(),
-            outcome: ExecutionState::Succeeded,
-            output: None,
-            diagnostic: None,
-        };
-        match outcome {
-            Ok(output) => envelope.output = Some(output),
-            Err(error) => {
-                envelope.outcome =
-                    if matches!(error.code, ErrorCode::Cancelled | ErrorCode::OutcomeUnknown) {
-                        ExecutionState::Unknown
-                    } else {
-                        ExecutionState::Failed
-                    };
-                envelope.diagnostic = Some(Diagnostic {
-                    code: error.stage,
-                    retry_safe: false,
-                });
-            }
-        }
-        let result = match FixedResult::capture(envelope.clone(), input, request.dispatch_token) {
-            Ok(r) => r,
-            Err(error) if error.code == ErrorCode::LimitExceeded => {
-                envelope.outcome = ExecutionState::Failed;
-                envelope.output = None;
-                envelope.diagnostic = Some(Diagnostic {
-                    code: "limit-exceeded".into(),
-                    retry_safe: false,
-                });
-                FixedResult::capture(envelope, input, request.dispatch_token)?
-            }
-            Err(error) => return Err(error),
-        };
-        sender.send(result)
+        run_source(request, cancellation, sender)
     }
+}
+fn run_source(
+    request: DispatchRequest,
+    cancellation: Cancellation,
+    sender: ResultSender,
+) -> Result<(), ExecutionError> {
+    let input = &request.input;
+    let outcome = SourceBundle::from_input(input)
+        .and_then(|b| super::extract(&b, &cancellation))
+        .and_then(|o| value(&o));
+    let mut envelope = ResultEnvelope {
+        project_id: input.envelope().project_id,
+        attempt_id: input.envelope().attempt_id,
+        item_id: request.item_id,
+        result_id: ExecutionId::new(),
+        supersedes: None,
+        dispatch_token: request.dispatch_token,
+        capability_id: input.envelope().capability_id.clone(),
+        capability_version: CAPABILITY_VERSION.into(),
+        outcome: ExecutionState::Succeeded,
+        output: None,
+        diagnostic: None,
+    };
+    match outcome {
+        Ok(output) => envelope.output = Some(output),
+        Err(error) => {
+            envelope.outcome =
+                if matches!(error.code, ErrorCode::Cancelled | ErrorCode::OutcomeUnknown) {
+                    ExecutionState::Unknown
+                } else {
+                    ExecutionState::Failed
+                };
+            envelope.diagnostic = Some(Diagnostic {
+                code: error.stage,
+                retry_safe: false,
+            });
+        }
+    }
+    let result = match FixedResult::capture(envelope.clone(), input, request.dispatch_token) {
+        Ok(r) => r,
+        Err(error) if error.code == ErrorCode::LimitExceeded => {
+            envelope.outcome = ExecutionState::Failed;
+            envelope.output = None;
+            envelope.diagnostic = Some(Diagnostic {
+                code: "limit-exceeded".into(),
+                retry_safe: false,
+            });
+            FixedResult::capture(envelope, input, request.dispatch_token)?
+        }
+        Err(error) => return Err(error),
+    };
+    sender.send(result)
 }

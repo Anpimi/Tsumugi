@@ -136,6 +136,8 @@ AI translation supports an editable OpenAI-compatible Chat Completions endpoint,
 
 New projects use database schema 10. Valid schema 3 through 9 projects are backed up in their project directory and upgraded when opened. Other schema versions are rejected without resetting the directory. The application remains in the unreleased 0.1.0 development batch.
 
+The bundled WebVTT integration supports a limited plain-text caption profile with explicit cue IDs. It preserves timing, layout and original non-text structure through import, translation, source maintenance and checked local subtitle export. See [bundled integrations and compatibility](docs/integrations.md) for supported syntax and interface maturity.
+
 ## Status
 
 Tsumugi is in early development. Current work focuses on the foundations for complete localization workflows:

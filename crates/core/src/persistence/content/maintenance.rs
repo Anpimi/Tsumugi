@@ -227,6 +227,7 @@ impl ProjectStore {
                     current_rows.iter().find(|row| {
                         row.occurrence.key.eq_ignore_ascii_case(&new.key)
                             && row.occurrence.text == new.text
+                            && row.occurrence.identity_basis == new.identity_basis
                     })
                 };
                 let Some(old) = old else {
@@ -251,6 +252,7 @@ impl ProjectStore {
                 {
                     summary.unresolved += 1;
                 } else if old.occurrence.text == new.text
+                    && old.occurrence.identity_basis == new.identity_basis
                     && target.as_ref().is_some_and(|target| {
                         target.source_revision_id == old.source_revision_id.unwrap()
                             && !pending.contains(&target.unit_id)

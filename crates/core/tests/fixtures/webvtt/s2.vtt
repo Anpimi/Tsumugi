@@ -1,0 +1,38 @@
+WEBVTT Caption example
+
+STYLE
+::cue { color: lime; }
+
+REGION
+id:main
+width:80%
+lines:3
+
+NOTE Keep this original note unchanged.
+
+keep
+00:00.000 --> 00:02.000 region:main
+Hello
+World
+
+timed
+00:01.500 --> 00:03.000 align:center
+Wait
+
+word
+00:03.000 --> 00:04.000
+New
+
+layout
+00:04.000 --> 00:05.000 size:50%
+Layout
+
+NOTE This note belongs between captions.
+
+renamed
+00:05.000 --> 00:06.000
+Same
+
+added
+00:06.000 --> 00:07.000
+Added

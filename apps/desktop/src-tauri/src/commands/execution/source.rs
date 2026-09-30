@@ -125,6 +125,22 @@ pub async fn select_source<R: tauri::Runtime>(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<Option<SourceSelection>, CommandError> {
+    select_source_kind(app, state, request, false).await
+}
+#[tauri::command]
+pub async fn select_webvtt_source<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    request: SessionRequest,
+) -> Result<Option<SourceSelection>, CommandError> {
+    select_source_kind(app, state, request, true).await
+}
+async fn select_source_kind<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, AppState>,
+    request: SessionRequest,
+    webvtt: bool,
+) -> Result<Option<SourceSelection>, CommandError> {
     let picker = ExecutionId::new();
     {
         let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
@@ -151,9 +167,13 @@ pub async fn select_source<R: tauri::Runtime>(
     let selection = selected
         .map(|path| {
             let path = path.into_path().map_err(|_| stale())?;
-            capture::Selection::authorize(path)
-                .map(Arc::new)
-                .map_err(map_source)
+            (if webvtt {
+                capture::Selection::authorize_webvtt(path)
+            } else {
+                capture::Selection::authorize(path)
+            })
+            .map(Arc::new)
+            .map_err(map_source)
         })
         .transpose()?;
     let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
@@ -388,13 +408,43 @@ pub fn read_source_integration(
     request: SessionRequest,
 ) -> Result<content::IntegrationDescriptor, CommandError> {
     let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
+    let active = authorized(
+        &mut sessions,
+        &request.session_token,
+        request.project_id,
+        CommandStage::ExecutionRead,
+    )?;
+    if let Some(snapshot) = active
+        .store
+        .content_scope()
+        .map_err(map_source)?
+        .current_snapshot
+    {
+        if active
+            .store
+            .source_bundle(snapshot)
+            .map_err(map_source)?
+            .plugin_id
+            == content::webvtt::PLUGIN
+        {
+            return Ok(content::webvtt_descriptor(cfg!(windows)));
+        }
+    }
+    Ok(content::integration_descriptor(cfg!(windows)))
+}
+#[tauri::command]
+pub fn read_webvtt_integration(
+    state: State<'_, AppState>,
+    request: SessionRequest,
+) -> Result<content::IntegrationDescriptor, CommandError> {
+    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
     authorized(
         &mut sessions,
         &request.session_token,
         request.project_id,
         CommandStage::ExecutionRead,
     )?;
-    Ok(content::integration_descriptor(cfg!(windows)))
+    Ok(content::webvtt_descriptor(cfg!(windows)))
 }
 
 #[tauri::command]

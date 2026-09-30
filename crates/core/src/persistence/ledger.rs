@@ -1006,6 +1006,7 @@ impl ProjectStore {
         }
         super::content::record_input(&tx, input)?;
         super::translation::record_input(&tx, input)?;
+        super::release::record_input(&tx, input)?;
         #[cfg(test)]
         crash_hook("before-enqueue-commit");
         commit(tx)?;

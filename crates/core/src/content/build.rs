@@ -37,6 +37,8 @@ pub struct BuildLocale {
     pub locale: String,
     pub file_name: String,
     pub entries: Vec<BuildEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_template: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -64,6 +66,7 @@ pub struct BuildManifest {
 
 impl BuildManifest {
     pub fn validate(&self) -> Result<(), ExecutionError> {
+        let vtt = self.plugin_id == webvtt::PLUGIN;
         if self.version != 1
             || self.policy_version != "balanced-1"
             || self.eligibility_basis.len() != 64
@@ -71,15 +74,25 @@ impl BuildManifest {
                 .eligibility_basis
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit())
-            || self.plugin_id != PLUGIN_ID
+            || !matches!(self.plugin_id.as_str(), PLUGIN_ID | webvtt::PLUGIN)
             || self.plugin_version != PLUGIN_VERSION
-            || self.builder_version != BUILDER_VERSION
-            || self.validator_version != VALIDATOR_VERSION
+            || self.builder_version
+                != if vtt {
+                    webvtt::BUILDER
+                } else {
+                    BUILDER_VERSION
+                }
+            || self.validator_version
+                != if vtt {
+                    webvtt::CHECKER
+                } else {
+                    VALIDATOR_VERSION
+                }
             || self.locales.is_empty()
             || self.locales.len() > 16
-            || self.source_files.len() != 2
-            || self.source_files[0].logical_path != MANIFEST_PATH
-            || self.source_files[1].logical_path != SOURCE_PATH
+            || self.source_files.len() != if vtt { 1 } else { 2 }
+            || self.source_files[0].logical_path != if vtt { webvtt::PATH } else { MANIFEST_PATH }
+            || (!vtt && self.source_files[1].logical_path != SOURCE_PATH)
             || self.source_files.iter().any(|file| {
                 file.sha256.len() != 64 || !file.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
             })
@@ -104,6 +117,36 @@ impl BuildManifest {
             return Err(invalid("build-entries"));
         }
         for locale in &self.locales {
+            if vtt {
+                let template = locale
+                    .source_template
+                    .as_ref()
+                    .ok_or_else(|| invalid("vtt-template"))?;
+                if codec::digest(template.as_bytes()) != self.source_files[0].sha256
+                    || !webvtt::file_name(&locale.file_name)
+                {
+                    return Err(invalid("vtt-template"));
+                }
+                let source = webvtt::extract(
+                    &SourceBundle::capture_webvtt(template.as_bytes(), "en-US")?,
+                    &Cancellation::default(),
+                )?;
+                if source.occurrences.len() != locale.entries.len()
+                    || source
+                        .occurrences
+                        .iter()
+                        .zip(&locale.entries)
+                        .any(|(cue, entry)| {
+                            cue.key != entry.native_key
+                                || cue.text != entry.source_text
+                                || cue.ordinal != entry.ordinal
+                        })
+                {
+                    return Err(invalid("vtt-template"));
+                }
+            } else if locale.source_template.is_some() {
+                return Err(invalid("build-template"));
+            }
             let parsed = Locale::parse(&locale.locale).map_err(|_| invalid("build-locale"))?;
             let file_stem = locale
                 .file_name
@@ -118,12 +161,13 @@ impl BuildManifest {
             if parsed.as_str() != locale.locale
                 || !locales.insert(&locale.locale)
                 || !paths.insert(locale.file_name.to_ascii_lowercase())
-                || !locale.file_name.starts_with("i18n/")
-                || declared_locale(&locale.file_name).is_err()
-                || locale.file_name.eq_ignore_ascii_case("i18n/default.json")
-                || windows_reserved
-                || declared_locale(&locale.file_name)?.split('-').next()
-                    != locale.locale.split('-').next()
+                || (!vtt
+                    && (!locale.file_name.starts_with("i18n/")
+                        || declared_locale(&locale.file_name).is_err()
+                        || locale.file_name.eq_ignore_ascii_case("i18n/default.json")
+                        || windows_reserved
+                        || declared_locale(&locale.file_name)?.split('-').next()
+                            != locale.locale.split('-').next()))
                 || locale.entries.len() != expected_units.len()
             {
                 return Err(invalid("build-locale"));
@@ -180,7 +224,11 @@ impl BuildManifest {
         let mut envelope = InputEnvelope::new(
             project,
             BUILD_OPERATION,
-            BUILD_CAPABILITY,
+            if self.plugin_id == webvtt::PLUGIN {
+                webvtt::BUILD
+            } else {
+                BUILD_CAPABILITY
+            },
             BUILD_CAPABILITY_VERSION,
             items,
         )?;
@@ -194,7 +242,10 @@ impl BuildManifest {
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let envelope = input.envelope();
         if envelope.operation != BUILD_OPERATION
-            || envelope.capability_id != BUILD_CAPABILITY
+            || !matches!(
+                envelope.capability_id.as_str(),
+                BUILD_CAPABILITY | webvtt::BUILD
+            )
             || envelope.capability_version != BUILD_CAPABILITY_VERSION
             || envelope.units.len() != 1
             || envelope.items.len() != envelope.units[0].item_ids.len()
@@ -203,6 +254,15 @@ impl BuildManifest {
         }
         let manifest: Self = from_value(&envelope.settings)?;
         manifest.validate()?;
+        if envelope.capability_id
+            != if manifest.plugin_id == webvtt::PLUGIN {
+                webvtt::BUILD
+            } else {
+                BUILD_CAPABILITY
+            }
+        {
+            return Err(invalid("build-input"));
+        }
         if manifest.project_id != envelope.project_id
             || envelope.items.len() != manifest.locales.len()
         {
@@ -244,6 +304,9 @@ pub fn build_locale(
     locale: &BuildLocale,
     cancel: &Cancellation,
 ) -> Result<BuildOutput, ExecutionError> {
+    if locale.source_template.is_some() {
+        return webvtt::build(locale, cancel);
+    }
     let mut utf8 = String::from("{\n");
     for (index, entry) in locale.entries.iter().enumerate() {
         if cancel.is_requested() {
@@ -279,6 +342,9 @@ pub fn validate_build_output(
     locale: &BuildLocale,
     output: &BuildOutput,
 ) -> Result<(), ExecutionError> {
+    if locale.source_template.is_some() {
+        return webvtt::check(locale, output);
+    }
     if output.version != 1
         || output.builder_version != BUILDER_VERSION
         || output.locale != locale.locale
@@ -329,6 +395,23 @@ pub fn validate_build_output(
 }
 
 pub struct BuildRunner;
+pub struct WebvttBuildRunner;
+impl Runner for WebvttBuildRunner {
+    fn capability_id(&self) -> &str {
+        webvtt::BUILD
+    }
+    fn capability_version(&self) -> &str {
+        BUILD_CAPABILITY_VERSION
+    }
+    fn run(
+        &self,
+        request: DispatchRequest,
+        cancellation: Cancellation,
+        sender: ResultSender,
+    ) -> Result<(), ExecutionError> {
+        run_build(request, cancellation, sender)
+    }
+}
 impl Runner for BuildRunner {
     fn capability_id(&self) -> &str {
         BUILD_CAPABILITY
@@ -343,58 +426,65 @@ impl Runner for BuildRunner {
         cancellation: Cancellation,
         sender: ResultSender,
     ) -> Result<(), ExecutionError> {
-        let input = &request.input;
-        let outcome = BuildManifest::from_input(input).and_then(|manifest| {
-            let index: usize = from_value(&input.item(request.item_id)?.payload)?;
-            let locale = manifest
-                .locales
-                .get(index)
-                .ok_or_else(|| invalid("build-item"))?;
-            let output = build_locale(locale, &cancellation)?;
-            validate_build_output(locale, &output)?;
-            value(&output)
-        });
-        let mut envelope = ResultEnvelope {
-            project_id: input.envelope().project_id,
-            attempt_id: input.envelope().attempt_id,
-            item_id: request.item_id,
-            result_id: ExecutionId::new(),
-            supersedes: None,
-            dispatch_token: request.dispatch_token,
-            capability_id: BUILD_CAPABILITY.into(),
-            capability_version: BUILD_CAPABILITY_VERSION.into(),
-            outcome: ExecutionState::Succeeded,
-            output: None,
-            diagnostic: None,
-        };
-        match outcome {
-            Ok(output) => envelope.output = Some(output),
-            Err(error) => {
-                envelope.outcome =
-                    if matches!(error.code, ErrorCode::Cancelled | ErrorCode::OutcomeUnknown) {
-                        ExecutionState::Unknown
-                    } else {
-                        ExecutionState::Failed
-                    };
-                envelope.diagnostic = Some(Diagnostic {
-                    code: error.stage,
-                    retry_safe: false,
-                });
-            }
-        }
-        let result = match FixedResult::capture(envelope.clone(), input, request.dispatch_token) {
-            Ok(result) => result,
-            Err(error) if error.code == ErrorCode::LimitExceeded => {
-                envelope.outcome = ExecutionState::Failed;
-                envelope.output = None;
-                envelope.diagnostic = Some(Diagnostic {
-                    code: "limit-exceeded".into(),
-                    retry_safe: false,
-                });
-                FixedResult::capture(envelope, input, request.dispatch_token)?
-            }
-            Err(error) => return Err(error),
-        };
-        sender.send(result)
+        run_build(request, cancellation, sender)
     }
+}
+fn run_build(
+    request: DispatchRequest,
+    cancellation: Cancellation,
+    sender: ResultSender,
+) -> Result<(), ExecutionError> {
+    let input = &request.input;
+    let outcome = BuildManifest::from_input(input).and_then(|manifest| {
+        let index: usize = from_value(&input.item(request.item_id)?.payload)?;
+        let locale = manifest
+            .locales
+            .get(index)
+            .ok_or_else(|| invalid("build-item"))?;
+        let output = build_locale(locale, &cancellation)?;
+        validate_build_output(locale, &output)?;
+        value(&output)
+    });
+    let mut envelope = ResultEnvelope {
+        project_id: input.envelope().project_id,
+        attempt_id: input.envelope().attempt_id,
+        item_id: request.item_id,
+        result_id: ExecutionId::new(),
+        supersedes: None,
+        dispatch_token: request.dispatch_token,
+        capability_id: input.envelope().capability_id.clone(),
+        capability_version: BUILD_CAPABILITY_VERSION.into(),
+        outcome: ExecutionState::Succeeded,
+        output: None,
+        diagnostic: None,
+    };
+    match outcome {
+        Ok(output) => envelope.output = Some(output),
+        Err(error) => {
+            envelope.outcome =
+                if matches!(error.code, ErrorCode::Cancelled | ErrorCode::OutcomeUnknown) {
+                    ExecutionState::Unknown
+                } else {
+                    ExecutionState::Failed
+                };
+            envelope.diagnostic = Some(Diagnostic {
+                code: error.stage,
+                retry_safe: false,
+            });
+        }
+    }
+    let result = match FixedResult::capture(envelope.clone(), input, request.dispatch_token) {
+        Ok(result) => result,
+        Err(error) if error.code == ErrorCode::LimitExceeded => {
+            envelope.outcome = ExecutionState::Failed;
+            envelope.output = None;
+            envelope.diagnostic = Some(Diagnostic {
+                code: "limit-exceeded".into(),
+                retry_safe: false,
+            });
+            FixedResult::capture(envelope, input, request.dispatch_token)?
+        }
+        Err(error) => return Err(error),
+    };
+    sender.send(result)
 }

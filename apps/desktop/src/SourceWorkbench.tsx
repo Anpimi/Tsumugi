@@ -8,12 +8,17 @@ import { SourceHistoryPanel, SourceImpactPanel } from "./SourceMaintenance";
 import { executionCommands as execution, executionContext, type AttemptDetail } from "./executionCommands";
 import { sourceCommands as commands, type ContentPage, type SourceChangePage, type LineageChoice, type Preflight, type SourceAdoptRequest, type SourceSelection, type StartRequest, type IntegrationDescriptor, type SourceHistory, type SourceImpactSummary } from "./sourceCommands";
 
+function cueTiming(basis: string): string | null {
+  if (!basis.startsWith("{")) return null;
+  try { const value = JSON.parse(basis) as { policy?: unknown; timing?: unknown }; return value.policy === "webvtt-cue/1" && typeof value.timing === "string" ? value.timing : null; } catch { return null; }
+}
 export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean> }
 export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; ref?: Ref<SourceHandle> }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const [open, setOpen] = useState(false);
   const [integration, setIntegration] = useState<IntegrationDescriptor | null>(null);
+  const [domain, setDomain] = useState("stardew-smapi");
   const [selection, setSelection] = useState<SourceSelection | null>(null);
   const [declared, setDeclared] = useState(false);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
@@ -48,9 +53,9 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
   useEffect(() => {
     if (!open) return;
     let stale = false;
-    void commands.integration(context).then(value => { if (!stale) setIntegration(value); }, error => { if (!stale) showError(error); });
+    void commands.integration(context, domain).then(value => { if (!stale) { setIntegration(value); setDomain(value.id); } }, error => { if (!stale) showError(error); });
     return () => { stale = true; };
-  }, [open, project.sessionToken]);
+  }, [open, project.sessionToken, domain]);
   useImperativeHandle(ref, () => ({
     showAttempt(id) { if (mutation.current || pendingApply || pendingStart) { setOpen(true); return; } sequence.current++; setAttempt(id); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); setConfirmed(false); setFailure(null); setOpen(true); },
     allowLeave() { if (pendingApply || pendingStart) { setOpen(true); return Promise.resolve(false); } if (!selection && Object.keys(lineage).length === 0 && !busy) return Promise.resolve(true); setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
@@ -137,31 +142,32 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
   }
   const knownErrors: Record<string, keyof UiMessages["source"]["errors"]> = {
     "unsupported-encoding": "encoding", "source-changed": "changed", "duplicate-native-key": "duplicate", "empty-source": "empty", "capture-timeout": "timeout", "extract-timeout": "unknown", "source-corrupt": "invalid", "stale-preview": "conflict", "language-required": "language",
-    "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", "invalid-json": "invalid", "source-value-not-string": "stringValue", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
+    "vtt-header": "webvtt", "vtt-timing": "webvtt", "vtt-setting": "webvtt", "vtt-region": "webvtt", "vtt-block": "webvtt", "vtt-cue-id": "webvtt", "vtt-order": "webvtt", "vtt-payload": "webvtt", "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", "invalid-json": "invalid", "source-value-not-string": "stringValue", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
   };
   const locked = busy || pendingStart !== null || pendingApply !== null;
   const warnings = page?.diagnostics ?? preflight?.diagnostics ?? [];
   return <>
     <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger className="navigation-item" disabled={disabled} onClick={() => { if (!attempt && !page) void perform(loadCurrent); }}>{t("source.title")}</Dialog.Trigger>
+      <Dialog.Trigger className="navigation-item" disabled={disabled} onClick={() => { if (!attempt && !page && !selection && !updating) void perform(loadCurrent); }}>{t("source.title")}</Dialog.Trigger>
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog source-dialog">
         <div className="execution-heading"><div><Dialog.Title>{t("source.title")}</Dialog.Title><Dialog.Description>{t("source.description")}</Dialog.Description></div><Dialog.Close className="secondary-button">{t("execution.back")}</Dialog.Close></div>
         <div className="execution-content" aria-busy={busy}>
-          {integration ? <><p>{t("source.profile", { version: integration.version, profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
+          {integration ? <><p>{t("source.profile", { version: integration.version, name: integration.id === "webvtt" ? "WebVTT" : "Stardew SMAPI", profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details></div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {warnings.includes("source-template") ? <p role="status">{t("source.templateWarning")}</p> : null}
-          {!page && !comparison && !attempt ? <section aria-label={t("source.select")}>
+          {!page && !comparison && !attempt ? <section aria-label={t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}>
+            <label className="source-field">{t("source.integration")}<select disabled={locked || updating} value={domain} onChange={event => { sequence.current++; setDomain(event.target.value); setIntegration(null); setSelection(null); setPreflight(null); setDeclared(false); setFailure(null); }}><option value="stardew-smapi">Stardew SMAPI</option><option value="webvtt">WebVTT</option></select></label>
             {updating ? <p role="status">{t("source.updateIntro")}</p> : null}
-            <p>{t("source.support")}</p>
+            <p>{t(domain === "webvtt" ? "source.webvttSupport" : "source.support")}</p>
             <button className="secondary-button" disabled={locked || !integration?.available} onClick={() => void perform(async current => {
-              const next = await commands.select(context);
+              const next = await commands.select(context, domain);
               if (current()) { setSelection(next); setPreflight(null); setDeclared(false); setConfirmed(false); if (next) { setPage(null); setComparison(null); setLineage({}); setAttempt(null); setDetail(null); } }
-            })}>{t("source.select")}</button>
+            })}>{t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}</button>
             {selection ? <>
               <p>{selection.folderName}</p>
               <label className="source-check"><input type="checkbox" checked={declared} disabled={locked} onChange={event => { setDeclared(event.target.checked); setPreflight(null); }} />{t("source.language", { language: project.metadata.sourceLocale })}</label>
-              <p>{t("source.languageHelp")}</p>
+              <p>{t("source.languageHelp", { file: domain === "webvtt" ? "source.vtt" : "default.json" })}</p>
               <button className="secondary-button" disabled={locked || !declared} onClick={() => void perform(async current => {
                 const result = await commands.preflight({ ...context, selectionId: selection.selectionId, sourceLanguage: project.metadata.sourceLocale });
                 if (current()) setPreflight(result);
@@ -185,7 +191,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
             <p role="status">{t("source.range", { namespace: page.namespace, count: page.total, language: page.confirmation.sourceLanguage })}</p>
             <ul>{page.coverage.map(file => <li key={file.artifactId}>{file.logicalPath}<details><summary>{t("source.fingerprint")}</summary><code>{file.sha256}</code></details></li>)}</ul>
             <p>{t("source.identityHelp")}</p>
-            <div className="source-table-scroll"><table className="source-table"><caption>{t("source.pageRange", { first: String((page.rows[0]?.occurrence.ordinal ?? 0) + 1), last: String((page.rows.at(-1)?.occurrence.ordinal ?? -1) + 1), total: String(page.total) })}</caption><thead><tr><th scope="col">{t("source.key")}</th><th scope="col">{t("source.text")}</th></tr></thead><tbody>{page.rows.map(row => <tr key={row.occurrence.ordinal}><th scope="row">{row.occurrence.key}<details><summary>{t("source.origin")}</summary><p>{row.occurrence.namespace}</p><p>{t("source.bytes", { start: String(row.occurrence.valueByteRange[0]), end: String(row.occurrence.valueByteRange[1]) })}</p>{row.unitId ? <code>{row.unitId}</code> : null}</details></th><td><pre>{row.occurrence.text || t("source.emptyText")}</pre></td></tr>)}</tbody></table></div>
+            <div className="source-table-scroll"><table className="source-table"><caption>{t("source.pageRange", { first: String((page.rows[0]?.occurrence.ordinal ?? 0) + 1), last: String((page.rows.at(-1)?.occurrence.ordinal ?? -1) + 1), total: String(page.total) })}</caption><thead><tr><th scope="col">{t("source.key")}</th><th scope="col">{t("source.text")}</th></tr></thead><tbody>{page.rows.map(row => <tr key={row.occurrence.ordinal}><th scope="row">{row.occurrence.key}{cueTiming(row.occurrence.identityBasis) ? <p>{cueTiming(row.occurrence.identityBasis)}</p> : null}<details><summary>{t("source.origin")}</summary><p>{row.occurrence.namespace}</p><p>{t("source.bytes", { start: String(row.occurrence.valueByteRange[0]), end: String(row.occurrence.valueByteRange[1]) })}</p>{row.unitId ? <code>{row.unitId}</code> : null}</details></th><td><pre>{row.occurrence.text || t("source.emptyText")}</pre></td></tr>)}</tbody></table></div>
             <div className="execution-actions">{[0, page.nextOrdinal].map((after, index) => after !== null ? <button className="secondary-button" key={index} disabled={locked || (index === 0 && page.rows[0]?.occurrence.ordinal === 0)} onClick={() => void perform(async current => {
               const next = page.snapshotId ? await commands.content({ ...context, snapshotId: page.snapshotId, after, limit: 50 }) : await commands.preview({ ...context, attemptId: page.attemptId, resultId: page.resultId, after, limit: 50 });
               if (current()) setPage(next);
@@ -207,7 +213,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
           {comparison ? <section>
             <h3 ref={first} tabIndex={-1}>{t("source.compareTitle")}</h3>
             <p role="status">{t("source.compareSummary", { unchanged: String(comparison.unchanged), moved: String(comparison.moved), changed: String(comparison.changed), added: String(comparison.added), ambiguous: String(comparison.ambiguous), removed: String(comparison.removed) })}</p>
-            <p>{t("source.compareHelp")}</p>
+            <p>{t(domain === "webvtt" ? "source.webvttCompareHelp" : "source.compareHelp")}</p>
             <label className="source-field">{t("source.mappingActor")}<input disabled={locked} value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
             <label className="source-field">{t("source.comparisonFilter")}<input disabled={locked} value={filter} maxLength={256} onChange={event => setFilter(event.target.value)} /></label>
             <button className="secondary-button" disabled={locked} onClick={() => void perform(current => compare(0, current, comparison.previousSnapshotId, filter))}>{t("source.search")}</button>
@@ -221,8 +227,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
               const selected = ordinal === undefined ? undefined : lineage[ordinal];
               const defaultChoice = row.kind === "unchanged" || row.kind === "moved" ? "automatic" : "unresolved";
               return <tr key={`${row.new?.key ?? row.old?.occurrence.key}:${index}`}><th scope="row">{t(`source.change.${row.kind}`)}</th>
-                <td>{row.old ? <><strong>{row.old.occurrence.key}</strong><pre>{row.old.occurrence.text || t("source.emptyText")}</pre><small>i18n/default.json · {row.old.occurrence.valueByteRange.join("–")}</small></> : row.candidates.length ? <ul>{row.candidates.map(candidate => <li key={candidate.occurrenceId}>{t("source.candidate", { key: candidate.occurrence.key, text: candidate.occurrence.text })}</li>)}</ul> : "—"}</td>
-                <td>{row.new ? <><strong>{row.new.key}</strong><pre>{row.new.text || t("source.emptyText")}</pre><small>i18n/default.json · {row.new.valueByteRange.join("–")}</small></> : "—"}</td>
+                <td>{row.old ? <><strong>{row.old.occurrence.key}</strong><pre>{row.old.occurrence.text || t("source.emptyText")}</pre><small>{cueTiming(row.old.occurrence.identityBasis) ?? "i18n/default.json"} · {row.old.occurrence.valueByteRange.join("–")}</small></> : row.candidates.length ? <ul>{row.candidates.map(candidate => <li key={candidate.occurrenceId}>{t("source.candidate", { key: candidate.occurrence.key, text: candidate.occurrence.text })}</li>)}</ul> : "—"}</td>
+                <td>{row.new ? <><strong>{row.new.key}</strong><pre>{row.new.text || t("source.emptyText")}</pre><small>{cueTiming(row.new.identityBasis) ?? "i18n/default.json"} · {row.new.valueByteRange.join("–")}</small></> : "—"}</td>
                 <td>{ordinal !== undefined ? <><label className="source-field">{t("source.mapping")}
                   <select disabled={locked} value={selected ? `${selected.decision}:${selected.oldOccurrenceId}` : defaultChoice} onChange={event => {
                     const [decision, oldOccurrenceId] = event.target.value.split(":");
