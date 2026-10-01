@@ -159,6 +159,16 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
+如需不带安装器的 Windows 独立可执行程序，运行：
+
+```text
+pnpm --dir apps/desktop tauri build --no-bundle
+```
+
+直接启动 `target/release/tsumugi-desktop.exe`。该构建内嵌前端，不依赖开发服务器，也不显示控制台窗口；仍需 Microsoft Edge WebView2 Runtime。`tauri dev` 和 debug 构建会保留开发控制台。
+
+桌面工作台会拦截网页刷新、浏览器前后导航、打印、查看源代码和网页保存快捷键，避免绕过编辑流程。Ctrl+S 仍由当前编辑器处理；文本输入框保留原生编辑菜单，其他正文仍可选取并使用 Ctrl+C 复制。工作区滚动时，导航和工具栏保持原位。
+
 当前桌面界面支持创建、打开、重命名和关闭项目、添加目标语言、导入源内容、管理译文修订、维护项目术语和上下文、审阅当前译文，以及构建并在本地导出已验证的 SMAPI 语言文件。这些操作通过 Tauri 命令完成。
 
 “任务”视图可查看持久化执行进度、已保存输出、取消、符合条件的恢复操作及显式结果采纳。普通构建没有合成任务创建菜单。开发者可使用隔离的[执行测试宿主](docs/execution-test-host.md)，在不接入翻译提供商的情况下检查这些流程。

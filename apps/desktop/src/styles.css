@@ -36,39 +36,65 @@
   background: #f6f8fc;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  font-size: 13px;
+  color-scheme: light;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  overflow: hidden;
 }
 
-button {
+button,
+input,
+select,
+textarea {
   font: inherit;
 }
 
+button,
+label,
+.sidebar,
+.topbar {
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+}
+
 button:focus-visible {
-  outline: 3px solid #9db9ff;
+  outline: 2px solid #315fd5;
   outline-offset: 2px;
 }
 
 .shell {
   display: flex;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: #f8fafc;
 }
 
 .sidebar {
   display: flex;
-  flex: 0 0 248px;
+  flex: 0 0 216px;
   flex-direction: column;
-  min-height: 100vh;
-  padding: 32px 14px 20px;
+  min-height: 0;
+  padding: 18px 10px 12px;
   border-right: 1px solid #dce3ee;
   background: #f1f4f9;
 }
@@ -77,7 +103,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 14px 30px;
+  padding: 0 10px 20px;
 }
 
 .brand-mark {
@@ -88,7 +114,6 @@ button:focus-visible {
   gap: 3px;
   border-radius: 8px;
   background: #315fd5;
-  box-shadow: 0 5px 14px rgb(43 82 183 / 18%);
 }
 
 .brand-mark span {
@@ -126,21 +151,38 @@ button:focus-visible {
 
 .navigation {
   display: grid;
-  gap: 5px;
+  align-content: start;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 4px;
+}
+
+.navigation > button {
+  justify-content: flex-start;
+  text-align: left;
+  min-height: 34px;
+  border-color: transparent;
+  border-radius: 4px;
+  color: #43516a;
+  background: transparent;
+}
+
+.navigation > button:hover:not(:disabled) {
+  background: #e4e9f1;
 }
 
 .navigation-item {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 10px;
   width: 100%;
-  min-height: 45px;
-  padding: 0 16px;
+  min-height: 34px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 4px;
   color: #5f6c80;
   background: transparent;
-  font-size: 15px;
+  font-size: 13px;
   text-align: left;
 }
 
@@ -189,6 +231,8 @@ button:focus-visible {
   display: flex;
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   flex-direction: column;
   background: #fff;
 }
@@ -197,10 +241,27 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 56px;
-  padding: 0 26px 0 18px;
+  flex: 0 0 44px;
+  min-height: 44px;
+  gap: 16px;
+  padding: 0 20px;
   border-bottom: 1px solid #e3e8f0;
   background: #fff;
+}
+
+.workspace-caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #52617a;
+  font-weight: 600;
+}
+
+.workspace-caption span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .menu-bar {
@@ -363,6 +424,7 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 18px;
+  flex-shrink: 0;
 }
 
 .language-control {
@@ -391,31 +453,30 @@ button:focus-visible {
 
 .workspace-body {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   justify-content: center;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 0;
 }
 
 .workbench-content {
-  width: min(100%, 1040px);
-  padding: 42px 42px 64px;
+  width: 100%;
+  padding: 24px;
 }
 
 .workbench-content.is-closed {
-  display: grid;
-  min-height: 100%;
-  place-items: center;
+  display: block;
 }
 
 .workbench-content.is-project {
-  width: min(100%, 1120px);
+  width: 100%;
 }
 
 .closed-state {
-  width: min(700px, 100%);
-  padding: 30px 20px;
-  text-align: center;
+  width: min(820px, 100%);
+  padding: 12px 0;
+  text-align: left;
 }
 
 .closed-state .empty-state-icon {
@@ -436,22 +497,22 @@ button:focus-visible {
 .project-heading h1 {
   margin: 0;
   color: #18243a;
-  font-size: clamp(28px, 4vw, 38px);
+  font-size: 24px;
   font-weight: 680;
   letter-spacing: -0.04em;
   line-height: 1.16;
 }
 
 .empty-lede {
-  margin: 17px auto 0;
+  margin: 12px 0 0;
   max-width: 600px;
   color: #61718a;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1.55;
 }
 
 .empty-detail {
-  margin: 8px auto 0;
+  margin: 6px 0 0;
   max-width: 550px;
   color: #8591a4;
   font-size: 13px;
@@ -469,8 +530,8 @@ button:focus-visible {
 }
 
 .empty-actions {
-  justify-content: center;
-  margin-top: 28px;
+  justify-content: flex-start;
+  margin-top: 20px;
 }
 
 .primary-button,
@@ -482,18 +543,18 @@ button:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 38px;
-  border-radius: 8px;
+  min-height: 32px;
+  border-radius: 4px;
   font-size: 13px;
   font-weight: 650;
   line-height: 1.2;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 .primary-button,
 .secondary-button,
 .danger-button {
-  padding: 8px 14px;
+  padding: 6px 12px;
   border: 1px solid transparent;
   cursor: pointer;
 }
@@ -501,12 +562,10 @@ button:focus-visible {
 .primary-button {
   color: #fff;
   background: #315fd5;
-  box-shadow: 0 5px 14px rgb(43 82 183 / 15%);
 }
 
 .primary-button:hover:not(:disabled) {
   background: #254fbe;
-  transform: translateY(-1px);
 }
 
 .secondary-button {
@@ -569,15 +628,14 @@ button:focus-visible {
 .editor-card,
 .inline-card {
   border: 1px solid #dbe3ef;
-  border-radius: 16px;
+  border-radius: 6px;
   background: #fff;
-  box-shadow: 0 16px 40px rgb(43 61 98 / 8%);
 }
 
 .form-card {
   width: min(700px, 100%);
-  margin: 0 auto;
-  padding: 30px;
+  margin: 0;
+  padding: 20px;
   text-align: left;
 }
 
@@ -588,7 +646,7 @@ button:focus-visible {
 .form-heading h1 {
   margin: 0;
   color: #18243a;
-  font-size: clamp(25px, 4vw, 32px);
+  font-size: 22px;
   font-weight: 680;
   letter-spacing: -0.035em;
   line-height: 1.2;
@@ -624,10 +682,10 @@ button:focus-visible {
 
 .field input {
   width: 100%;
-  min-height: 42px;
-  padding: 9px 12px;
+  min-height: 34px;
+  padding: 6px 9px;
   border: 1px solid #cbd5e4;
-  border-radius: 8px;
+  border-radius: 4px;
   color: #1d293d;
   background: #fff;
   font: inherit;
@@ -636,10 +694,10 @@ button:focus-visible {
 
 .field select {
   width: 100%;
-  min-height: 42px;
-  padding: 9px 12px;
+  min-height: 34px;
+  padding: 6px 9px;
   border: 1px solid #cbd5e4;
-  border-radius: 8px;
+  border-radius: 4px;
   color: #1d293d;
   background: #fff;
   font: inherit;
@@ -747,7 +805,7 @@ button:focus-visible {
 }
 
 .create-form {
-  padding: 24px;
+  padding: 20px;
 }
 
 .create-form .form-fields {
@@ -901,9 +959,9 @@ button:focus-visible {
 }
 
 .recent-projects {
-  width: min(560px, 100%);
-  margin: 34px auto 0;
-  padding-top: 22px;
+  width: 100%;
+  margin: 28px 0 0;
+  padding-top: 18px;
   border-top: 1px solid #e5eaf2;
   text-align: left;
 }
@@ -996,7 +1054,7 @@ button:focus-visible {
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  padding: 16px 0 26px;
+  padding: 0 0 18px;
 }
 
 .project-heading > div {
@@ -1072,18 +1130,18 @@ button:focus-visible {
 
 .metadata-grid {
   display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) minmax(220px, 1.5fr) minmax(130px, 0.7fr);
+  grid-template-columns: minmax(140px, 0.8fr) minmax(220px, 1.5fr);
   gap: 1px;
   margin: 0;
   overflow: hidden;
   border: 1px solid #e0e6ef;
-  border-radius: 12px;
+  border-radius: 6px;
   background: #e0e6ef;
 }
 
 .metadata-item {
-  min-height: 104px;
-  padding: 18px 20px;
+  min-height: 76px;
+  padding: 12px 14px;
   background: #fbfcfe;
 }
 
@@ -1101,9 +1159,9 @@ button:focus-visible {
   align-items: center;
   gap: 7px;
   min-height: 30px;
-  margin: 12px 0 0;
+  margin: 6px 0 0;
   color: #24334c;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 650;
 }
 
@@ -1268,15 +1326,16 @@ button:focus-visible {
 .execution-dialog {
   position: fixed;
   z-index: 11;
-  inset: 4vh max(20px, calc((100vw - 1040px) / 2));
+  inset: 12px;
   overflow: auto;
-  padding: 28px;
+  padding: 18px 20px;
   background: #fff;
   border: 1px solid #d7e0ef;
-  border-radius: 14px;
-  box-shadow: 0 22px 70px rgb(31 47 82 / 22%);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(31 47 82 / 18%);
+  overscroll-behavior: contain;
 }
-.execution-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.execution-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #d7e0ef; }
 .execution-heading h2 { margin: 0; }
 .execution-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 16px 0; }
 .execution-list { list-style: none; padding: 0; display: grid; gap: 12px; }
@@ -1439,8 +1498,7 @@ button:focus-visible {
     gap: 3px;
   }
 }
-.review-dialog { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
-.release-dialog { width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.review-dialog, .release-dialog { width: auto; max-height: none; overflow: auto; }
 .release-dialog section { margin: 18px 0; }
 .release-dialog fieldset { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
 .release-locale { display: inline-flex; align-items: center; gap: 6px; }
