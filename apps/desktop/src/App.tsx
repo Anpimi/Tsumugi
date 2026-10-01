@@ -1144,6 +1144,10 @@ function App() {
 
       <section className="workspace" aria-label={t("nav.workspace")}>
         <header className="topbar">
+          <div className="workspace-caption">
+            <Icon name="folder-open" size={16} />
+            <span>{project?.metadata.displayName ?? t("nav.workspace")}</span>
+          </div>
            <div className="topbar-actions">
             <label className="language-control">
               <span>{t("language")}</span>
@@ -1170,7 +1174,6 @@ function App() {
               <section className="closed-state" aria-live="polite">
                 {closedPanel === "empty" ? (
                   <>
-                    <p className="eyebrow">{t("empty.title")}</p>
                     <h1>{t("empty.title")}</h1>
                     <p className="empty-lede">{t("empty.body")}</p>
                     <p className="empty-detail">{t("empty.detail")}</p>

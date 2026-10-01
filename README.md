@@ -126,6 +126,16 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
+For a standalone Windows executable without an installer, run:
+
+```text
+pnpm --dir apps/desktop tauri build --no-bundle
+```
+
+Launch `target/release/tsumugi-desktop.exe` directly. This build embeds the frontend and does not need a development server or console window. The Microsoft Edge WebView2 Runtime is still required. `tauri dev` and debug builds retain the development console.
+
+The desktop workbench suppresses page reload, browser navigation, printing, page-source and page-save shortcuts so they cannot bypass the editing workflow. Ctrl+S still belongs to the active editor. Text fields retain their native editing menus; other text can be selected and copied with Ctrl+C. The navigation and toolbar stay in place while the workspace scrolls.
+
 The desktop shell supports creating, opening, renaming, closing, and reconciling local projects, adding target locales, importing source content, managing translation revisions, working with project terminology and context, reviewing current translations, and building verified SMAPI language files for local export. These operations use Tauri commands.
 
 The Tasks view exposes persisted execution progress, saved outputs, cancellation, eligible recovery, and explicit result adoption. Normal builds have no synthetic task creation menu. Developers can use the isolated [execution test host](docs/execution-test-host.md) to exercise these paths without a translation provider.
