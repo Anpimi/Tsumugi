@@ -866,7 +866,24 @@ impl ProjectStore {
         after_ordinal: u32,
         limit: u32,
     ) -> Result<ReviewPage, ExecutionError> {
-        if limit == 0 || limit > 100 || after_ordinal > MAX_SCOPE as u32 {
+        self.review_page_filtered(project_id, locale, after_ordinal, limit, "")
+    }
+
+    /// Search the current scope before paging, then derive current evidence only for this page.
+    pub fn review_page_filtered(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+        after_ordinal: u32,
+        limit: u32,
+        query: &str,
+    ) -> Result<ReviewPage, ExecutionError> {
+        if limit == 0
+            || limit > 100
+            || after_ordinal > MAX_SCOPE as u32
+            || query.len() > 256
+            || query.contains('\0')
+        {
             return Err(failure(ErrorCode::InvalidInput, "review-page"));
         }
         let connection = self
@@ -893,17 +910,62 @@ impl ProjectStore {
         if total > MAX_SCOPE as i64 {
             return Err(failure(ErrorCode::LimitExceeded, "review-scope"));
         }
-        let mut statement = connection.prepare(
-            "SELECT unit_id,ordinal FROM source_occurrences WHERE snapshot_id=?1 AND ordinal>=?2
-             ORDER BY ordinal LIMIT ?3"
+        let (total, items) = if query.is_empty() {
+            // The usual list view only needs the requested page. Searching reads
+            // text across the scope, but must not make every unfiltered page do so.
+            let mut statement = connection
+                .prepare("SELECT unit_id,ordinal FROM source_occurrences WHERE snapshot_id=?1 AND ordinal>=?2 ORDER BY ordinal LIMIT ?3")
+                .map_err(sql)?;
+            let items = statement
+                .query_map(params![snapshot, after_ordinal, limit + 1], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
+                })
+                .map_err(sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql)?;
+            (total as u32, items)
+        } else {
+            let query = query.to_lowercase();
+            let mut statement = connection.prepare(
+            "SELECT o.unit_id,o.ordinal,o.native_key,r.text,tr.text
+             FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+             LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?2
+               AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t WHERE t.unit_id=o.unit_id AND t.locale=?2)
+             LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
+             WHERE o.snapshot_id=?1 ORDER BY o.ordinal"
         ).map_err(sql)?;
-        let items = statement
-            .query_map(params![snapshot, after_ordinal, limit + 1], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
-            })
-            .map_err(sql)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(sql)?;
+            let matches = statement
+                .query_map(params![snapshot, locale], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u32>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                })
+                .map_err(sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql)?
+                .into_iter()
+                .filter(|(_, _, key, source, translation)| {
+                    query.is_empty()
+                        || key.to_lowercase().contains(&query)
+                        || source.to_lowercase().contains(&query)
+                        || translation
+                            .as_ref()
+                            .is_some_and(|text| text.to_lowercase().contains(&query))
+                })
+                .collect::<Vec<_>>();
+            let total = matches.len() as u32;
+            let items = matches
+                .into_iter()
+                .filter(|(_, ordinal, _, _, _)| *ordinal >= after_ordinal)
+                .take((limit + 1) as usize)
+                .map(|(unit, ordinal, _, _, _)| (unit, ordinal))
+                .collect::<Vec<_>>();
+            (total, items)
+        };
         let next_ordinal = (items.len() > limit as usize).then(|| items[limit as usize].1);
         let rows = items
             .into_iter()
@@ -2208,6 +2270,80 @@ mod tests {
                 text: text.into(),
             })
             .unwrap();
+    }
+
+    #[test]
+    fn current_scope_search_pages_before_deriving_review_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = ProjectStore::create(
+            directory.path().join("project"),
+            ProjectMetadata::create("Search", "en", ["zh-CN", "fr-FR"]).unwrap(),
+        )
+        .unwrap();
+        let project = parse_id(store.metadata().unwrap().project_id().to_string()).unwrap();
+        let values = (0..60)
+            .map(|index| {
+                (
+                    format!("entry-{index:03}"),
+                    if index == 55 {
+                        "Later needle 世界".to_string()
+                    } else {
+                        format!("Source {index}")
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        adopt_source(&mut store, &serde_json::to_vec(&values).unwrap());
+        let scope = store.content_scope().unwrap();
+        let first = store
+            .review_page_filtered(project, "zh-CN", 0, 50, "ENTRY-")
+            .unwrap();
+        assert_eq!(first.total, 60);
+        assert_eq!(first.rows.len(), 50);
+        assert_eq!(first.next_ordinal, Some(50));
+        let second = store
+            .review_page_filtered(project, "zh-CN", 50, 50, "ENTRY-")
+            .unwrap();
+        assert_eq!(second.rows.len(), 10);
+        assert_eq!(second.next_ordinal, None);
+        let found = store
+            .review_page_filtered(project, "zh-CN", 0, 50, "NEEDLE 世界")
+            .unwrap();
+        assert_eq!(found.total, 1);
+        assert_eq!(found.rows[0].native_key, "entry-055");
+        assert_eq!(found.rows[0].translation_text, None);
+        translate(
+            &mut store,
+            project,
+            found.rows[0].unit_id,
+            "zh-CN",
+            "Égypte 世界",
+        );
+        let translated = store
+            .review_page_filtered(project, "zh-CN", 0, 50, "ÉGYPTE")
+            .unwrap();
+        assert_eq!(translated.total, 1);
+        assert_eq!(
+            translated.rows[0].translation_text.as_deref(),
+            Some("Égypte 世界")
+        );
+        assert!(translated.rows[0].current_decision.is_none());
+        assert!(translated.rows[0].current_check.is_none());
+        assert_eq!(
+            store
+                .review_page_filtered(project, "fr-FR", 0, 50, "ÉGYPTE")
+                .unwrap()
+                .total,
+            0
+        );
+        assert_eq!(store.content_scope().unwrap(), scope);
+        assert_eq!(
+            store
+                .review_page_filtered(project, "zh-CN", 0, 50, &"界".repeat(86))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
     }
     fn approve(
         store: &mut ProjectStore,

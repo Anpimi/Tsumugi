@@ -1,4 +1,5 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReviewWorkbench } from "./ReviewWorkbench";
@@ -140,7 +141,7 @@ it("keeps the review open when its translation editor cannot be opened", async (
   await user.click(await screen.findByRole("button", { name: "first" }));
   await user.click(screen.getByRole("button", { name: "Open translation editor" }));
   expect(openEditor).toHaveBeenCalledOnce();
-  expect(screen.getByRole("dialog", { name: "Review and QA" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Review and QA" })).toBeInTheDocument();
   expect(screen.getByText("The translation editor is unavailable. Your review remains open.")).toBeInTheDocument();
 });
 

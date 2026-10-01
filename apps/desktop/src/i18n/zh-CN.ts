@@ -1,6 +1,15 @@
 import type { UiMessages } from "./types";
 
 export const zhCN = {
+workbench: {
+  overview: "项目概览", backOverview: "返回概览", nextStep: "下一步",
+  importTitle: "导入需要翻译的原文", importHelp: "导入支持的源内容后开始翻译，原始文件保持不变。",
+  sourceFailed: "未能读取源内容状态，请进入源内容检查或重试。", import: "导入源内容",
+  continueTitle: "继续翻译", continueHelp: "编辑译文、审阅当前依据，再构建并导出交付版本。", continue: "打开翻译工作台",
+  search: "查找键名、原文或译文", searchAction: "查找", searchLimit: "查询不能超过 256 个 UTF-8 字节。",
+  results: "匹配 {{count}} 条", chooseEntry: "选择一个条目开始翻译", chooseEntryHelp: "原文与编辑器保持在列表旁边，需要时可展开参考资料。",
+  previousEntry: "上一条", nextEntry: "下一条", references: "术语、上下文与历史", saved: "已保存", unsaved: "有未保存修改", saving: "正在保存…", unselected: "未选择译文", selected: "已选择译文", qaPending: "QA 尚未有效", reviewPending: "尚未批准",
+},
 arena: {
   "open": "Arena 对比",
   "title": "比较译文候选",
@@ -495,6 +504,7 @@ ai: {
       stay: "继续编辑",
       discard: "放弃草稿并继续",
       errors: {
+      query: "查询不能超过 256 个 UTF-8 字节。",
         source: "当前原文缺失或已变化。请先导入或核对源内容。",
         locale: "项目已不包含此目标语言。请选择现有目标语言。",
         selection: "已有较新的选择。请刷新历史并比较后再保存或选择。",

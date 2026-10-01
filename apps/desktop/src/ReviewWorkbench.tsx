@@ -1,3 +1,5 @@
+import { reviewReasonKey } from "./reviewLabels";
+import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -32,7 +34,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
 }) {
   const { t } = useTranslation();
   const session = executionContext(project);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useWorkbenchView("review");
   const [tab, setTab] = useState<Tab>("review");
   const [locale, setLocale] = useState(project.metadata.targetLocales[0] ?? "");
   const [page, setPage] = useState<ReviewPage | null>(null);
@@ -65,6 +67,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const heading = useRef<HTMLHeadingElement>(null);
   const hasDraft = Object.values(drafts).some(value => value.trim().length > 0);
   const requestedWork = useRef(false);
+  const previousLocale = useRef(locale);
 
   useEffect(() => {
     alive.current = true;
@@ -74,14 +77,21 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   useEffect(() => {
     if (!open || !locale) return;
     const ticket = ++generation.current;
-    setSelected(null); setHistory(null); setPage(null); setWork(null); setEligibility(null);
-    void commands.page({ ...session, locale, afterOrdinal: 0, limit: 50 })
-      .then(async value => { if (alive.current && generation.current === ticket) { setPage(value); setPageAfter(0); if (requestedWork.current) { requestedWork.current = false; await loadWork(0); } } })
+    const localeChanged = previousLocale.current !== locale;
+    previousLocale.current = locale;
+    if (localeChanged) { setSelected(null); setHistory(null); setPage(null); setWork(null); setEligibility(null); setPageAfter(0); setWorkOffset(0); }
+    const after = localeChanged ? 0 : pageAfter;
+    void commands.page({ ...session, locale, afterOrdinal: after, limit: 50 })
+      .then(async value => { if (alive.current && generation.current === ticket) {
+        setPage(value);
+        if (requestedWork.current || tab === "work") { requestedWork.current = false; await loadWork(localeChanged ? 0 : workOffset); }
+        else if (selected && !localeChanged) await selectUnit(selected.unitId);
+      } })
       .catch(error => { if (alive.current && generation.current === ticket) { setNotice("error"); setReason(errorReason(error)); } });
     return () => { generation.current++; };
   }, [open, locale, project.sessionToken]);
   useImperativeHandle(ref, () => ({
-    showWork() { requestedWork.current = true; setTab("work"); setOpen(true); },
+    showWork() { requestedWork.current = true; setTab("work"); setOpen(true); if (open) { requestedWork.current = false; void loadWork(workOffset); } },
     allowLeave() {
       if (running.current || batchRunning || pending) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); }
       if (!hasDraft && Object.keys(chosen).length === 0) return Promise.resolve(true);
@@ -288,16 +298,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (discard) { setDrafts({}); setChosen({}); setOpen(false); }
     leaveResolver.current?.(discard); leaveResolver.current = null;
   }
-  function queueReason(value: string) {
-    if (value.startsWith("translation-") || value.startsWith("source-fallback")) return t("review.queueReasonTranslation");
-    if (value.startsWith("approval-")) return t("review.queueReasonApproval");
-    if (value === "changes-requested") return t("review.queueReasonChanges");
-    if (value.startsWith("qa-missing")) return t("review.queueReasonQa");
-    if (value.startsWith("qa-issue")) return t("review.queueReasonIssue");
-    if (value.startsWith("resource-")) return t("review.queueReasonResource");
-    if (value === "term-conflict") return t("review.issueConflict");
-    return t("review.queueReasonCoverage");
-  }
+  function queueReason(code: string) { return t(reviewReasonKey(code)); }
   function eligibilityReasonLabel(value: EligibilityReason) {
     if (value.code === "source-fallback") return t("review.fallbackActive");
     if (value.code === "issue-waiver") return t("review.waived");
@@ -326,10 +327,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   }
 
   return <>
-    <Dialog.Root open={open} onOpenChange={value => { if (value) setOpen(true); else requestClose(); }}>
-      <Dialog.Trigger className="navigation-item" disabled={disabled}>{t("review.title")}</Dialog.Trigger>
-      <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog source-dialog review-dialog" onEscapeKeyDown={event => { if (pending || busy) event.preventDefault(); }}>
-        <div className="execution-heading"><div><Dialog.Title ref={heading} tabIndex={-1}>{t("review.title")}</Dialog.Title><Dialog.Description>{t("review.description")}</Dialog.Description></div><button className="secondary-button" onClick={requestClose}>{t("execution.back")}</button></div>
+    <WorkbenchPanel open={open} title={t("review.title")} description={t("review.description")} className="source-dialog review-dialog" onBack={requestClose} backDisabled={disabled || busy}>
         {project.metadata.targetLocales.length === 0 ? <p>{t("review.noLocale")}</p> : <>
           <div className="review-header-fields">
             <label>{t("review.targetLocale")}<select value={locale} disabled={busy} onChange={event => { setLocale(event.target.value); setSelected(null); }}>
@@ -361,13 +359,13 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
               {!selected ? <p>{t("review.selectEntry")}</p> : <>
                 <h3>{selected.nativeKey}</h3><p><strong>{t("review.source")}</strong> {selected.sourceText}</p>
                 <p><strong>{t("review.translation")}</strong> {selected.translationText ?? t("review.missingTranslation")}</p>
-                {selected.selectionId ? <button className="text-button" onClick={() => {
+                <button className="text-button" onClick={() => {
                   if (busy || pending || running.current) { setNotice("unknown"); return; }
                   const destination = { target: { unitId: selected.unitId, sourceRevisionId: selected.sourceRevisionId, key: selected.nativeKey, sourceText: selected.sourceText }, locale: selected.locale };
                   if (hasDraft || Object.keys(chosen).length > 0) { leaveToTranslation.current = destination; setLeavePrompt(true); return; }
                   if (onOpenTranslation(destination.target, destination.locale)) setOpen(false);
                   else { setNotice("error"); setReason("editor-unavailable"); }
-                }}>{t("review.openTranslation")}</button> : null}
+                }}>{t("review.openTranslation")}</button>
                 <p>{selected.currentDecision?.kind === "approve" ? t("review.currentApproval") : selected.currentDecision?.kind === "request-changes" ? t("review.changesRequested") : t("review.approvalMissing")}</p>
                 {selected.currentFallback ? <p>{t("review.fallbackActive")}</p> : null}
                 <label>{t("review.reason")}<textarea value={drafts[draftKey(selected)] ?? ""} onChange={event => setDrafts(previous => ({ ...previous, [draftKey(selected)]: event.target.value }))} maxLength={4096} /></label>
@@ -408,8 +406,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
               {value.blockerCount > value.blockers.length || value.exceptionCount > value.exceptions.length ? <p>{t("review.moreReasons")}</p> : null}</div>)}</> : null}
           </section> : null}
         </>}
-      </Dialog.Content></Dialog.Portal>
-    </Dialog.Root>
+      </WorkbenchPanel>
     <Dialog.Root open={batchPrompt} onOpenChange={setBatchPrompt}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog"><Dialog.Title>{t("review.batchConfirm")}</Dialog.Title><Dialog.Description>{t("review.batchCount", { count: Object.keys(chosen).length })}</Dialog.Description><ul className="review-batch-list">{Object.values(chosen).map(item => <li key={draftKey(item)}>{item.locale}: {item.nativeKey}</li>)}</ul><div className="form-actions"><button className="secondary-button" onClick={() => setBatchPrompt(false)}>{t("review.stay")}</button><button className="primary-button" onClick={() => void approveBatch()}>{t("review.batchStart")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
     <Dialog.Root open={leavePrompt} onOpenChange={value => { if (!value && !busy) finishLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}><Dialog.Title>{t("review.leaveTitle")}</Dialog.Title><Dialog.Description>{t("review.leaveHelp")}</Dialog.Description><div className="form-actions"><button className="secondary-button" onClick={() => finishLeave(false)}>{t("review.stay")}</button><button className="primary-button" onClick={() => finishLeave(true)}>{t("review.discard")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </>;

@@ -6,6 +6,7 @@ use tsumugi_core::{
 
 request!(ReviewPageRequest {
     locale: String,
+    query: Option<String>,
     after_ordinal: u32,
     limit: u32
 });
@@ -64,11 +65,12 @@ pub fn read_review_page(
         CommandStage::ExecutionRead,
     )?
     .store
-    .review_page(
+    .review_page_filtered(
         request.project_id,
         &request.locale,
         request.after_ordinal,
         request.limit,
+        request.query.as_deref().unwrap_or(""),
     )
     .map_err(|error| mapped(error, CommandStage::ExecutionRead))
 }

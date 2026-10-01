@@ -1,3 +1,4 @@
+import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -35,7 +36,7 @@ export function ResourceWorkbench({
 }) {
   const { t } = useTranslation();
   const session = executionContext(project);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useWorkbenchView("resources");
   const [tab, setTab] = useState<Tab>("terms");
   const [locale, setLocale] = useState(project.metadata.targetLocales[0] ?? "");
   const [sourcePage, setSourcePage] = useState<ContentPage | null>(null);
@@ -294,10 +295,7 @@ export function ResourceWorkbench({
   }
   const sourceRows = sourcePage?.rows ?? [];
   return <>
-    <Dialog.Root open={open} onOpenChange={value => { if (value) setOpen(true); else requestClose(); }}>
-      <Dialog.Trigger className="navigation-item" disabled={disabled}>{t("resource.title")}</Dialog.Trigger>
-      <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog source-dialog">
-        <div className="execution-heading"><div><Dialog.Title ref={heading} tabIndex={-1}>{t("resource.title")}</Dialog.Title><Dialog.Description>{t("resource.description")}</Dialog.Description></div><button className="secondary-button" onClick={requestClose}>{t("execution.back")}</button></div>
+    <WorkbenchPanel open={open} title={t("resource.title")} description={t("resource.description")} className="source-dialog" onBack={requestClose} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
           {failure ? <p role="alert">{t("resource.error", { reason: t(`resource.errors.${failure}`, { defaultValue: failure }) })}</p> : null}
           {message ? <p role="status">{message}</p> : null}
@@ -348,8 +346,7 @@ export function ResourceWorkbench({
             {impact ? <><p>{t("resource.affectedCount", { count: impact.totalAffected })}</p><p>{t("resource.coverage")}</p>{impact.items.length ? <ul>{impact.items.map(item => <li key={item.unitId}><h4>{item.nativeKey}</h4><p>{t(`resource.impactStatus.${item.status}`)}</p><ul>{item.reasons.map(reason => <li key={reason.changeId}>{t(`resource.reasonKind.${reason.kind}`)} · {reason.oldValue ?? "—"} → {reason.newRemoved ? t("resource.removedValue") : reason.newValue} · {t(`resource.confidence.${reason.confidence}`)}</li>)}</ul><button className="secondary-button" disabled={busy} onClick={() => openTranslation({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, key: item.nativeKey, sourceText: item.sourceText })}>{t("resource.openTranslation")}</button></li>)}</ul> : <p>{t("resource.noImpacts")}</p>}<div className="execution-actions"><button className="secondary-button" disabled={busy || impactOffset === 0} onClick={() => void run(current => loadImpact(Math.max(0, impactOffset - 50), current))}>{t("execution.firstPage")}</button><button className="secondary-button" disabled={busy || impact.nextOffset === null} onClick={() => void run(current => loadImpact(impact.nextOffset!, current))}>{t("execution.nextPage")}</button></div></> : <p>{t("resource.loadImpact")}</p>}
           </section> : null}
         </div>
-      </Dialog.Content></Dialog.Portal>
-    </Dialog.Root>
+      </WorkbenchPanel>
     <Dialog.Root open={leavePrompt} onOpenChange={value => { if (!value && !busy) finishLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}><Dialog.Title>{t("resource.leaveTitle")}</Dialog.Title><Dialog.Description>{t("resource.leaveHelp")}</Dialog.Description><div className="form-actions"><button className="secondary-button" onClick={() => finishLeave(false)}>{t("resource.stay")}</button><button className="primary-button" onClick={() => finishLeave(true)}>{t("resource.discardAndLeave")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </>;
 }

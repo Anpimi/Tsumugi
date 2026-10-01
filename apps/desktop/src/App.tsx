@@ -1,3 +1,5 @@
+import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
+import { sourceCommands } from "./sourceCommands";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
@@ -30,12 +32,12 @@ import {
 import { isLocale, localeOptions, type Locale } from "./i18n";
 import { languageName } from "./i18n/languageNames";
 import type { TranslationKey } from "./i18n/types";
-import { ExecutionTasks } from "./ExecutionTasks";
+import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
 import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
 import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
-import { ReleaseWorkbench } from "./ReleaseWorkbench";
+import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
 import { AiWorkbench, type AiHandle } from "./AiWorkbench";
 import { ArenaWorkbench } from "./ArenaWorkbench";
 import { executionCommands, executionContext } from "./executionCommands";
@@ -172,7 +174,6 @@ const CREATE_DEFAULT_VALUES: CreateFormValues = {
 const OPEN_DEFAULT_VALUES: OpenFormValues = { locator: "" };
 const EDITOR_DEFAULT_VALUES: EditorFormValues = { value: "", syncDirectoryName: false };
 
-const navigation = (t: TFunction) => [{ label: t("nav.workspace"), icon: "folder" as const, selected: true }];
 
 const languagePresets = [
   { value: "en-US", labelKey: "localeNames.englishUnitedStates" },
@@ -326,6 +327,13 @@ function App() {
   const resolvedLanguage = translation.resolvedLanguage ?? translation.language ?? "en-US";
   const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
   const [project, setProject] = useState<ProjectView | null>(null);
+  const [area, setArea] = useState<WorkspaceArea>("overview");
+  const [sourceState, setSourceState] = useState<"loading" | "empty" | "ready" | "failed">("loading");
+  const areaNavigation = useRef(false);
+  const currentSession = useRef<string | null>(null);
+  currentSession.current = project?.sessionToken ?? null;
+  const releaseWorkbench = useRef<ReleaseHandle>(null);
+  const tasksWorkbench = useRef<TasksHandle>(null);
   const [operation, setOperation] = useState<Operation>("idle");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [closedPanel, setClosedPanel] = useState<ClosedPanel>("empty");
@@ -555,6 +563,8 @@ function App() {
       return true;
     }
 
+    if (releaseWorkbench.current && !await releaseWorkbench.current.allowLeave()) return false;
+    if (tasksWorkbench.current && !await tasksWorkbench.current.allowLeave()) return false;
     if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
     if (translationWorkbench.current && !await translationWorkbench.current.allowLeave()) return false;
     if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
@@ -597,6 +607,8 @@ function App() {
   }
 
   async function executeClose(preserveRestoreCandidate = false, coordinated = false) {
+    if (releaseWorkbench.current && !await releaseWorkbench.current.allowLeave()) return false;
+    if (tasksWorkbench.current && !await tasksWorkbench.current.allowLeave()) return false;
     if (sourceWorkbench.current && !await sourceWorkbench.current.allowLeave()) return false;
     if (translationWorkbench.current && !await translationWorkbench.current.allowLeave()) return false;
     if (resourceWorkbench.current && !await resourceWorkbench.current.allowLeave()) return false;
@@ -1012,6 +1024,7 @@ function App() {
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
+      if (area !== "overview") return;
       if (event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
         event.preventDefault();
         if (openPanel) {
@@ -1032,7 +1045,7 @@ function App() {
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel]);
+  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1075,7 +1088,29 @@ function App() {
     };
   }, [busy, createDraftDirty, dirty, project, resolvedLanguage]);
 
-  const navItems = navigation(t);
+  useEffect(() => { setArea("overview"); }, [project?.sessionToken]);
+  useEffect(() => {
+    if (!project || area !== "overview") return;
+    let stale = false;
+    setSourceState("loading");
+    void sourceCommands.scope(executionContext(project)).then(scope => {
+      if (!stale) setSourceState(scope.currentSnapshot ? "ready" : "empty");
+    }).catch(() => { if (!stale) setSourceState("failed"); });
+    return () => { stale = true; };
+  }, [project?.sessionToken, area]);
+  async function navigateArea(next: WorkspaceArea) {
+    if (next === area || busy || stopping || areaNavigation.current) return;
+    const handles = { source: sourceWorkbench, translation: translationWorkbench, resources: resourceWorkbench,
+      review: reviewWorkbench, ai: aiWorkbench, arena: arenaWorkbench, release: releaseWorkbench, tasks: tasksWorkbench };
+    const session = currentSession.current;
+    areaNavigation.current = true;
+    try {
+      if (area === "source") { if (sourceWorkbench.current && !await sourceWorkbench.current.allowNavigate()) return; }
+      else if (area !== "overview" && handles[area].current && !await handles[area].current!.allowLeave()) return;
+      if (currentSession.current === session) setArea(next);
+    } finally { areaNavigation.current = false; }
+  }
+  const viewOwner = { area, activate: setArea, deactivate: (closing: WorkspaceArea) => setArea(current => current === closing ? "overview" : current) };
   const renderFeedback = feedback ? (
     <div className={`feedback feedback-${feedback.tone}`} aria-live="polite" role={feedback.tone === "error" ? "alert" : "status"}>
       <div className="feedback-copy">
@@ -1105,7 +1140,7 @@ function App() {
   ) : null;
 
   return (
-    <main className="shell">
+    <WorkspaceViewProvider value={viewOwner}><main className="shell">
       <DialogRoot open={stopIntent !== null} onOpenChange={open => { if (!open && !stopping) setStopIntent(null); }}>
         <DialogPortal><DialogOverlay className="dialog-backdrop lifecycle-confirm-backdrop" /><DialogContent className="confirm-dialog lifecycle-confirm-dialog" onEscapeKeyDown={event => { if (stopping) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <DialogTitle>{t("execution.stopTitle")}</DialogTitle><DialogDescription>{t("execution.stopHelp")}</DialogDescription>
@@ -1125,20 +1160,7 @@ function App() {
           </div>
         </div>
 
-        <nav className="navigation" aria-label={t("nav.workspace")}>
-          {project ? <><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></> : null}
-           {navItems.map((item) => (
-             <button
-               aria-current={item.selected ? "page" : undefined}
-               className={`navigation-item${item.selected ? " is-selected" : ""}`}
-               key={item.label}
-               type="button"
-             >
-              <Icon name={item.icon} />
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
+        <WorkbenchNavigation area={area} hasProject={Boolean(project)} disabled={busy || stopping} onNavigate={next => void navigateArea(next)} />
 
         <div className="sidebar-footer" aria-live="polite">
           <span className={`status-dot status-dot-${operation}`} aria-hidden="true" />
@@ -1170,7 +1192,7 @@ function App() {
         </header>
 
         <div className="workspace-body">
-          <div className={`workbench-content${project ? " is-project" : " is-closed"}`}>
+          <div hidden={area !== "overview"} className={`workbench-content${project ? " is-project" : " is-closed"}`}>
             {stopIntent ? null : renderFeedback}
             {project && stoppedSession === project.sessionToken ? <p role="status">{t("execution.stopped")}</p> : null}
 
@@ -1400,6 +1422,12 @@ function App() {
                   </span>
                 </div>
 
+                <section className="project-next-step" aria-label={t("workbench.nextStep")}>
+                  <div><h2>{t(sourceState === "ready" ? "workbench.continueTitle" : "workbench.importTitle")}</h2>
+                  <p>{t(sourceState === "ready" ? "workbench.continueHelp" : sourceState === "failed" ? "workbench.sourceFailed" : "workbench.importHelp")}</p></div>
+                  <button type="button" className="primary-button" disabled={busy || sourceState === "loading"} onClick={() => void navigateArea(sourceState === "ready" ? "translation" : "source")}>{t(sourceState === "ready" ? "workbench.continue" : "workbench.import")}</button>
+                  {sourceState === "ready" ? <div className="execution-actions"><button type="button" className="secondary-button" onClick={() => void navigateArea("review")}>{t("review.title")}</button><button type="button" className="secondary-button" onClick={() => void navigateArea("release")}>{t("release.title")}</button></div> : null}
+                </section>
                 <dl className="metadata-grid" aria-label={t("accessibility.metadata")}>
                   <div className="metadata-item">
                     <dt>{t("project.source")}</dt>
@@ -1422,7 +1450,7 @@ function App() {
                 </details>
 
                 <div className="action-bar" aria-label={t("accessibility.projectActions")}>
-                  <button className="primary-button" type="button" onClick={() => startEditor("rename")} disabled={busy}>
+                  <button className="secondary-button" type="button" onClick={() => startEditor("rename")} disabled={busy}>
                     {t("project.rename")}
                   </button>
                   <button className="secondary-button" type="button" onClick={() => startEditor("target")} disabled={busy}>
@@ -1539,6 +1567,7 @@ function App() {
               </section>
             )}
           </div>
+          {project ? <><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></> : null}
         </div>
 
         <DialogRoot
@@ -1630,7 +1659,7 @@ function App() {
           </DialogPortal>
         </DialogRoot>
       </section>
-    </main>
+    </main></WorkspaceViewProvider>
   );
 }
 

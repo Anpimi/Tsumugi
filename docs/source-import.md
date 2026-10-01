@@ -8,7 +8,7 @@ When a project already has source content, choose **Update source content** to c
 
 The current SMAPI profile has no game-runtime context beyond the saved native key and source files. A same-key text change needs an explicit continuation decision to retain its unit, and its earlier translation approval and QA do not carry over. A same-key, same-text entry can retain its unit and source revision even when reordered. Review and QA must establish current eligibility before another release.
 
-Search and paging change only the displayed comparison. The confirmation always covers the complete captured source, including removed entries and unresolved relationships. **Review estimated impact** shows a per-language estimate before confirmation. After adoption, **Current translation impact** derives the current qualification and all pending reasons from saved source, translation, review and resource facts. Its work-queue action opens the existing review workflow. An estimate cannot grant approval or overwrite a newer translation edit.
+Search and paging change only the displayed comparison. The confirmation always covers the complete captured source, including removed entries and unresolved relationships. **Review estimated impact** shows a per-language estimate before confirmation. After adoption, **Current translation impact** derives the current qualification and all pending reasons from saved source, translation, review and resource facts. Its work-queue action opens the existing review workflow, and an entry can open its translation editor directly. Returning to Source content refreshes the same impact page. An estimate cannot grant approval or overwrite a newer translation edit.
 
 **Source snapshot history** lists verified snapshots, original fingerprints and identity evidence. Search an earlier snapshot to inspect its native text, decisions, reviewer and reason. To correct an identity decision, import the current source package again, choose the earlier snapshot as the historical decision basis, and record an explicit continuation or rejection. You can search that fixed historical source for another item rather than relying on equal-text suggestions. Correction appends a new checked snapshot and receipt; it preserves unrelated current identities and earlier decisions, translations and releases. Reimporting identical files without an explicit identity decision is rejected as unchanged.
 
@@ -31,7 +31,7 @@ If a start acknowledgement is lost, check or resume that same import. If applyin
 
 After capture, the external Mod can be moved or removed: preview, adoption and reopening use project-owned bytes. Moving the closed project keeps content identities and receipts intact. Corrupt stored evidence and unsupported database schemas are rejected rather than repaired or shown as empty content.
 
-New projects use schema 9. Valid schema 3 through 8 databases receive a SQLite backup in their project directory before automatic upgrade. Other schema versions are rejected without resetting the project. This remains part of the unreleased 0.1.0 batch.
+See the [README](../README.md#development) for the current database schema and supported upgrades. Supported older databases receive a SQLite backup in their project directory before automatic upgrade. Other schema versions are rejected without resetting the project. This remains part of the unreleased 0.1.0 batch.
 
 ## Native fault checks
 

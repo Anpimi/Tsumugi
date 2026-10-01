@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { CommandError, ProjectView } from "./projectCommands";
@@ -7,20 +8,21 @@ import { projectCommands } from "./projectCommands";
 import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type Task, type PrepareRequest, type ResultEnvelope } from "./executionCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string };
-export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
+export interface TasksHandle { allowLeave: () => Promise<boolean> }
+export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; ref?: Ref<TasksHandle> }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useWorkbenchView("tasks");
   const [dismissBlocked, setDismissBlocked] = useState(false);
-  return <Dialog.Root open={open} onOpenChange={next => { if (!dismissBlocked) setOpen(next); }}>
-    <Dialog.Trigger className="navigation-item" disabled={disabled}>{t("execution.title")}</Dialog.Trigger>
-    <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog" onEscapeKeyDown={event => { if (dismissBlocked) event.preventDefault(); }}>
-      <div className="execution-heading"><div><Dialog.Title>{t("execution.title")}</Dialog.Title><Dialog.Description>{project.metadata.displayName}</Dialog.Description></div><Dialog.Close className="secondary-button" disabled={dismissBlocked}>{t("execution.back")}</Dialog.Close></div>
-      {open ? <TaskContent onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
-    </Dialog.Content></Dialog.Portal>
-  </Dialog.Root>;
+  const [visited, setVisited] = useState(false);
+  useEffect(() => { if (open) setVisited(true); }, [open]);
+  useImperativeHandle(ref, () => ({ allowLeave: () => Promise.resolve(!dismissBlocked) }));
+  return <WorkbenchPanel open={open} title={t("execution.title")} description={project.metadata.displayName}
+    onBack={() => { if (!dismissBlocked) setOpen(false); }} backDisabled={disabled || dismissBlocked}>
+    {visited ? <TaskContent active={open} onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
+  </WorkbenchPanel>;
 }
 
-export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
+export function TaskContent({ project, active = true, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; active?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -58,7 +60,7 @@ export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, 
   // A single completed read schedules the next poll. Selection, mutation and
   // unmount invalidate older responses before they can update this view.
   useEffect(() => {
-    if (busy) return;
+    if (busy || !active) return;
     const ticket = ++sequence.current;
     const current = () => mounted.current && ticket === sequence.current;
     async function read() {
@@ -84,7 +86,7 @@ export function TaskContent({ project, onDismissBlockedChange, onSourcePreview, 
     }
     const stop = pollExecutionProjection(read, current);
     return () => { sequence.current++; stop(); };
-  }, [project.sessionToken, taskId, attemptId, cursor, attemptCursor, offset, refresh, busy]);
+  }, [project.sessionToken, taskId, attemptId, cursor, attemptCursor, offset, refresh, busy, active]);
 
   function selectTask(id: string | null) {
     sequence.current++;

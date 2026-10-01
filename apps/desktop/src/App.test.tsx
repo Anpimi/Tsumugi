@@ -93,9 +93,47 @@ describe("project lifecycle workbench", () => {
     mocks.invoke.mockImplementation(async (command: string) => command === "list_execution_tasks" ? [] : projectView());
     await user.click(screen.getByRole("button", { name: "Tasks" }));
     await screen.findByText(/No tasks in this project/);
-    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
     expect(screen.getByRole("textbox", { name: /Project name/ })).toHaveValue("Unsaved draft");
     expect(mocks.invoke.mock.calls.some(([command]) => command === "rename_project")).toBe(false);
+  });
+
+  it("guards area navigation and restores the saved editor after returning from Tasks", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const target = { unitId: "unit", locale: "zh-CN", nativeKey: "first", sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
+    let text: string | null = null;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "read_content_scope") return { revision: "2", currentSnapshot: "snapshot" };
+      if (command === "read_source_content") return { snapshotId: "snapshot", namespace: "Example.Mod", rows: [], nextOrdinal: null, total: 1 };
+      if (command === "read_review_page") return { rows: [{ ...target, translationText: text }], total: 1, nextOrdinal: null };
+      if (command === "read_review_target") return { ...target, translationText: text };
+      if (command === "read_translation_history") return { unitId: "unit", locale: "zh-CN", total: 0, rows: [], nextOrdinal: null, currentText: text, current: text === null ? null : { eventId: "selection", revisionId: "revision" } };
+      if (command === "resolve_terms") return { entries: [] };
+      if (command === "read_context_revision") return null;
+      if (command === "create_execution_identity") return "action";
+      if (command === "save_translation_revision") { text = String(args.request.text); return {}; }
+      if (command === "execution_status") return { active: false, error: null };
+      if (command === "list_execution_tasks") return [];
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const editor = await screen.findByRole("textbox", { name: "Your draft" });
+    await user.type(editor, "Draft");
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Leave with an unsaved translation?");
+    expect(screen.getByRole("button", { name: "Translations", hidden: true })).toHaveAttribute("aria-current", "page");
+    await user.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(editor).toHaveValue("Draft");
+    await user.click(editor); await user.keyboard("{Control>}s{/Control}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByText(/No tasks in this project/);
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Draft");
+    expect(screen.getByRole("button", { name: "first" })).toHaveAttribute("aria-current", "true");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision")).toHaveLength(1);
   });
   it("clears a rejected create result after explicitly discarding the draft", async () => {
     const user = userEvent.setup();
@@ -320,7 +358,7 @@ describe("project lifecycle workbench", () => {
     await createProject(user);
     expect(screen.getByText("Swati")).toHaveTextContent("Swati (ss)");
     expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");
-    expect(screen.getByText("x-example")).toHaveTextContent(/^x-example$/);
+    expect(screen.getByText("x-example", { selector: ".locale-chip" })).toHaveTextContent(/^x-example$/);
     await user.selectOptions(screen.getByRole("combobox", { name: /language/i }), "zh-CN");
     expect(screen.getByText("斯瓦蒂语")).toHaveTextContent("斯瓦蒂语 (ss)");
     expect(screen.getByText("Sô")).toHaveTextContent("Sô (sss)");

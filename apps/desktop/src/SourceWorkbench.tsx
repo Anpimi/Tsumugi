@@ -1,7 +1,9 @@
+import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import type { CommandError, ProjectView } from "./projectCommands";
+import type { EditorTarget } from "./TranslationWorkbench";
 import type { UiMessages } from "./i18n/types";
 import { pollExecutionProjection } from "./executionCommands";
 import { SourceHistoryPanel, SourceImpactPanel } from "./SourceMaintenance";
@@ -12,11 +14,11 @@ function cueTiming(basis: string): string | null {
   if (!basis.startsWith("{")) return null;
   try { const value = JSON.parse(basis) as { policy?: unknown; timing?: unknown }; return value.policy === "webvtt-cue/1" && typeof value.timing === "string" ? value.timing : null; } catch { return null; }
 }
-export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean> }
-export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; ref?: Ref<SourceHandle> }) {
+export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
+export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean; ref?: Ref<SourceHandle> }) {
   const { t } = useTranslation();
   const context = executionContext(project);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useWorkbenchView("source");
   const [integration, setIntegration] = useState<IntegrationDescriptor | null>(null);
   const [domain, setDomain] = useState("stardew-smapi");
   const [selection, setSelection] = useState<SourceSelection | null>(null);
@@ -58,6 +60,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
   }, [open, project.sessionToken, domain]);
   useImperativeHandle(ref, () => ({
     showAttempt(id) { if (mutation.current || pendingApply || pendingStart) { setOpen(true); return; } sequence.current++; setAttempt(id); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); setConfirmed(false); setFailure(null); setOpen(true); },
+    allowNavigate() { return Promise.resolve(!busy && !pendingApply && !pendingStart); },
     allowLeave() { if (pendingApply || pendingStart) { setOpen(true); return Promise.resolve(false); } if (!selection && Object.keys(lineage).length === 0 && !busy) return Promise.resolve(true); setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
   }));
   function showError(error: unknown) {
@@ -140,6 +143,12 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
       if (changed) setFailure("stale-preview");
     }
   }
+  useEffect(() => {
+    if (open && !attempt && !page && !selection && !updating) void perform(loadCurrent);
+  }, [open, project.sessionToken]);
+  function requestBack() {
+    if (!mutation.current && !pendingApply && !pendingStart) setOpen(false);
+  }
   const knownErrors: Record<string, keyof UiMessages["source"]["errors"]> = {
     "unsupported-encoding": "encoding", "source-changed": "changed", "duplicate-native-key": "duplicate", "empty-source": "empty", "capture-timeout": "timeout", "extract-timeout": "unknown", "source-corrupt": "invalid", "stale-preview": "conflict", "language-required": "language",
     "vtt-header": "webvtt", "vtt-timing": "webvtt", "vtt-setting": "webvtt", "vtt-region": "webvtt", "vtt-block": "webvtt", "vtt-cue-id": "webvtt", "vtt-order": "webvtt", "vtt-payload": "webvtt", "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", "invalid-json": "invalid", "source-value-not-string": "stringValue", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
@@ -147,10 +156,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
   const locked = busy || pendingStart !== null || pendingApply !== null;
   const warnings = page?.diagnostics ?? preflight?.diagnostics ?? [];
   return <>
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Trigger className="navigation-item" disabled={disabled} onClick={() => { if (!attempt && !page && !selection && !updating) void perform(loadCurrent); }}>{t("source.title")}</Dialog.Trigger>
-      <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog source-dialog">
-        <div className="execution-heading"><div><Dialog.Title>{t("source.title")}</Dialog.Title><Dialog.Description>{t("source.description")}</Dialog.Description></div><Dialog.Close className="secondary-button">{t("execution.back")}</Dialog.Close></div>
+    <WorkbenchPanel open={open} title={t("source.title")} description={t("source.description")} className="source-dialog" onBack={() => void requestBack()} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
           {integration ? <><p>{t("source.profile", { version: integration.version, name: integration.id === "webvtt" ? "WebVTT" : "Stardew SMAPI", profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details></div> : null}
@@ -277,12 +283,11 @@ export function SourceWorkbench({ project, disabled, onOpenWork, ref }: { projec
             <button className="text-button" disabled={busy || !receiptChecked} onClick={() => { setPendingApply(null); setConfirmed(false); }}>{t("execution.keepOutput")}</button>
           </section> : null}
           <button className="text-button" disabled={locked} onClick={() => void perform(loadCurrent)}>{t("source.viewCurrent")}</button>
-          {page?.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <SourceImpactPanel key={page.snapshotId} project={project} snapshotId={page.snapshotId} onOpenWork={onOpenWork ? () => { setOpen(false); onOpenWork(); } : undefined} /> : null}
+          {page?.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <SourceImpactPanel key={page.snapshotId} project={project} snapshotId={page.snapshotId} active={open} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork ? () => { setOpen(false); onOpenWork(); } : undefined} /> : null}
           <p>{t("source.correctionHelp")}</p><SourceHistoryPanel key={page?.scope.revision ?? comparison?.scope.revision ?? "selection"} project={project} disabled={locked} onHistory={setHistory} />
           <p>{t("source.draftHelp")}</p>
         </div>
-      </Dialog.Content></Dialog.Portal>
-    </Dialog.Root>
+      </WorkbenchPanel>
     <Dialog.Root open={leave} onOpenChange={next => { if (!next) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; } }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}>
         <Dialog.Title>{t("source.leaveTitle")}</Dialog.Title><Dialog.Description>{t("source.leaveHelp")}</Dialog.Description>

@@ -1,5 +1,6 @@
+import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { createRef } from "react";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
@@ -66,7 +67,7 @@ it("retains an update selection when reopening an already imported project", asy
   await user.click(screen.getByRole("button", { name: "Choose Mod folder" }));
   await screen.findByText("Example Mod");
   const contentReads = invoke.mock.calls.filter(([name]) => name === "read_source_content").length;
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Back to overview" }));
   await user.click(screen.getByRole("button", { name: "Source content" }));
   expect(screen.getByText("Example Mod")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Check source files" })).toBeDisabled();
@@ -141,7 +142,7 @@ it("keeps the selection across view changes and requires a decision before leavi
   render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
   const user = await select();
   expect(screen.getByRole("button", { name: "Check source files" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Back" }));
+  await user.click(screen.getByRole("button", { name: "Back to overview" }));
   await user.click(screen.getByRole("button", { name: "Source content" }));
   expect(screen.getByText("Example Mod")).toBeInTheDocument();
   let decision!: Promise<boolean>;

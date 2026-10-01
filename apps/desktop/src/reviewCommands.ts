@@ -21,7 +21,7 @@ export interface WaiverWrite { projectId: string; actionId: string; unitId: stri
 export interface FallbackWrite { projectId: string; actionId: string; unitId: string; locale: string; expectedBasis: string; allow: boolean; expectedFallbackId: string | null; actor: string; reason: string }
 
 export const reviewCommands = {
-  page: (request: SessionRequest & { locale: string; afterOrdinal: number; limit: number }) => invoke<ReviewPage>("read_review_page", { request }),
+  page: (request: SessionRequest & { locale: string; query?: string; afterOrdinal: number; limit: number }) => invoke<ReviewPage>("read_review_page", { request }),
   target: (request: SessionRequest & { unitId: string; locale: string }) => invoke<ReviewTarget>("read_review_target", { request }),
   history: (request: SessionRequest & { unitId: string; locale: string; offset: number; limit: number }) => invoke<ReviewHistoryPage>("read_review_history", { request }),
   decide: (session: SessionRequest, decision: ReviewWrite) => invoke<ReviewDecision>("write_review_decision", { request: { ...session, decision } }),

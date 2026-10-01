@@ -1,5 +1,7 @@
 # Direct AI translation
 
+AI translation and Arena comparison are working areas in the sidebar. Connection configuration can be folded away while preparing a task; validation errors in connection fields reveal those settings again. The selected scope, sharing choices and budget remain part of the explicit preview and consent flow. Moving between working areas keeps local preparation state through the existing leave decision, and Tasks retains persisted attempts.
+
 Open a project with current source content and choose **AI translation**. Select a connection preset or enter a custom full Chat Completions URL, model and API key environment variable name. Presets supply editable connection defaults; choose a model explicitly. For a service without authentication, clear the environment variable name. Set credentials in the environment before launching the desktop application; never paste a key into a URL or into the name field.
 
 Remote endpoints require HTTPS. HTTP is allowed only for loopback endpoints. URL credentials, query strings, fragments and redirects are rejected. Choose the token field expected by the service: `max_tokens` or `max_completion_tokens`; the client does not silently switch fields or providers.

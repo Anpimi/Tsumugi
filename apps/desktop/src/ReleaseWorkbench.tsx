@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
+import { reviewReasonKey } from "./reviewLabels";
+import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import type { ProjectView } from "./projectCommands";
 import { executionCommands, executionContext } from "./executionCommands";
@@ -19,10 +20,11 @@ const errorReasons = {
   "outcome-unknown": "release.errorOutcomeUnknown",
 } as const;
 
-export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; disabled: boolean }) {
+export interface ReleaseHandle { allowLeave: () => Promise<boolean> }
+export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: { project: ProjectView; disabled: boolean; ref?: Ref<ReleaseHandle>; onOpenTranslation?: (target: import("./TranslationWorkbench").EditorTarget, locale: string) => boolean }) {
   const { t } = useTranslation();
   const session = executionContext(project);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useWorkbenchView("release");
   const [domain, setDomain] = useState<string | null>(null);
   const [languages, setLanguages] = useState<string[]>([]);
   const [names, setNames] = useState<Record<string, string>>(() => Object.fromEntries(project.metadata.targetLocales.map(locale => [locale, suggestedFile(locale)])));
@@ -40,6 +42,7 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
   const generation = useRef(0);
   const mounted = useRef(false);
   const mutating = useRef(false);
+  useImperativeHandle(ref, () => ({ allowLeave: () => Promise.resolve(!mutating.current) }));
   const errorRegion = useRef<HTMLParagraphElement>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
   useEffect(() => { if (error) { errorRegion.current?.focus(); errorRegion.current?.scrollIntoView({ block: "nearest" }); } }, [error]);
@@ -135,12 +138,16 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
       if (current(ticket)) setDeliveries(rows);
     });
   }
+  function blockerLabel(code: string) { return t(reviewReasonKey(code)); }
+  async function openBlocker(unitId: string, locale: string) {
+    await run(async ticket => {
+      const target = await reviewCommands.target({ ...session, unitId, locale });
+      if (current(ticket) && onOpenTranslation?.({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, locale)) setOpen(false);
+    });
+  }
   const mappingReady = languages.length > 0 && languages.every(locale => names[locale]?.trim());
   const hasConflict = preview?.files.some(file => file.state === "conflict") ?? false;
-  return <Dialog.Root open={open} onOpenChange={next => { if (!busy) setOpen(next); }}>
-    <Dialog.Trigger className="navigation-item" disabled={disabled}>{t("release.title")}</Dialog.Trigger>
-    <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="execution-dialog release-dialog" onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}>
-      <div className="execution-heading"><div><Dialog.Title>{t("release.title")}</Dialog.Title><Dialog.Description>{t(vtt ? "release.webvttDescription" : "release.description")}</Dialog.Description></div><Dialog.Close className="secondary-button" disabled={busy}>{t("execution.back")}</Dialog.Close></div>
+  return <WorkbenchPanel open={open} title={t("release.title")} description={t(vtt ? "release.webvttDescription" : "release.description")} className="source-dialog release-dialog" onBack={() => { if (!busy) setOpen(false); }} backDisabled={disabled || busy}>
       <div className="execution-content" aria-busy={busy}>
         {error ? <p className="release-alert" role="alert" ref={errorRegion} tabIndex={-1}>{t("release.error", { reason: t(errorReasons[error as keyof typeof errorReasons] ?? "release.errorUnknown") })}</p> : null}
         <section><h3>{t("release.prepare")}</h3><p>{t(vtt ? "release.webvttScope" : "release.scope")}</p>
@@ -149,7 +156,7 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
           <p>{t("release.policy")}</p>
           <div className="form-actions"><button className="secondary-button" disabled={busy || !mappingReady || !domain} onClick={() => void assess()}>{t("release.check")}</button><button className="primary-button" disabled={busy || !mappingReady || !eligibility?.ready || !domain} onClick={() => void build()}>{t("release.build")}</button></div>
           {eligibility ? <div role="status"><p>{t(eligibility.ready ? "release.ready" : "release.blocked", { count: eligibility.locales.reduce((sum, item) => sum + item.blockerCount, 0) })}</p><p>{t("release.source", { id: eligibility.sourceSnapshotId })} · {eligibility.policyVersion}</p>
-            {eligibility.locales.map(item => <div key={item.locale}><strong>{item.locale}</strong>: {t("release.coverage", { count: item.checkedUnits })}{item.blockers.map((reason, index) => <p key={`${reason.unitId}:${index}`}>{reason.nativeKey}: {reason.code}</p>)}{item.exceptions.map((reason, index) => <p key={`exception:${reason.unitId}:${index}`}>{t("release.exception", { key: reason.nativeKey, reason: reason.code })}</p>)}</div>)}
+            {eligibility.locales.map(item => <div key={item.locale}><strong>{item.locale}</strong>: {t("release.coverage", { count: item.checkedUnits })}{item.blockers.map((reason, index) => <div className="release-blocker" key={`${reason.unitId}:${index}`}>{reason.nativeKey}: {blockerLabel(reason.code)} {onOpenTranslation ? <button type="button" className="text-button" disabled={busy} onClick={() => void openBlocker(reason.unitId, item.locale)}>{t("translation.openEditor")}</button> : null}<details><summary>{t("execution.diagnostic")}</summary>{reason.code}</details></div>)}{item.exceptions.map((reason, index) => <p key={`exception:${reason.unitId}:${index}`}>{t("release.exception", { key: reason.nativeKey, reason: reason.code })}</p>)}</div>)}
           </div> : null}
           {attempt ? <p role="status">{t("release.started", { id: attempt })}</p> : null}
         </section>
@@ -173,6 +180,5 @@ export function ReleaseWorkbench({ project, disabled }: { project: ProjectView; 
           </div> : null}
         </section>
       </div>
-    </Dialog.Content></Dialog.Portal>
-  </Dialog.Root>;
+    </WorkbenchPanel>;
 }

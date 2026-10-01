@@ -1,4 +1,5 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ExecutionTasks } from "./ExecutionTasks";
@@ -88,8 +89,8 @@ it("preserves keyboard return focus and Chinese task messages", async () => {
   const trigger = screen.getByRole("button", { name: "任务" }); trigger.focus();
   await user.keyboard("{Enter}");
   await screen.findByText(/此项目暂无任务/);
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(trigger).toHaveFocus());
+  await user.click(screen.getByRole("button", { name: "返回概览" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "项目概览" })).toHaveFocus());
 });
 
 it("retries uncertain preparation with the original request after checking its receipt", async () => {

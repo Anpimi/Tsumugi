@@ -1,6 +1,8 @@
+import { reviewReasonKey } from "./reviewLabels";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ProjectView } from "./projectCommands";
+import type { EditorTarget } from "./TranslationWorkbench";
 import { executionContext } from "./executionCommands";
 import { sourceCommands as commands, type ContentPage, type LineageEvidence, type SourceHistory, type SourceImpactPage } from "./sourceCommands";
 
@@ -54,34 +56,28 @@ export function SourceHistoryPanel({ project, disabled, onHistory }: { project: 
   </section>;
 }
 
-export function SourceImpactPanel({ project, snapshotId, onOpenWork }: { project: ProjectView; snapshotId: string; onOpenWork?: () => void }) {
+export function SourceImpactPanel({ project, snapshotId, active = true, onOpenWork, onOpenTranslation }: { project: ProjectView; snapshotId: string; active?: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const [locale, setLocale] = useState(project.metadata.targetLocales[0] ?? "");
   const [page, setPage] = useState<SourceImpactPage | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [pageAfter, setPageAfter] = useState(0);
   const generation = useRef(0);
   useEffect(() => () => { generation.current++; }, []);
-  useEffect(() => { void load(); }, [snapshotId]);
+  useEffect(() => { if (active) void load(pageAfter); }, [snapshotId, active]);
   async function load(after = 0) {
     const ticket = ++generation.current;
     setBusy(true); setFailed(false);
-    try { const next = await commands.impact({ ...context, snapshotId, locale, after, limit: 10 }); if (generation.current === ticket) setPage(next); }
+    try { const next = await commands.impact({ ...context, snapshotId, locale, after, limit: 10 }); if (generation.current === ticket) { setPage(next); setPageAfter(after); } }
     catch { if (generation.current === ticket) { setPage(null); setFailed(true); } }
     finally { if (generation.current === ticket) setBusy(false); }
   }
   function reasonLabel(value: string) {
     if (value === "source-changed") return t("source.reasonChanged");
     if (value === "correspondence-unresolved") return t("source.reasonUnresolved");
-    if (value.startsWith("translation-")) return t("review.queueReasonTranslation");
-    if (value.startsWith("approval-")) return t("review.queueReasonApproval");
-    if (value === "changes-requested") return t("review.queueReasonChanges");
-    if (value.startsWith("qa-missing")) return t("review.queueReasonQa");
-    if (value.startsWith("qa-issue")) return t("review.queueReasonIssue");
-    if (value.startsWith("resource-")) return t("review.queueReasonResource");
-    if (value === "term-conflict") return t("review.issueConflict");
-    return t("review.queueReasonCoverage");
+    return t(reviewReasonKey(value));
   }
   return <section className="source-maintenance-panel"><h4>{t("source.actualImpact")}</h4>
     <label className="source-field">{t("review.targetLocale")}<select value={locale} disabled={busy} onChange={event => { generation.current++; setLocale(event.target.value); setPage(null); }}>
@@ -92,6 +88,7 @@ export function SourceImpactPanel({ project, snapshotId, onOpenWork }: { project
     {failed ? <p role="alert">{t("source.impactFailed")}</p> : null}
     {page ? <><p role="status">{t("source.impactSummary", { locale: page.summary.locale, preserved: String(page.summary.preserved), reassess: String(page.summary.reassess), unresolved: String(page.summary.unresolved), total: String(page.summary.total) })}</p><p>{t("source.impactCoverage")}</p>
       <ul>{page.rows.map(row => <li key={row.current.occurrenceId}><strong>{row.current.occurrence.key}</strong> · {t(`source.impactStatus.${row.status}`)}<pre>{row.current.occurrence.text}</pre>
+        {onOpenTranslation && row.current.unitId && row.current.sourceRevisionId ? <button type="button" className="text-button" disabled={busy} onClick={() => onOpenTranslation({ unitId: row.current.unitId!, sourceRevisionId: row.current.sourceRevisionId!, key: row.current.occurrence.key, sourceText: row.current.occurrence.text }, locale)}>{t("translation.openEditor")}</button> : null}
         {row.previous ? <details><summary>{t("source.previous")}</summary><pre>{row.previous.occurrence.text}</pre><code>{row.previous.sourceRevisionId}</code>
           <h5>{t("source.previousBases")}</h5>{row.previousBases.length ? row.previousBases.map(basis => <div key={basis.actionId}><p>{t(basis.kind === "review" ? "source.historicalReview" : "source.historicalCheck")}</p><pre>{basis.translationText}</pre><code>{basis.evidence.selectionId}</code><br /><code>{basis.evidence.revisionId}</code><br /><code>{basis.basis}</code><p>{t("source.historicalBasisNotice")}</p></div>) : <p>{t("source.noPreviousBasis")}</p>}
         </details> : null}
