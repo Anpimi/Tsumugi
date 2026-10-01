@@ -1218,9 +1218,18 @@ impl ProjectStore {
         if !owned {
             return Err(error(ErrorCode::Unauthorized, "translation-project"));
         }
-        Ok(selection_by_action(connection, action)?
+        let selection = selection_by_action(connection, action)?
             .map(|(selection, _)| selection)
-            .filter(|selection| selection.unit_id == unit && selection.locale == locale))
+            .filter(|selection| selection.unit_id == unit && selection.locale == locale);
+        if self
+            .execution_unknown
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            // An explicit receipt check must also validate the durable ledger and
+            // release the uncertainty guard, whether the action committed or not.
+            self.reconcile_execution()?;
+        }
+        Ok(selection)
     }
 
     pub fn save_translation_revision(

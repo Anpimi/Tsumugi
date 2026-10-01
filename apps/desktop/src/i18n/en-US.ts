@@ -32,7 +32,6 @@ arena: {
   "compare": "Start comparison",
   "reopen": "Reopen comparison: {{name}} · {{locale}}",
   "current": "Current selection: {{text}}",
-  "otherSelection": "another revision or none",
   "historical": "History may use different source or resource evidence. Check each candidate before selecting.",
   "currentBasis": "Current source and resources",
   "oldBasis": "Historical evidence / needs reassessment",

@@ -12,7 +12,7 @@ const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliat
 const item={unitId:"unit",sourceRevisionId:"source",sourceSnapshotId:"snapshot",nativeKey:"first",sourceLocale:"en",sourceText:"Hello {name}",targetLocale:"zh-CN",terms:[],context:null,omissions:["terms-not-shared","context-not-shared"],resourceBaseline:0};
 let prepared:ArenaPrepared,comparison:ComparisonView;
 beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:"attempt",preview:{config:defaultArenaConfig(),digest:"digest",items:[{slot:0,sourceOrder:0,item},{slot:1,sourceOrder:0,item}]}};
- comparison={comparisonId:"comparison",unitId:"unit",locale:"zh-CN",sourceRevisionId:"source",sourceText:item.sourceText,nativeKey:"first",selectionId:"selected",selectedRevisionId:"r1",basis:"basis",blind:true,revealed:false,rows:[{revisionId:"r1",text:"First {name}",sourceRevisionId:"source",originKind:"ai",contributors:[],model:null,recipe:null,basisCurrent:true},{revisionId:"r2",text:"Second {name}",sourceRevisionId:"source",originKind:"manual",contributors:[],model:null,recipe:null,basisCurrent:true}]};
+ comparison={comparisonId:"comparison",unitId:"unit",locale:"zh-CN",sourceRevisionId:"source",sourceText:item.sourceText,nativeKey:"first",selectionId:"selected",selectedRevisionId:"r1",selectedText:"First {name}",basis:"basis",blind:true,revealed:false,rows:[{revisionId:"r1",text:"First {name}",sourceRevisionId:"source",originKind:"ai",contributors:[],model:null,recipe:null,basisCurrent:true},{revisionId:"r2",text:"Second {name}",sourceRevisionId:"source",originKind:"manual",contributors:[],model:null,recipe:null,basisCurrent:true}]};
  invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
   if(command==="read_content_scope")return{currentSnapshot:"snapshot"};if(command==="read_source_content")return{rows:[{unitId:"unit",sourceRevisionId:"source",occurrence:{key:"first",text:item.sourceText}}],nextOrdinal:null};
   if(command==="list_arena_comparisons")return[];
@@ -65,9 +65,47 @@ it("keeps offline blind preference separate from a confirmed generation preview"
 it("invalidates consent when the second scheme changes",async()=>{const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Scheme 2 · Model"}),"different");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_arena_translation")).toBe(false);});
 it("preserves stable anonymous labels and does not infer a winner from returned order",async()=>{const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));const a=await screen.findByRole("heading",{name:"Candidate A"});expect(within(a.closest("article")!).getByText("Second output")).toBeInTheDocument();expect(screen.queryByText("alpha-model")).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="select_translation_revision"||c==="adopt_execution")).toBe(false);});
 it("sends observed selection and all contributors in one merge request",async()=>{const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));await user.clear(screen.getByRole("textbox",{name:"Merged translation"}));await user.click(screen.getByRole("textbox",{name:"Merged translation"}));await user.paste("Combined {name}");await user.click(screen.getByRole("button",{name:"Save merge and select"}));await screen.findByText(/Merge saved and selected/);const request=invoke.mock.calls.find(([c])=>c==="save_arena_merge")![1].request;expect(request).toMatchObject({unitId:"unit",locale:"zh-CN",sourceRevisionId:"source",expectedSelectionId:"selected",text:"Combined {name}",merge:{contributors:["r1","r2"],expectedBasis:"basis"}});expect(invoke.mock.calls.some(([c])=>c==="save_translation_revision"||c==="select_translation_revision")).toBe(false);});
+it("shows the actual selected merge outside the comparison candidates",async()=>{
+ const user=await compare();const original=invoke.getMockImplementation()!;
+ invoke.mockImplementation(async(c:string,a:unknown)=>{
+  const value=await original(c,a);
+  if(c==="save_arena_merge")comparison=Object.assign({...comparison,selectionId:"merged",selectedRevisionId:"merged-revision"},{selectedText:"Combined {name}"});
+  return value;
+ });
+ await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));
+ await user.clear(screen.getByRole("textbox",{name:"Merged translation"}));await user.click(screen.getByRole("textbox",{name:"Merged translation"}));await user.paste("Combined {name}");
+ await user.click(screen.getByRole("button",{name:"Save merge and select"}));await screen.findByText(/Merge saved and selected/);
+ expect(screen.getByText("Current selection: Combined {name}")).toBeInTheDocument();
+ expect(comparison.rows.some(r=>r.revisionId===comparison.selectedRevisionId)).toBe(false);
+});
+it.each([[null,null,"No translation is selected yet."],["outside","",""],["outside","External revision","External revision"]])("distinguishes current selection %s from the compared revisions",async(revisionId,text,shown)=>{
+ comparison=Object.assign({...comparison,selectedRevisionId:revisionId},{selectedText:text});
+ await compare();expect(screen.getByText(`Current selection:${shown?` ${shown}`:""}`)).toBeInTheDocument();
+});
+it("clears a transient poll failure after a successful terminal read",async()=>{
+ const original=invoke.getMockImplementation()!;let reads=0;
+ invoke.mockImplementation((c:string,a:unknown)=>c==="read_arena_translation"&&++reads===1?Promise.reject({code:"busy"}):original(c,a));
+ const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ expect(await screen.findByRole("alert")).toHaveTextContent("Another operation is running");
+ await screen.findByRole("heading",{name:"Candidate A"},{timeout:3000});expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+it("preserves a cancellation failure when a background read succeeds",async()=>{
+ const original=invoke.getMockImplementation()!;let reads=0;
+ invoke.mockImplementation(async(c:string,a:unknown)=>{
+  if(c==="cancel_execution_task")throw {code:"busy"};
+  const value=await original(c,a);
+  if(c==="read_arena_translation"){reads++;return {...value,detail:{...value.detail,progress:{...value.detail.progress,queued:1}}};}
+  return value;
+ });
+ const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ await user.click(await screen.findByRole("button",{name:"Cancel remaining work"}));await screen.findByRole("alert");const prior=reads;
+ await waitFor(()=>expect(reads).toBeGreaterThan(prior),{timeout:3000});expect(screen.getByRole("alert")).toHaveTextContent("Another operation is running");
+});
 it("keeps newer input when a previous merge save returns successfully",async()=>{const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));let finish:(v:unknown)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="save_arena_merge"?new Promise(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Save merge and select"}));const input=screen.getByRole("textbox",{name:"Merged translation"});expect(input).toBeEnabled();await user.type(input," plus newer edit");finish({revisionId:"merged"});await screen.findByText(/Merge saved and selected/);expect(input).toHaveValue("First {name} plus newer edit");await user.click(screen.getByRole("button",{name:"Back"}));expect(await screen.findByText("Keep your Arena draft?")).toBeInTheDocument();});
 it("preserves a merge draft on a relevant-basis conflict and allows explicit rebase",async()=>{const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="save_arena_merge"?Promise.reject({code:"dependency-conflict",field:"arena-basis"}):original(c,a));await user.click(screen.getByRole("button",{name:"Save merge and select"}));expect(await screen.findByRole("alert")).toHaveFocus();expect(screen.getByRole("textbox",{name:"Merged translation"})).toHaveValue("First {name}");comparison={...comparison,basis:"new-basis",selectionId:"new-selection"};await user.click(screen.getByRole("button",{name:"Review current basis and keep draft"}));expect(screen.getByRole("textbox",{name:"Merged translation"})).toHaveValue("First {name}");});
-it("checks an uncertain merge before repeating the exact action",async()=>{const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));const original=invoke.getMockImplementation()!;let first=true;invoke.mockImplementation((c:string,a:unknown)=>{if(c==="save_arena_merge"&&first){first=false;return Promise.reject({code:"outcome-unknown"});}return original(c,a);});await user.click(screen.getByRole("button",{name:"Save merge and select"}));await screen.findByText(/The action may have committed/);expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();expect(screen.getByRole("button",{name:"Back"})).toBeDisabled();await user.click(screen.getByRole("button",{name:"Check saved result"}));await user.click(await screen.findByRole("button",{name:"Retry same action"}));await screen.findByText(/Merge saved and selected/);const saves=invoke.mock.calls.filter(([c])=>c==="save_arena_merge");expect(saves).toHaveLength(2);expect(saves[0][1]).toEqual(saves[1][1]);});
+it("checks an uncertain merge before repeating the exact action",async()=>{const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));const original=invoke.getMockImplementation()!;let first=true;invoke.mockImplementation((c:string,a:unknown)=>{if(c==="save_arena_merge"&&first){first=false;return Promise.reject({code:"outcome-unknown",field:"translation-commit"});}return original(c,a);});await user.click(screen.getByRole("button",{name:"Save merge and select"}));await screen.findByText(/The action may have committed/);expect(screen.getByRole("alert")).toHaveTextContent("The result is uncertain");expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();expect(screen.getByRole("button",{name:"Back"})).toBeDisabled();await user.click(screen.getByRole("button",{name:"Check saved result"}));await user.click(await screen.findByRole("button",{name:"Retry same action"}));await screen.findByText(/Merge saved and selected/);const saves=invoke.mock.calls.filter(([c])=>c==="save_arena_merge");expect(saves).toHaveLength(2);expect(saves[0][1]).toEqual(saves[1][1]);});
 it("reconciles a committed merge after a newer selection without resaving",async()=>{
  const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));
  const original=invoke.getMockImplementation()!;
@@ -77,7 +115,7 @@ it("reconciles a committed merge after a newer selection without resaving",async
   return original(c,a);
  });
  await user.click(screen.getByRole("button",{name:"Save merge and select"}));await screen.findByText(/The action may have committed/);
- comparison={...comparison,selectionId:"newer-selection",selectedRevisionId:"r2"};
+ comparison={...comparison,selectionId:"newer-selection",selectedRevisionId:"r2",selectedText:"Second {name}"};
  await user.click(screen.getByRole("button",{name:"Check saved result"}));await screen.findByText(/The saved action has been confirmed/);
  expect(screen.queryByRole("textbox",{name:"Merged translation"})).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([c])=>c==="save_arena_merge")).toHaveLength(1);

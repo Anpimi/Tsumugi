@@ -876,7 +876,7 @@ impl ProjectStore {
         Ok(ExecutionTransaction { tx, unknown })
     }
 
-    pub fn reconcile_execution(&mut self) -> Result<(), ExecutionError> {
+    pub fn reconcile_execution(&self) -> Result<(), ExecutionError> {
         let connection = self.execution_connection()?;
         if !connection.is_autocommit() {
             return Err(error(ErrorCode::OutcomeUnknown, "reconcile"));

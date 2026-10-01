@@ -34,7 +34,6 @@ arena: {
   "compare": "开始比较",
   "reopen": "重开比较：{{name}} · {{locale}}",
   "current": "当前选择：{{text}}",
-  "otherSelection": "其他修订或尚未选择",
   "historical": "历史候选可能使用不同原文或资源依据，选择前请检查各项。",
   "currentBasis": "当前原文与资源依据",
   "oldBasis": "历史依据／需要重评",

@@ -7,7 +7,7 @@ export const defaultArenaConfig=():ArenaConfig=>({variants:[{...defaultAiConfig}
 export interface ArenaPrepared {attemptId:string;preview:{config:ArenaConfig;items:Array<{slot:number;sourceOrder:number;item:AiItem}>;digest:string}}
 export interface ArenaView {detail:AttemptDetail;rows:Array<{item:AiItem;itemId:string;sourceOrder:number;label:number;resultId:string|null;output:AiOutput|null}>;variants:AiConfig[]|null;blind:boolean;revealed:boolean;differentInputs:boolean;repeatedSampling:boolean;parentAttemptId:string|null}
 export interface ComparisonEntry {revisionId:string;text:string;sourceRevisionId:string;originKind:string;contributors:string[];model:string|null;recipe:string|null;basisCurrent:boolean}
-export interface ComparisonView {comparisonId:string|null;unitId:string;locale:string;sourceRevisionId:string;sourceText:string;nativeKey:string;selectionId:string|null;selectedRevisionId:string|null;basis:string;blind:boolean;revealed:boolean;rows:ComparisonEntry[]}
+export interface ComparisonView {comparisonId:string|null;unitId:string;locale:string;sourceRevisionId:string;sourceText:string;nativeKey:string;selectionId:string|null;selectedRevisionId:string|null;selectedText:string|null;basis:string;blind:boolean;revealed:boolean;rows:ComparisonEntry[]}
 export type ComparisonSummary = Pick<ComparisonView,"comparisonId"|"nativeKey"|"locale">;
 export interface CompareRequest extends SessionRequest {actionId:string;unitId:string;locale:string;revisionIds:string[];blind:boolean}
 export interface MergeRequest extends TranslationSaveRequest {merge:{contributors:string[];expectedBasis:string}}

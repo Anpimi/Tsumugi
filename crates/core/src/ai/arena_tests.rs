@@ -465,6 +465,83 @@ fn arena_boundaries_digest_cancellation_and_parent_round_are_checked() {
 }
 
 #[test]
+fn arena_merge_commit_uncertainty_reconciles_before_same_action_retry() {
+    let (temp, mut store, rows) = source_project();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let unit = rows[0].unit_id.unwrap();
+    let source = rows[0].source_revision_id.unwrap();
+    let mut refs = Vec::new();
+    let mut selection = None;
+    for text in ["First {name}", "Second {name}"] {
+        let saved = store
+            .save_translation_revision(&SaveTranslationRevision {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: "zh-CN".into(),
+                source_revision_id: source,
+                expected_selection_id: selection,
+                text: text.into(),
+            })
+            .unwrap();
+        refs.push(saved.revision_id);
+        selection = Some(saved.event_id);
+    }
+    let view = store
+        .preview_comparison(project, unit, "zh-CN", &refs)
+        .unwrap();
+    let request = SaveTranslationRevision {
+        project_id: project,
+        action_id: ExecutionId::new(),
+        unit_id: unit,
+        locale: "zh-CN".into(),
+        source_revision_id: source,
+        expected_selection_id: selection,
+        text: "Merged {name}".into(),
+    };
+    let basis = MergeBasis {
+        contributors: refs,
+        expected_basis: view.basis,
+    };
+    let reader = rusqlite::Connection::open_with_flags(
+        temp.path().join("project/project.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    reader
+        .execute_batch("BEGIN; SELECT COUNT(*) FROM translation_revisions;")
+        .unwrap();
+    assert_eq!(
+        store
+            .save_merged_translation(&request, &basis)
+            .unwrap_err()
+            .code,
+        ErrorCode::OutcomeUnknown
+    );
+    assert!(store.is_reconciling());
+    reader.execute_batch("ROLLBACK").unwrap();
+    assert!(
+        store
+            .translation_selection_by_action(project, unit, "zh-CN", request.action_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(!store.is_reconciling());
+    let saved = store.save_merged_translation(&request, &basis).unwrap();
+    assert_eq!(
+        store.save_merged_translation(&request, &basis).unwrap(),
+        saved
+    );
+    assert_eq!(
+        store
+            .translation_history(project, unit, "zh-CN", 0, 10)
+            .unwrap()
+            .total,
+        3
+    );
+}
+
+#[test]
 fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_schema_ten_backup() {
     let (temp, mut store, rows) = source_project();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
@@ -566,6 +643,18 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_schema_ten_b
     let fresh = store
         .read_comparison(project, view.comparison_id.unwrap())
         .unwrap();
+    assert_eq!(fresh.selected_revision_id, Some(merged.revision_id));
+    assert_eq!(fresh.selected_text.as_deref(), Some("Merged {name}"));
+    assert!(
+        fresh
+            .rows
+            .iter()
+            .all(|row| row.revision_id != merged.revision_id)
+    );
+    assert_eq!(
+        serde_json::to_value(&fresh).unwrap()["selectedText"],
+        "Merged {name}"
+    );
     let fresh_basis = MergeBasis {
         contributors: refs,
         expected_basis: fresh.basis.clone(),
