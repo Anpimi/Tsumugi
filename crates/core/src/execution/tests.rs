@@ -338,35 +338,38 @@ impl AdoptionHandler for FixtureHandler {
     fn operation(&self) -> &str {
         "fixture"
     }
-    fn apply(
+    fn prepare(
         &self,
-        tx: &AdoptionTransaction<'_>,
         input: &FixedInput,
         _action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
-        let mut changes = Vec::new();
-        for result in results {
-            let item = input.item(result.envelope().item_id)?;
-            let revision: i64 = tx.query_row(
-                "SELECT revision FROM fixture_targets WHERE id = ?1",
-                [&item.scope.id],
-                |row| row.get(0),
-            )?;
-            if revision != item.dependencies[0].expected_revision.get() as i64 {
-                return Err(ExecutionError::new(
-                    ErrorCode::DependencyConflict,
-                    "fixture",
-                ));
+    ) -> Result<PreparedMutation, ExecutionError> {
+        let input = input.clone();
+        let results = results.to_vec();
+        Ok(Box::new(move |tx| {
+            let mut changes = Vec::new();
+            for result in &results {
+                let item = input.item(result.envelope().item_id)?;
+                let revision: i64 = tx.query_row(
+                    "SELECT revision FROM fixture_targets WHERE id = ?1",
+                    [&item.scope.id],
+                    |row| row.get(0),
+                )?;
+                if revision != item.dependencies[0].expected_revision.get() as i64 {
+                    return Err(ExecutionError::new(
+                        ErrorCode::DependencyConflict,
+                        "fixture",
+                    ));
+                }
+                tx.execute("UPDATE fixture_targets SET revision = revision + 1, value = 'applied' WHERE id = ?1", [&item.scope.id])?;
+                changes.push(ChangeReference {
+                    kind: "fixture".into(),
+                    id: item.scope.id.clone(),
+                    revision: Revision::new((revision + 1) as u64)?,
+                });
             }
-            tx.execute("UPDATE fixture_targets SET revision = revision + 1, value = 'applied' WHERE id = ?1", [&item.scope.id])?;
-            changes.push(ChangeReference {
-                kind: "fixture".into(),
-                id: item.scope.id.clone(),
-                revision: Revision::new((revision + 1) as u64)?,
-            });
-        }
-        Ok(changes)
+            Ok(changes)
+        }))
     }
 }
 
@@ -402,15 +405,11 @@ fn handler_checks_only_relevant_dependencies_within_the_owners_transaction() {
     connection
         .execute("UPDATE fixture_targets SET revision = 2 WHERE id = 'b'", [])
         .unwrap();
-    let tx = connection.transaction().unwrap();
-    let changes = FixtureHandler
-        .apply(
-            &AdoptionTransaction::new(&tx),
-            &fixed,
-            &action,
-            &[output.clone()],
-        )
+    let mutation = FixtureHandler
+        .prepare(&fixed, &action, &[output.clone()])
         .unwrap();
+    let tx = connection.transaction().unwrap();
+    let changes = mutation(&AdoptionTransaction::new(&tx)).unwrap();
     assert_eq!(changes[0].revision.get(), 2);
     tx.rollback().unwrap();
     let value: String = connection
@@ -424,12 +423,10 @@ fn handler_checks_only_relevant_dependencies_within_the_owners_transaction() {
     connection
         .execute("UPDATE fixture_targets SET revision = 2 WHERE id = 'a'", [])
         .unwrap();
+    let mutation = FixtureHandler.prepare(&fixed, &action, &[output]).unwrap();
     let tx = connection.transaction().unwrap();
     assert_eq!(
-        FixtureHandler
-            .apply(&AdoptionTransaction::new(&tx), &fixed, &action, &[output])
-            .unwrap_err()
-            .code,
+        mutation(&AdoptionTransaction::new(&tx)).unwrap_err().code,
         ErrorCode::DependencyConflict
     );
     tx.rollback().unwrap();

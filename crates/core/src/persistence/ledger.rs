@@ -1396,82 +1396,65 @@ impl ProjectStore {
     ) -> Result<Option<AdoptionReceipt>, ExecutionError> {
         read_receipt(self.execution_connection()?, action)
     }
+    pub fn capture_execution_adoption(
+        &self,
+        action: &AdoptionAction,
+    ) -> Result<AdoptionCapture, ExecutionError> {
+        let connection = self.execution_connection()?;
+        if !connection.is_autocommit() {
+            return Err(error(ErrorCode::DependencyConflict, "adoption-transaction"));
+        }
+        let transaction = connection.unchecked_transaction().map_err(sql_error)?;
+        let capture = capture_adoption_in(&transaction, action)?;
+        transaction.commit().map_err(sql_error)?;
+        Ok(capture)
+    }
+
     pub fn adopt_execution(
         &mut self,
         action: &AdoptionAction,
         handler: &dyn AdoptionHandler,
     ) -> Result<AdoptionReceipt, ExecutionError> {
+        let prepared = self.capture_execution_adoption(action)?.prepare(handler)?;
+        self.commit_execution_adoption(prepared)
+    }
+
+    pub fn commit_execution_adoption(
+        &mut self,
+        prepared: PreparedAdoption,
+    ) -> Result<AdoptionReceipt, ExecutionError> {
         let tx = self.execution_write()?;
-        let input = load_input(&tx, action.attempt_id)?;
-        let digest = action.request_digest(&input)?;
-        let persisted: (Vec<u8>, String) = tx
-            .query_row(
-                "SELECT CASE WHEN length(request)<=1048576 THEN request END,digest FROM execution_actions WHERE action_id=?1",
-                [action.action_id.to_string()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map_err(sql_error)?;
-        let stored: AdoptionAction = codec::decode(&persisted.0, MAX_INPUT_BYTES)?;
-        if stored != *action || persisted.1 != digest {
-            return Err(error(ErrorCode::ResultMismatch, "action-identity"));
+        let action = &prepared.capture.action;
+        let current = capture_adoption_in(&tx, action)?;
+        if let Some(receipt) = current.receipt {
+            return Ok(receipt);
         }
-        if let Some(receipt) = read_receipt(&tx, action.action_id)? {
-            return if receipt.request_digest == digest {
-                Ok(receipt)
-            } else {
-                Err(error(ErrorCode::CorruptLedger, "receipt"))
-            };
-        }
-        if handler.operation() != action.operation {
-            return Err(error(ErrorCode::Unauthorized, "handler"));
-        }
-        let results = action
-            .result_ids
-            .iter()
-            .map(|id| load_result(&tx, &input, *id))
-            .collect::<Result<Vec<_>, _>>()?;
-        action.validate(&input, &results)?;
-        if cancel_revision(&tx, input.envelope().task_id)? != action.cancellation_revision {
-            return Err(error(ErrorCode::Cancelled, "adoption"));
-        }
-        let state = read_attempt(&tx, action.attempt_id, true)?;
-        for result in &results {
-            let newer:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![input.envelope().task_id.to_string(),result.envelope().item_id.to_string(),action.attempt_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
-            if newer {
-                return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
-            }
-            let item = state
-                .items
+        if current.digest != prepared.capture.digest
+            || current.input.digest() != prepared.capture.input.digest()
+            || current
+                .results
                 .iter()
-                .find(|item| item.item_id == result.envelope().item_id)
-                .ok_or_else(|| error(ErrorCode::ResultMismatch, "item"))?;
-            let current:String=tx.query_row("SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![action.attempt_id.to_string(),item.item_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
-            if current != result.envelope().result_id.to_string()
-                || item.validation != ValidationState::Valid
-                || item.adoption == AdoptionState::Committed
-            {
-                return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
-            }
-            let scope = &input.item(item.item_id)?.scope;
-            if let Some(locale) = &scope.locale {
-                let metadata = super::read_metadata_from(&tx)
-                    .map_err(|_| error(ErrorCode::CorruptLedger, "scope"))?;
-                if !metadata
-                    .target_locales()
+                .map(|result| result.digest())
+                .collect::<Vec<_>>()
+                != prepared
+                    .capture
+                    .results
                     .iter()
-                    .any(|target| target.as_str() == locale)
-                {
-                    return Err(error(ErrorCode::Unauthorized, "locale-scope"));
-                }
-            }
+                    .map(|result| result.digest())
+                    .collect::<Vec<_>>()
+        {
+            return Err(error(ErrorCode::ResultMismatch, "adoption-preparation"));
         }
-        let changes = handler.apply(&AdoptionTransaction::new(&tx), &input, action, &results)?;
+        let mutation = prepared
+            .mutation
+            .ok_or_else(|| error(ErrorCode::CorruptLedger, "receipt"))?;
+        let changes = mutation(&AdoptionTransaction::new(&tx))?;
         let receipt = AdoptionReceipt {
             project_id: action.project_id,
             attempt_id: action.attempt_id,
             action_id: action.action_id,
             unit_id: action.unit_id,
-            request_digest: digest,
+            request_digest: current.digest,
             changes,
         };
         let bytes = codec::encode(&receipt, MAX_INPUT_BYTES)?;
@@ -1486,7 +1469,7 @@ impl ProjectStore {
             ],
         )
         .map_err(sql_error)?;
-        for result in &results {
+        for result in &current.results {
             tx.execute("UPDATE execution_items SET adoption='committed' WHERE attempt_id=?1 AND item_id=?2",params![action.attempt_id.to_string(),result.envelope().item_id.to_string()]).map_err(sql_error)?;
         }
         #[cfg(test)]
@@ -1496,6 +1479,91 @@ impl ProjectStore {
         crash_hook("after-adoption-commit");
         Ok(receipt)
     }
+}
+
+fn capture_adoption_in(
+    connection: &Connection,
+    action: &AdoptionAction,
+) -> Result<AdoptionCapture, ExecutionError> {
+    let input = load_input(connection, action.attempt_id)?;
+    let digest = action.request_digest(&input)?;
+    let persisted: (Vec<u8>, String) = connection
+            .query_row(
+                "SELECT CASE WHEN length(request)<=1048576 THEN request END,digest FROM execution_actions WHERE action_id=?1",
+                [action.action_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(sql_error)?;
+    let stored: AdoptionAction = codec::decode(&persisted.0, MAX_INPUT_BYTES)?;
+    if stored != *action || persisted.1 != digest {
+        return Err(error(ErrorCode::ResultMismatch, "action-identity"));
+    }
+    if let Some(receipt) = read_receipt(connection, action.action_id)? {
+        return if receipt.request_digest == digest {
+            Ok(AdoptionCapture {
+                action: action.clone(),
+                input,
+                results: Vec::new(),
+                digest,
+                receipt: Some(receipt),
+            })
+        } else {
+            Err(error(ErrorCode::CorruptLedger, "receipt"))
+        };
+    }
+    let results = action
+        .result_ids
+        .iter()
+        .map(|id| load_result(connection, &input, *id))
+        .collect::<Result<Vec<_>, _>>()?;
+    action.validate(&input, &results)?;
+    if cancel_revision(connection, input.envelope().task_id)? != action.cancellation_revision {
+        return Err(error(ErrorCode::Cancelled, "adoption"));
+    }
+    let state = read_attempt(connection, action.attempt_id, true)?;
+    for result in &results {
+        let newer:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![input.envelope().task_id.to_string(),result.envelope().item_id.to_string(),action.attempt_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
+        if newer {
+            return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
+        }
+        let item = state
+            .items
+            .iter()
+            .find(|item| item.item_id == result.envelope().item_id)
+            .ok_or_else(|| error(ErrorCode::ResultMismatch, "item"))?;
+        let current: String = connection
+            .query_row(
+                "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![action.attempt_id.to_string(), item.item_id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        if current != result.envelope().result_id.to_string()
+            || item.validation != ValidationState::Valid
+            || item.adoption == AdoptionState::Committed
+        {
+            return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
+        }
+        let scope = &input.item(item.item_id)?.scope;
+        if let Some(locale) = &scope.locale {
+            let metadata = super::read_metadata_from(connection)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "scope"))?;
+            if !metadata
+                .target_locales()
+                .iter()
+                .any(|target| target.as_str() == locale)
+            {
+                return Err(error(ErrorCode::Unauthorized, "locale-scope"));
+            }
+        }
+    }
+    Ok(AdoptionCapture {
+        action: action.clone(),
+        input,
+        results,
+        digest,
+        receipt: None,
+    })
 }
 
 pub(super) fn read_receipt(

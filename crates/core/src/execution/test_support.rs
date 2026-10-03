@@ -240,33 +240,37 @@ impl AdoptionHandler for SampleHandler {
     fn operation(&self) -> &str {
         "sample-update"
     }
-    fn apply(
+    fn prepare(
         &self,
-        tx: &AdoptionTransaction<'_>,
         input: &FixedInput,
         action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
-        let mut changes = Vec::new();
-        for result in results {
-            let item = input.item(result.envelope().item_id)?;
-            let dependency = item.dependencies.first().ok_or_else(|| {
-                ExecutionError::new(ErrorCode::InvalidInput, "fixture-dependency")
-            })?;
-            let changed=tx.execute("UPDATE fixture_targets SET value='Updated sample',revision=revision+1 WHERE id=?1 AND revision=?2",rusqlite::params![item.scope.id,dependency.expected_revision.get() as i64])?;
-            if changed != 1 {
-                return Err(ExecutionError::new(
-                    ErrorCode::DependencyConflict,
-                    "fixture-dependency",
-                )
-                .for_item(item.item_id));
+    ) -> Result<PreparedMutation, ExecutionError> {
+        let input = input.clone();
+        let results = results.to_vec();
+        let action = action.clone();
+        Ok(Box::new(move |tx| {
+            let mut changes = Vec::new();
+            for result in &results {
+                let item = input.item(result.envelope().item_id)?;
+                let dependency = item.dependencies.first().ok_or_else(|| {
+                    ExecutionError::new(ErrorCode::InvalidInput, "fixture-dependency")
+                })?;
+                let changed=tx.execute("UPDATE fixture_targets SET value='Updated sample',revision=revision+1 WHERE id=?1 AND revision=?2",rusqlite::params![item.scope.id,dependency.expected_revision.get() as i64])?;
+                if changed != 1 {
+                    return Err(ExecutionError::new(
+                        ErrorCode::DependencyConflict,
+                        "fixture-dependency",
+                    )
+                    .for_item(item.item_id));
+                }
+                changes.push(ChangeReference {
+                    kind: action.operation.clone(),
+                    id: item.scope.id.clone(),
+                    revision: dependency.expected_revision.next()?,
+                });
             }
-            changes.push(ChangeReference {
-                kind: action.operation.clone(),
-                id: item.scope.id.clone(),
-                revision: dependency.expected_revision.next()?,
-            });
-        }
-        Ok(changes)
+            Ok(changes)
+        }))
     }
 }

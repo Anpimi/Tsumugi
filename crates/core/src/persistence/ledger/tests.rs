@@ -116,37 +116,155 @@ impl AdoptionHandler for Handler {
     fn operation(&self) -> &str {
         "fixture"
     }
-    fn apply(
+    fn prepare(
         &self,
-        tx: &AdoptionTransaction<'_>,
         input: &FixedInput,
         _action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
-        let mut changes = Vec::new();
-        for result in results {
-            let item = input.item(result.envelope().item_id)?;
-            let expected = item.dependencies[0].expected_revision;
-            let current: i64 = tx.query_row(
-                "SELECT revision FROM fixture_targets WHERE id=?1",
-                [&item.scope.id],
-                |r| r.get(0),
-            )?;
-            if current != expected.get() as i64 {
-                return Err(error(ErrorCode::DependencyConflict, "fixture"));
+    ) -> Result<PreparedMutation, ExecutionError> {
+        let input = input.clone();
+        let results = results.to_vec();
+        Ok(Box::new(move |tx| {
+            let mut changes = Vec::new();
+            for result in &results {
+                let item = input.item(result.envelope().item_id)?;
+                let expected = item.dependencies[0].expected_revision;
+                let current: i64 = tx.query_row(
+                    "SELECT revision FROM fixture_targets WHERE id=?1",
+                    [&item.scope.id],
+                    |r| r.get(0),
+                )?;
+                if current != expected.get() as i64 {
+                    return Err(error(ErrorCode::DependencyConflict, "fixture"));
+                }
+                tx.execute(
+                    "UPDATE fixture_targets SET revision=revision+1,value='applied' WHERE id=?1",
+                    [&item.scope.id],
+                )?;
+                changes.push(ChangeReference {
+                    kind: "fixture".into(),
+                    id: item.scope.id.clone(),
+                    revision: expected.next()?,
+                });
             }
-            tx.execute(
-                "UPDATE fixture_targets SET revision=revision+1,value='applied' WHERE id=?1",
-                [&item.scope.id],
-            )?;
-            changes.push(ChangeReference {
-                kind: "fixture".into(),
-                id: item.scope.id.clone(),
-                revision: expected.next()?,
-            });
-        }
-        Ok(changes)
+            Ok(changes)
+        }))
     }
+}
+
+#[test]
+fn adoption_preparation_releases_sqlite_and_commit_rechecks_changed_dependencies() {
+    struct EditingHandler(std::path::PathBuf, String);
+    impl AdoptionHandler for EditingHandler {
+        fn operation(&self) -> &str {
+            "fixture"
+        }
+        fn prepare(
+            &self,
+            input: &FixedInput,
+            action: &AdoptionAction,
+            results: &[FixedResult],
+        ) -> Result<PreparedMutation, ExecutionError> {
+            let writer = Connection::open(&self.0).unwrap();
+            writer.busy_timeout(Duration::from_millis(100)).unwrap();
+            writer
+                .execute(
+                    "UPDATE fixture_targets SET revision=revision+1 WHERE id=?1",
+                    [&self.1],
+                )
+                .unwrap();
+            Handler.prepare(input, action, results)
+        }
+    }
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let path = parent.path().join("project");
+    let mut store = store(&path);
+    install_targets(&store);
+    let input = fixture_input(&store, false);
+    store.enqueue_execution(&input).unwrap();
+    let item = &input.envelope().items[0];
+    let result = produce(&mut store, &input, item.item_id);
+    store.save_execution_result(&result).unwrap();
+    store
+        .validate_execution_result(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let action = action(&mut store, &input, &[result]);
+    let handler = EditingHandler(
+        path.join(super::super::DATABASE_FILENAME),
+        item.scope.id.clone(),
+    );
+    assert_eq!(
+        store.adopt_execution(&action, &handler).unwrap_err().code,
+        ErrorCode::DependencyConflict
+    );
+    assert!(store.adoption_receipt(action.action_id).unwrap().is_none());
+    let current: (i64, String) = store
+        .execution_connection()
+        .unwrap()
+        .query_row(
+            "SELECT revision,value FROM fixture_targets WHERE id=?1",
+            [&item.scope.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(current, (2, "original".into()));
+}
+
+#[test]
+fn prepared_adoption_rechecks_cancellation_and_returns_competing_receipt_without_reapplying() {
+    let _schema = TestSchema::enable();
+    let parent = tempfile::tempdir().unwrap();
+    let mut store = store(&parent.path().join("project"));
+    install_targets(&store);
+    let input = fixture_input(&store, false);
+    store.enqueue_execution(&input).unwrap();
+    let result = produce(&mut store, &input, input.envelope().items[0].item_id);
+    store.save_execution_result(&result).unwrap();
+    store
+        .validate_execution_result(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let old = action(&mut store, &input, &[result.clone()]);
+    let prepared = store
+        .capture_execution_adoption(&old)
+        .unwrap()
+        .prepare(&Handler)
+        .unwrap();
+    store
+        .cancel_execution(input.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    assert_eq!(
+        store.commit_execution_adoption(prepared).unwrap_err().code,
+        ErrorCode::Cancelled
+    );
+    assert!(store.adoption_receipt(old.action_id).unwrap().is_none());
+    let renewed = action(&mut store, &input, &[result]);
+    let first = store
+        .capture_execution_adoption(&renewed)
+        .unwrap()
+        .prepare(&Handler)
+        .unwrap();
+    let second = store
+        .capture_execution_adoption(&renewed)
+        .unwrap()
+        .prepare(&Handler)
+        .unwrap();
+    store.rename(1, "Unrelated edit after preparation").unwrap();
+    let receipt = store.commit_execution_adoption(first).unwrap();
+    store
+        .cancel_execution(input.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    assert_eq!(store.commit_execution_adoption(second).unwrap(), receipt);
+    let revision: i64 = store
+        .execution_connection()
+        .unwrap()
+        .query_row(
+            "SELECT revision FROM fixture_targets WHERE id=?1",
+            [&input.envelope().items[0].scope.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(revision, 2);
 }
 
 #[test]

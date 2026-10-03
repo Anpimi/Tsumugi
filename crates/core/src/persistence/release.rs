@@ -7,8 +7,8 @@ use crate::{
         BuildSourceFile, VALIDATOR_VERSION, validate_build_output,
     },
     execution::{
-        AdoptionAction, AdoptionHandler, AdoptionTransaction, ChangeReference, ErrorCode,
-        ExecutionError, ExecutionId, FixedInput, FixedResult, MAX_INPUT_BYTES, Revision, codec,
+        AdoptionAction, AdoptionHandler, ChangeReference, ErrorCode, ExecutionError, ExecutionId,
+        FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
     },
 };
 use rusqlite::{Connection, params};
@@ -906,30 +906,16 @@ impl AdoptionHandler for ReleaseAdoptionHandler {
         BUILD_OPERATION
     }
 
-    fn apply(
+    fn prepare(
         &self,
-        transaction: &AdoptionTransaction<'_>,
         input: &FixedInput,
         action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
+    ) -> Result<PreparedMutation, ExecutionError> {
         let manifest = BuildManifest::from_input(input)?;
-        let release_id = ExecutionId::new();
         let manifest_bytes = codec::encode(&manifest, MAX_INPUT_BYTES)?;
-        transaction.execute(
-            "INSERT INTO release_records
-             (release_id,action_id,project_id,attempt_id,manifest,manifest_digest)
-             VALUES (?1,?2,?3,?4,?5,?6)",
-            params![
-                release_id.to_string(),
-                action.action_id.to_string(),
-                manifest.project_id.to_string(),
-                action.attempt_id.to_string(),
-                &manifest_bytes,
-                codec::digest(&manifest_bytes),
-            ],
-        )?;
         let mut seen = BTreeSet::new();
+        let mut outputs = Vec::with_capacity(results.len());
         for result in results {
             let item = input.item(result.envelope().item_id)?;
             let index: usize = serde_json::from_value(item.payload.clone())
@@ -950,28 +936,48 @@ impl AdoptionHandler for ReleaseAdoptionHandler {
             if !seen.insert(index) {
                 return Err(failure(ErrorCode::ResultMismatch, "build-duplicate"));
             }
-            transaction.execute(
-                "INSERT INTO release_artifacts
-                 (release_id,locale,file_name,bytes,sha256,validator_version,entry_count)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![
-                    release_id.to_string(),
-                    &output.locale,
-                    &output.file_name,
-                    output.utf8.as_bytes(),
-                    &output.sha256,
-                    manifest.validator_version,
-                    output.entry_count,
-                ],
-            )?;
+            outputs.push(output);
         }
         if seen.len() != manifest.locales.len() {
             return Err(failure(ErrorCode::ResultMismatch, "build-coverage"));
         }
-        Ok(vec![ChangeReference {
-            kind: "release".into(),
-            id: release_id.to_string(),
-            revision: Revision::new(1)?,
-        }])
+        let action = action.clone();
+        Ok(Box::new(move |transaction| {
+            let release_id = ExecutionId::new();
+            transaction.execute(
+                "INSERT INTO release_records
+                 (release_id,action_id,project_id,attempt_id,manifest,manifest_digest)
+                 VALUES (?1,?2,?3,?4,?5,?6)",
+                params![
+                    release_id.to_string(),
+                    action.action_id.to_string(),
+                    manifest.project_id.to_string(),
+                    action.attempt_id.to_string(),
+                    &manifest_bytes,
+                    codec::digest(&manifest_bytes)
+                ],
+            )?;
+            for output in outputs {
+                transaction.execute(
+                    "INSERT INTO release_artifacts
+                     (release_id,locale,file_name,bytes,sha256,validator_version,entry_count)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                    params![
+                        release_id.to_string(),
+                        &output.locale,
+                        &output.file_name,
+                        output.utf8.as_bytes(),
+                        &output.sha256,
+                        manifest.validator_version,
+                        output.entry_count
+                    ],
+                )?;
+            }
+            Ok(vec![ChangeReference {
+                kind: "release".into(),
+                id: release_id.to_string(),
+                revision: Revision::new(1)?,
+            }])
+        }))
     }
 }

@@ -2,8 +2,8 @@
 
 use super::ProjectStore;
 use crate::execution::{
-    AdoptionAction, AdoptionHandler, AdoptionTransaction, ChangeReference, ErrorCode,
-    ExecutionError, ExecutionId, FixedInput, FixedResult, MAX_INPUT_BYTES, Revision, codec,
+    AdoptionAction, AdoptionHandler, ChangeReference, ErrorCode, ExecutionError, ExecutionId,
+    FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -671,13 +671,12 @@ impl AdoptionHandler for TranslationAdoptionHandler {
         crate::content::TRANSLATION_OPERATION
     }
 
-    fn apply(
+    fn prepare(
         &self,
-        tx: &AdoptionTransaction<'_>,
         input: &FixedInput,
         action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
+    ) -> Result<PreparedMutation, ExecutionError> {
         if results.len() != 1 {
             return Err(error(ErrorCode::ResultMismatch, "translation-result"));
         }
@@ -694,181 +693,189 @@ impl AdoptionHandler for TranslationAdoptionHandler {
         {
             return Err(error(ErrorCode::DependencyConflict, "stale-preview"));
         }
-        let complete: (i64, i64) = tx.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(execution='succeeded' AND validation='valid'
+        let input = input.clone();
+        let action = action.clone();
+        let result = result.clone();
+        Ok(Box::new(move |tx| {
+            let input = &input;
+            let action = &action;
+            let result = &result;
+            let complete: (i64, i64) = tx.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(execution='succeeded' AND validation='valid'
                 AND current_result_id IS NOT NULL),0)
              FROM execution_items WHERE attempt_id=?1",
-            [action.attempt_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        if complete.0 != input.envelope().items.len() as i64 || complete.0 != complete.1 {
-            return Err(error(
-                ErrorCode::DependencyConflict,
-                "translation-incomplete",
-            ));
-        }
-        let (project, locales): (String, String) = tx.query_row(
-            "SELECT project_id,target_locales_json FROM project_metadata WHERE row_id=1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        let targets: Vec<String> = serde_json::from_str(&locales)
-            .map_err(|_| error(ErrorCode::CorruptLedger, "translation-project"))?;
-        if project != action.project_id.to_string()
-            || !targets.iter().any(|locale| locale == &bundle.target_locale)
-        {
-            return Err(error(ErrorCode::DependencyConflict, "translation-locale"));
-        }
-        let current: Option<String> = tx.query_row(
-            "SELECT current_snapshot FROM content_scope WHERE row_id=1",
-            [],
-            |row| row.get(0),
-        )?;
-        if current.as_deref() != Some(&bundle.source_snapshot_id.to_string())
-            || confirmation.source_snapshot_id != bundle.source_snapshot_id
-        {
-            return Err(error(ErrorCode::DependencyConflict, "translation-source"));
-        }
-        let (unit, revision, native_key, namespace): (String, String, String, String) = tx
-            .query_row(
-                "SELECT unit_id,revision_id,native_key,namespace FROM source_occurrences
-                 WHERE occurrence_id=?1 AND snapshot_id=?2",
-                rusqlite::params![
-                    confirmation.occurrence_id.to_string(),
-                    bundle.source_snapshot_id.to_string()
-                ],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                [action.attempt_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-        if unit != confirmation.target_unit_id.to_string()
-            || revision != confirmation.source_revision_id.to_string()
-            || !native_key.eq_ignore_ascii_case(&entry.native_key)
-        {
-            return Err(error(ErrorCode::DependencyConflict, "translation-match"));
-        }
-        let matches: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM source_occurrences
+            if complete.0 != input.envelope().items.len() as i64 || complete.0 != complete.1 {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "translation-incomplete",
+                ));
+            }
+            let (project, locales): (String, String) = tx.query_row(
+                "SELECT project_id,target_locales_json FROM project_metadata WHERE row_id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let targets: Vec<String> = serde_json::from_str(&locales)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "translation-project"))?;
+            if project != action.project_id.to_string()
+                || !targets.iter().any(|locale| locale == &bundle.target_locale)
+            {
+                return Err(error(ErrorCode::DependencyConflict, "translation-locale"));
+            }
+            let current: Option<String> = tx.query_row(
+                "SELECT current_snapshot FROM content_scope WHERE row_id=1",
+                [],
+                |row| row.get(0),
+            )?;
+            if current.as_deref() != Some(&bundle.source_snapshot_id.to_string())
+                || confirmation.source_snapshot_id != bundle.source_snapshot_id
+            {
+                return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+            }
+            let (unit, revision, native_key, namespace): (String, String, String, String) = tx
+                .query_row(
+                    "SELECT unit_id,revision_id,native_key,namespace FROM source_occurrences
+                 WHERE occurrence_id=?1 AND snapshot_id=?2",
+                    rusqlite::params![
+                        confirmation.occurrence_id.to_string(),
+                        bundle.source_snapshot_id.to_string()
+                    ],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )?;
+            if unit != confirmation.target_unit_id.to_string()
+                || revision != confirmation.source_revision_id.to_string()
+                || !native_key.eq_ignore_ascii_case(&entry.native_key)
+            {
+                return Err(error(ErrorCode::DependencyConflict, "translation-match"));
+            }
+            let matches: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM source_occurrences
              WHERE snapshot_id=?1 AND namespace=?2 AND comparison_key=?3",
-            rusqlite::params![
-                bundle.source_snapshot_id.to_string(),
-                namespace,
-                entry.native_key.to_ascii_lowercase()
-            ],
-            |row| row.get(0),
-        )?;
-        if matches != 1 {
-            return Err(error(
-                ErrorCode::DependencyConflict,
-                "translation-ambiguous",
-            ));
-        }
-        let selected: (Option<String>, Option<i64>) = tx.query_row(
-            "SELECT
+                rusqlite::params![
+                    bundle.source_snapshot_id.to_string(),
+                    namespace,
+                    entry.native_key.to_ascii_lowercase()
+                ],
+                |row| row.get(0),
+            )?;
+            if matches != 1 {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "translation-ambiguous",
+                ));
+            }
+            let selected: (Option<String>, Option<i64>) = tx.query_row(
+                "SELECT
                (SELECT event_id FROM translation_selections WHERE unit_id=?1 AND locale=?2
                 ORDER BY sequence DESC LIMIT 1),
                (SELECT sequence FROM translation_selections WHERE unit_id=?1 AND locale=?2
                 ORDER BY sequence DESC LIMIT 1)",
-            rusqlite::params![unit, bundle.target_locale],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        if selected.0.as_deref()
-            != confirmation
-                .expected_selection_id
-                .map(|id| id.to_string())
-                .as_deref()
-            || matches!(
-                confirmation.decision,
-                TranslationSelectionDecision::SelectIfEmpty
-            ) && selected.0.is_some()
-            || matches!(confirmation.decision, TranslationSelectionDecision::Replace)
-                && selected.0.is_none()
-        {
-            return Err(error(
-                ErrorCode::DependencyConflict,
-                "translation-selection",
-            ));
-        }
-        let ordinal: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(ordinal),0)+1 FROM translation_revisions
+                rusqlite::params![unit, bundle.target_locale],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if selected.0.as_deref()
+                != confirmation
+                    .expected_selection_id
+                    .map(|id| id.to_string())
+                    .as_deref()
+                || matches!(
+                    confirmation.decision,
+                    TranslationSelectionDecision::SelectIfEmpty
+                ) && selected.0.is_some()
+                || matches!(confirmation.decision, TranslationSelectionDecision::Replace)
+                    && selected.0.is_none()
+            {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "translation-selection",
+                ));
+            }
+            let ordinal: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(ordinal),0)+1 FROM translation_revisions
              WHERE unit_id=?1 AND locale=?2",
-            rusqlite::params![unit, bundle.target_locale],
-            |row| row.get(0),
-        )?;
-        let ordinal = u64::try_from(ordinal)
-            .map_err(|_| error(ErrorCode::CorruptLedger, "translation-ordinal"))?;
-        let revision_id = ExecutionId::new();
-        let digest = action.request_digest(input)?;
-        tx.execute(
-            "INSERT INTO translation_revisions
+                rusqlite::params![unit, bundle.target_locale],
+                |row| row.get(0),
+            )?;
+            let ordinal = u64::try_from(ordinal)
+                .map_err(|_| error(ErrorCode::CorruptLedger, "translation-ordinal"))?;
+            let revision_id = ExecutionId::new();
+            let digest = action.request_digest(input)?;
+            tx.execute(
+                "INSERT INTO translation_revisions
              (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,
               source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,
               item_id,artifact_id,logical_path,declared_locale,native_key,file_digest)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'import',?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
-            rusqlite::params![
-                revision_id.to_string(),
-                project,
-                unit,
-                bundle.target_locale,
-                ordinal as i64,
-                entry.text,
-                bundle.source_snapshot_id.to_string(),
-                revision,
-                action.action_id.to_string(),
-                digest,
-                action.attempt_id.to_string(),
-                result.envelope().result_id.to_string(),
-                result.envelope().item_id.to_string(),
-                entry.artifact_id.to_string(),
-                bundle.file.logical_path,
-                bundle.declared_locale,
-                entry.native_key,
-                bundle.file.sha256,
-            ],
-        )?;
-        let resource_baseline: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(rowid),0) FROM resource_changes",
-            [],
-            |row| row.get(0),
-        )?;
-        tx.execute(
-            "INSERT INTO translation_resource_baselines VALUES (?1,?2)",
-            rusqlite::params![revision_id.to_string(), resource_baseline],
-        )?;
-        let mut changes = vec![ChangeReference {
-            kind: "translation-revision".into(),
-            id: revision_id.to_string(),
-            revision: Revision::new(ordinal)?,
-        }];
-        if confirmation.decision != TranslationSelectionDecision::CandidateOnly {
-            let sequence = selected
-                .1
-                .unwrap_or(0)
-                .checked_add(1)
-                .ok_or_else(|| error(ErrorCode::LimitExceeded, "translation-selection"))?;
-            let event = ExecutionId::new();
-            tx.execute(
-                "INSERT INTO translation_selections
-                 (event_id,project_id,unit_id,locale,sequence,revision_id,action_id,
-                  request_digest,previous_event_id)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                 rusqlite::params![
-                    event.to_string(),
+                    revision_id.to_string(),
                     project,
                     unit,
                     bundle.target_locale,
-                    sequence,
-                    revision_id.to_string(),
+                    ordinal as i64,
+                    entry.text,
+                    bundle.source_snapshot_id.to_string(),
+                    revision,
                     action.action_id.to_string(),
                     digest,
-                    selected.0,
+                    action.attempt_id.to_string(),
+                    result.envelope().result_id.to_string(),
+                    result.envelope().item_id.to_string(),
+                    entry.artifact_id.to_string(),
+                    bundle.file.logical_path,
+                    bundle.declared_locale,
+                    entry.native_key,
+                    bundle.file.sha256,
                 ],
             )?;
-            changes.push(ChangeReference {
-                kind: "translation-selection".into(),
-                id: event.to_string(),
-                revision: Revision::new(sequence as u64)?,
-            });
-        }
-        Ok(changes)
+            let resource_baseline: i64 = tx.query_row(
+                "SELECT COALESCE(MAX(rowid),0) FROM resource_changes",
+                [],
+                |row| row.get(0),
+            )?;
+            tx.execute(
+                "INSERT INTO translation_resource_baselines VALUES (?1,?2)",
+                rusqlite::params![revision_id.to_string(), resource_baseline],
+            )?;
+            let mut changes = vec![ChangeReference {
+                kind: "translation-revision".into(),
+                id: revision_id.to_string(),
+                revision: Revision::new(ordinal)?,
+            }];
+            if confirmation.decision != TranslationSelectionDecision::CandidateOnly {
+                let sequence = selected
+                    .1
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or_else(|| error(ErrorCode::LimitExceeded, "translation-selection"))?;
+                let event = ExecutionId::new();
+                tx.execute(
+                    "INSERT INTO translation_selections
+                 (event_id,project_id,unit_id,locale,sequence,revision_id,action_id,
+                  request_digest,previous_event_id)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    rusqlite::params![
+                        event.to_string(),
+                        project,
+                        unit,
+                        bundle.target_locale,
+                        sequence,
+                        revision_id.to_string(),
+                        action.action_id.to_string(),
+                        digest,
+                        selected.0,
+                    ],
+                )?;
+                changes.push(ChangeReference {
+                    kind: "translation-selection".into(),
+                    id: event.to_string(),
+                    revision: Revision::new(sequence as u64)?,
+                });
+            }
+            Ok(changes)
+        }))
     }
 }
 

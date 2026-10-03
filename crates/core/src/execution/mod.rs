@@ -3,6 +3,7 @@
 //! Generating a result never grants permission to apply it. Persistence and the
 //! active project session must check these associations again at every mutation.
 
+mod adoption;
 pub(crate) mod codec;
 mod runner;
 mod runtime;
@@ -15,6 +16,7 @@ use std::{collections::BTreeSet, fmt, sync::Arc};
 use uuid::Uuid;
 
 use crate::{Locale, ProjectId};
+pub use adoption::{AdoptionCapture, PreparedAdoption};
 pub use runner::*;
 pub use runtime::{ExecutionRuntime, OutcomeQuery};
 

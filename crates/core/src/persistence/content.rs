@@ -1363,13 +1363,12 @@ impl AdoptionHandler for SourceAdoptionHandler {
     fn operation(&self) -> &str {
         OPERATION
     }
-    fn apply(
+    fn prepare(
         &self,
-        tx: &AdoptionTransaction<'_>,
         input: &FixedInput,
         action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
+    ) -> Result<PreparedMutation, ExecutionError> {
         if results.len() != 1 {
             return Err(invalid("invalid-structure"));
         }
@@ -1382,125 +1381,135 @@ impl AdoptionHandler for SourceAdoptionHandler {
         {
             return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
         }
-        let (revision, current): (i64, Option<String>) = tx.query_row(
-            "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        if revision as u64 != confirmation.expected_content_revision.get() {
-            return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
-        }
-        let (project, language): (String, String) = tx.query_row(
-            "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        if project != action.project_id.to_string() || language != output.source_language {
-            return Err(failure(ErrorCode::DependencyConflict, "language-conflict"));
-        }
         let bundle = SourceBundle::from_input(input)?;
-        let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=1048576 THEN payload END,digest FROM source_sets WHERE set_id=?1",[bundle.set_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-        if stored_project != project
-            || codec::digest(&stored) != digest
-            || codec::decode::<SourceBundle>(&stored, MAX_INPUT_BYTES)? != bundle
-        {
-            return Err(corrupt());
-        }
-        let file_count: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM source_files WHERE set_id=?1",
-            [bundle.set_id.to_string()],
-            |r| r.get(0),
-        )?;
-        if file_count as usize != bundle.files.len() {
-            return Err(corrupt());
-        }
-        for f in &bundle.files {
-            let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=131072 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
-            if path != f.logical_path
-                || role != f.role
-                || bytes != f.utf8.as_bytes()
-                || digest != f.sha256
+        let input = input.clone();
+        let action = action.clone();
+        let result = result.clone();
+        Ok(Box::new(move |tx| {
+            let input = &input;
+            let action = &action;
+            let result = &result;
+            let (revision, current): (i64, Option<String>) = tx.query_row(
+                "SELECT revision,current_snapshot FROM content_scope WHERE row_id=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if revision as u64 != confirmation.expected_content_revision.get() {
+                return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
+            }
+            let (project, language): (String, String) = tx.query_row(
+                "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            if project != action.project_id.to_string() || language != output.source_language {
+                return Err(failure(ErrorCode::DependencyConflict, "language-conflict"));
+            }
+            let (stored_project,stored,digest):(String,Vec<u8>,String)=tx.query_row("SELECT project_id,CASE WHEN length(payload)<=1048576 THEN payload END,digest FROM source_sets WHERE set_id=?1",[bundle.set_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+            if stored_project != project
+                || codec::digest(&stored) != digest
+                || codec::decode::<SourceBundle>(&stored, MAX_INPUT_BYTES)? != bundle
             {
                 return Err(corrupt());
             }
-        }
-        if let Some(previous) = current {
-            return apply_update(
-                tx,
-                input,
-                result,
-                &output,
-                &confirmation,
-                id(previous)?,
-                revision,
-                &project,
-                &bundle,
-                action.action_id,
-            );
-        }
-        if confirmation.expected_current_snapshot.is_some() || !confirmation.lineage.is_empty() {
-            return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
-        }
-        let snapshots: i64 =
-            tx.query_row("SELECT COUNT(*) FROM source_snapshots", [], |r| r.get(0))?;
-        if snapshots != 0 || revision != 1 {
-            return Err(corrupt());
-        }
-        let snapshot = ExecutionId::new();
-        tx.execute(
-            "INSERT INTO source_snapshots VALUES (?1,?2,?3,?4,?5,?6,?7)",
-            params![
-                snapshot.to_string(),
-                project,
-                bundle.set_id.to_string(),
-                input.envelope().attempt_id.to_string(),
-                result.envelope().result_id.to_string(),
-                output.source_language,
-                output.identity_policy
-            ],
-        )?;
-        for row in &output.occurrences {
-            let unit = ExecutionId::new();
-            let revision = ExecutionId::new();
-            let occurrence = ExecutionId::new();
-            tx.execute(
-                "INSERT INTO source_units VALUES (?1,?2)",
-                params![unit.to_string(), project],
+            let file_count: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM source_files WHERE set_id=?1",
+                [bundle.set_id.to_string()],
+                |r| r.get(0),
             )?;
+            if file_count as usize != bundle.files.len() {
+                return Err(corrupt());
+            }
+            for f in &bundle.files {
+                let (path,role,bytes,digest):(String,String,Vec<u8>,String)=tx.query_row("SELECT logical_path,role,CASE WHEN length(bytes)<=131072 THEN bytes END,digest FROM source_files WHERE set_id=?1 AND artifact_id=?2",params![bundle.set_id.to_string(),f.artifact_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+                if path != f.logical_path
+                    || role != f.role
+                    || bytes != f.utf8.as_bytes()
+                    || digest != f.sha256
+                {
+                    return Err(corrupt());
+                }
+            }
+            if let Some(previous) = current {
+                return apply_update(
+                    tx,
+                    input,
+                    result,
+                    &output,
+                    &confirmation,
+                    id(previous)?,
+                    revision,
+                    &project,
+                    &bundle,
+                    action.action_id,
+                );
+            }
+            if confirmation.expected_current_snapshot.is_some() || !confirmation.lineage.is_empty()
+            {
+                return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
+            }
+            let snapshots: i64 =
+                tx.query_row("SELECT COUNT(*) FROM source_snapshots", [], |r| r.get(0))?;
+            if snapshots != 0 || revision != 1 {
+                return Err(corrupt());
+            }
+            let snapshot = ExecutionId::new();
             tx.execute(
-                "INSERT INTO source_revisions VALUES (?1,?2,1,?3)",
-                params![revision.to_string(), unit.to_string(), row.text],
-            )?;
-            tx.execute("INSERT INTO source_occurrences VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",params![occurrence.to_string(),snapshot.to_string(),row.ordinal,row.artifact_id.to_string(),unit.to_string(),revision.to_string(),row.namespace,row.key,row.key.to_ascii_lowercase(),row.key_byte_range[0],row.key_byte_range[1],row.value_byte_range[0],row.value_byte_range[1]])?;
-            tx.execute(
-                "INSERT INTO source_identity VALUES (?1,?2,?3)",
+                "INSERT INTO source_snapshots VALUES (?1,?2,?3,?4,?5,?6,?7)",
                 params![
-                    occurrence.to_string(),
-                    output.identity_policy,
-                    row.identity_basis
+                    snapshot.to_string(),
+                    project,
+                    bundle.set_id.to_string(),
+                    input.envelope().attempt_id.to_string(),
+                    result.envelope().result_id.to_string(),
+                    output.source_language,
+                    output.identity_policy
                 ],
             )?;
-            tx.execute(
-                "INSERT INTO source_lineage(occurrence_id,relation) VALUES (?1,'initial')",
-                [occurrence.to_string()],
-            )?;
-            #[cfg(test)]
-            if std::env::var("TSUMUGI_SOURCE_CRASH").as_deref() == Ok("during-source-adoption") {
-                if let Ok(path) = std::env::var("TSUMUGI_EXECUTION_HOOK") {
-                    std::fs::write(path, "during-source-adoption").unwrap();
+            for row in &output.occurrences {
+                let unit = ExecutionId::new();
+                let revision = ExecutionId::new();
+                let occurrence = ExecutionId::new();
+                tx.execute(
+                    "INSERT INTO source_units VALUES (?1,?2)",
+                    params![unit.to_string(), project],
+                )?;
+                tx.execute(
+                    "INSERT INTO source_revisions VALUES (?1,?2,1,?3)",
+                    params![revision.to_string(), unit.to_string(), row.text],
+                )?;
+                tx.execute("INSERT INTO source_occurrences VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",params![occurrence.to_string(),snapshot.to_string(),row.ordinal,row.artifact_id.to_string(),unit.to_string(),revision.to_string(),row.namespace,row.key,row.key.to_ascii_lowercase(),row.key_byte_range[0],row.key_byte_range[1],row.value_byte_range[0],row.value_byte_range[1]])?;
+                tx.execute(
+                    "INSERT INTO source_identity VALUES (?1,?2,?3)",
+                    params![
+                        occurrence.to_string(),
+                        output.identity_policy,
+                        row.identity_basis
+                    ],
+                )?;
+                tx.execute(
+                    "INSERT INTO source_lineage(occurrence_id,relation) VALUES (?1,'initial')",
+                    [occurrence.to_string()],
+                )?;
+                #[cfg(test)]
+                if std::env::var("TSUMUGI_SOURCE_CRASH").as_deref() == Ok("during-source-adoption")
+                {
+                    if let Ok(path) = std::env::var("TSUMUGI_EXECUTION_HOOK") {
+                        std::fs::write(path, "during-source-adoption").unwrap();
+                    }
+                    std::process::abort();
                 }
-                std::process::abort();
             }
-        }
-        let next = confirmation.expected_content_revision.next()?;
-        tx.execute(
-            "UPDATE content_scope SET current_snapshot=?1,revision=?2 WHERE row_id=1",
-            params![snapshot.to_string(), next.get() as i64],
-        )?;
-        Ok(vec![ChangeReference {
-            kind: "source-snapshot".into(),
-            id: snapshot.to_string(),
-            revision: next,
-        }])
+            let next = confirmation.expected_content_revision.next()?;
+            tx.execute(
+                "UPDATE content_scope SET current_snapshot=?1,revision=?2 WHERE row_id=1",
+                params![snapshot.to_string(), next.get() as i64],
+            )?;
+            Ok(vec![ChangeReference {
+                kind: "source-snapshot".into(),
+                id: snapshot.to_string(),
+                revision: next,
+            }])
+        }))
     }
 }

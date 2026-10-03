@@ -122,15 +122,23 @@ fn storage_error(error: rusqlite::Error) -> ExecutionError {
     ExecutionError::new(code, "adoption-handler")
 }
 
+/// A prepared mutation belongs to a trusted Core adapter, never to a plugin.
+/// It may recheck bounded database facts and write atomically, but must not
+/// parse domain formats, call producers, perform external IO, or control transactions.
+pub type PreparedMutation = Box<
+    dyn FnOnce(&AdoptionTransaction<'_>) -> Result<Vec<ChangeReference>, ExecutionError> + Send,
+>;
+
+/// Core-owned bridge from immutable execution evidence to a checked mutation.
+/// Producers use Runner/result contracts and never receive this SQL authority.
 pub trait AdoptionHandler: Send + Sync {
     fn operation(&self) -> &str;
-    /// Operation-specific scope and dependency checks happen inside this same
-    /// transaction immediately before the writes. Errors roll back the unit.
-    fn apply(
+    /// Decode and validate domain evidence outside all database transactions.
+    /// Capture validated values in the returned mutation; do not defer parsing.
+    fn prepare(
         &self,
-        transaction: &AdoptionTransaction<'_>,
         input: &FixedInput,
         action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError>;
+    ) -> Result<PreparedMutation, ExecutionError>;
 }

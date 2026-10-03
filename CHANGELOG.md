@@ -31,6 +31,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
+- Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically.
 - Project storage now uses schema 11. Valid schema 3 through 10 projects receive a SQLite backup before automatic upgrade. Schema 1 and 2 projects from early development are unsupported; preserve their directories and create a new project to reimport their source files. Unsupported or corrupt databases are rejected without reset. Downgrading an upgraded project is not supported.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.

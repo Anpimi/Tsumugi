@@ -142,43 +142,34 @@ impl AdoptionHandler for ArenaAdoptionHandler {
     fn operation(&self) -> &str {
         crate::ai::arena::OPERATION
     }
-    fn apply(
+    fn prepare(
         &self,
-        tx: &AdoptionTransaction<'_>,
         input: &FixedInput,
         action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
-        apply_ai(tx, input, action, results, true)
+    ) -> Result<PreparedMutation, ExecutionError> {
+        prepare_ai(input, action, results, true)
     }
 }
 impl AdoptionHandler for AiAdoptionHandler {
     fn operation(&self) -> &str {
         OPERATION
     }
-    fn apply(
+    fn prepare(
         &self,
-        tx: &AdoptionTransaction<'_>,
         input: &FixedInput,
         action: &AdoptionAction,
         results: &[FixedResult],
-    ) -> Result<Vec<ChangeReference>, ExecutionError> {
-        apply_ai(tx, input, action, results, false)
+    ) -> Result<PreparedMutation, ExecutionError> {
+        prepare_ai(input, action, results, false)
     }
 }
-fn apply_ai(
-    tx: &AdoptionTransaction<'_>,
+fn prepare_ai(
     input: &FixedInput,
     action: &AdoptionAction,
     results: &[FixedResult],
     arena: bool,
-) -> Result<Vec<ChangeReference>, ExecutionError> {
-    if arena {
-        let cancelled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN execution_cancellations c USING(task_id) WHERE a.attempt_id=?1 AND c.revision>a.cancellation_revision)", [action.attempt_id.to_string()], |r| r.get(0))?;
-        if cancelled {
-            return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
-        }
-    }
+) -> Result<PreparedMutation, ExecutionError> {
     if results.len() != 1 {
         return Err(error(ErrorCode::ResultMismatch, "ai-result"));
     }
@@ -194,30 +185,44 @@ fn apply_ai(
             item_payload(input, result.envelope().item_id)?,
         )
     };
-    let (project, locales): (String, String) = tx.query_row(
-        "SELECT project_id,target_locales_json FROM project_metadata WHERE row_id=1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    let targets: Vec<String> =
-        serde_json::from_str(&locales).map_err(|_| error(ErrorCode::CorruptLedger, "ai-locale"))?;
-    if project != action.project_id.to_string() || !targets.contains(&item.target_locale) {
-        return Err(error(ErrorCode::DependencyConflict, "ai-locale"));
-    }
-    let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 AND o.revision_id=?2)",params![item.unit_id.to_string(),item.source_revision_id.to_string()],|r|r.get(0))?;
-    if !valid {
-        return Err(error(ErrorCode::DependencyConflict, "ai-source"));
-    }
-    let ordinal:i64=tx.query_row("SELECT COALESCE(MAX(ordinal),0)+1 FROM translation_revisions WHERE unit_id=?1 AND locale=?2",params![item.unit_id.to_string(),item.target_locale],|r|r.get(0))?;
-    let id = ExecutionId::new();
-    tx.execute("INSERT INTO translation_revisions (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,item_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'ai',?9,?10,?11,?12,?13)",params![id.to_string(),project,item.unit_id.to_string(),item.target_locale,ordinal,out.text,item.source_snapshot_id.to_string(),item.source_revision_id.to_string(),action.action_id.to_string(),action.request_digest(input)?,action.attempt_id.to_string(),result.envelope().result_id.to_string(),result.envelope().item_id.to_string()])?;
-    tx.execute(
-        "INSERT INTO translation_resource_baselines VALUES (?1,?2)",
-        params![id.to_string(), item.resource_baseline as i64],
-    )?;
-    Ok(vec![ChangeReference {
-        kind: "translation-revision".into(),
-        id: id.to_string(),
-        revision: Revision::new(ordinal as u64)?,
-    }])
+    let input = input.clone();
+    let action = action.clone();
+    let result = result.clone();
+    Ok(Box::new(move |tx| {
+        let input = &input;
+        let action = &action;
+        let result = &result;
+        if arena {
+            let cancelled: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN execution_cancellations c USING(task_id) WHERE a.attempt_id=?1 AND c.revision>a.cancellation_revision)", [action.attempt_id.to_string()], |r| r.get(0))?;
+            if cancelled {
+                return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
+            }
+        }
+        let (project, locales): (String, String) = tx.query_row(
+            "SELECT project_id,target_locales_json FROM project_metadata WHERE row_id=1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let targets: Vec<String> = serde_json::from_str(&locales)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "ai-locale"))?;
+        if project != action.project_id.to_string() || !targets.contains(&item.target_locale) {
+            return Err(error(ErrorCode::DependencyConflict, "ai-locale"));
+        }
+        let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id WHERE o.unit_id=?1 AND o.revision_id=?2)",params![item.unit_id.to_string(),item.source_revision_id.to_string()],|r|r.get(0))?;
+        if !valid {
+            return Err(error(ErrorCode::DependencyConflict, "ai-source"));
+        }
+        let ordinal:i64=tx.query_row("SELECT COALESCE(MAX(ordinal),0)+1 FROM translation_revisions WHERE unit_id=?1 AND locale=?2",params![item.unit_id.to_string(),item.target_locale],|r|r.get(0))?;
+        let id = ExecutionId::new();
+        tx.execute("INSERT INTO translation_revisions (revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,item_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'ai',?9,?10,?11,?12,?13)",params![id.to_string(),project,item.unit_id.to_string(),item.target_locale,ordinal,out.text,item.source_snapshot_id.to_string(),item.source_revision_id.to_string(),action.action_id.to_string(),action.request_digest(input)?,action.attempt_id.to_string(),result.envelope().result_id.to_string(),result.envelope().item_id.to_string()])?;
+        tx.execute(
+            "INSERT INTO translation_resource_baselines VALUES (?1,?2)",
+            params![id.to_string(), item.resource_baseline as i64],
+        )?;
+        Ok(vec![ChangeReference {
+            kind: "translation-revision".into(),
+            id: id.to_string(),
+            revision: Revision::new(ordinal as u64)?,
+        }])
+    }))
 }
