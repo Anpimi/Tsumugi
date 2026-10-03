@@ -33,6 +33,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Desktop project operations, search, review and export run on a bounded project thread instead of blocking window events. Cancellation remains available while review checks run, and queued requests recheck the active session before accessing project data.
 - Project lifecycle cancellation, retry intent, folder moves, stale recent paths, action feedback, and shutdown while tasks are active.
 - Translation draft preservation and save ordering during navigation, return to an editor, and late responses; responsive review checks and saves.
 - Editor keyboard shortcuts and workspace selection interfering with text editing or unexpectedly reopening the first item.

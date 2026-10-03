@@ -49,3 +49,15 @@ pnpm --filter @tsumugi/desktop test
 ```
 
 IPC, component tests, and successful builds do not establish native visual or keyboard acceptance. Record manual observations separately, including the source revision and whether the test feature was enabled.
+
+## Project command scheduling
+
+The desktop owns its session and SQLite connection on one project thread. All project commands, including reads, lifecycle changes, review and export, enter a FIFO queue without waiting on the window or async runtime thread. Session tokens and project identities are checked when the operation executes. Closing does not overtake an accepted write, and losing a reply does not cancel that write: use the existing action/receipt reconciliation flow.
+
+Admission permits at most 32 normal operations and reserves four additional slots for close, execution cancellation and quiescence. Saturation returns the existing `busy` error before work is accepted. A split file-capture operation reserves its slot through its final session check, so queue saturation cannot strand its completion. File/capture work uses at most four blocking slots; native pickers have one separate slot. Their permits stay with the work even if a caller stops waiting.
+
+Review cancellation is an independent, session-and-project-bound signal and does not wait behind a check. A synchronous database operation already running on the project thread is not forcibly interrupted; accepted close/cancel operations retain FIFO ordering. The execution ticker uses that same owner, so a long project operation can delay task projection even though the window remains responsive. Database read optimization and shorter QA transactions are separate concerns.
+
+Operations taking at least 100 ms including queue time emit a diagnostic line with operation name, dispatch sequence, session epoch, queue milliseconds and work milliseconds. Epochs are local to the running process. These logs contain no request text, paths, project IDs or session tokens; work time includes SQLite and application processing and is not a per-query SQL trace.
+
+For native scheduling checks, this test feature also consumes `review-page.json` and `review-check.json` through the same one-shot controls described in [source import](source-import.md#native-fault-checks). A `{"wait":true}` barrier pauses the actual project operation until its matching `.release` file appears (60-second deadline). Check window input while `review-page.reached` exists; check the independent cancel action while `review-check.reached` exists. Release the barrier before the deadline and verify the real operation's result. Synthetic delays isolate scheduling and do not establish real search performance. Keep these controls beside a dedicated test executable and use only disposable project data.

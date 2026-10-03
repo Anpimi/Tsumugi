@@ -141,63 +141,83 @@ async fn select_source_kind<R: tauri::Runtime>(
     request: SessionRequest,
     webvtt: bool,
 ) -> Result<Option<SourceSelection>, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let picker = ExecutionId::new();
-    {
-        let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-        let active = authorized(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
+    let initial = request.clone();
+    lease
+        .run(
+            "select_source.begin",
             CommandStage::ExecutionRead,
-        )?;
-        let (host, _) = active.execution_parts()?;
-        host.allow_mutation()?;
-        host.source.stop();
-        host.source.picker = Some(picker);
-    }
-    let selected =
-        tauri::async_runtime::spawn_blocking(move || app.dialog().file().blocking_pick_folder())
-            .await
-            .map_err(|_| {
-                map_source(ExecutionError::new(
-                    ErrorCode::StorageFailed,
-                    "selection-failed",
-                ))
-            })?;
-    let selection = selected
-        .map(|path| {
-            let path = path.into_path().map_err(|_| stale())?;
-            (if webvtt {
-                capture::Selection::authorize_webvtt(path)
-            } else {
-                capture::Selection::authorize(path)
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.source.stop();
+                host.source.picker = Some(picker);
+                Ok(())
+            },
+        )
+        .await?;
+    let selection = async {
+        let selected = state
+            .dialogs
+            .run(CommandStage::ExecutionRead, move || {
+                Ok(app.dialog().file().blocking_pick_folder())
             })
-            .map(Arc::new)
-            .map_err(map_source)
-        })
-        .transpose()?;
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    let (host, _) = active.execution_parts()?;
-    host.allow_mutation()?;
-    if host.source.picker != Some(picker) {
-        return Err(stale());
+            .await?;
+        state
+            .io
+            .run(CommandStage::ExecutionRead, move || {
+                selected
+                    .map(|path| {
+                        let path = path.into_path().map_err(|_| stale())?;
+                        (if webvtt {
+                            capture::Selection::authorize_webvtt(path)
+                        } else {
+                            capture::Selection::authorize(path)
+                        })
+                        .map(Arc::new)
+                        .map_err(map_source)
+                    })
+                    .transpose()
+            })
+            .await
     }
-    host.source.picker = None;
-    Ok(selection.map(|selection| {
-        let id = ExecutionId::new();
-        let folder_name = selection.label();
-        host.source.selection = Some((id, selection));
-        SourceSelection {
-            selection_id: id,
-            folder_name,
-        }
-    }))
+    .await;
+    lease
+        .run(
+            "select_source.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                if host.source.picker != Some(picker) {
+                    return Err(stale());
+                }
+                host.source.picker = None;
+                Ok(selection?.map(|selection| {
+                    let id = ExecutionId::new();
+                    let folder_name = selection.label();
+                    host.source.selection = Some((id, selection));
+                    SourceSelection {
+                        selection_id: id,
+                        folder_name,
+                    }
+                }))
+            },
+        )
+        .await
 }
 
 struct CaptureJob {
@@ -267,392 +287,514 @@ pub async fn preflight_source(
     state: State<'_, AppState>,
     request: CaptureRequest,
 ) -> Result<Preflight, CommandError> {
-    let job = {
-        let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-        begin(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
-            request.selection_id,
-            &request.source_language,
-        )?
-    };
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let job = lease
+        .run(
+            "preflight_source.begin",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                begin(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    initial.selection_id,
+                    &initial.source_language,
+                )
+            },
+        )
+        .await?;
     let id = job.id;
     let language = request.source_language;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let bundle = job.selection.capture(&language, &job.cancel)?;
-        content::extract(&bundle, &job.cancel)
-    })
-    .await
-    .map_err(|_| {
-        map_source(ExecutionError::new(
-            ErrorCode::StorageFailed,
-            "capture-failed",
-        ))
-    });
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    finish(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        id,
-    )?;
-    let output = result?.map_err(map_source)?;
-    Ok(Preflight {
-        namespace: output.namespace,
-        count: output.occurrences.len() as u32,
-        source_language: output.source_language,
-        diagnostics: output.diagnostics,
-        files: output.coverage,
-    })
+    let result = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            let bundle = job
+                .selection
+                .capture(&language, &job.cancel)
+                .map_err(map_source)?;
+            content::extract(&bundle, &job.cancel).map_err(map_source)
+        })
+        .await;
+    lease
+        .run(
+            "preflight_source.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                finish(sessions, &request.session_token, request.project_id, id)?;
+                let output = result?;
+                Ok(Preflight {
+                    namespace: output.namespace,
+                    count: output.occurrences.len() as u32,
+                    source_language: output.source_language,
+                    diagnostics: output.diagnostics,
+                    files: output.coverage,
+                })
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn start_source_import(
     state: State<'_, AppState>,
     request: StartRequest,
 ) -> Result<ExecutionId, CommandError> {
-    let job = {
-        let mut sessions = lock_sessions(&state, CommandStage::ExecutionRecover)?;
-        let active = authorized(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
+    let lease = state.sessions.lease(CommandStage::ExecutionRecover)?;
+    let initial = request.clone();
+    let job = lease
+        .run(
+            "start_source_import.begin",
             CommandStage::ExecutionRecover,
-        )?;
-        let (host, store) = active.execution_parts()?;
-        host.allow_mutation()?;
-        let identity = (
-            request.attempt_id,
-            request.selection_id,
-            request.source_language.clone(),
-        );
-        match store.execution_input(request.attempt_id) {
-            Ok(input) => {
-                if host.source.last_start.as_ref() != Some(&identity)
-                    || input.envelope().operation != content::OPERATION
-                {
-                    return Err(stale());
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRecover,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let identity = (
+                    initial.attempt_id,
+                    initial.selection_id,
+                    initial.source_language.clone(),
+                );
+                match store.execution_input(initial.attempt_id) {
+                    Ok(input) => {
+                        if host.source.last_start.as_ref() != Some(&identity)
+                            || input.envelope().operation != content::OPERATION
+                        {
+                            return Err(stale());
+                        }
+                        return Ok(None);
+                    }
+                    Err(error) if error.code == ErrorCode::InvalidInput => {}
+                    Err(error) => return Err(map_source(error)),
                 }
-                return Ok(request.attempt_id);
-            }
-            Err(error) if error.code == ErrorCode::InvalidInput => {}
-            Err(error) => return Err(map_source(error)),
-        }
-        let job = begin(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
-            request.selection_id,
-            &request.source_language,
-        )?;
-        let active = authorized(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
-            CommandStage::ExecutionRecover,
-        )?;
-        active.execution_parts()?.0.source.last_start = Some(identity);
-        job
+                let job = begin(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    initial.selection_id,
+                    &initial.source_language,
+                )?;
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRecover,
+                )?;
+                active.execution_parts()?.0.source.last_start = Some(identity);
+                Ok(Some(job))
+            },
+        )
+        .await?;
+    let Some(job) = job else {
+        return Ok(request.attempt_id);
     };
     let id = job.id;
     let language = request.source_language;
-    let result =
-        tauri::async_runtime::spawn_blocking(move || job.selection.capture(&language, &job.cancel))
-            .await
-            .map_err(|_| {
-                map_source(ExecutionError::new(
-                    ErrorCode::StorageFailed,
-                    "capture-failed",
-                ))
-            });
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRecover)?;
-    let active = finish(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        id,
-    )?;
-    let bundle: SourceBundle = result?.map_err(map_source)?;
-    let metadata = active
-        .store
-        .metadata()
-        .map_err(|e| map_persistence_error(e, CommandStage::ExecutionRecover))?;
-    let input = bundle
-        .fixed_input(metadata.project_id())
-        .map_err(map_source)?;
-    let mut envelope = input.envelope().clone();
-    envelope.attempt_id = request.attempt_id;
-    let input = FixedInput::capture(envelope).map_err(map_source)?;
-    let (host, store) = active.execution_parts()?;
-    host.runtime.submit(store, &input).map_err(map_source)?;
-    Ok(request.attempt_id)
+    let result = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            job.selection
+                .capture(&language, &job.cancel)
+                .map_err(map_source)
+        })
+        .await;
+    lease
+        .run(
+            "start_source_import.finish",
+            CommandStage::ExecutionRecover,
+            move |sessions| {
+                let active = finish(sessions, &request.session_token, request.project_id, id)?;
+                let bundle: SourceBundle = result?;
+                let metadata = active
+                    .store
+                    .metadata()
+                    .map_err(|e| map_persistence_error(e, CommandStage::ExecutionRecover))?;
+                let input = bundle
+                    .fixed_input(metadata.project_id())
+                    .map_err(map_source)?;
+                let mut envelope = input.envelope().clone();
+                envelope.attempt_id = request.attempt_id;
+                let input = FixedInput::capture(envelope).map_err(map_source)?;
+                let (host, store) = active.execution_parts()?;
+                host.runtime.submit(store, &input).map_err(map_source)?;
+                Ok(request.attempt_id)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn cancel_source_capture(
+pub async fn cancel_source_capture(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<(), CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionCancel)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionCancel,
-    )?;
-    active.execution_parts()?.0.source.stop();
-    Ok(())
+    state
+        .sessions
+        .run(
+            "cancel_source_capture",
+            CommandStage::ExecutionCancel,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionCancel,
+                )?;
+                active.execution_parts()?.0.source.stop();
+                Ok(())
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_integration(
+pub async fn read_source_integration(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<content::IntegrationDescriptor, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    if let Some(snapshot) = active
-        .store
-        .content_scope()
-        .map_err(map_source)?
-        .current_snapshot
-    {
-        if active
-            .store
-            .source_bundle(snapshot)
-            .map_err(map_source)?
-            .plugin_id
-            == content::webvtt::PLUGIN
-        {
-            return Ok(content::webvtt_descriptor(cfg!(windows)));
-        }
-    }
-    Ok(content::integration_descriptor(cfg!(windows)))
+    state
+        .sessions
+        .run(
+            "read_source_integration",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                if let Some(snapshot) = active
+                    .store
+                    .content_scope()
+                    .map_err(map_source)?
+                    .current_snapshot
+                {
+                    if active
+                        .store
+                        .source_bundle(snapshot)
+                        .map_err(map_source)?
+                        .plugin_id
+                        == content::webvtt::PLUGIN
+                    {
+                        return Ok(content::webvtt_descriptor(cfg!(windows)));
+                    }
+                }
+                Ok(content::integration_descriptor(cfg!(windows)))
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_webvtt_integration(
+pub async fn read_webvtt_integration(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<content::IntegrationDescriptor, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    Ok(content::webvtt_descriptor(cfg!(windows)))
+    state
+        .sessions
+        .run(
+            "read_webvtt_integration",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                Ok(content::webvtt_descriptor(cfg!(windows)))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_content_scope(
+pub async fn read_content_scope(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<ContentScope, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .content_scope()
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_content_scope",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .content_scope()
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_preview(
+pub async fn read_source_preview(
     state: State<'_, AppState>,
     request: PreviewRequest,
 ) -> Result<ContentPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .source_preview(
-        request.attempt_id,
-        request.result_id,
-        request.after,
-        request.limit,
-    )
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_source_preview",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_preview(
+                    request.attempt_id,
+                    request.result_id,
+                    request.after,
+                    request.limit,
+                )
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_content(
+pub async fn read_source_content(
     state: State<'_, AppState>,
     request: ContentRequest,
 ) -> Result<ContentPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .source_content(request.snapshot_id, request.after, request.limit)
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_source_content",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_content(request.snapshot_id, request.after, request.limit)
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_comparison(
+pub async fn read_source_comparison(
     state: State<'_, AppState>,
     request: ComparisonRequest,
 ) -> Result<SourceChangePage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .source_comparison_filtered(
-        request.attempt_id,
-        request.result_id,
-        request.base,
-        &request.filter,
-        request.after,
-        request.limit,
-    )
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_source_comparison",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_comparison_filtered(
+                    request.attempt_id,
+                    request.result_id,
+                    request.base,
+                    &request.filter,
+                    request.after,
+                    request.limit,
+                )
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_history(
+pub async fn read_source_history(
     state: State<'_, AppState>,
     request: HistoryRequest,
 ) -> Result<content::SourceHistory, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .source_history(request.offset, request.limit)
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_source_history",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_history(request.offset, request.limit)
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_history_content(
+pub async fn read_source_history_content(
     state: State<'_, AppState>,
     request: HistoryContentRequest,
 ) -> Result<ContentPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .source_history_content(
-        request.snapshot_id,
-        &request.query,
-        request.after,
-        request.limit,
-    )
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_source_history_content",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_history_content(
+                    request.snapshot_id,
+                    &request.query,
+                    request.after,
+                    request.limit,
+                )
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_lineage(
+pub async fn read_source_lineage(
     state: State<'_, AppState>,
     request: LineageRequest,
 ) -> Result<Vec<content::LineageEvidence>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .source_lineage_evidence(request.snapshot_id, request.ordinal)
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_source_lineage",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_lineage_evidence(request.snapshot_id, request.ordinal)
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
 pub async fn estimate_source_update(
     state: State<'_, AppState>,
     request: SourceAdoptRequest,
 ) -> Result<Vec<content::SourceImpactSummary>, CommandError> {
-    let sessions = Arc::clone(&state.sessions);
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut sessions = sessions.lock().map_err(|_| {
-            CommandError::simple(CommandErrorCode::Busy, CommandStage::ExecutionRead)
-        })?;
-        let active = authorized(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
+    state
+        .sessions
+        .run(
+            "estimate_source_update",
             CommandStage::ExecutionRead,
-        )?;
-        #[cfg(feature = "execution-test-host")]
-        test_support::source_fixture_hook(&mut active.store, "estimate").map_err(map_source)?;
-        active
-            .store
-            .source_update_estimate(request.attempt_id, request.result_id, &request.confirmation)
-            .map_err(map_source)
-    })
-    .await
-    .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                #[cfg(feature = "execution-test-host")]
+                test_support::source_fixture_hook(&mut active.store, "estimate")
+                    .map_err(map_source)?;
+                active
+                    .store
+                    .source_update_estimate(
+                        request.attempt_id,
+                        request.result_id,
+                        &request.confirmation,
+                    )
+                    .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_source_impact(
+pub async fn read_source_impact(
     state: State<'_, AppState>,
     request: ImpactRequest,
 ) -> Result<content::SourceImpactPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .source_impact(
-        request.snapshot_id,
-        &request.locale,
-        request.after,
-        request.limit,
-    )
-    .map_err(map_source)
+    state
+        .sessions
+        .run(
+            "read_source_impact",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .source_impact(
+                    request.snapshot_id,
+                    &request.locale,
+                    request.after,
+                    request.limit,
+                )
+                .map_err(map_source)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn prepare_source_adoption(
+pub async fn prepare_source_adoption(
     state: State<'_, AppState>,
     request: SourceAdoptRequest,
 ) -> Result<AdoptionAction, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    #[cfg(feature = "execution-test-host")]
-    test_support::source_fixture_hook(store, "prepare").map_err(map_source)?;
-    let input = store
-        .execution_input(request.attempt_id)
-        .map_err(map_source)?;
-    if input.envelope().operation != content::OPERATION {
-        return Err(stale());
-    }
-    let parameters = serde_json::to_value(&request.confirmation).map_err(|_| stale())?;
-    store
-        .prepare_adoption_with_id(
-            request.action_id,
-            request.attempt_id,
-            input.envelope().units[0].unit_id,
-            vec![request.result_id],
-            parameters,
+    state
+        .sessions
+        .run(
+            "prepare_source_adoption",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                #[cfg(feature = "execution-test-host")]
+                test_support::source_fixture_hook(store, "prepare").map_err(map_source)?;
+                let input = store
+                    .execution_input(request.attempt_id)
+                    .map_err(map_source)?;
+                if input.envelope().operation != content::OPERATION {
+                    return Err(stale());
+                }
+                let parameters =
+                    serde_json::to_value(&request.confirmation).map_err(|_| stale())?;
+                store
+                    .prepare_adoption_with_id(
+                        request.action_id,
+                        request.attempt_id,
+                        input.envelope().units[0].unit_id,
+                        vec![request.result_id],
+                        parameters,
+                    )
+                    .map_err(map_source)
+            },
         )
-        .map_err(map_source)
+        .await
 }

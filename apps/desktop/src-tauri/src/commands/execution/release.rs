@@ -78,48 +78,64 @@ fn invalid(stage: CommandStage, field: &str) -> CommandError {
 }
 
 #[tauri::command]
-pub fn start_locale_build(
+pub async fn start_locale_build(
     state: State<'_, AppState>,
     request: BuildRequest,
 ) -> Result<ExecutionId, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    let input = store
-        .prepare_locale_build(
-            request.project_id,
-            request.attempt_id,
-            &request.choices,
-            &request.expected_eligibility_basis,
+    state
+        .sessions
+        .run(
+            "start_locale_build",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let input = store
+                    .prepare_locale_build(
+                        request.project_id,
+                        request.attempt_id,
+                        &request.choices,
+                        &request.expected_eligibility_basis,
+                    )
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))?;
+                host.runtime
+                    .submit(store, &input)
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))?;
+                Ok(request.attempt_id)
+            },
         )
-        .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))?;
-    host.runtime
-        .submit(store, &input)
-        .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))?;
-    Ok(request.attempt_id)
+        .await
 }
 
 #[tauri::command]
-pub fn list_releases(
+pub async fn list_releases(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<Vec<ReleaseView>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .list_releases(request.project_id)
-    .map_err(map_read)
+    state
+        .sessions
+        .run(
+            "list_releases",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .list_releases(request.project_id)
+                .map_err(map_read)
+            },
+        )
+        .await
 }
 
 #[tauri::command]
@@ -128,61 +144,84 @@ pub async fn choose_delivery_folder<R: tauri::Runtime>(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<Option<DeliverySelection>, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let picker = ExecutionId::new();
-    {
-        let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-        let active = authorized(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
+    let initial = request.clone();
+    lease
+        .run(
+            "choose_delivery_folder.begin",
             CommandStage::ExecutionRead,
-        )?;
-        let (host, _) = active.execution_parts()?;
-        host.allow_mutation()?;
-        host.release.picker = Some(picker);
-    }
-    let selected =
-        tauri::async_runtime::spawn_blocking(move || app.dialog().file().blocking_pick_folder())
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.release.picker = Some(picker);
+                Ok(())
+            },
+        )
+        .await?;
+    let selection = async {
+        let selected = state
+            .dialogs
+            .run(CommandStage::ExecutionRead, move || {
+                Ok(app.dialog().file().blocking_pick_folder())
+            })
+            .await?;
+        state
+            .io
+            .run(CommandStage::ExecutionRead, move || {
+                selected
+                    .map(|path| {
+                        let path = path
+                            .into_path()
+                            .map_err(|_| invalid(CommandStage::ExecutionRead, "delivery-folder"))?;
+                        source::capture::Selection::authorize(path)
+                            .map(Arc::new)
+                            .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+                    })
+                    .transpose()
+            })
             .await
-            .map_err(|_| {
-                CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::ExecutionRead)
-            })?;
-    let selection = selected
-        .map(|path| {
-            let path = path
-                .into_path()
-                .map_err(|_| invalid(CommandStage::ExecutionRead, "delivery-folder"))?;
-            source::capture::Selection::authorize(path)
-                .map(Arc::new)
-                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
-        })
-        .transpose()?;
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    let (host, _) = active.execution_parts()?;
-    host.allow_mutation()?;
-    if host.release.picker != Some(picker) {
-        return Err(CommandError::simple(
-            CommandErrorCode::SessionInvalid,
-            CommandStage::ExecutionRead,
-        ));
     }
-    host.release.picker = None;
-    Ok(selection.map(|selection| {
-        host.release.preview = None;
-        let selection_id = ExecutionId::new();
-        let folder_name = selection.label();
-        host.release.selection = Some((selection_id, selection));
-        DeliverySelection {
-            selection_id,
-            folder_name,
-        }
-    }))
+    .await;
+    lease
+        .run(
+            "choose_delivery_folder.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                if host.release.picker != Some(picker) {
+                    return Err(CommandError::simple(
+                        CommandErrorCode::SessionInvalid,
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                host.release.picker = None;
+                Ok(selection?.map(|selection| {
+                    host.release.preview = None;
+                    let selection_id = ExecutionId::new();
+                    let folder_name = selection.label();
+                    host.release.selection = Some((selection_id, selection));
+                    DeliverySelection {
+                        selection_id,
+                        folder_name,
+                    }
+                }))
+            },
+        )
+        .await
 }
 
 fn selected(
@@ -302,30 +341,38 @@ fn preview_files(
 }
 
 #[tauri::command]
-pub fn preview_delivery(
+pub async fn preview_delivery(
     state: State<'_, AppState>,
     request: PreviewRequest,
 ) -> Result<DeliveryPreview, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    let selection = selected(host, request.selection_id)?;
-    let root = selection.destination_root().map_err(map_read)?;
-    let files = preview_files(store, request.release_id, root)?;
-    let preview = DeliveryPreview {
-        preview_id: ExecutionId::new(),
-        release_id: request.release_id,
-        selection_id: request.selection_id,
-        folder_name: selection.label(),
-        files,
-    };
-    host.release.preview = Some(preview.clone());
-    Ok(preview)
+    state
+        .sessions
+        .run(
+            "preview_delivery",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                let selection = selected(host, request.selection_id)?;
+                let root = selection.destination_root().map_err(map_read)?;
+                let files = preview_files(store, request.release_id, root)?;
+                let preview = DeliveryPreview {
+                    preview_id: ExecutionId::new(),
+                    release_id: request.release_id,
+                    selection_id: request.selection_id,
+                    folder_name: selection.label(),
+                    files,
+                };
+                host.release.preview = Some(preview.clone());
+                Ok(preview)
+            },
+        )
+        .await
 }
 
 #[cfg(windows)]
@@ -458,157 +505,178 @@ fn export_one_with_digest(
 }
 
 #[tauri::command]
-pub fn export_release(
+pub async fn export_release(
     state: State<'_, AppState>,
     request: ExportRequest,
 ) -> Result<DeliveryView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    let selection = selected(host, request.selection_id)?;
-    let root = selection
-        .destination_root()
-        .map_err(map_read)?
-        .to_path_buf();
-    let directory = root.to_string_lossy().into_owned();
-    if let Some(existing) = store
-        .delivery_by_action(request.action_id)
-        .map_err(map_adopt)?
-    {
-        if existing.release_id != request.release_id
-            || existing.directory != directory
-            || existing.overwrite_conflicts != request.overwrite_conflicts
-        {
-            return Err(CommandError::simple(
-                CommandErrorCode::DependencyConflict,
-                CommandStage::ExecutionAdopt,
-            ));
-        }
-        if existing.state == "pending" {
-            return Err(CommandError::simple(
-                CommandErrorCode::OutcomeUnknown,
-                CommandStage::ExecutionAdopt,
-            ));
-        }
-        return Ok(existing);
-    }
-    let preview = host
-        .release
-        .preview
-        .as_ref()
-        .filter(|item| {
-            item.preview_id == request.preview_id
-                && item.release_id == request.release_id
-                && item.selection_id == request.selection_id
-        })
-        .cloned()
-        .ok_or_else(|| {
-            CommandError::simple(
-                CommandErrorCode::DependencyConflict,
-                CommandStage::ExecutionAdopt,
-            )
-        })?;
-    if preview.files.iter().any(|file| file.state == "conflict") && !request.overwrite_conflicts {
-        return Err(CommandError::simple(
-            CommandErrorCode::DestinationConflict,
+    state
+        .sessions
+        .run(
+            "export_release",
             CommandStage::ExecutionAdopt,
-        ));
-    }
-    store
-        .begin_delivery(
-            request.action_id,
-            request.release_id,
-            &directory,
-            request.overwrite_conflicts,
-        )
-        .map_err(map_adopt)?;
-    let fresh = preview_files(store, request.release_id, &root)?;
-    if fresh != preview.files {
-        let failed = preview
-            .files
-            .iter()
-            .map(|file| DeliveryFile {
-                locale: file.locale.clone(),
-                file_name: file.file_name.clone(),
-                expected_sha256: file.expected_sha256.clone(),
-                actual_sha256: fresh
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let selection = selected(host, request.selection_id)?;
+                let root = selection
+                    .destination_root()
+                    .map_err(map_read)?
+                    .to_path_buf();
+                let directory = root.to_string_lossy().into_owned();
+                if let Some(existing) = store
+                    .delivery_by_action(request.action_id)
+                    .map_err(map_adopt)?
+                {
+                    if existing.release_id != request.release_id
+                        || existing.directory != directory
+                        || existing.overwrite_conflicts != request.overwrite_conflicts
+                    {
+                        return Err(CommandError::simple(
+                            CommandErrorCode::DependencyConflict,
+                            CommandStage::ExecutionAdopt,
+                        ));
+                    }
+                    if existing.state == "pending" {
+                        return Err(CommandError::simple(
+                            CommandErrorCode::OutcomeUnknown,
+                            CommandStage::ExecutionAdopt,
+                        ));
+                    }
+                    return Ok(existing);
+                }
+                let preview = host
+                    .release
+                    .preview
+                    .as_ref()
+                    .filter(|item| {
+                        item.preview_id == request.preview_id
+                            && item.release_id == request.release_id
+                            && item.selection_id == request.selection_id
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        CommandError::simple(
+                            CommandErrorCode::DependencyConflict,
+                            CommandStage::ExecutionAdopt,
+                        )
+                    })?;
+                if preview.files.iter().any(|file| file.state == "conflict")
+                    && !request.overwrite_conflicts
+                {
+                    return Err(CommandError::simple(
+                        CommandErrorCode::DestinationConflict,
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
+                store
+                    .begin_delivery(
+                        request.action_id,
+                        request.release_id,
+                        &directory,
+                        request.overwrite_conflicts,
+                    )
+                    .map_err(map_adopt)?;
+                let fresh = preview_files(store, request.release_id, &root)?;
+                if fresh != preview.files {
+                    let failed = preview
+                        .files
+                        .iter()
+                        .map(|file| DeliveryFile {
+                            locale: file.locale.clone(),
+                            file_name: file.file_name.clone(),
+                            expected_sha256: file.expected_sha256.clone(),
+                            actual_sha256: fresh
+                                .iter()
+                                .find(|current| current.locale == file.locale)
+                                .and_then(|current| current.current_sha256.clone()),
+                            state: "failed".into(),
+                        })
+                        .collect();
+                    store
+                        .finish_delivery(request.action_id, failed)
+                        .map_err(map_adopt)?;
+                    host.release.preview = None;
+                    return Err(CommandError::simple(
+                        CommandErrorCode::DestinationConflict,
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
+                let i18n = if preview
+                    .files
                     .iter()
-                    .find(|current| current.locale == file.locale)
-                    .and_then(|current| current.current_sha256.clone()),
-                state: "failed".into(),
-            })
-            .collect();
-        store
-            .finish_delivery(request.action_id, failed)
-            .map_err(map_adopt)?;
-        host.release.preview = None;
-        return Err(CommandError::simple(
-            CommandErrorCode::DestinationConflict,
-            CommandStage::ExecutionAdopt,
-        ));
-    }
-    let i18n = if preview
-        .files
-        .iter()
-        .all(|file| file.file_name.starts_with("i18n/"))
-    {
-        root.join("i18n")
-    } else {
-        root.clone()
-    };
-    if !i18n.exists() {
-        fs::create_dir(&i18n).map_err(|_| {
-            CommandError::simple(
-                CommandErrorCode::StorageFailed,
-                CommandStage::ExecutionAdopt,
-            )
-        })?;
-    }
-    let _guard = source::capture::Selection::authorize(i18n.clone()).map_err(map_adopt)?;
-    let mut results = Vec::new();
-    for file in &preview.files {
-        let result = store
-            .release_artifact(request.release_id, &file.locale)
-            .map_err(map_adopt)
-            .and_then(|(_, bytes)| export_one(&i18n, file, &bytes, request.overwrite_conflicts));
-        results.push(match result {
-            Ok(result) => result,
-            Err(_) => DeliveryFile {
-                locale: file.locale.clone(),
-                file_name: file.file_name.clone(),
-                expected_sha256: file.expected_sha256.clone(),
-                actual_sha256: None,
-                state: "failed".into(),
+                    .all(|file| file.file_name.starts_with("i18n/"))
+                {
+                    root.join("i18n")
+                } else {
+                    root.clone()
+                };
+                if !i18n.exists() {
+                    fs::create_dir(&i18n).map_err(|_| {
+                        CommandError::simple(
+                            CommandErrorCode::StorageFailed,
+                            CommandStage::ExecutionAdopt,
+                        )
+                    })?;
+                }
+                let _guard =
+                    source::capture::Selection::authorize(i18n.clone()).map_err(map_adopt)?;
+                let mut results = Vec::new();
+                for file in &preview.files {
+                    let result = store
+                        .release_artifact(request.release_id, &file.locale)
+                        .map_err(map_adopt)
+                        .and_then(|(_, bytes)| {
+                            export_one(&i18n, file, &bytes, request.overwrite_conflicts)
+                        });
+                    results.push(match result {
+                        Ok(result) => result,
+                        Err(_) => DeliveryFile {
+                            locale: file.locale.clone(),
+                            file_name: file.file_name.clone(),
+                            expected_sha256: file.expected_sha256.clone(),
+                            actual_sha256: None,
+                            state: "failed".into(),
+                        },
+                    });
+                }
+                host.release.preview = None;
+                store
+                    .finish_delivery(request.action_id, results)
+                    .map_err(map_adopt)
             },
-        });
-    }
-    host.release.preview = None;
-    store
-        .finish_delivery(request.action_id, results)
-        .map_err(map_adopt)
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn list_deliveries(
+pub async fn list_deliveries(
     state: State<'_, AppState>,
     request: ReleaseRequest,
 ) -> Result<Vec<DeliveryView>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .list_deliveries(request.release_id)
-    .map_err(map_read)
+    state
+        .sessions
+        .run(
+            "list_deliveries",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .list_deliveries(request.release_id)
+                .map_err(map_read)
+            },
+        )
+        .await
 }
 
 fn observe_delivery_files(
@@ -636,49 +704,57 @@ fn observe_delivery_files(
 }
 
 #[tauri::command]
-pub fn reconcile_delivery(
+pub async fn reconcile_delivery(
     state: State<'_, AppState>,
     request: ReconcileRequest,
 ) -> Result<DeliveryView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRecover)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRecover,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    let root = selected(host, request.selection_id)?
-        .destination_root()
-        .map_err(map_read)?
-        .to_path_buf();
-    let current = store
-        .delivery_by_action(request.action_id)
-        .map_err(map_recover)?
-        .ok_or_else(|| invalid(CommandStage::ExecutionRecover, "delivery-action"))?;
-    if current.directory != root.to_string_lossy() {
-        return Err(CommandError::simple(
-            CommandErrorCode::PermissionDenied,
+    state
+        .sessions
+        .run(
+            "reconcile_delivery",
             CommandStage::ExecutionRecover,
-        ));
-    }
-    if !matches!(current.state.as_str(), "pending" | "unknown") {
-        return Ok(current);
-    }
-    let folder = if current
-        .files
-        .iter()
-        .all(|file| file.file_name.starts_with("i18n/"))
-    {
-        root.join("i18n")
-    } else {
-        root.clone()
-    };
-    let files = observe_delivery_files(&folder, current.files)?;
-    store
-        .reconcile_delivery(request.action_id, files)
-        .map_err(map_recover)
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRecover,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let root = selected(host, request.selection_id)?
+                    .destination_root()
+                    .map_err(map_read)?
+                    .to_path_buf();
+                let current = store
+                    .delivery_by_action(request.action_id)
+                    .map_err(map_recover)?
+                    .ok_or_else(|| invalid(CommandStage::ExecutionRecover, "delivery-action"))?;
+                if current.directory != root.to_string_lossy() {
+                    return Err(CommandError::simple(
+                        CommandErrorCode::PermissionDenied,
+                        CommandStage::ExecutionRecover,
+                    ));
+                }
+                if !matches!(current.state.as_str(), "pending" | "unknown") {
+                    return Ok(current);
+                }
+                let folder = if current
+                    .files
+                    .iter()
+                    .all(|file| file.file_name.starts_with("i18n/"))
+                {
+                    root.join("i18n")
+                } else {
+                    root.clone()
+                };
+                let files = observe_delivery_files(&folder, current.files)?;
+                store
+                    .reconcile_delivery(request.action_id, files)
+                    .map_err(map_recover)
+            },
+        )
+        .await
 }
 
 #[cfg(all(test, windows))]

@@ -143,7 +143,6 @@ fn setup() -> (
     let app = super::super::register_commands(tauri::test::mock_builder())
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .unwrap();
-    start_clock(&app.state::<AppState>());
     let webview =
         tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
             .build()
@@ -175,9 +174,10 @@ fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
     let (temp, app, webview, context) = setup();
     let units = {
         let state = app.state::<AppState>();
-        let mut sessions = state.sessions.lock().unwrap();
+        let context = context.clone();
+        state.sessions.with(move |sessions| {
         let active = authorized(
-            &mut sessions,
+            sessions,
             context["sessionToken"].as_str().unwrap(),
             serde_json::from_value(context["projectId"].clone()).unwrap(),
             CommandStage::ExecutionRead,
@@ -228,6 +228,7 @@ fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
             .iter()
             .map(|r| r.unit_id.unwrap())
             .collect::<Vec<_>>()
+        })
     };
     let config = tsumugi_core::ai::AiConfig {
         endpoint: "http://127.0.0.1:65534/v1/chat/completions".into(),
@@ -333,9 +334,10 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
     let project: ExecutionId = serde_json::from_value(context["projectId"].clone()).unwrap();
     let (unit, source) = {
         let state = app.state::<AppState>();
-        let mut sessions = state.sessions.lock().unwrap();
+        let context = context.clone();
+        state.sessions.with(move |sessions| {
         let active = authorized(
-            &mut sessions,
+            sessions,
             context["sessionToken"].as_str().unwrap(),
             project,
             CommandStage::ExecutionRead,
@@ -386,6 +388,7 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
             .rows
             .remove(0);
         (row.unit_id.unwrap(), row.source_revision_id.unwrap())
+        })
     };
     let a = tsumugi_core::ai::AiConfig {
         endpoint: "http://127.0.0.1:65534/v1/chat/completions".into(),
@@ -463,27 +466,29 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
     assert!(call(&webview, "start_arena_translation", foreign).is_err());
     {
         let state = app.state::<AppState>();
-        let mut sessions = state.sessions.lock().unwrap();
-        let active = authorized(
-            &mut sessions,
-            context["sessionToken"].as_str().unwrap(),
-            project,
-            CommandStage::ExecutionRead,
-        )
-        .unwrap();
-        active
-            .store
-            .save_context(&tsumugi_core::SaveContext {
-                project_id: project,
-                action_id: ExecutionId::new(),
-                unit_id: unit,
-                locale: "zh-CN".into(),
-                source_revision_id: source,
-                expected_revision_id: None,
-                reason: "Synthetic change".into(),
-                text: "Updated context".into(),
-            })
+        let context = context.clone();
+        state.sessions.with(move |sessions| {
+            let active = authorized(
+                sessions,
+                context["sessionToken"].as_str().unwrap(),
+                project,
+                CommandStage::ExecutionRead,
+            )
             .unwrap();
+            active
+                .store
+                .save_context(&tsumugi_core::SaveContext {
+                    project_id: project,
+                    action_id: ExecutionId::new(),
+                    unit_id: unit,
+                    locale: "zh-CN".into(),
+                    source_revision_id: source,
+                    expected_revision_id: None,
+                    reason: "Synthetic change".into(),
+                    text: "Updated context".into(),
+                })
+                .unwrap();
+        })
     }
     assert_eq!(
         call(&webview, "start_arena_translation", start(&second, true)).unwrap_err()["field"],
@@ -547,7 +552,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     let session_token = context["sessionToken"].as_str().unwrap().to_owned();
     let action_id = ExecutionId::new();
     let state = app.state::<AppState>();
-    let guard = state.sessions.lock().unwrap();
+    let guard = state.sessions.pause();
     let mut check = Box::pin(review::run_review_checks(
         app.state::<AppState>(),
         review::ReviewCheckRequest {
@@ -590,7 +595,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     assert!(tauri::async_runtime::block_on(check).is_err());
     assert!(state.review_check_cancellations.lock().unwrap().is_empty());
 
-    let guard = state.sessions.lock().unwrap();
+    let guard = state.sessions.pause();
     let mut save = Box::pin(source::translation::save_translation_revision(
         app.state::<AppState>(),
         source::translation::TranslationSaveRequest {
@@ -610,7 +615,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     ));
     drop(guard);
     assert!(tauri::async_runtime::block_on(save).is_err());
-    let guard = state.sessions.lock().unwrap();
+    let guard = state.sessions.pause();
     let mut merge = Box::pin(arena::save_arena_merge(
         app.state::<AppState>(),
         arena::MergeRequest {

@@ -62,319 +62,427 @@ pub async fn choose_resource_file<R: tauri::Runtime>(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<Option<GlossaryCapture>, CommandError> {
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let picker = ExecutionId::new();
-    {
-        let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-        let active = authorized(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
+    let initial = request.clone();
+    lease
+        .run(
+            "choose_resource_file.begin",
             CommandStage::ExecutionRead,
-        )?;
-        let (host, _) = active.execution_parts()?;
-        host.allow_mutation()?;
-        host.source.resource_picker = Some(picker);
-    }
-    let read_result: Result<Option<Vec<u8>>, CommandError> =
-        async {
-            let selected = tauri::async_runtime::spawn_blocking(move || {
-                app.dialog().file().blocking_pick_file()
-            })
-            .await
-            .map_err(|_| {
-                CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::ExecutionRead)
-            })?;
-            let Some(selected) = selected else {
-                return Ok(None);
-            };
-            let path = selected.into_path().map_err(|_| {
-                CommandError::simple(
-                    CommandErrorCode::PermissionDenied,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
                     CommandStage::ExecutionRead,
-                )
-            })?;
-            let bytes = tauri::async_runtime::spawn_blocking(move || {
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.source.resource_picker = Some(picker);
+                Ok(())
+            },
+        )
+        .await?;
+    let read_result = async {
+        let selected = state
+            .dialogs
+            .run(CommandStage::ExecutionRead, move || {
+                Ok(app.dialog().file().blocking_pick_file())
+            })
+            .await?;
+        let Some(selected) = selected else {
+            return Ok(None);
+        };
+        state
+            .io
+            .run(CommandStage::ExecutionRead, move || {
+                let path = selected.into_path().map_err(|_| {
+                    CommandError::simple(
+                        CommandErrorCode::PermissionDenied,
+                        CommandStage::ExecutionRead,
+                    )
+                })?;
                 source::capture::read_resource_file(&path)
+                    .map(Some)
+                    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
             })
             .await
-            .map_err(|_| {
-                CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::ExecutionRead)
-            })?
-            .map_err(|error| resource_error(error, CommandStage::ExecutionRead))?;
-            Ok(Some(bytes))
-        }
-        .await;
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    if host.source.resource_picker != Some(picker) {
-        return Err(CommandError::simple(
-            CommandErrorCode::SessionInvalid,
-            CommandStage::ExecutionAdopt,
-        ));
     }
-    host.source.resource_picker = None;
-    read_result?
-        .map(|bytes| {
-            store
-                .capture_glossary(request.project_id, picker, &bytes)
-                .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
-        })
-        .transpose()
+    .await;
+    lease
+        .run(
+            "choose_resource_file.finish",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                if host.source.resource_picker != Some(picker) {
+                    return Err(CommandError::simple(
+                        CommandErrorCode::SessionInvalid,
+                        CommandStage::ExecutionAdopt,
+                    ));
+                }
+                host.source.resource_picker = None;
+                read_result?
+                    .map(|bytes| {
+                        store
+                            .capture_glossary(request.project_id, picker, &bytes)
+                            .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+                    })
+                    .transpose()
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn list_resource_captures(
+pub async fn list_resource_captures(
     state: State<'_, AppState>,
     request: CaptureListRequest,
 ) -> Result<Vec<GlossaryCapture>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .list_glossary_captures(request.project_id, request.limit)
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "list_resource_captures",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .list_glossary_captures(request.project_id, request.limit)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_resource_preview(
+pub async fn read_resource_preview(
     state: State<'_, AppState>,
     request: CaptureRequest,
 ) -> Result<ResourcePreview, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .glossary_preview(request.project_id, request.capture_id)
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_resource_preview",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .glossary_preview(request.project_id, request.capture_id)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn decide_resource_entry(
+pub async fn decide_resource_entry(
     state: State<'_, AppState>,
     request: DecisionRequest,
 ) -> Result<ResourceDecisionResult, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .decide_glossary_entry(&request.decision)
-        .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+    state
+        .sessions
+        .run(
+            "decide_resource_entry",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .decide_glossary_entry(&request.decision)
+                    .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn save_term(
+pub async fn save_term(
     state: State<'_, AppState>,
     request: TermRequest,
 ) -> Result<TermRevision, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .save_term(&request.term)
-        .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+    state
+        .sessions
+        .run("save_term", CommandStage::ExecutionAdopt, move |sessions| {
+            let active = authorized(
+                sessions,
+                &request.session_token,
+                request.project_id,
+                CommandStage::ExecutionAdopt,
+            )?;
+            let (host, store) = active.execution_parts()?;
+            host.allow_mutation()?;
+            store
+                .save_term(&request.term)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn read_terms(
+pub async fn read_terms(
     state: State<'_, AppState>,
     request: TermListRequest,
 ) -> Result<Vec<TermRevision>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .list_terms(
-        request.project_id,
-        &request.locale,
-        request.after_term_id.as_deref(),
-        request.limit,
-    )
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run("read_terms", CommandStage::ExecutionRead, move |sessions| {
+            authorized(
+                sessions,
+                &request.session_token,
+                request.project_id,
+                CommandStage::ExecutionRead,
+            )?
+            .store
+            .list_terms(
+                request.project_id,
+                &request.locale,
+                request.after_term_id.as_deref(),
+                request.limit,
+            )
+            .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn read_term_history(
+pub async fn read_term_history(
     state: State<'_, AppState>,
     request: TermHistoryRequest,
 ) -> Result<Vec<TermRevision>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .term_history(
-        request.project_id,
-        &request.term_id,
-        request.offset,
-        request.limit,
-    )
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_term_history",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .term_history(
+                    request.project_id,
+                    &request.term_id,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn resolve_terms(
+pub async fn resolve_terms(
     state: State<'_, AppState>,
     request: UnitLocaleRequest,
 ) -> Result<TermResolution, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .resolve_terms(request.project_id, request.unit_id, &request.locale)
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "resolve_terms",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .resolve_terms(request.project_id, request.unit_id, &request.locale)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_context_revision(
+pub async fn read_context_revision(
     state: State<'_, AppState>,
     request: UnitLocaleRequest,
 ) -> Result<Option<ContextRevision>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .context_revision(request.project_id, request.unit_id, &request.locale)
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_context_revision",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .context_revision(request.project_id, request.unit_id, &request.locale)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn save_context(
+pub async fn save_context(
     state: State<'_, AppState>,
     request: ContextWriteRequest,
 ) -> Result<ContextRevision, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .save_context(&request.context)
-        .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+    state
+        .sessions
+        .run(
+            "save_context",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .save_context(&request.context)
+                    .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn capture_context(
+pub async fn capture_context(
     state: State<'_, AppState>,
     request: ContextCaptureRequest,
 ) -> Result<ContextCapture, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .capture_context(&request.capture)
-        .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+    state
+        .sessions
+        .run(
+            "capture_context",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .capture_context(&request.capture)
+                    .map_err(|error| resource_error(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_context_capture(
+pub async fn read_context_capture(
     state: State<'_, AppState>,
     request: CaptureRequest,
 ) -> Result<ContextCapture, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .read_context_capture(request.project_id, request.capture_id)
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_context_capture",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .read_context_capture(request.project_id, request.capture_id)
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn tm_suggestions(
+pub async fn tm_suggestions(
     state: State<'_, AppState>,
     request: SuggestionRequest,
 ) -> Result<Vec<TmSuggestion>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .tm_suggestions(
-        request.project_id,
-        request.unit_id,
-        &request.locale,
-        request.offset,
-        request.limit,
-    )
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "tm_suggestions",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .tm_suggestions(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn resource_impacts(
+pub async fn resource_impacts(
     state: State<'_, AppState>,
     request: ImpactRequest,
 ) -> Result<ImpactPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .resource_impacts(
-        request.project_id,
-        &request.locale,
-        request.offset,
-        request.limit,
-    )
-    .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "resource_impacts",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .resource_impacts(
+                    request.project_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|error| resource_error(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }

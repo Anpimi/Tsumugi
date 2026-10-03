@@ -77,26 +77,25 @@ pub(super) fn initialize_test_host(state: &AppState) -> Result<(), CommandError>
             ));
         }
     };
-    let mut sessions = state
-        .sessions
-        .lock()
-        .map_err(|_| CommandError::simple(CommandErrorCode::Busy, CommandStage::Create))?;
-    let view = sessions.create(CreateProjectRequest {
-        destination: destination.clone(),
-        display_name: "Execution test project".into(),
-        source_locale: "en-US".into(),
-        target_locales: vec!["zh-CN".into()],
-    })?;
-    let active = sessions.active_mut(&view.session_token, CommandStage::ExecutionRecover)?;
-    let (host, store) = active.execution_parts()?;
-    let input = test_support::input(
-        store,
-        mode,
-        1500,
-        args.iter().any(|arg| arg == "--fixture-grouped"),
-    )
-    .map_err(map_recover)?;
-    host.runtime.submit(store, &input).map_err(map_recover)
+    let destination = destination.clone();
+    state.sessions.with(move |sessions| {
+        let view = sessions.create(CreateProjectRequest {
+            destination: destination.clone(),
+            display_name: "Execution test project".into(),
+            source_locale: "en-US".into(),
+            target_locales: vec!["zh-CN".into()],
+        })?;
+        let active = sessions.active_mut(&view.session_token, CommandStage::ExecutionRecover)?;
+        let (host, store) = active.execution_parts()?;
+        let input = test_support::input(
+            store,
+            mode,
+            1500,
+            args.iter().any(|arg| arg == "--fixture-grouped"),
+        )
+        .map_err(map_recover)?;
+        host.runtime.submit(store, &input).map_err(map_recover)
+    })
 }
 
 pub(super) struct ExecutionHost {
@@ -295,34 +294,16 @@ impl ActiveSession {
 
 /// The clock only holds the session during bounded polling. Producers and
 /// outcome queries own no store, session, or application handle.
-pub(super) fn start_clock(state: &AppState) {
-    if state
-        .clock_started
-        .swap(true, std::sync::atomic::Ordering::AcqRel)
-    {
-        return;
-    }
-    let sessions = Arc::downgrade(&state.sessions);
-    std::thread::spawn(move || {
-        loop {
-            let Some(shared) = sessions.upgrade() else {
-                break;
-            };
-            if let Ok(mut sessions) = shared.lock() {
-                if let Some(active) = sessions.active.as_mut() {
-                    if !active.store.is_reconciling() {
-                        if let Some(host) = active.execution.as_mut() {
-                            if let Err(error) = host.tick(&mut active.store) {
-                                host.last_error = Some(error);
-                            }
-                        }
-                    }
+pub(super) fn tick_sessions(sessions: &mut SessionManager) {
+    if let Some(active) = sessions.active.as_mut() {
+        if !active.store.is_reconciling() {
+            if let Some(host) = active.execution.as_mut() {
+                if let Err(error) = host.tick(&mut active.store) {
+                    host.last_error = Some(error);
                 }
             }
-            drop(shared);
-            std::thread::sleep(Duration::from_millis(50));
         }
-    });
+    }
 }
 
 fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
@@ -404,23 +385,32 @@ request!(FixtureRequest {
 });
 #[cfg(feature = "execution-test-host")]
 #[tauri::command]
-pub fn seed_execution_fixture(
+pub async fn seed_execution_fixture(
     state: State<'_, AppState>,
     request: FixtureRequest,
 ) -> Result<ExecutionId, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRecover)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRecover,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    let input = test_support::input(store, request.mode, request.delay_ms, request.grouped)
-        .map_err(map_recover)?;
-    host.runtime.submit(store, &input).map_err(map_recover)?;
-    Ok(input.envelope().attempt_id)
+    state
+        .sessions
+        .run(
+            "seed_execution_fixture",
+            CommandStage::ExecutionRecover,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRecover,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let input =
+                    test_support::input(store, request.mode, request.delay_ms, request.grouped)
+                        .map_err(map_recover)?;
+                host.runtime.submit(store, &input).map_err(map_recover)?;
+                Ok(input.envelope().attempt_id)
+            },
+        )
+        .await
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -483,108 +473,148 @@ fn authorized<'a>(
 }
 
 #[tauri::command]
-pub fn create_execution_identity(
+pub async fn create_execution_identity(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<ExecutionId, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    Ok(ExecutionId::new())
+    state
+        .sessions
+        .run(
+            "create_execution_identity",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                Ok(ExecutionId::new())
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn execution_status(
+pub async fn execution_status(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<RuntimeStatus, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    Ok(RuntimeStatus {
-        active: host.active(store)?,
-        quiescing: host.quiescing,
-        query_count: host.queries.len() as u32,
-        error: host.last_error.clone(),
-    })
+    state
+        .sessions
+        .run(
+            "execution_status",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                Ok(RuntimeStatus {
+                    active: host.active(store)?,
+                    quiescing: host.quiescing,
+                    query_count: host.queries.len() as u32,
+                    error: host.last_error.clone(),
+                })
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn list_execution_tasks(
+pub async fn list_execution_tasks(
     state: State<'_, AppState>,
     request: ListRequest,
 ) -> Result<Vec<TaskView>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    active
-        .store
-        .execution_tasks(request.after, request.limit)
-        .map_err(map_read)
+    state
+        .sessions
+        .run(
+            "list_execution_tasks",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .execution_tasks(request.after, request.limit)
+                    .map_err(map_read)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_execution_task(
+pub async fn read_execution_task(
     state: State<'_, AppState>,
     request: TaskRequest,
 ) -> Result<Vec<AttemptSummary>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    active
-        .store
-        .execution_attempt_page(request.task_id, request.after, request.limit)
-        .map_err(map_read)
-        .map(|rows| {
-            rows.into_iter()
-                .map(|(attempt_id, sequence)| AttemptSummary {
-                    attempt_id,
-                    sequence,
-                })
-                .collect()
-        })
+    state
+        .sessions
+        .run(
+            "read_execution_task",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .execution_attempt_page(request.task_id, request.after, request.limit)
+                    .map_err(map_read)
+                    .map(|rows| {
+                        rows.into_iter()
+                            .map(|(attempt_id, sequence)| AttemptSummary {
+                                attempt_id,
+                                sequence,
+                            })
+                            .collect()
+                    })
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn read_execution_attempt(
+pub async fn read_execution_attempt(
     state: State<'_, AppState>,
     request: AttemptRequest,
 ) -> Result<AttemptDetail, CommandError> {
-    if request.limit == 0 || request.limit > 100 {
-        return Err(CommandError::simple(
-            CommandErrorCode::LimitExceeded,
+    state
+        .sessions
+        .run(
+            "read_execution_attempt",
             CommandStage::ExecutionRead,
-        ));
-    }
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    attempt_detail(
-        host,
-        store,
-        request.attempt_id,
-        request.offset,
-        request.limit,
-    )
+            move |sessions| {
+                if request.limit == 0 || request.limit > 100 {
+                    return Err(CommandError::simple(
+                        CommandErrorCode::LimitExceeded,
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                attempt_detail(
+                    host,
+                    store,
+                    request.attempt_id,
+                    request.offset,
+                    request.limit,
+                )
+            },
+        )
+        .await
 }
 fn attempt_detail(
     host: &ExecutionHost,
@@ -649,276 +679,334 @@ fn attempt_detail(
     })
 }
 #[tauri::command]
-pub fn read_execution_output(
+pub async fn read_execution_output(
     state: State<'_, AppState>,
     request: OutputRequest,
 ) -> Result<ResultEnvelope, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    active
-        .store
-        .execution_result(request.attempt_id, request.result_id)
-        .map(|result| result.envelope().clone())
-        .map_err(map_read)
+    state
+        .sessions
+        .run(
+            "read_execution_output",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .execution_result(request.attempt_id, request.result_id)
+                    .map(|result| result.envelope().clone())
+                    .map_err(map_read)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn cancel_execution_task(
+pub async fn cancel_execution_task(
     state: State<'_, AppState>,
     request: CancelRequest,
 ) -> Result<Revision, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionCancel)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionCancel,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.runtime
-        .cancel(store, request.task_id, request.request_id)
-        .map_err(|e| map_execution(e, CommandStage::ExecutionCancel))
+    state
+        .sessions
+        .run(
+            "cancel_execution_task",
+            CommandStage::ExecutionCancel,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionCancel,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.runtime
+                    .cancel(store, request.task_id, request.request_id)
+                    .map_err(|e| map_execution(e, CommandStage::ExecutionCancel))
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn recover_execution(
+pub async fn recover_execution(
     state: State<'_, AppState>,
     request: RecoveryRequest,
 ) -> Result<RecoveryView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRecover)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRecover,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    let plan = store
-        .execution_recovery(
-            request.attempt_id,
-            host.runtime.is_active(request.attempt_id),
-        )
-        .map_err(map_recover)?;
-    let unit = plan
-        .units
-        .iter()
-        .find(|unit| unit.unit_id == request.unit_id)
-        .ok_or_else(|| {
-            CommandError::invalid_input(CommandStage::ExecutionRecover, Some("unitId"))
-        })?;
-    let mut selected = request.item_ids.clone();
-    selected.sort();
-    let mut eligible = unit.remaining_item_ids.clone();
-    eligible.sort();
-    let matching = if request.action == RecoveryAction::QueryOutcome {
-        selected.len() == 1 && eligible.contains(&selected[0])
-    } else {
-        selected == eligible
-    };
-    if !unit.actions.contains(&request.action) || !matching {
-        let mut error = CommandError::simple(
-            CommandErrorCode::PermissionDenied,
+    state
+        .sessions
+        .run(
+            "recover_execution",
             CommandStage::ExecutionRecover,
-        );
-        error.item_ids = request.item_ids;
-        error.recovery_actions = unit.actions.clone();
-        return Err(error);
-    }
-    let mut response = RecoveryView {
-        attempt_id: request.attempt_id,
-        query_started: false,
-    };
-    match request.action {
-        RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure => {
-            response.attempt_id = host
-                .runtime
-                .resume(store, request.attempt_id, &selected)
-                .map_err(map_recover)?
-        }
-        RecoveryAction::ValidateOutput => {
-            for item in selected {
-                let id = store
-                    .execution_current_result(request.attempt_id, item)
-                    .map_err(map_recover)?
-                    .ok_or_else(|| {
-                        CommandError::simple(
-                            CommandErrorCode::OutputInvalid,
-                            CommandStage::ExecutionRecover,
-                        )
-                    })?;
-                store
-                    .validate_execution_result(request.attempt_id, id)
-                    .map_err(map_recover)?;
-            }
-        }
-        RecoveryAction::QueryOutcome => {
-            if selected.len() != 1 || host.queries.len() + host.retired_queries.len() >= 2 {
-                return Err(CommandError::simple(
-                    CommandErrorCode::Busy,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
                     CommandStage::ExecutionRecover,
-                ));
-            }
-            if host.queries.iter().any(|job| {
-                job.query.request.input.envelope().attempt_id == request.attempt_id
-                    && job.query.request.item_id == selected[0]
-            }) {
-                return Err(CommandError::simple(
-                    CommandErrorCode::Busy,
-                    CommandStage::ExecutionRecover,
-                ));
-            }
-            let query = host
-                .runtime
-                .outcome_query(store, request.attempt_id, selected[0])
-                .map_err(map_recover)?
-                .ok_or_else(|| CommandError::unknown(CommandStage::ExecutionRecover))?;
-            let query = Arc::new(query);
-            let worker = query.clone();
-            let (sender, receiver) = mpsc::sync_channel(1);
-            let thread = std::thread::Builder::new()
-                .name("execution-query".into())
-                .spawn(move || {
-                    let _ = sender.send(worker.run());
-                })
-                .map_err(|_| {
-                    CommandError::simple(
-                        CommandErrorCode::StorageFailed,
-                        CommandStage::ExecutionRecover,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let plan = store
+                    .execution_recovery(
+                        request.attempt_id,
+                        host.runtime.is_active(request.attempt_id),
                     )
-                })?;
-            host.queries.push(QueryJob {
-                query,
-                receiver,
-                thread,
-                started: Instant::now(),
-                pending_outcome: None,
-            });
-            response.query_started = true;
-        }
-        _ => {
-            return Err(CommandError::invalid_input(
-                CommandStage::ExecutionRecover,
-                Some("action"),
-            ));
-        }
-    }
-    host.last_error = None;
-    Ok(response)
+                    .map_err(map_recover)?;
+                let unit = plan
+                    .units
+                    .iter()
+                    .find(|unit| unit.unit_id == request.unit_id)
+                    .ok_or_else(|| {
+                        CommandError::invalid_input(CommandStage::ExecutionRecover, Some("unitId"))
+                    })?;
+                let mut selected = request.item_ids.clone();
+                selected.sort();
+                let mut eligible = unit.remaining_item_ids.clone();
+                eligible.sort();
+                let matching = if request.action == RecoveryAction::QueryOutcome {
+                    selected.len() == 1 && eligible.contains(&selected[0])
+                } else {
+                    selected == eligible
+                };
+                if !unit.actions.contains(&request.action) || !matching {
+                    let mut error = CommandError::simple(
+                        CommandErrorCode::PermissionDenied,
+                        CommandStage::ExecutionRecover,
+                    );
+                    error.item_ids = request.item_ids;
+                    error.recovery_actions = unit.actions.clone();
+                    return Err(error);
+                }
+                let mut response = RecoveryView {
+                    attempt_id: request.attempt_id,
+                    query_started: false,
+                };
+                match request.action {
+                    RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure => {
+                        response.attempt_id = host
+                            .runtime
+                            .resume(store, request.attempt_id, &selected)
+                            .map_err(map_recover)?
+                    }
+                    RecoveryAction::ValidateOutput => {
+                        for item in selected {
+                            let id = store
+                                .execution_current_result(request.attempt_id, item)
+                                .map_err(map_recover)?
+                                .ok_or_else(|| {
+                                    CommandError::simple(
+                                        CommandErrorCode::OutputInvalid,
+                                        CommandStage::ExecutionRecover,
+                                    )
+                                })?;
+                            store
+                                .validate_execution_result(request.attempt_id, id)
+                                .map_err(map_recover)?;
+                        }
+                    }
+                    RecoveryAction::QueryOutcome => {
+                        if selected.len() != 1
+                            || host.queries.len() + host.retired_queries.len() >= 2
+                        {
+                            return Err(CommandError::simple(
+                                CommandErrorCode::Busy,
+                                CommandStage::ExecutionRecover,
+                            ));
+                        }
+                        if host.queries.iter().any(|job| {
+                            job.query.request.input.envelope().attempt_id == request.attempt_id
+                                && job.query.request.item_id == selected[0]
+                        }) {
+                            return Err(CommandError::simple(
+                                CommandErrorCode::Busy,
+                                CommandStage::ExecutionRecover,
+                            ));
+                        }
+                        let query = host
+                            .runtime
+                            .outcome_query(store, request.attempt_id, selected[0])
+                            .map_err(map_recover)?
+                            .ok_or_else(|| CommandError::unknown(CommandStage::ExecutionRecover))?;
+                        let query = Arc::new(query);
+                        let worker = query.clone();
+                        let (sender, receiver) = mpsc::sync_channel(1);
+                        let thread = std::thread::Builder::new()
+                            .name("execution-query".into())
+                            .spawn(move || {
+                                let _ = sender.send(worker.run());
+                            })
+                            .map_err(|_| {
+                                CommandError::simple(
+                                    CommandErrorCode::StorageFailed,
+                                    CommandStage::ExecutionRecover,
+                                )
+                            })?;
+                        host.queries.push(QueryJob {
+                            query,
+                            receiver,
+                            thread,
+                            started: Instant::now(),
+                            pending_outcome: None,
+                        });
+                        response.query_started = true;
+                    }
+                    _ => {
+                        return Err(CommandError::invalid_input(
+                            CommandStage::ExecutionRecover,
+                            Some("action"),
+                        ));
+                    }
+                }
+                host.last_error = None;
+                Ok(response)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn prepare_execution_adoption(
+pub async fn prepare_execution_adoption(
     state: State<'_, AppState>,
     request: PrepareRequest,
 ) -> Result<AdoptionAction, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .prepare_adoption_with_id(
-            request.action_id,
-            request.attempt_id,
-            request.unit_id,
-            request.result_ids,
-            serde_json::Value::Null,
+    state
+        .sessions
+        .run(
+            "prepare_execution_adoption",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .prepare_adoption_with_id(
+                        request.action_id,
+                        request.attempt_id,
+                        request.unit_id,
+                        request.result_ids,
+                        serde_json::Value::Null,
+                    )
+                    .map_err(map_adopt)
+            },
         )
-        .map_err(map_adopt)
+        .await
 }
 #[tauri::command]
-pub fn adopt_execution(
+pub async fn adopt_execution(
     state: State<'_, AppState>,
     request: AdoptRequest,
 ) -> Result<AdoptionReceipt, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    let action = store
-        .adoption_action(request.action_id)
-        .map_err(map_adopt)?;
-    if let Some(receipt) = store
-        .adoption_receipt(request.action_id)
-        .map_err(map_adopt)?
-    {
-        return Ok(receipt);
-    }
-    let handler = host.handlers.get(&action.operation).ok_or_else(|| {
-        CommandError::simple(
-            CommandErrorCode::PermissionDenied,
+    state
+        .sessions
+        .run(
+            "adopt_execution",
             CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let action = store
+                    .adoption_action(request.action_id)
+                    .map_err(map_adopt)?;
+                if let Some(receipt) = store
+                    .adoption_receipt(request.action_id)
+                    .map_err(map_adopt)?
+                {
+                    return Ok(receipt);
+                }
+                let handler = host.handlers.get(&action.operation).ok_or_else(|| {
+                    CommandError::simple(
+                        CommandErrorCode::PermissionDenied,
+                        CommandStage::ExecutionAdopt,
+                    )
+                })?;
+                #[cfg(feature = "execution-test-host")]
+                if action.operation == tsumugi_core::content::OPERATION {
+                    test_support::source_fixture_hook(store, "adopt-before").map_err(map_adopt)?;
+                }
+                let receipt = store
+                    .adopt_execution(&action, handler.as_ref())
+                    .map_err(map_adopt)?;
+                #[cfg(feature = "execution-test-host")]
+                if action.operation == tsumugi_core::content::OPERATION {
+                    test_support::source_fixture_hook(store, "adopt-after").map_err(map_adopt)?;
+                }
+                Ok(receipt)
+            },
         )
-    })?;
-    #[cfg(feature = "execution-test-host")]
-    if action.operation == tsumugi_core::content::OPERATION {
-        test_support::source_fixture_hook(store, "adopt-before").map_err(map_adopt)?;
-    }
-    let receipt = store
-        .adopt_execution(&action, handler.as_ref())
-        .map_err(map_adopt)?;
-    #[cfg(feature = "execution-test-host")]
-    if action.operation == tsumugi_core::content::OPERATION {
-        test_support::source_fixture_hook(store, "adopt-after").map_err(map_adopt)?;
-    }
-    Ok(receipt)
+        .await
 }
 #[tauri::command]
-pub fn read_execution_receipt(
+pub async fn read_execution_receipt(
     state: State<'_, AppState>,
     request: AdoptRequest,
 ) -> Result<Option<AdoptionReceipt>, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?;
-    active
-        .store
-        .adoption_receipt(request.action_id)
-        .map_err(map_read)
+    state
+        .sessions
+        .run(
+            "read_execution_receipt",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .adoption_receipt(request.action_id)
+                    .map_err(map_read)
+            },
+        )
+        .await
 }
 #[tauri::command]
-pub fn quiesce_execution(
+pub async fn quiesce_execution(
     state: State<'_, AppState>,
     request: SessionRequest,
 ) -> Result<RuntimeStatus, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionQuiesce)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionQuiesce,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    if !host.quiescing {
-        host.begin_quiesce(store)?;
-    }
-    match host.runtime.finish_quiesce(store) {
-        Ok(()) => host.quiescing = false,
-        Err(error) if error.code == ErrorCode::Busy => {}
-        Err(error) => return Err(map_execution(error, CommandStage::ExecutionQuiesce)),
-    }
-    Ok(RuntimeStatus {
-        active: host.active(store)?,
-        quiescing: host.quiescing,
-        query_count: 0,
-        error: host.last_error.clone(),
-    })
+    state
+        .sessions
+        .run(
+            "quiesce_execution",
+            CommandStage::ExecutionQuiesce,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionQuiesce,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                if !host.quiescing {
+                    host.begin_quiesce(store)?;
+                }
+                match host.runtime.finish_quiesce(store) {
+                    Ok(()) => host.quiescing = false,
+                    Err(error) if error.code == ErrorCode::Busy => {}
+                    Err(error) => return Err(map_execution(error, CommandStage::ExecutionQuiesce)),
+                }
+                Ok(RuntimeStatus {
+                    active: host.active(store)?,
+                    quiescing: host.quiescing,
+                    query_count: 0,
+                    error: host.last_error.clone(),
+                })
+            },
+        )
+        .await
 }
 
 #[cfg(all(test, feature = "execution-test-host"))]

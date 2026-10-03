@@ -106,18 +106,20 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     // No path-grant IPC command is registered in either product configuration.
     {
         let state = app.state::<AppState>();
-        let mut sessions = state.sessions.lock().unwrap();
-        let host = sessions
-            .active
-            .as_mut()
-            .unwrap()
-            .execution_parts()
-            .unwrap()
-            .0;
-        host.source.selection = Some((
-            selection,
-            Arc::new(capture::Selection::authorize(source.clone()).unwrap()),
-        ));
+        let source = source.clone();
+        state.sessions.with(move |sessions| {
+            let host = sessions
+                .active
+                .as_mut()
+                .unwrap()
+                .execution_parts()
+                .unwrap()
+                .0;
+            host.source.selection = Some((
+                selection,
+                Arc::new(capture::Selection::authorize(source.clone()).unwrap()),
+            ));
+        })
     }
     let mut capture = context.clone();
     capture["selectionId"] = json!(selection);
@@ -163,9 +165,10 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     let detail = loop {
         {
             let state = app.state::<AppState>();
-            let mut sessions = state.sessions.lock().unwrap();
-            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-            host.tick(store).unwrap();
+            state.sessions.with(move |sessions| {
+                let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+                host.tick(store).unwrap();
+            })
         }
         let mut r = context.clone();
         r["attemptId"] = json!(attempt);
@@ -279,19 +282,21 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     let selection = ExecutionId::new();
     {
         let state = app.state::<AppState>();
-        let mut sessions = state.sessions.lock().unwrap();
-        sessions
-            .active
-            .as_mut()
-            .unwrap()
-            .execution_parts()
-            .unwrap()
-            .0
-            .source
-            .selection = Some((
-            selection,
-            Arc::new(capture::Selection::authorize(source.clone()).unwrap()),
-        ));
+        let source = source.clone();
+        state.sessions.with(move |sessions| {
+            sessions
+                .active
+                .as_mut()
+                .unwrap()
+                .execution_parts()
+                .unwrap()
+                .0
+                .source
+                .selection = Some((
+                selection,
+                Arc::new(capture::Selection::authorize(source.clone()).unwrap()),
+            ));
+        })
     }
     let mut files = context.clone();
     files["selectionId"] = json!(selection);
@@ -310,9 +315,11 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
         loop {
             {
                 let state = app.state::<AppState>();
-                let mut sessions = state.sessions.lock().unwrap();
-                let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-                host.tick(store).unwrap();
+                state.sessions.with(move |sessions| {
+                    let (host, store) =
+                        sessions.active.as_mut().unwrap().execution_parts().unwrap();
+                    host.tick(store).unwrap();
+                })
             }
             let mut request = context.clone();
             request["attemptId"] = json!(attempt);

@@ -3,8 +3,9 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
+mod dispatch;
 mod execution;
 
 use serde::{Deserialize, Serialize};
@@ -231,22 +232,35 @@ pub struct CloseProjectView {
     pub closed: bool,
 }
 
-#[derive(Default)]
-pub struct AppState {
-    sessions: Arc<Mutex<SessionManager>>,
-    review_check_cancellations: Arc<
-        Mutex<
-            BTreeMap<
+type ReviewCheckRegistry = Arc<
+    Mutex<
+        BTreeMap<
+            tsumugi_core::execution::ExecutionId,
+            (
+                String,
                 tsumugi_core::execution::ExecutionId,
-                (
-                    String,
-                    tsumugi_core::execution::ExecutionId,
-                    tsumugi_core::execution::Cancellation,
-                ),
-            >,
+                tsumugi_core::execution::Cancellation,
+            ),
         >,
     >,
-    clock_started: std::sync::atomic::AtomicBool,
+>;
+
+pub struct AppState {
+    sessions: dispatch::SessionExecutor,
+    io: dispatch::BlockingExecutor,
+    dialogs: dispatch::BlockingExecutor,
+    review_check_cancellations: ReviewCheckRegistry,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            sessions: dispatch::SessionExecutor::default(),
+            io: dispatch::BlockingExecutor::new(4),
+            dialogs: dispatch::BlockingExecutor::new(1),
+            review_check_cancellations: Arc::default(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -770,91 +784,109 @@ impl SessionManager {
 }
 
 #[tauri::command]
-pub fn create_project(
+pub async fn create_project(
     state: State<'_, AppState>,
     request: CreateProjectRequest,
 ) -> Result<ProjectView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::Create)?;
-    sessions.create(request)
+    state
+        .sessions
+        .run("create_project", CommandStage::Create, move |sessions| {
+            sessions.create(request)
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn open_project(
+pub async fn open_project(
     state: State<'_, AppState>,
     request: OpenProjectRequest,
 ) -> Result<ProjectView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::Open)?;
-    sessions.open(request)
+    state
+        .sessions
+        .run("open_project", CommandStage::Open, move |sessions| {
+            sessions.open(request)
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn read_project(
+pub async fn read_project(
     state: State<'_, AppState>,
     request: ReadProjectRequest,
 ) -> Result<ProjectView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::Read)?;
-    sessions.read(request)
+    state
+        .sessions
+        .run("read_project", CommandStage::Read, move |sessions| {
+            sessions.read(request)
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn rename_project(
+pub async fn rename_project(
     state: State<'_, AppState>,
     request: RenameProjectRequest,
 ) -> Result<MetadataMutationView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::Rename)?;
-    sessions.rename(request)
+    state
+        .sessions
+        .run("rename_project", CommandStage::Rename, move |sessions| {
+            sessions.rename(request)
+        })
+        .await
 }
 
 #[tauri::command]
-pub fn add_target_locale(
+pub async fn add_target_locale(
     state: State<'_, AppState>,
     request: AddTargetLocaleRequest,
 ) -> Result<MetadataMutationView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::AddTargetLocale)?;
-    sessions.add_target_locale(request)
+    state
+        .sessions
+        .run(
+            "add_target_locale",
+            CommandStage::AddTargetLocale,
+            move |sessions| sessions.add_target_locale(request),
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn set_target_locales(
+pub async fn set_target_locales(
     state: State<'_, AppState>,
     request: SetTargetLocalesRequest,
 ) -> Result<MetadataMutationView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::SetTargetLocales)?;
-    sessions.set_target_locales(request)
+    state
+        .sessions
+        .run(
+            "set_target_locales",
+            CommandStage::SetTargetLocales,
+            move |sessions| sessions.set_target_locales(request),
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn close_project(
+pub async fn close_project(
     state: State<'_, AppState>,
     request: CloseProjectRequest,
 ) -> Result<CloseProjectView, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::Close)?;
-    sessions.close(request)
+    state
+        .sessions
+        .run("close_project", CommandStage::Close, move |sessions| {
+            sessions.close(request)
+        })
+        .await
 }
 
 pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    builder
-        .manage(AppState::default())
-        .setup(|app| {
-            use tauri::Manager;
-            #[cfg(feature = "execution-test-host")]
-            execution::initialize_test_host(&app.state::<AppState>())?;
-            execution::start_clock(&app.state::<AppState>());
-            Ok(())
-        })
-        .invoke_handler(execution::handler())
-}
-
-fn lock_sessions<'a>(
-    state: &'a State<'_, AppState>,
-    stage: CommandStage,
-) -> Result<MutexGuard<'a, SessionManager>, CommandError> {
-    state
-        .sessions
-        // Synchronous commands run on the desktop event thread. A background
-        // projection/check must not block it when a view is reopened or closed.
-        .try_lock()
-        .map_err(|_| CommandError::simple(CommandErrorCode::Busy, stage))
+    let builder = builder.manage(AppState::default());
+    #[cfg(feature = "execution-test-host")]
+    let builder = builder.setup(|app| {
+        use tauri::Manager;
+        execution::initialize_test_host(&app.state::<AppState>())?;
+        Ok(())
+    });
+    builder.invoke_handler(execution::handler())
 }
 
 fn validate_locator(raw: &str, stage: CommandStage, field: &str) -> Result<PathBuf, CommandError> {
@@ -1061,31 +1093,6 @@ fn metadata_field_name(field: MetadataField) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn busy_background_session_does_not_block_synchronous_commands() {
-        use tauri::Manager;
-        let app = super::register_commands(tauri::test::mock_builder())
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap();
-        let state = app.state::<super::AppState>();
-        let held = state.sessions.lock().unwrap();
-        let (send, receive) = std::sync::mpsc::channel();
-        std::thread::scope(|scope| {
-            let worker = scope.spawn(|| {
-                let result =
-                    super::lock_sessions(&state, super::CommandStage::ExecutionRead).map(|_| ());
-                send.send(result).unwrap();
-            });
-            let result = receive.recv_timeout(std::time::Duration::from_secs(1));
-            drop(held);
-            worker.join().unwrap();
-            assert_eq!(
-                result.unwrap().unwrap_err().code,
-                super::CommandErrorCode::Busy
-            );
-        });
-        assert!(super::lock_sessions(&state, super::CommandStage::ExecutionRead).is_ok());
-    }
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;

@@ -53,91 +53,140 @@ fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
 }
 
 #[tauri::command]
-pub fn read_review_page(
+pub async fn read_review_page(
     state: State<'_, AppState>,
     request: ReviewPageRequest,
 ) -> Result<ReviewPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .review_page_filtered(
-        request.project_id,
-        &request.locale,
-        request.after_ordinal,
-        request.limit,
-        request.query.as_deref().unwrap_or(""),
-    )
-    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_review_page",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                #[cfg(feature = "execution-test-host")]
+                test_support::source_fixture_hook(&mut active.store, "review-page")
+                    .map_err(map_read)?;
+                active
+                    .store
+                    .review_page_filtered(
+                        request.project_id,
+                        &request.locale,
+                        request.after_ordinal,
+                        request.limit,
+                        request.query.as_deref().unwrap_or(""),
+                    )
+                    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_review_target(
+pub async fn read_review_target(
     state: State<'_, AppState>,
     request: ReviewTargetRequest,
 ) -> Result<ReviewTarget, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .review_target(request.project_id, request.unit_id, &request.locale)
-    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_review_target",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_target(request.project_id, request.unit_id, &request.locale)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_review_history(
+pub async fn read_review_history(
     state: State<'_, AppState>,
     request: ReviewHistoryRequest,
 ) -> Result<ReviewHistoryPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .review_history(
-        request.project_id,
-        request.unit_id,
-        &request.locale,
-        request.offset,
-        request.limit,
-    )
-    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_review_history",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_history(
+                    request.project_id,
+                    request.unit_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn write_review_decision(
+pub async fn write_review_decision(
     state: State<'_, AppState>,
     request: ReviewWriteRequest,
 ) -> Result<ReviewDecision, CommandError> {
-    if request.decision.project_id != request.project_id {
-        return Err(CommandError::invalid_input(
+    state
+        .sessions
+        .run(
+            "write_review_decision",
             CommandStage::ExecutionAdopt,
-            Some("review-project"),
-        ));
+            move |sessions| {
+                if request.decision.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionAdopt,
+                        Some("review-project"),
+                    ));
+                }
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .write_review(&request.decision)
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
+}
+
+struct ReviewCheckRegistration {
+    registry: ReviewCheckRegistry,
+    action: ExecutionId,
+}
+impl Drop for ReviewCheckRegistration {
+    fn drop(&mut self) {
+        self.registry
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&self.action);
     }
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .write_review(&request.decision)
-        .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
 }
 
 #[tauri::command]
@@ -166,38 +215,41 @@ pub async fn run_review_checks(
             ),
         );
     }
-    // Keep the desktop event loop free to deliver cancel_review_checks while
-    // this synchronous store operation holds the project session lock.
-    let sessions = Arc::clone(&state.sessions);
-    let outcome = tauri::async_runtime::spawn_blocking(move || {
-        let mut sessions = sessions.lock().map_err(|_| {
-            CommandError::simple(CommandErrorCode::Busy, CommandStage::ExecutionAdopt)
-        })?;
-        let active = authorized(
-            &mut sessions,
-            &request.session_token,
-            request.project_id,
+    // The registration lives with accepted work, even if its IPC waiter goes away.
+    let registration = ReviewCheckRegistration {
+        registry: running_checks,
+        action: request.action_id,
+    };
+    state
+        .sessions
+        .run(
+            "run_review_checks",
             CommandStage::ExecutionAdopt,
-        )?;
-        let (host, store) = active.execution_parts()?;
-        host.allow_mutation()?;
-        store
-            .run_review_checks_with_cancel(
-                request.project_id,
-                request.unit_id,
-                &request.locale,
-                &request.expected_basis,
-                request.action_id,
-                &cancellation,
-            )
-            .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
-    })
-    .await;
-    running_checks
-        .lock()
-        .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
-        .remove(&request.action_id);
-    outcome.map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
+            move |sessions| {
+                let _registration = registration;
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                #[cfg(feature = "execution-test-host")]
+                test_support::source_fixture_hook(store, "review-check").map_err(map_adopt)?;
+                store
+                    .run_review_checks_with_cancel(
+                        request.project_id,
+                        request.unit_id,
+                        &request.locale,
+                        &request.expected_basis,
+                        request.action_id,
+                        &cancellation,
+                    )
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
@@ -223,90 +275,122 @@ pub fn cancel_review_checks(
 }
 
 #[tauri::command]
-pub fn waive_review_issue(
+pub async fn waive_review_issue(
     state: State<'_, AppState>,
     request: WaiverRequest,
 ) -> Result<Waiver, CommandError> {
-    if request.waiver.project_id != request.project_id {
-        return Err(CommandError::invalid_input(
+    state
+        .sessions
+        .run(
+            "waive_review_issue",
             CommandStage::ExecutionAdopt,
-            Some("review-project"),
-        ));
-    }
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .waive_review_issue(&request.waiver)
-        .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+            move |sessions| {
+                if request.waiver.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionAdopt,
+                        Some("review-project"),
+                    ));
+                }
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .waive_review_issue(&request.waiver)
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn allow_source_fallback(
+pub async fn allow_source_fallback(
     state: State<'_, AppState>,
     request: FallbackRequest,
 ) -> Result<FallbackDecision, CommandError> {
-    if request.fallback.project_id != request.project_id {
-        return Err(CommandError::invalid_input(
+    state
+        .sessions
+        .run(
+            "allow_source_fallback",
             CommandStage::ExecutionAdopt,
-            Some("review-project"),
-        ));
-    }
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionAdopt)?;
-    let active = authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionAdopt,
-    )?;
-    let (host, store) = active.execution_parts()?;
-    host.allow_mutation()?;
-    store
-        .allow_source_fallback(&request.fallback)
-        .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+            move |sessions| {
+                if request.fallback.project_id != request.project_id {
+                    return Err(CommandError::invalid_input(
+                        CommandStage::ExecutionAdopt,
+                        Some("review-project"),
+                    ));
+                }
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                store
+                    .allow_source_fallback(&request.fallback)
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_review_work(
+pub async fn read_review_work(
     state: State<'_, AppState>,
     request: ReviewWorkRequest,
 ) -> Result<WorkPage, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .review_work_page(
-        request.project_id,
-        &request.locale,
-        request.offset,
-        request.limit,
-    )
-    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_review_work",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_work_page(
+                    request.project_id,
+                    &request.locale,
+                    request.offset,
+                    request.limit,
+                )
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]
-pub fn read_review_eligibility(
+pub async fn read_review_eligibility(
     state: State<'_, AppState>,
     request: EligibilityRequest,
 ) -> Result<Eligibility, CommandError> {
-    let mut sessions = lock_sessions(&state, CommandStage::ExecutionRead)?;
-    authorized(
-        &mut sessions,
-        &request.session_token,
-        request.project_id,
-        CommandStage::ExecutionRead,
-    )?
-    .store
-    .review_eligibility(request.project_id, &request.locales)
-    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+    state
+        .sessions
+        .run(
+            "read_review_eligibility",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_eligibility(request.project_id, &request.locales)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
