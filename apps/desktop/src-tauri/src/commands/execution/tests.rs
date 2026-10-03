@@ -641,6 +641,219 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     assert!(tauri::async_runtime::block_on(merge).is_err());
 }
 
+#[test]
+fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
+    let (temp, app, webview, context) = setup();
+    let state = app.state::<AppState>();
+    let project_id: ExecutionId = serde_json::from_value(context["projectId"].clone()).unwrap();
+    let session_token = context["sessionToken"].as_str().unwrap().to_owned();
+    let unit = state.sessions.with(move |sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        let bundle = tsumugi_core::content::SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"Hello"}"#,
+            "en-US",
+        ).unwrap();
+        let input = bundle.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.active(store).unwrap() {
+            host.tick(store).unwrap();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let result = store.execution_current_result(
+            input.envelope().attempt_id, input.envelope().items[0].item_id,
+        ).unwrap().unwrap();
+        let preview = store.source_preview(input.envelope().attempt_id, result, 0, 1).unwrap();
+        let action = store.prepare_adoption_with_id(
+            ExecutionId::new(), input.envelope().attempt_id, input.envelope().units[0].unit_id,
+            vec![result], serde_json::to_value(preview.confirmation).unwrap(),
+        ).unwrap();
+        store.adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler).unwrap();
+        store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 1)
+            .unwrap().rows.remove(0)
+    });
+    let first = call(
+        &webview,
+        "save_translation_revision",
+        request(
+            &context,
+            json!({
+                "actionId":ExecutionId::new(), "unitId":unit.unit_id, "locale":"zh-CN",
+                "sourceRevisionId":unit.source_revision_id, "expectedSelectionId":null, "text":"Before QA"
+            }),
+        ),
+    )
+    .unwrap();
+    let target = call(
+        &webview,
+        "read_review_target",
+        request(
+            &context,
+            json!({
+                "unitId":unit.unit_id, "locale":"zh-CN"
+            }),
+        ),
+    )
+    .unwrap();
+    let action_id = ExecutionId::new();
+    let save_action = ExecutionId::new();
+    let held = state.sessions.pause();
+    let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut check = Box::pin(review::run_review_checks(app.state::<AppState>(),
+        serde_json::from_value(request(&context, json!({
+            "actionId":action_id, "unitId":unit.unit_id, "locale":"zh-CN", "expectedBasis":target["basis"]
+        }))).unwrap()));
+    assert!(matches!(
+        std::future::Future::poll(check.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    let save_request = request(
+        &context,
+        json!({
+            "actionId":save_action, "unitId":unit.unit_id, "locale":"zh-CN",
+            "sourceRevisionId":unit.source_revision_id, "expectedSelectionId":first["eventId"], "text":"Accepted during QA"
+        }),
+    );
+    let mut save = Box::pin(source::translation::save_translation_revision(
+        app.state::<AppState>(),
+        serde_json::from_value(save_request.clone()).unwrap(),
+    ));
+    assert!(matches!(
+        std::future::Future::poll(save.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    let mut close = Box::pin(crate::commands::close_project(
+        app.state::<AppState>(),
+        CloseProjectRequest {
+            session_token: session_token.clone(),
+        },
+    ));
+    assert!(matches!(
+        std::future::Future::poll(close.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    let mut reopen = Box::pin(crate::commands::open_project(
+        app.state::<AppState>(),
+        crate::commands::OpenProjectRequest {
+            locator: temp.path().join("project").to_string_lossy().into_owned(),
+        },
+    ));
+    assert!(matches!(
+        std::future::Future::poll(reopen.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    let mut late_request = save_request.clone();
+    late_request["actionId"] = json!(ExecutionId::new());
+    late_request["text"] = json!("Must not reach reopened session");
+    let mut late_save = Box::pin(source::translation::save_translation_revision(
+        app.state::<AppState>(),
+        serde_json::from_value(late_request).unwrap(),
+    ));
+    assert!(matches!(
+        std::future::Future::poll(late_save.as_mut(), &mut poll_context),
+        std::task::Poll::Pending
+    ));
+    assert!(
+        review::cancel_review_checks(
+            app.state::<AppState>(),
+            review::ReviewCancelCheckRequest {
+                session_token: session_token.clone(),
+                project_id,
+                action_id,
+            }
+        )
+        .unwrap()
+    );
+    drop(held);
+    let cancelled = tauri::async_runtime::block_on(check).unwrap();
+    assert_eq!(cancelled.outcome, "cancelled");
+    assert!(
+        cancelled
+            .rules
+            .iter()
+            .all(|rule| rule.status == "cancelled")
+    );
+    let saved = tauri::async_runtime::block_on(save).unwrap();
+    assert!(tauri::async_runtime::block_on(close).unwrap().closed);
+    let reopened = tauri::async_runtime::block_on(reopen).unwrap();
+    assert_ne!(reopened.session_token, session_token);
+    assert_eq!(
+        tauri::async_runtime::block_on(late_save).unwrap_err().code,
+        CommandErrorCode::SessionInvalid
+    );
+    assert!(state.review_check_cancellations.lock().unwrap().is_empty());
+    let current = json!({"sessionToken":reopened.session_token, "projectId":project_id});
+    let history = call(
+        &webview,
+        "read_translation_history",
+        request(
+            &current,
+            json!({
+                "unitId":unit.unit_id, "locale":"zh-CN", "afterOrdinal":0, "limit":10
+            }),
+        ),
+    )
+    .unwrap();
+    assert_eq!(history["total"], 2);
+    assert_eq!(history["currentText"], "Accepted during QA");
+    assert_eq!(history["current"]["eventId"], json!(saved.event_id));
+    assert_eq!(
+        call(
+            &webview,
+            "read_translation_action",
+            request(
+                &current,
+                json!({
+                    "unitId":unit.unit_id, "locale":"zh-CN", "actionId":save_action
+                })
+            )
+        )
+        .unwrap(),
+        serde_json::to_value(&saved).unwrap()
+    );
+    // A saved acknowledgement can be reconciled after close without duplicating its revision.
+    assert_eq!(call(&webview, "save_translation_revision", request(&current, json!({
+        "actionId":save_action, "unitId":unit.unit_id, "locale":"zh-CN",
+        "sourceRevisionId":unit.source_revision_id, "expectedSelectionId":first["eventId"], "text":"Accepted during QA"
+    }))).unwrap(), serde_json::to_value(&saved).unwrap());
+    assert_eq!(
+        call(
+            &webview,
+            "read_translation_history",
+            request(
+                &current,
+                json!({
+                    "unitId":unit.unit_id, "locale":"zh-CN", "afterOrdinal":0, "limit":10
+                })
+            )
+        )
+        .unwrap(),
+        history
+    );
+    let reviews = call(
+        &webview,
+        "read_review_history",
+        request(
+            &current,
+            json!({
+                "unitId":unit.unit_id, "locale":"zh-CN", "offset":0, "limit":10
+            }),
+        ),
+    )
+    .unwrap();
+    assert_eq!(reviews["checks"].as_array().unwrap().len(), 1);
+    assert_eq!(reviews["checks"][0]["runId"], json!(cancelled.run_id));
+    assert_eq!(reviews["checks"][0]["outcome"], "cancelled");
+    call(
+        &webview,
+        "close_project",
+        json!({"sessionToken":current["sessionToken"]}),
+    )
+    .unwrap();
+}
+
 fn request(context: &Value, extra: Value) -> Value {
     let mut request = context.clone();
     request
