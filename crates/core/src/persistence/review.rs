@@ -13,6 +13,26 @@ const CHECK_VERSION: &str = "smapi-prebuild-2";
 const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
+mod queries;
+#[cfg(test)]
+mod query_tests;
+mod views;
+pub(super) use views::ReadScopes;
+pub use views::{
+    ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary,
+    ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+};
+
+fn check_outcome(rules: &[CheckRuleResult]) -> &'static str {
+    if rules.iter().all(|rule| rule.status == "cancelled") {
+        "cancelled"
+    } else if rules.iter().all(|rule| rule.status == "failed") {
+        "failed"
+    } else {
+        "completed"
+    }
+}
+
 #[cfg(test)]
 thread_local! {
     static CHECK_FAIL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -584,19 +604,7 @@ fn check_by_action(
             }
             let rules: Vec<CheckRuleResult> = serde_json::from_str(&rules_json)
                 .map_err(|_| failure(ErrorCode::CorruptLedger, "review-checks"))?;
-            let outcome = if rules
-                .iter()
-                .all(|rule: &CheckRuleResult| rule.status == "cancelled")
-            {
-                "cancelled"
-            } else if rules
-                .iter()
-                .all(|rule: &CheckRuleResult| rule.status == "failed")
-            {
-                "failed"
-            } else {
-                "completed"
-            };
+            let outcome = check_outcome(&rules);
             Ok((
                 CheckRun {
                     run_id: parse_id(run_id)?,
@@ -847,6 +855,39 @@ pub(super) fn target_in(
 }
 
 impl ProjectStore {
+    /// One bounded traversal reused by work pagination and source impact summaries.
+    pub(super) fn review_work_set(
+        &self,
+        project_id: ExecutionId,
+        locale: &str,
+    ) -> Result<Vec<(ReviewTarget, Vec<String>)>, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        queries::read_snapshot(connection, |connection| {
+            check_project(connection, project_id, locale)?;
+            let (_, units) = all_units(connection, project_id)?;
+            let impacts = self.impact_map(project_id, locale)?;
+            let targets = queries::targets_in(connection, project_id, &units, locale)?;
+            Ok(targets
+                .into_iter()
+                .map(|target| {
+                    let (mut reasons, _) = assess(&target, impacts.contains_key(&target.unit_id));
+                    if let Some(changes) = impacts.get(&target.unit_id) {
+                        if reasons
+                            .iter()
+                            .any(|reason| reason == "resource-impact-unresolved")
+                        {
+                            reasons
+                                .extend(changes.iter().map(|id| format!("resource-change:{id}")));
+                        }
+                    }
+                    (target, reasons)
+                })
+                .collect())
+        })
+    }
+
     pub fn review_target(
         &self,
         project_id: ExecutionId,
@@ -856,7 +897,9 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
-        target_in(connection, project_id, unit_id, locale)
+        queries::read_snapshot(connection, |connection| {
+            target_in(connection, project_id, unit_id, locale)
+        })
     }
 
     pub fn review_page(
@@ -889,6 +932,12 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
+        let transaction = if connection.is_autocommit() {
+            Some(connection.unchecked_transaction().map_err(sql)?)
+        } else {
+            None
+        };
+        let connection = transaction.as_deref().unwrap_or(connection);
         check_project(connection, project_id, locale)?;
         let snapshot: Option<String> = connection
             .query_row(
@@ -967,11 +1016,12 @@ impl ProjectStore {
             (total, items)
         };
         let next_ordinal = (items.len() > limit as usize).then(|| items[limit as usize].1);
-        let rows = items
+        let units = items
             .into_iter()
             .take(limit as usize)
-            .map(|(unit, _)| target_in(connection, project_id, parse_id(unit)?, locale))
+            .map(|(unit, _)| parse_id(unit))
             .collect::<Result<Vec<_>, _>>()?;
+        let rows = queries::targets_in(connection, project_id, &units, locale)?;
         Ok(ReviewPage {
             rows,
             next_ordinal,
@@ -1933,27 +1983,11 @@ impl ProjectStore {
         if limit == 0 || limit > 100 || offset > MAX_SCOPE as u32 {
             return Err(failure(ErrorCode::InvalidInput, "review-work-page"));
         }
-        let connection = self
-            .connection()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
-        check_project(connection, project_id, locale)?;
-        let (_, units) = all_units(connection, project_id)?;
-        let impacts = self.impact_map(project_id, locale)?;
         let mut items = Vec::new();
-        for unit_id in units {
-            let target = target_in(connection, project_id, unit_id, locale)?;
-            let (mut reasons, _) = assess(&target, impacts.contains_key(&unit_id));
-            if let Some(changes) = impacts.get(&unit_id) {
-                if reasons
-                    .iter()
-                    .any(|reason| reason == "resource-impact-unresolved")
-                {
-                    reasons.extend(changes.iter().map(|id| format!("resource-change:{id}")));
-                }
-            }
+        for (target, reasons) in self.review_work_set(project_id, locale)? {
             if !reasons.is_empty() {
                 items.push(WorkItem {
-                    unit_id,
+                    unit_id: target.unit_id,
                     locale: locale.to_owned(),
                     native_key: target.native_key,
                     reasons,
@@ -2146,7 +2180,7 @@ mod tests {
             .unwrap();
     }
 
-    fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
+    pub(super) fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
         adopt_source_files(
             store,
             br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
@@ -2229,7 +2263,7 @@ mod tests {
         }
     }
 
-    fn fixture() -> (
+    pub(super) fn fixture() -> (
         tempfile::TempDir,
         ProjectStore,
         ExecutionId,
@@ -2251,7 +2285,7 @@ mod tests {
             page.rows.iter().map(|row| row.unit_id).collect(),
         )
     }
-    fn translate(
+    pub(super) fn translate(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,

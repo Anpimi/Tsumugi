@@ -24,8 +24,16 @@ beforeEach(async () => {
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: "snapshot" };
     if (command === "read_source_content") return content;
-    if (command === "read_review_page") return { rows: content.rows.map(row => ({ unitId: row.unitId, locale: "zh-CN", nativeKey: row.occurrence.key, sourceText: row.occurrence.text, sourceSnapshotId: "snapshot", sourceRevisionId: row.sourceRevisionId, selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] })), total: 1, nextOrdinal: null };
+    if (command === "read_review_summary_page") return { rows: content.rows.map(row => ({ unitId: row.unitId, locale: "zh-CN", nativeKey: row.occurrence.key, sourcePreview: row.occurrence.text, sourceSnapshotId: "snapshot", sourceRevisionId: row.sourceRevisionId, selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationPreview: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] })), total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: "snapshot", readVersion: "view" };
     if (command === "read_review_target") return { unitId: "unit", locale: "zh-CN", nativeKey: "first", sourceText: "Original", sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
+    if (command === "read_review_editor_snapshot") return {
+      target: { unitId: args.request.unitId, locale: "zh-CN", nativeKey: args.request.unitId === "second" ? "second" : "first", sourceText: "Original", sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] },
+      translations: history,
+      terms: { unitId: args.request.unitId, locale: "zh-CN", sourceRevisionId: "source-revision", entries: [{ source: "Original", selected: { revisionId: "term-revision", termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] },
+      context: { revisionId: "context-revision", unitId: args.request.unitId, locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null },
+      readVersion: "view",
+    };
+    if (command === "read_review_neighbor") return { unitId: "second", afterOrdinal: 1, sourceSnapshotId: "snapshot" };
     if (command === "read_translation_history") return history;
     if (command === "resolve_terms") return { unitId: "unit", locale: "zh-CN", sourceRevisionId: "source-revision", entries: [{ source: "Original", selected: { revisionId: "term-revision", termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
     if (command === "read_context_revision") return { revisionId: "context-revision", unitId: "unit", locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
@@ -46,6 +54,136 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 51 without manual paging, then reports the end (%s)", async mode => {
+  const original = invoke.getMockImplementation()!;
+  const saved = new Map<string, string>();
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page") {
+      const after = Number(args.request.afterOrdinal);
+      return { rows: Array.from({ length: Math.min(50, 51 - after) }, (_, offset) => {
+        const position = after + offset;
+        return { unitId: `unit-${position}`, locale: "zh-CN", nativeKey: `entry-${position + 1}`,
+          sourceSnapshotId: "snapshot", sourceRevisionId: `source-${position}`,
+          sourcePreview: "Source preview", translationPreview: saved.get(`unit-${position}`) ?? null,
+          selectionId: null, revisionId: null, basis: "basis", currentDecision: null, currentCheck: null };
+      }), total: 51, nextOrdinal: after + 50 < 51 ? after + 50 : null,
+        scopeId: "fixed-scope", sourceSnapshotId: "snapshot", readVersion: "view" };
+    }
+    if (command === "read_review_editor_snapshot") {
+      const value = await original(command, args);
+      const unitId = String(args.request.unitId);
+      const position = Number(unitId.split("-")[1]);
+      const text = saved.get(unitId) ?? null;
+      return { ...value, target: { ...value.target, unitId, nativeKey: `entry-${position + 1}`,
+        sourceRevisionId: `source-${position}`, sourceText: "Complete source for editing", translationText: text },
+        translations: { ...emptyHistory, unitId, currentText: text } };
+    }
+    if (command === "save_translation_revision") {
+      saved.set(String(args.request.unitId), String(args.request.text));
+      return {};
+    }
+    if (command === "read_review_neighbor") {
+      const next = Number(String(args.request.unitId).split("-")[1]) + Number(args.request.direction);
+      return { unitId: next >= 0 && next < 51 ? `unit-${next}` : null,
+        afterOrdinal: next >= 0 && next < 51 ? next : null, sourceSnapshotId: "snapshot" };
+    }
+    return original(command, args);
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "entry-50" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Fiftieth saved");
+  if (mode === "save-and-next") await user.click(screen.getByRole("button", { name: "Save and next" }));
+  else {
+    await user.click(screen.getByRole("button", { name: "Next entry" }));
+    await user.click(await screen.findByRole("button", { name: "Save and continue" }));
+  }
+  expect(await screen.findByRole("heading", { name: "entry-51" })).toBeInTheDocument();
+  expect(saved.get("unit-49")).toBe("Fiftieth saved");
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("");
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "entry-51" })).toHaveAttribute("aria-current", "true");
+  await user.type(screen.getByRole("textbox", { name: "Your draft" }), "Final saved");
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  expect(await screen.findByText("You have reached the last entry in this list.")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "entry-51" })).toBeInTheDocument();
+  expect(saved.get("unit-50")).toBe("Final saved");
+});
+
+it("retains input entered while save-and-next waits for the neighboring entry", async () => {
+  const original = invoke.getMockImplementation()!;
+  let finish!: (value: unknown) => void;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_neighbor"
+    ? new Promise(resolve => { finish = resolve; }) : original(command, args));
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "A");
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  await waitFor(() => expect(finish).toBeDefined());
+  await user.type(editor, "B");
+  await act(async () => finish({ unitId: "second", afterOrdinal: 1, sourceSnapshotId: "snapshot" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  expect(editor).toHaveValue("AB");
+  expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
+  expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("Your draft changed while the next entry was loading");
+});
+
+it.each([
+  ["review-scope-expired", "This result list has expired"],
+  ["review-scope-source-changed", "The source range changed"],
+])("recovers a stale result scope through a fresh search without losing the draft (%s)", async (field, message) => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page") {
+      if (args.request.scopeId) throw { code: "dependency-conflict", field };
+      return { ...await original(command, args), nextOrdinal: 1 };
+    }
+    return original(command, args);
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "Retained input");
+  await user.click(screen.getByRole("button", { name: "Next page" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(editor).toHaveValue("Retained input");
+  await user.click(screen.getByRole("button", { name: "Find" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  expect(editor).toHaveValue("Retained input");
+  expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_summary_page").at(-1)?.[1].request.scopeId).toBeNull();
+});
+
+it("keeps the editor but disables list navigation when a new search has no matches", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const value = await original(command, args);
+    return command === "read_review_summary_page" && args.request.query === "absent"
+      ? { ...value, rows: [], total: 0, nextOrdinal: null } : value;
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "Keep this input");
+  await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "absent");
+  await user.click(screen.getByRole("button", { name: "Find" }));
+  await screen.findByText("0 matching entries");
+  expect(editor).toHaveValue("Keep this input");
+  expect(screen.getByRole("button", { name: "Previous entry" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+});
 
 it("requires language mapping and applies only the reviewed unique result", async () => {
   render(<TranslationWorkbench project={project} disabled={false} />);
@@ -107,13 +245,13 @@ it("shows current adopted terms and context beside the editable translation", as
   expect(reference).toHaveTextContent("Original: 原文 · Manual · Project terminology");
   expect(reference).toHaveTextContent("Used in the opening screen · Translator note");
   expect(screen.getByRole("textbox", { name: "Your draft" })).toBeEnabled();
-  expect(invoke.mock.calls.find(([name]) => name === "resolve_terms")?.[1].request).toMatchObject({ unitId: "unit", locale: "zh-CN" });
+  expect(invoke.mock.calls.find(([name]) => name === "read_review_editor_snapshot")?.[1].request).toMatchObject({ unitId: "unit", locale: "zh-CN" });
 });
 
 it("queries the complete current scope and retains a filtered position on return", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_review_page") return Promise.resolve({ rows: [{ unitId: "late-unit", locale: "zh-CN", nativeKey: args.request.query ? "later-needle" : "first", sourceText: "Source on page two", sourceSnapshotId: "snapshot", sourceRevisionId: "later-source", selectionId: null, revisionId: null, translationText: null, basis: "later-basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] }], total: args.request.query ? 1 : 60, nextOrdinal: args.request.query ? null : 50 });
+    if (command === "read_review_summary_page") return Promise.resolve({ rows: [{ unitId: "late-unit", locale: "zh-CN", nativeKey: args.request.query ? "later-needle" : "first", sourcePreview: "Source on page two", sourceSnapshotId: "snapshot", sourceRevisionId: "later-source", selectionId: null, revisionId: null, translationText: null, basis: "later-basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] }], total: args.request.query ? 1 : 60, nextOrdinal: args.request.query ? null : 50, scopeId: "filtered-scope", sourceSnapshotId: "snapshot", readVersion: "view" });
     return original(command, args);
   });
   render(<TranslationWorkbench project={project} disabled={false} />);
@@ -123,7 +261,7 @@ it("queries the complete current scope and retains a filtered position on return
   await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "needle");
   await user.click(screen.getByRole("button", { name: "Find" }));
   await screen.findByRole("button", { name: "later-needle" });
-  expect(invoke).toHaveBeenCalledWith("read_review_page", { request: expect.objectContaining({ query: "needle", afterOrdinal: 0, limit: 50, locale: "zh-CN" }) });
+  expect(invoke).toHaveBeenCalledWith("read_review_summary_page", { request: expect.objectContaining({ query: "needle", afterOrdinal: 0, limit: 50, locale: "zh-CN" }) });
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
   await user.click(screen.getByRole("button", { name: "Translations" }));
   expect(await screen.findByRole("button", { name: "later-needle" })).toBeInTheDocument();
@@ -142,7 +280,7 @@ it("refreshes a clean retained editor against current source and selection on re
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     const value = await original(command, args);
-    return command === "read_review_target" ? { ...value, sourceRevisionId: "updated-source", sourceText: "Updated original" } : value;
+    return command === "read_review_editor_snapshot" ? { ...value, target: { ...value.target, sourceRevisionId: "updated-source", sourceText: "Updated original" } } : value;
   });
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("External selection"));
@@ -162,7 +300,7 @@ it("preserves text entered while a retained editor refresh is awaiting current f
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
   let complete!: () => void;
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_target"
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_editor_snapshot"
     ? new Promise(resolve => { complete = async () => resolve(await original(command, args)); }) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await waitFor(() => expect(complete).toBeDefined());
@@ -177,7 +315,7 @@ it("keeps the current editor when a neighboring entry is requested with a dirty 
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     const value = await original(command, args);
-    if (command === "read_review_page") return { ...value, rows: [value.rows[0], { ...value.rows[0], unitId: "second", nativeKey: "second", sourceRevisionId: "source-second" }], total: 2 };
+    if (command === "read_review_summary_page") return { ...value, rows: [value.rows[0], { ...value.rows[0], unitId: "second", nativeKey: "second", sourceRevisionId: "source-second" }], total: 2 };
     return value;
   });
   render(<TranslationWorkbench project={project} disabled={false} />);

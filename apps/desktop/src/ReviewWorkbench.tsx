@@ -6,8 +6,8 @@ import { useTranslation } from "react-i18next";
 import { executionCommands, executionContext } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
-import { reviewCommands as commands, type Eligibility, type EligibilityReason, type FallbackWrite, type ReviewPage,
-  type ReviewHistoryPage, type ReviewTarget, type ReviewWrite, type WaiverWrite, type WorkPage } from "./reviewCommands";
+import { reviewCommands as commands, type Eligibility, type EligibilityReason, type FallbackWrite,
+  type ReviewHistoryPage, type ReviewTarget, type ReviewSummary, type ReviewSummaryPage, type ReviewWrite, type WaiverWrite, type WorkPage } from "./reviewCommands";
 
 type Tab = "review" | "work" | "eligibility";
 type Pending = { kind: "decision"; request: ReviewWrite } | { kind: "check"; request: { unitId: string; locale: string; expectedBasis: string; actionId: string } }
@@ -26,7 +26,7 @@ function isUncertain(error: unknown) {
 function isConflict(error: unknown) {
   return (error as { code?: string } | null)?.code === "dependency-conflict";
 }
-function draftKey(target: ReviewTarget) { return `${target.locale}:${target.unitId}`; }
+function draftKey(target: Pick<ReviewTarget, "locale" | "unitId">) { return `${target.locale}:${target.unitId}`; }
 
 export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean;
@@ -37,7 +37,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [open, setOpen] = useWorkbenchView("review");
   const [tab, setTab] = useState<Tab>("review");
   const [locale, setLocale] = useState(project.metadata.targetLocales[0] ?? "");
-  const [page, setPage] = useState<ReviewPage | null>(null);
+  const [page, setPage] = useState<ReviewSummaryPage | null>(null);
   const [pageAfter, setPageAfter] = useState(0);
   const [selected, setSelected] = useState<ReviewTarget | null>(null);
   const [history, setHistory] = useState<ReviewHistoryPage | null>(null);
@@ -48,7 +48,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [languages, setLanguages] = useState<string[]>(project.metadata.targetLocales);
   const [actor, setActor] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [chosen, setChosen] = useState<Record<string, ReviewTarget>>({});
+  const [chosen, setChosen] = useState<Record<string, ReviewSummary>>({});
   const [pending, setPending] = useState<Pending | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [reason, setReason] = useState("");
@@ -81,7 +81,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     previousLocale.current = locale;
     if (localeChanged) { setSelected(null); setHistory(null); setPage(null); setWork(null); setEligibility(null); setPageAfter(0); setWorkOffset(0); }
     const after = localeChanged ? 0 : pageAfter;
-    void commands.page({ ...session, locale, afterOrdinal: after, limit: 50 })
+    void commands.summaryPage({ ...session, locale, query: "", scopeId: null, afterOrdinal: after, limit: 50 })
       .then(async value => { if (alive.current && generation.current === ticket) {
         setPage(value);
         if (requestedWork.current || tab === "work") { requestedWork.current = false; await loadWork(localeChanged ? 0 : workOffset); }
@@ -105,7 +105,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const ticket = ++generation.current;
     setBusy(true); setNotice(null);
     try {
-      const value = await commands.page({ ...session, locale, afterOrdinal: after, limit: 50 });
+      const value = await commands.summaryPage({ ...session, locale, query: "",
+        scopeId: after === 0 ? null : page?.scopeId ?? null, afterOrdinal: after, limit: 50 });
       if (alive.current && generation.current === ticket) { setPage(value); setPageAfter(after); }
     } catch (error) {
       if (alive.current && generation.current === ticket) { setNotice("error"); setReason(errorReason(error)); }
@@ -162,7 +163,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     setBusy(true); setNotice(null);
     try {
       const [newPage, newSelected, newHistory] = await Promise.all([
-        commands.page({ ...session, locale, afterOrdinal: pageAfter, limit: 50 }),
+        commands.summaryPage({ ...session, locale, query: "", scopeId: null, afterOrdinal: pageAfter, limit: 50 }),
         current ? commands.target({ ...session, unitId: current.unitId, locale }) : Promise.resolve(null),
         current ? commands.history({ ...session, unitId: current.unitId, locale, offset: 0, limit: 20 }) : Promise.resolve(null),
       ]);

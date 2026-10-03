@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { SessionRequest } from "./executionCommands";
+import type { TranslationHistory } from "./translationCommands";
+import type { ContextRevision, TermResolution } from "./resourceCommands";
 
 export type DecisionKind = "approve" | "request-changes";
 export interface ReviewDecision { decisionId: string; actionId: string; unitId: string; locale: string; basis: string; selectionId: string; revisionId: string; sourceRevisionId: string; actor: string; kind: DecisionKind; reason: string; createdAt: string }
@@ -10,6 +12,27 @@ export interface Waiver { waiverId: string; actionId: string; unitId: string; lo
 export interface FallbackDecision { fallbackId: string; actionId: string; unitId: string; locale: string; sourceRevisionId: string; allow: boolean; previousFallbackId: string | null; policyVersion: string; actor: string; reason: string; createdAt: string }
 export interface ReviewTarget { unitId: string; locale: string; nativeKey: string; sourceSnapshotId: string; sourceRevisionId: string; sourceText: string; selectionId: string | null; revisionId: string | null; translationText: string | null; basis: string; termConflict: boolean; currentDecision: ReviewDecision | null; currentCheck: CheckRun | null; currentFallback: FallbackDecision | null; currentWaivers: Waiver[] }
 export interface ReviewPage { rows: ReviewTarget[]; nextOrdinal: number | null; total: number }
+export interface ReviewSummary {
+  unitId: string; locale: string; nativeKey: string; sourceSnapshotId: string;
+  sourceRevisionId: string; sourcePreview: string; translationPreview: string | null;
+  selectionId: string | null; revisionId: string | null; basis: string;
+  currentDecision: Pick<ReviewDecision, "decisionId" | "basis" | "kind"> | null;
+  currentCheck: Pick<CheckRun, "runId" | "basis" | "outcome"> & { hasFindings: boolean } | null;
+}
+export interface ReviewSummaryPage {
+  rows: ReviewSummary[]; nextOrdinal: number | null; total: number;
+  scopeId: string; sourceSnapshotId: string; readVersion: string;
+}
+export interface ReviewEditorSnapshot {
+  target: ReviewTarget; translations: TranslationHistory; terms: TermResolution;
+  context: ContextRevision | null; readVersion: string;
+}
+export interface ReviewNeighbor { unitId: string | null; afterOrdinal: number | null; sourceSnapshotId: string }
+export interface ReviewScopeCapture {
+  scopeId: string; sourceSnapshotId: string; locale: string; query: string;
+  units: { unitId: string; expectedBasis: string; expectedDecisionId: string | null }[];
+  readVersion: string;
+}
 export interface ReviewHistoryPage { decisions: ReviewDecision[]; checks: CheckRun[]; waivers: Waiver[]; fallbacks: FallbackDecision[]; nextOffset: number | null }
 export interface WorkItem { unitId: string; locale: string; nativeKey: string; reasons: string[]; basis: string }
 export interface WorkPage { items: WorkItem[]; total: number; nextOffset: number | null; coverage: string }
@@ -21,6 +44,10 @@ export interface WaiverWrite { projectId: string; actionId: string; unitId: stri
 export interface FallbackWrite { projectId: string; actionId: string; unitId: string; locale: string; expectedBasis: string; allow: boolean; expectedFallbackId: string | null; actor: string; reason: string }
 
 export const reviewCommands = {
+  summaryPage: (request: SessionRequest & { locale: string; query: string; scopeId: string | null; afterOrdinal: number; limit: number }) => invoke<ReviewSummaryPage>("read_review_summary_page", { request }),
+  editorSnapshot: (request: SessionRequest & { unitId: string; locale: string }) => invoke<ReviewEditorSnapshot>("read_review_editor_snapshot", { request }),
+  neighbor: (request: SessionRequest & { unitId: string; locale: string; scopeId: string; direction: -1 | 1 }) => invoke<ReviewNeighbor>("read_review_neighbor", { request }),
+  captureScope: (request: SessionRequest & { locale: string; scopeId: string; excluded: string[] }) => invoke<ReviewScopeCapture>("capture_review_scope", { request }),
   page: (request: SessionRequest & { locale: string; query?: string; afterOrdinal: number; limit: number }) => invoke<ReviewPage>("read_review_page", { request }),
   target: (request: SessionRequest & { unitId: string; locale: string }) => invoke<ReviewTarget>("read_review_target", { request }),
   history: (request: SessionRequest & { unitId: string; locale: string; offset: number; limit: number }) => invoke<ReviewHistoryPage>("read_review_history", { request }),

@@ -470,10 +470,64 @@ fn snapshot_rows(
     }
     let mut rows = Vec::new();
     let mut units = std::collections::BTreeSet::new();
-    for expected in &output.occurrences {
-        let row:(String,String,String,String,String,String,String,String,String,i64,i64,i64,i64,String,String,i64,String)=connection.query_row(
-            "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.artifact_id,o.namespace,o.native_key,o.comparison_key,r.text,u.project_id,o.key_start,o.key_end,o.value_start,o.value_end,i.policy,i.basis,r.revision,r.unit_id FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id JOIN source_units u ON u.unit_id=o.unit_id JOIN source_identity i ON i.occurrence_id=o.occurrence_id WHERE o.snapshot_id=?1 AND o.ordinal=?2",
-            params![snapshot.to_string(),expected.ordinal],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get(15)?,r.get(16)?))).map_err(sql_error)?;
+    let mut predecessors = std::collections::BTreeMap::new();
+    let lineage_fields = if has_lineage {
+        "l.predecessor_id,l.relation"
+    } else {
+        "NULL,NULL"
+    };
+    let lineage_join = if has_lineage {
+        "LEFT JOIN source_lineage l ON l.occurrence_id=o.occurrence_id"
+    } else {
+        ""
+    };
+    let query = format!(
+        "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.artifact_id,o.namespace,o.native_key,
+                o.comparison_key,r.text,u.project_id,o.key_start,o.key_end,o.value_start,o.value_end,
+                i.policy,i.basis,r.revision,r.unit_id,o.ordinal,{lineage_fields}
+         FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
+         JOIN source_units u ON u.unit_id=o.unit_id JOIN source_identity i ON i.occurrence_id=o.occurrence_id
+         {lineage_join} WHERE o.snapshot_id=?1 ORDER BY o.ordinal");
+    let mut authority_statement = connection.prepare(&query).map_err(sql_error)?;
+    let authority_rows = authority_statement
+        .query_map([snapshot.to_string()], |r| {
+            Ok((
+                (
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, String>(7)?,
+                    r.get::<_, String>(8)?,
+                    r.get::<_, i64>(9)?,
+                    r.get::<_, i64>(10)?,
+                    r.get::<_, i64>(11)?,
+                    r.get::<_, i64>(12)?,
+                    r.get::<_, String>(13)?,
+                    r.get::<_, String>(14)?,
+                    r.get::<_, i64>(15)?,
+                    r.get::<_, String>(16)?,
+                ),
+                r.get::<_, u32>(17)?,
+                r.get::<_, Option<String>>(18)?,
+                r.get::<_, Option<String>>(19)?,
+            ))
+        })
+        .map_err(sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    if authority_rows.len() != output.occurrences.len() {
+        return Err(corrupt());
+    }
+    for (expected, (row, ordinal, predecessor, relation)) in
+        output.occurrences.iter().zip(authority_rows)
+    {
+        if ordinal != expected.ordinal {
+            return Err(corrupt());
+        }
         if row.3 != expected.artifact_id.to_string()
             || row.4 != expected.namespace
             || row.5 != expected.key
@@ -497,19 +551,14 @@ fn snapshot_rows(
             occurrence: expected.clone(),
         });
         if has_lineage {
-            let (predecessor, relation): (Option<String>, String) = connection
-                .query_row(
-                    "SELECT predecessor_id,relation FROM source_lineage WHERE occurrence_id=?1",
-                    [&row.0],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .map_err(sql_error)?;
+            let relation = relation.ok_or_else(corrupt)?;
             if (predecessor.is_none() && !matches!(relation.as_str(), "initial" | "new"))
                 || (predecessor.is_some()
                     && !matches!(relation.as_str(), "unchanged" | "changed" | "unresolved"))
             {
                 return Err(corrupt());
             }
+            predecessors.insert(row.0, predecessor);
         }
     }
     let action: String = connection
@@ -611,6 +660,26 @@ fn snapshot_rows(
                 .iter()
                 .map(|row| row.key.to_ascii_lowercase())
                 .collect();
+            let mut edge_statement = connection
+                .prepare(
+                    "SELECT e.new_occurrence_id,e.old_occurrence_id FROM source_lineage_evidence e
+                 JOIN source_occurrences o ON o.occurrence_id=e.new_occurrence_id
+                 WHERE o.snapshot_id=?1",
+                )
+                .map_err(sql_error)?;
+            let mut actual_edges: std::collections::BTreeMap<
+                String,
+                std::collections::BTreeSet<String>,
+            > = Default::default();
+            for edge in edge_statement
+                .query_map([snapshot.to_string()], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .map_err(sql_error)?
+            {
+                let (new, old) = edge.map_err(sql_error)?;
+                actual_edges.entry(new).or_default().insert(old);
+            }
             for row in &rows {
                 let mut expected: std::collections::BTreeSet<String> = old_rows
                     .iter()
@@ -627,24 +696,11 @@ fn snapshot_rows(
                 {
                     expected.insert(choice.old_occurrence_id.to_string());
                 }
-                let predecessor: Option<String> = connection
-                    .query_row(
-                        "SELECT predecessor_id FROM source_lineage WHERE occurrence_id=?1",
-                        [row.occurrence_id.unwrap().to_string()],
-                        |r| r.get(0),
-                    )
-                    .map_err(sql_error)?;
-                if let Some(predecessor) = predecessor {
-                    expected.insert(predecessor);
+                let occurrence = row.occurrence_id.unwrap().to_string();
+                if let Some(Some(predecessor)) = predecessors.get(&occurrence) {
+                    expected.insert(predecessor.clone());
                 }
-                let mut edges = connection.prepare("SELECT old_occurrence_id FROM source_lineage_evidence WHERE new_occurrence_id=?1").map_err(sql_error)?;
-                let actual = edges
-                    .query_map([row.occurrence_id.unwrap().to_string()], |r| {
-                        r.get::<_, String>(0)
-                    })
-                    .map_err(sql_error)?
-                    .collect::<Result<std::collections::BTreeSet<_>, _>>()
-                    .map_err(sql_error)?;
+                let actual = actual_edges.remove(&occurrence).unwrap_or_default();
                 if actual != expected {
                     return Err(corrupt());
                 }

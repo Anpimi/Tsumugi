@@ -1,7 +1,8 @@
 use super::*;
 use tsumugi_core::{
-    CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewHistoryPage,
-    ReviewPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkPage,
+    CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewEditorSnapshot,
+    ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewSummaryPage,
+    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkPage,
 };
 
 request!(ReviewPageRequest {
@@ -13,6 +14,24 @@ request!(ReviewPageRequest {
 request!(ReviewTargetRequest {
     unit_id: ExecutionId,
     locale: String
+});
+request!(ReviewSummaryPageRequest {
+    locale: String,
+    query: String,
+    scope_id: Option<ExecutionId>,
+    after_ordinal: u32,
+    limit: u32
+});
+request!(ReviewNeighborRequest {
+    locale: String,
+    scope_id: ExecutionId,
+    unit_id: ExecutionId,
+    direction: i32
+});
+request!(ReviewScopeRequest {
+    locale: String,
+    scope_id: ExecutionId,
+    excluded: Vec<ExecutionId>
 });
 request!(ReviewHistoryRequest {
     unit_id: ExecutionId,
@@ -50,6 +69,125 @@ fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
     let mut result = map_execution(error, stage);
     result.field = Some(reason);
     result
+}
+
+#[tauri::command]
+pub async fn read_review_summary_page(
+    state: State<'_, AppState>,
+    request: ReviewSummaryPageRequest,
+) -> Result<ReviewSummaryPage, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_summary_page",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .review_summary_page(
+                        request.project_id,
+                        &request.locale,
+                        request.after_ordinal,
+                        request.limit,
+                        &request.query,
+                        request.scope_id,
+                    )
+                    .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_review_editor_snapshot(
+    state: State<'_, AppState>,
+    request: ReviewTargetRequest,
+) -> Result<ReviewEditorSnapshot, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_editor_snapshot",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_editor_snapshot(request.project_id, request.unit_id, &request.locale)
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_review_neighbor(
+    state: State<'_, AppState>,
+    request: ReviewNeighborRequest,
+) -> Result<ReviewNeighbor, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_review_neighbor",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_neighbor(
+                    request.project_id,
+                    &request.locale,
+                    request.scope_id,
+                    request.unit_id,
+                    request.direction,
+                )
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn capture_review_scope(
+    state: State<'_, AppState>,
+    request: ReviewScopeRequest,
+) -> Result<ReviewScopeCapture, CommandError> {
+    state
+        .sessions
+        .run(
+            "capture_review_scope",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?
+                .store
+                .review_scope_capture(
+                    request.project_id,
+                    &request.locale,
+                    request.scope_id,
+                    &request.excluded,
+                )
+                .map_err(|error| mapped(error, CommandStage::ExecutionRead))
+            },
+        )
+        .await
 }
 
 #[tauri::command]

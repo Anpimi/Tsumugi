@@ -6,7 +6,9 @@ workbench: {
   continueTitle: "Continue translating", continueHelp: "Edit translations, review their current evidence, then build and export a release.", continue: "Open translations",
   search: "Find by key, source or translation", searchAction: "Find", searchLimit: "Use a query of at most 256 UTF-8 bytes.",
   results: "{{count}} matching entries", chooseEntry: "Choose an entry to translate", chooseEntryHelp: "The source and editor stay beside the list. Reference material is available when you need it.",
-  previousEntry: "Previous entry", nextEntry: "Next entry", references: "Terms, context and history", saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", unselected: "No selected translation", selected: "Translation selected", qaPending: "QA not current", reviewPending: "Not approved",
+  previousEntry: "Previous entry", nextEntry: "Next entry", saveAndNext: "Save and next",
+  scopeEnd: "You have reached the last entry in this list.",
+  references: "Terms, context and history", saved: "Saved", unsaved: "Unsaved changes", saving: "Saving…", unselected: "No selected translation", selected: "Translation selected", qaPending: "QA not current", reviewPending: "Not approved",
 },
 
 arena: {
@@ -504,6 +506,9 @@ ai: {
       discard: "Discard draft and continue",
       errors: {
       query: "Use a query of at most 256 UTF-8 bytes.",
+        sourceScope: "The source range changed. Search again to refresh the list; your draft has been kept.",
+        scopeExpired: "This result list has expired. Search again to start a new list; your draft has been kept.",
+        navigationEdited: "Your draft changed while the next entry was loading. It has been kept; save or discard it before switching.",
         source: "The current source is missing or changed. Import or review source content before continuing.",
         locale: "This target language is no longer in the project. Choose an existing target language.",
         selection: "A newer selection exists. Refresh the history and compare before saving or selecting.",

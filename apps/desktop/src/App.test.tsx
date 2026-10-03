@@ -105,7 +105,14 @@ describe("project lifecycle workbench", () => {
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
       if (command === "read_content_scope") return { revision: "2", currentSnapshot: "snapshot" };
       if (command === "read_source_content") return { snapshotId: "snapshot", namespace: "Example.Mod", rows: [], nextOrdinal: null, total: 1 };
-      if (command === "read_review_page") return { rows: [{ ...target, translationText: text }], total: 1, nextOrdinal: null };
+      if (command === "read_review_summary_page") return { rows: [{ ...target, sourcePreview: target.sourceText, translationPreview: text }], total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: "snapshot", readVersion: "view" };
+      if (command === "read_review_editor_snapshot") return {
+        target: { ...target, translationText: text },
+        translations: { unitId: "unit", locale: "zh-CN", total: 0, rows: [], nextOrdinal: null,
+          currentText: text, current: text === null ? null : { eventId: "selection", revisionId: "revision" } },
+        terms: { unitId: "unit", locale: "zh-CN", sourceRevisionId: "source-revision", entries: [] },
+        context: null, readVersion: "view",
+      };
       if (command === "read_review_target") return { ...target, translationText: text };
       if (command === "read_translation_history") return { unitId: "unit", locale: "zh-CN", total: 0, rows: [], nextOrdinal: null, currentText: text, current: text === null ? null : { eventId: "selection", revisionId: "revision" } };
       if (command === "resolve_terms") return { entries: [] };

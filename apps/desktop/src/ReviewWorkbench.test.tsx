@@ -29,7 +29,7 @@ beforeEach(async () => {
   nextIdentity = 0;
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_review_page") return { rows: [targets.first], nextOrdinal: null, total: 1 };
+    if (command === "read_review_summary_page") return { rows: [targets.first], nextOrdinal: null, total: 1, scopeId: "read-scope", sourceSnapshotId: "snapshot", readVersion: "view" };
     if (command === "read_review_target") return targets[args.request.unitId as string];
     if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "create_execution_identity") return `action-${++nextIdentity}`;
@@ -67,7 +67,7 @@ it("preserves a newer reason draft while an approval is being saved", async () =
 it("uses fixed item bases for batch approval and reports a changed item separately", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_review_page") {
+    if (command === "read_review_summary_page") {
       return args.request.afterOrdinal === 0
         ? { rows: [targets.first], nextOrdinal: 1, total: 2 }
         : { rows: [targets.second], nextOrdinal: null, total: 2 };
@@ -97,7 +97,7 @@ it("stops a batch after the in-flight approval and keeps later entries selected"
   const pending = new Promise(resolve => { finish = resolve; });
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_review_page") {
+    if (command === "read_review_summary_page") {
       return Promise.resolve(args.request.afterOrdinal === 0
         ? { rows: [targets.first], nextOrdinal: 1, total: 2 }
         : { rows: [targets.second], nextOrdinal: null, total: 2 });

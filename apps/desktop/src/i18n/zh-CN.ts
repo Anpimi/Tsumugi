@@ -8,7 +8,9 @@ workbench: {
   continueTitle: "继续翻译", continueHelp: "编辑译文、审阅当前依据，再构建并导出交付版本。", continue: "打开翻译工作台",
   search: "查找键名、原文或译文", searchAction: "查找", searchLimit: "查询不能超过 256 个 UTF-8 字节。",
   results: "匹配 {{count}} 条", chooseEntry: "选择一个条目开始翻译", chooseEntryHelp: "原文与编辑器保持在列表旁边，需要时可展开参考资料。",
-  previousEntry: "上一条", nextEntry: "下一条", references: "术语、上下文与历史", saved: "已保存", unsaved: "有未保存修改", saving: "正在保存…", unselected: "未选择译文", selected: "已选择译文", qaPending: "QA 尚未有效", reviewPending: "尚未批准",
+  previousEntry: "上一条", nextEntry: "下一条", saveAndNext: "保存并下一条",
+  scopeEnd: "已到达当前列表的最后一条。",
+  references: "术语、上下文与历史", saved: "已保存", unsaved: "有未保存修改", saving: "正在保存…", unselected: "未选择译文", selected: "已选择译文", qaPending: "QA 尚未有效", reviewPending: "尚未批准",
 },
 arena: {
   "open": "Arena 对比",
@@ -505,6 +507,9 @@ ai: {
       discard: "放弃草稿并继续",
       errors: {
       query: "查询不能超过 256 个 UTF-8 字节。",
+        sourceScope: "源内容范围已改变。请重新查找以刷新列表；您的草稿已保留。",
+        scopeExpired: "此结果列表已过期。请重新查找以生成新列表；您的草稿已保留。",
+        navigationEdited: "加载下一条期间，您修改了草稿。新草稿已保留，请保存或放弃后再切换。",
         source: "当前原文缺失或已变化。请先导入或核对源内容。",
         locale: "项目已不包含此目标语言。请选择现有目标语言。",
         selection: "已有较新的选择。请刷新历史并比较后再保存或选择。",

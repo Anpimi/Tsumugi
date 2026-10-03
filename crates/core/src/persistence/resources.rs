@@ -2283,14 +2283,59 @@ pub(super) fn resolve_terms_in(
         .map_err(sql)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(sql)?;
+    let terms = all
+        .into_iter()
+        .map(RawTerm::convert)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(resolve_terms_from(
+        unit_id,
+        locale,
+        id(source_revision)?,
+        &source_text,
+        &terms,
+    ))
+}
+
+/// Load the current terminology once for a bounded query, never its revision history.
+pub(super) fn current_terms_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    locale: &str,
+) -> Result<Vec<TermRevision>, ExecutionError> {
+    let query = format!(
+        "SELECT {TERM_COLUMNS} FROM term_current c JOIN term_revisions r
+        ON r.revision_id=c.revision_id WHERE c.project_id=?1 AND r.locale=?2 AND r.removed=0"
+    );
+    let mut statement = connection.prepare(&query).map_err(sql)?;
+    let rows = statement
+        .query_map(params![project_id.to_string(), locale], RawTerm::read)
+        .map_err(sql)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql)?;
+    rows.into_iter().map(RawTerm::convert).collect()
+}
+
+/// The same matching and precedence rules serve individual reads and summary pages.
+pub(super) fn resolve_terms_from(
+    unit_id: ExecutionId,
+    locale: &str,
+    source_revision_id: ExecutionId,
+    source_text: &str,
+    terms: &[TermRevision],
+) -> TermResolution {
     let mut grouped: BTreeMap<String, Vec<TermRevision>> = BTreeMap::new();
-    for raw in all {
-        let term = raw.convert()?;
+    for term in terms {
+        if term.scope_unit_id.is_some_and(|scope| scope != unit_id) {
+            continue;
+        }
         if term.scope_unit_id == Some(unit_id)
             || source_text.contains(&term.source)
             || term.aliases.iter().any(|alias| source_text.contains(alias))
         {
-            grouped.entry(term.source.clone()).or_default().push(term);
+            grouped
+                .entry(term.source.clone())
+                .or_default()
+                .push(term.clone());
         }
     }
     let mut entries = Vec::new();
@@ -2325,12 +2370,12 @@ pub(super) fn resolve_terms_in(
             conflicting,
         });
     }
-    Ok(TermResolution {
+    TermResolution {
         unit_id,
         locale: locale.to_owned(),
-        source_revision_id: id(source_revision)?,
+        source_revision_id,
         entries,
-    })
+    }
 }
 
 #[cfg(test)]

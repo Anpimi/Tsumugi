@@ -40,8 +40,9 @@ pub use resources::{
 pub use review::{
     CheckFinding, CheckRuleResult, CheckRun, Eligibility, EligibilityLocale, EligibilityReason,
     FallbackDecision, FallbackWrite, ReviewBasis, ReviewDecision, ReviewDecisionKind,
-    ReviewHistoryPage, ReviewPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem,
-    WorkPage,
+    ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture,
+    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
@@ -234,6 +235,7 @@ pub struct ProjectStore {
     lock: Option<File>,
     pending: Option<PendingChange>,
     execution_unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    review_scopes: review::ReadScopes,
     #[cfg(test)]
     fault: Option<StorageFault>,
     #[cfg(test)]
@@ -275,6 +277,7 @@ impl ProjectStore {
             lock: Some(lock),
             pending: None,
             execution_unknown: Default::default(),
+            review_scopes: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -326,6 +329,7 @@ impl ProjectStore {
             lock: Some(lock),
             pending: None,
             execution_unknown: Default::default(),
+            review_scopes: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]

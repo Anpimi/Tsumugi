@@ -22,12 +22,13 @@ pub use persistence::{
     RecoveryPlan, RecoveryUnit, ReleaseAdoptionHandler, ReleaseView, ReleasedArtifact,
     ResourceChangeKind, ResourceDecision, ResourceDecisionKind, ResourceDecisionResult,
     ResourcePreview, ResourcePreviewRow, ReviewBasis, ReviewDecision, ReviewDecisionKind,
-    ReviewHistoryPage, ReviewPage, ReviewTarget, ReviewWrite, SaveContext, SaveTerm,
-    SaveTranslationRevision, SelectTranslationRevision, TaskView, TermResolution,
-    TermResolutionEntry, TermRevision, TmSuggestion, TranslationAdoptionConfirmation,
-    TranslationAdoptionHandler, TranslationHistory, TranslationMatch, TranslationPreview,
-    TranslationPreviewRow, TranslationRevision, TranslationSelection, TranslationSelectionDecision,
-    Waiver, WaiverWrite, WorkItem, WorkPage,
+    ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture,
+    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    ReviewTarget, ReviewWrite, SaveContext, SaveTerm, SaveTranslationRevision,
+    SelectTranslationRevision, TaskView, TermResolution, TermResolutionEntry, TermRevision,
+    TmSuggestion, TranslationAdoptionConfirmation, TranslationAdoptionHandler, TranslationHistory,
+    TranslationMatch, TranslationPreview, TranslationPreviewRow, TranslationRevision,
+    TranslationSelection, TranslationSelectionDecision, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 
 #[cfg(test)]

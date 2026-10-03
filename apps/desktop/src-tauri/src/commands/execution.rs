@@ -29,6 +29,7 @@ macro_rules! handlers {
         resource::read_context_revision,resource::save_context,resource::capture_context,
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
         review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
+        review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
         review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,
         release::start_locale_build,release::list_releases,release::choose_delivery_folder,

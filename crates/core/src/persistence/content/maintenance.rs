@@ -2,6 +2,74 @@ use super::*;
 use rusqlite::OptionalExtension;
 use std::collections::BTreeMap;
 
+// All rows passed here have been validated against their immutable source capture.
+// Keep at most eight validated historical snapshots for this read, never a durable cache.
+fn lineage_evidence_in(
+    connection: &Connection,
+    current: &ContentRow,
+    snapshots: &mut BTreeMap<ExecutionId, Vec<ContentRow>>,
+) -> Result<Vec<LineageEvidence>, ExecutionError> {
+    let (predecessor, relation): (Option<String>, String) = connection
+        .query_row(
+            "SELECT predecessor_id,relation FROM source_lineage WHERE occurrence_id=?1",
+            [current.occurrence_id.unwrap().to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(sql_error)?;
+    let mut statement = connection.prepare(
+            "SELECT o.snapshot_id,o.ordinal,e.relationship,e.decision,e.actor,e.reason,e.action_id,e.policy FROM source_lineage_evidence e JOIN source_occurrences o ON o.occurrence_id=e.old_occurrence_id WHERE e.new_occurrence_id=?1 ORDER BY o.snapshot_id,o.ordinal"
+        ).map_err(sql_error)?;
+    let mut evidence = Vec::new();
+    for edge in statement
+        .query_map([current.occurrence_id.unwrap().to_string()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, u32>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, String>(7)?,
+            ))
+        })
+        .map_err(sql_error)?
+    {
+        let (old_snapshot, ordinal, relationship, decision, actor, reason, action, policy) =
+            edge.map_err(sql_error)?;
+        let old_snapshot_id = id(old_snapshot)?;
+        if !snapshots.contains_key(&old_snapshot_id) {
+            if snapshots.len() == 8 {
+                let oldest = *snapshots.keys().next().ok_or_else(corrupt)?;
+                snapshots.remove(&oldest);
+            }
+            let (_, (_, _, _, old_rows)) = snapshot_rows(connection, old_snapshot_id, true)?;
+            snapshots.insert(old_snapshot_id, old_rows);
+        }
+        let old = snapshots
+            .get(&old_snapshot_id)
+            .ok_or_else(corrupt)?
+            .get(ordinal as usize)
+            .ok_or_else(corrupt)?
+            .clone();
+        let applied_relation = (predecessor.as_deref()
+            == old.occurrence_id.map(|id| id.to_string()).as_deref())
+        .then(|| relation.clone());
+        evidence.push(LineageEvidence {
+            old,
+            old_snapshot_id,
+            relationship,
+            decision,
+            actor,
+            reason,
+            action_id: id(action)?,
+            policy,
+            applied_relation,
+        });
+    }
+    Ok(evidence)
+}
+
 impl ProjectStore {
     pub fn source_history(&self, offset: u32, limit: u32) -> Result<SourceHistory, ExecutionError> {
         if limit == 0 || limit > 100 {
@@ -102,53 +170,7 @@ impl ProjectStore {
         let current = rows
             .get(ordinal as usize)
             .ok_or_else(|| failure(ErrorCode::InvalidInput, "page"))?;
-        let (predecessor, relation): (Option<String>, String) = connection
-            .query_row(
-                "SELECT predecessor_id,relation FROM source_lineage WHERE occurrence_id=?1",
-                [current.occurrence_id.unwrap().to_string()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .map_err(sql_error)?;
-        let mut statement = connection.prepare(
-            "SELECT o.snapshot_id,o.ordinal,e.relationship,e.decision,e.actor,e.reason,e.action_id,e.policy FROM source_lineage_evidence e JOIN source_occurrences o ON o.occurrence_id=e.old_occurrence_id WHERE e.new_occurrence_id=?1 ORDER BY o.snapshot_id,o.ordinal"
-        ).map_err(sql_error)?;
-        let mut evidence = Vec::new();
-        for edge in statement
-            .query_map([current.occurrence_id.unwrap().to_string()], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, u32>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, Option<String>>(4)?,
-                    r.get::<_, Option<String>>(5)?,
-                    r.get::<_, String>(6)?,
-                    r.get::<_, String>(7)?,
-                ))
-            })
-            .map_err(sql_error)?
-        {
-            let (old_snapshot, ordinal, relationship, decision, actor, reason, action, policy) =
-                edge.map_err(sql_error)?;
-            let old_snapshot_id = id(old_snapshot)?;
-            let (_, (_, _, _, old_rows)) = snapshot_rows(connection, old_snapshot_id, true)?;
-            let old = old_rows.get(ordinal as usize).ok_or_else(corrupt)?.clone();
-            let applied_relation = (predecessor.as_deref()
-                == old.occurrence_id.map(|id| id.to_string()).as_deref())
-            .then(|| relation.clone());
-            evidence.push(LineageEvidence {
-                old,
-                old_snapshot_id,
-                relationship,
-                decision,
-                actor,
-                reason,
-                action_id: id(action)?,
-                policy,
-                applied_relation,
-            });
-        }
-        Ok(evidence)
+        lineage_evidence_in(connection, current, &mut BTreeMap::new())
     }
 
     /// An estimate only. Adoption changes source facts, never writes a derived work queue.
@@ -278,6 +300,12 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
+        let transaction = if connection.is_autocommit() {
+            Some(connection.unchecked_transaction().map_err(sql_error)?)
+        } else {
+            None
+        };
+        let connection = transaction.as_deref().unwrap_or(connection);
         if scope(connection)?.current_snapshot != Some(snapshot) {
             return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
         }
@@ -287,16 +315,12 @@ impl ProjectStore {
         let project = id(metadata.project_id().to_string())?;
         let content = self.source_content(snapshot, after, limit)?;
         let mut work: BTreeMap<ExecutionId, Vec<String>> = BTreeMap::new();
-        let mut offset = 0;
-        loop {
-            let page = self.review_work_page(project, locale, offset, 100)?;
-            for item in page.items {
-                work.insert(item.unit_id, item.reasons);
+        let mut targets = BTreeMap::new();
+        for (target, reasons) in self.review_work_set(project, locale)? {
+            if !reasons.is_empty() {
+                work.insert(target.unit_id, reasons);
             }
-            match page.next_offset {
-                Some(next) => offset = next,
-                None => break,
-            }
+            targets.insert(target.unit_id, target);
         }
         let summary = SourceImpactSummary {
             locale: locale.into(),
@@ -306,10 +330,8 @@ impl ProjectStore {
             total: content.total,
         };
         let mut summary = summary;
-        let (_, (_, _, _, all)) = snapshot_rows(connection, snapshot, true)?;
-        for row in &all {
-            if work.contains_key(&row.unit_id.unwrap()) {
-                let target = self.review_target(project, row.unit_id.unwrap(), locale)?;
+        for target in targets.values() {
+            if work.contains_key(&target.unit_id) {
                 if target.selection_id.is_none() {
                     summary.unresolved += 1;
                 } else {
@@ -318,10 +340,13 @@ impl ProjectStore {
             }
         }
         let mut rows = Vec::new();
+        let mut lineage_snapshots = BTreeMap::new();
         for row in content.rows {
-            let target = self.review_target(project, row.unit_id.unwrap(), locale)?;
+            let target = targets
+                .get(&row.unit_id.unwrap())
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "source-impact-unit"))?;
             let mut reasons = work.get(&row.unit_id.unwrap()).cloned().unwrap_or_default();
-            let lineage = self.source_lineage_evidence(snapshot, row.occurrence.ordinal)?;
+            let lineage = lineage_evidence_in(connection, &row, &mut lineage_snapshots)?;
             let predecessor: Option<String> = connection
                 .query_row(
                     "SELECT predecessor_id FROM source_lineage WHERE occurrence_id=?1",
@@ -412,7 +437,7 @@ impl ProjectStore {
                 reasons,
                 selection_id: target.selection_id,
                 translation_revision_id: target.revision_id,
-                review_basis: target.basis,
+                review_basis: target.basis.clone(),
                 lineage,
             });
         }

@@ -221,6 +221,81 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     read["limit"] = json!(100);
     let content = call(&view, "read_source_content", read.clone()).unwrap();
     assert_eq!(content["total"], 532);
+    let mut summary_request = context.clone();
+    summary_request["locale"] = json!("zh-CN");
+    summary_request["query"] = json!("");
+    summary_request["scopeId"] = Value::Null;
+    summary_request["afterOrdinal"] = json!(0);
+    summary_request["limit"] = json!(50);
+    let summaries = call(&view, "read_review_summary_page", summary_request.clone()).unwrap();
+    let typed: tsumugi_core::ReviewSummaryPage = serde_json::from_value(summaries.clone()).unwrap();
+    assert_eq!(typed.total, 532);
+    assert_eq!(typed.rows.len(), 50);
+    assert_eq!(
+        typed.source_snapshot_id.to_string(),
+        snapshot.as_str().unwrap()
+    );
+    assert!(
+        typed
+            .rows
+            .iter()
+            .all(|row| row.source_preview.chars().count() <= 256)
+    );
+    assert!(summaries["rows"][0].get("basisEvidence").is_none());
+    let last = &summaries["rows"][49];
+    let mut save = context.clone();
+    save["actionId"] = json!(ExecutionId::new());
+    save["unitId"] = last["unitId"].clone();
+    save["locale"] = json!("zh-CN");
+    save["sourceRevisionId"] = last["sourceRevisionId"].clone();
+    save["expectedSelectionId"] = Value::Null;
+    save["text"] = json!("Saved fiftieth entry");
+    let saved = call(&view, "save_translation_revision", save).unwrap();
+    let mut editor_request = context.clone();
+    editor_request["unitId"] = last["unitId"].clone();
+    editor_request["locale"] = json!("zh-CN");
+    let editor = call(&view, "read_review_editor_snapshot", editor_request).unwrap();
+    let editor: tsumugi_core::ReviewEditorSnapshot = serde_json::from_value(editor).unwrap();
+    assert_eq!(
+        editor.target.translation_text.as_deref(),
+        Some("Saved fiftieth entry")
+    );
+    assert_eq!(
+        editor.target.selection_id.unwrap().to_string(),
+        saved["eventId"].as_str().unwrap()
+    );
+    assert_eq!(editor.translations.total, 1);
+    assert_ne!(editor.target.basis, typed.rows[49].basis);
+    let mut neighbor_request = context.clone();
+    neighbor_request["locale"] = json!("zh-CN");
+    neighbor_request["scopeId"] = summaries["scopeId"].clone();
+    neighbor_request["unitId"] = last["unitId"].clone();
+    neighbor_request["direction"] = json!(1);
+    let neighbor = call(&view, "read_review_neighbor", neighbor_request.clone()).unwrap();
+    summary_request["scopeId"] = summaries["scopeId"].clone();
+    summary_request["afterOrdinal"] = neighbor["afterOrdinal"].clone();
+    let next = call(&view, "read_review_summary_page", summary_request.clone()).unwrap();
+    assert_eq!(next["rows"][0]["unitId"], neighbor["unitId"]);
+    assert_eq!(next["rows"][0]["unitId"], content["rows"][50]["unitId"]);
+    let mut scope_request = context.clone();
+    scope_request["locale"] = json!("zh-CN");
+    scope_request["scopeId"] = summaries["scopeId"].clone();
+    scope_request["excluded"] = json!([last["unitId"]]);
+    let captured = call(&view, "capture_review_scope", scope_request).unwrap();
+    let captured: tsumugi_core::ReviewScopeCapture = serde_json::from_value(captured).unwrap();
+    assert_eq!(captured.units.len(), 531);
+    assert!(
+        !captured
+            .units
+            .iter()
+            .any(|unit| unit.unit_id == typed.rows[49].unit_id)
+    );
+    let mut wrong_scope = neighbor_request;
+    wrong_scope["locale"] = json!("fr-FR");
+    assert!(call(&view, "read_review_neighbor", wrong_scope).is_err());
+    let mut changed_query = summary_request.clone();
+    changed_query["query"] = json!("changed");
+    assert!(call(&view, "read_review_summary_page", changed_query).is_err());
     wait_for_execution_idle(&view, &context);
     call(
         &view,
@@ -235,6 +310,15 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     )
     .unwrap();
     assert!(call(&view, "read_source_content", read.clone()).is_err());
+    assert!(call(&view, "read_review_summary_page", summary_request.clone()).is_err());
+    summary_request["sessionToken"] = reopened["sessionToken"].clone();
+    let expired = call(&view, "read_review_summary_page", summary_request.clone()).unwrap_err();
+    assert_eq!(expired["field"], "review-scope-expired");
+    summary_request["scopeId"] = Value::Null;
+    assert_eq!(
+        call(&view, "read_review_summary_page", summary_request).unwrap()["total"],
+        532
+    );
     read["sessionToken"] = reopened["sessionToken"].clone();
     assert_eq!(call(&view, "read_source_content", read).unwrap(), content);
     call(
