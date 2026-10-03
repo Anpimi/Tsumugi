@@ -1302,12 +1302,14 @@ impl ProjectStore {
             Some(value) => request_digest(&(request, value))?,
             None => request_digest(request)?,
         };
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
             .connection_mut()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(super::ledger::sql_error)?;
+        let commit_observer = change_clock.observe(&transaction, super::ChangeScope::Translation);
         if let Some((selection, saved_digest)) =
             selection_by_action(&transaction, request.action_id)?
         {
@@ -1395,7 +1397,7 @@ impl ProjectStore {
         if merge.is_some() {
             super::migration_crash_hook("before-arena-merge-commit");
         }
-        transaction.commit().map_err(|_| {
+        commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "translation-commit")
         })?;
@@ -1414,12 +1416,14 @@ impl ProjectStore {
             return Err(error(ErrorCode::OutcomeUnknown, "translation-session"));
         }
         let digest = request_digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
             .connection_mut()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(super::ledger::sql_error)?;
+        let commit_observer = change_clock.observe(&transaction, super::ChangeScope::Translation);
         if let Some((selection, saved_digest)) =
             selection_by_action(&transaction, request.action_id)?
         {
@@ -1463,7 +1467,7 @@ impl ProjectStore {
             current,
             next_sequence,
         )?;
-        transaction.commit().map_err(|_| {
+        commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "translation-commit")
         })?;
@@ -1710,7 +1714,16 @@ mod tests {
             expected_selection_id: None,
             text: "译文👩‍💻e\u{301}".into(),
         };
+        let before = store.changes_since(Revision::new(0).unwrap());
         let original = store.save_translation_edit(&first).unwrap();
+        assert_eq!(
+            store.changes_since(before.sequence).scopes,
+            [super::super::ChangeScope::Translation]
+        );
+        assert_eq!(
+            store.changes_since(before.sequence).sequence.get(),
+            before.sequence.get() + 1
+        );
         assert_eq!(original.action_id, first.action_id);
         assert_eq!(original.project_id, project_id);
         assert_eq!(original.basis.source_revision_id, first.source_revision_id);
@@ -1725,6 +1738,7 @@ mod tests {
             ..first.clone()
         };
         let newer = store.save_translation_edit(&second).unwrap();
+        let committed = store.changes_since(Revision::new(0).unwrap());
         // A lost ACK is reconciled by the original action, even after another save.
         assert_eq!(store.save_translation_edit(&first).unwrap(), original);
         let different = SaveTranslationRevision {
@@ -1765,9 +1779,24 @@ mod tests {
             .unwrap();
         assert_eq!(history.total, 2);
         assert_eq!(history.current, Some(newer.selection));
+        assert_eq!(
+            store.changes_since(committed.sequence).sequence,
+            committed.sequence
+        );
         store.close().unwrap();
         let mut reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_ne!(
+            reopened.changes_since(Revision::new(0).unwrap()).epoch,
+            committed.epoch
+        );
         assert_eq!(reopened.save_translation_edit(&first).unwrap(), original);
+        assert_eq!(
+            reopened
+                .changes_since(Revision::new(0).unwrap())
+                .sequence
+                .get(),
+            0
+        );
     }
 
     #[test]

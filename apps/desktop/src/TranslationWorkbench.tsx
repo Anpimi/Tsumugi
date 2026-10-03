@@ -1,3 +1,4 @@
+import { useSessionQuery } from "./SessionReadProvider";
 import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
@@ -96,7 +97,6 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const mounted = useRef(false);
   const generation = useRef(0);
   const sourceLoad = useRef(0);
-  const pollGeneration = useRef(0);
   const running = useRef(false);
   const draftRef = useRef("");
   const heading = useRef<HTMLHeadingElement>(null);
@@ -106,7 +106,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; generation.current++; sourceLoad.current++; pollGeneration.current++; leaveResolver.current?.(false); };
+    return () => { mounted.current = false; generation.current++; sourceLoad.current++; leaveResolver.current?.(false); };
   }, []);
   useEffect(() => {
     if (!open || !targetLocale) return;
@@ -229,27 +229,13 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       throw error;
     }
   }
-  useEffect(() => {
-    if (!open || !attempt || preview || busy) return;
-    const ticket = ++pollGeneration.current;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    async function poll() {
-      if (stopped) return;
-      try {
-        const next = await commands.preview({ ...context, attemptId: attempt!, after: 0, limit: 50, basis: null });
-        if (!stopped && mounted.current && pollGeneration.current === ticket) { setTargetLocale(next.targetLocale); setPreview(next); setFailure(null); return; }
-      } catch (error) {
-        const stage = errorStage(error);
-        if (stage !== "translation-incomplete" && !stopped && mounted.current && pollGeneration.current === ticket) {
-          setFailure(stage); return;
-        }
-      }
-      if (!stopped && pollGeneration.current === ticket) timer = setTimeout(() => void poll(), 800);
-    }
-    void poll();
-    return () => { stopped = true; pollGeneration.current++; clearTimeout(timer); };
-  }, [open, attempt, preview, busy, project.sessionToken]);
+  const importRead = useSessionQuery<TranslationPreview | null>({ key: ["translation-import-preview", attempt, 0, 50, null], scopes: ["execution", "translation"], enabled: open && !busy && !!attempt && !preview,
+    read: async () => {
+      try { return await commands.preview({ ...context, attemptId: attempt!, after: 0, limit: 50, basis: null }); }
+      catch (error) { if (errorStage(error) === "translation-incomplete") return null; throw error; }
+    } });
+  useEffect(() => { if (importRead.data) { setTargetLocale(importRead.data.targetLocale); setPreview(importRead.data); setFailure(null); } }, [importRead.data]);
+  useEffect(() => { if (importRead.error) setFailure(errorStage(importRead.error)); }, [importRead.error]);
   async function loadPreview(after: number, basis: string | null, current: () => boolean) {
     if (!attempt) return;
     const next = await commands.preview({ ...context, attemptId: attempt, after, limit: 50, basis });

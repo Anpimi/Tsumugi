@@ -15,9 +15,9 @@ pub use persistence::{
     ComparisonView, MergeBasis,
 };
 pub use persistence::{
-    AttemptView, BuildLocaleChoice, CaptureContext, CheckFinding, CheckRuleResult, CheckRun,
-    ComputedReviewCheck, ContextCapture, ContextItem, ContextOmission, ContextRevision,
-    DeliveryFile, DeliveryView, Eligibility, EligibilityLocale, EligibilityReason,
+    AttemptView, BuildLocaleChoice, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,
+    CheckRuleResult, CheckRun, ComputedReviewCheck, ContextCapture, ContextItem, ContextOmission,
+    ContextRevision, DeliveryFile, DeliveryView, Eligibility, EligibilityLocale, EligibilityReason,
     FallbackDecision, FallbackWrite, GlossaryCapture, GlossaryEntry, GlossaryFile, ImpactItem,
     ImpactPage, ImpactReason, PersistenceError, PersistenceErrorCode, PersistenceStage,
     PreparedReviewCheck, ProjectStore, Reconciliation, RecoveryPlan, RecoveryUnit,
@@ -28,10 +28,9 @@ pub use persistence::{
     ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, SaveContext, SaveTerm,
     SaveTranslationRevision, SelectTranslationRevision, TaskView, TermResolution,
     TermResolutionEntry, TermRevision, TmSuggestion, TranslationAdoptionConfirmation,
-    TranslationAdoptionHandler, TranslationHistory, TranslationMatch, TranslationPreview,
-    TranslationEditBasis, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
-    TranslationSelection, TranslationSelectionDecision,
-    Waiver, WaiverWrite, WorkItem, WorkPage,
+    TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
+    TranslationPreview, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
+    TranslationSelection, TranslationSelectionDecision, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 
 #[cfg(test)]

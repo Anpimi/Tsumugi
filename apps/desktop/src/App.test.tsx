@@ -14,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   destroy: vi.fn(),
 }));
 
+// Composition tests isolate native notifications; the bridge has its own race tests.
+vi.mock("./SessionReadProvider", async importOriginal => {
+  const actual = await importOriginal<typeof import("./SessionReadProvider")>();
+  return { ...actual, SessionReadProvider: (props: React.ComponentProps<typeof actual.SessionReadProvider>) => <actual.SessionReadProvider {...props} bridge={false}/> };
+});
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/path", () => ({ join: mocks.join }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));

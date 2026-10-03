@@ -1,11 +1,11 @@
+import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { CommandError, ProjectView } from "./projectCommands";
-import { pollExecutionProjection } from "./executionCommands";
 import { projectCommands } from "./projectCommands";
-import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type Task, type PrepareRequest, type ResultEnvelope } from "./executionCommands";
+import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type PrepareRequest, type ResultEnvelope } from "./executionCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string };
 export interface TasksHandle { allowLeave: () => Promise<boolean> }
@@ -25,16 +25,11 @@ export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslati
 export function TaskContent({ project, active = true, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; active?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
   const { t } = useTranslation();
   const context = executionContext(project);
-  const [tasks, setTasks] = useState<Task[]>([]);
   const [taskId, setTaskId] = useState<string | null>(null);
-  const [attempts, setAttempts] = useState<AttemptSummary[]>([]);
   const [attemptId, setAttemptId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<AttemptDetail | null>(null);
   const [cursor, setCursor] = useState("0");
   const [attemptCursor, setAttemptCursor] = useState("0");
   const [offset, setOffset] = useState(0);
-  const [refresh, setRefresh] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | null>(null);
@@ -48,55 +43,41 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
   useEffect(() => { onDismissBlockedChange?.(busy || pendingAction !== null); return () => onDismissBlockedChange?.(false); }, [busy, pendingAction, onDismissBlockedChange]);
   useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
   function confirm(choice: Confirmation) { actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFailure(null); setMessage(null); setConfirmation(choice); }
-  const sequence = useRef(0);
   const mounted = useRef(true);
   const mutating = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; }; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   function showError(error: unknown) {
     const code = (error as Partial<CommandError> | null)?.code;
     setFailure(code ?? "storage-failed");
   }
-  // A single completed read schedules the next poll. Selection, mutation and
-  // unmount invalidate older responses before they can update this view.
-  useEffect(() => {
-    if (busy || !active) return;
-    const ticket = ++sequence.current;
-    const current = () => mounted.current && ticket === sequence.current;
-    async function read() {
-      try {
-        const runtime = await commands.status(context);
-        if (!current()) return;
-        if (runtime.error) showError(runtime.error);
-        if (!taskId) {
-          const rows = await commands.list({ ...context, after: cursor, limit: 50 });
-          if (current()) setTasks(rows);
-        } else {
-          const rows = await commands.task({ ...context, taskId, after: attemptCursor, limit: 100 });
-          if (!current()) return;
-          setAttempts(rows);
-          const selected = attemptId ?? rows.at(-1)?.attemptId;
-          if (selected) {
-            const next = await commands.attempt({ ...context, attemptId: selected, offset, limit: 100 });
-            if (current()) setDetail(next);
-          }
-        }
-      } catch (error) { if (current()) showError(error); }
-      finally { if (current()) setLoading(false); }
-    }
-    const stop = pollExecutionProjection(read, current);
-    return () => { sequence.current++; stop(); };
-  }, [project.sessionToken, taskId, attemptId, cursor, attemptCursor, offset, refresh, busy, active]);
+  const reads = useSessionReads();
+  const projection = useSessionQuery<{ runtime: RuntimeStatus; tasks: Task[]; attempts: AttemptSummary[]; detail: AttemptDetail | null }>({
+    key: ["tasks", taskId, attemptId, cursor, attemptCursor, offset], scopes: ["execution", "source", "translation", "release"], enabled: active && !busy,
+    read: async () => {
+      const status = () => reads.client.getQueryData<RuntimeStatus>(reads.key(["runtime"])) ?? commands.status(context);
+      if (!taskId) {
+        const [runtime, tasks] = await Promise.all([status(), commands.list({ ...context, after: cursor, limit: 50 })]);
+        return { runtime, tasks, attempts: [], detail: null };
+      }
+      const [runtime, attempts] = await Promise.all([status(), commands.task({ ...context, taskId, after: attemptCursor, limit: 100 })]);
+      const selected = attemptId ?? attempts.at(-1)?.attemptId;
+      const detail = selected ? await commands.attempt({ ...context, attemptId: selected, offset, limit: 100 }) : null;
+      return { runtime, tasks: [], attempts, detail };
+    },
+  });
+  const tasks = projection.data?.tasks ?? [], attempts = projection.data?.attempts ?? [], detail = projection.data?.detail ?? null;
+  const loading = projection.isPending && active && !busy;
+  useEffect(() => { const error = projection.error ?? projection.data?.runtime.error; if (error) showError(error); }, [projection.error, projection.data?.runtime.error]);
 
   function selectTask(id: string | null) {
-    sequence.current++;
-    setTaskId(id); setDetail(null); setAttemptId(null); setAttemptCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setFailure(null); setLoading(true); setPendingAction(null);
+    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setFailure(null); setPendingAction(null);
   }
   async function perform(work: () => Promise<void>) {
     if (mutating.current) return;
-    mutating.current = true; sequence.current++; setBusy(true); setFailure(null); setMessage(null);
+    mutating.current = true; setBusy(true); setFailure(null); setMessage(null);
     try { await work(); } catch (error) { if (mounted.current) showError(error); }
-    finally { mutating.current = false; if (mounted.current) { setBusy(false); setRefresh(value => value + 1); } }
+    finally { mutating.current = false; if (mounted.current) { setBusy(false); reads.invalidate(["execution"]); } }
   }
   async function execute(choice: Confirmation) {
     if (!detail) return;
@@ -165,7 +146,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
     </> : <>
       <label className="field execution-attempt">{t("execution.attempt")}
         <select disabled={busy || pendingAction !== null} value={attemptId ?? detail?.attemptId ?? ""} onChange={event => {
-          sequence.current++; setAttemptId(event.target.value); setOffset(0); setDetail(null); setOutput(null); setReceipt(null); setLoading(true);
+          setAttemptId(event.target.value); setOffset(0); setOutput(null); setReceipt(null);
         }}>
           {attempts.map(attempt => <option key={attempt.attemptId} value={attempt.attemptId}>{t("execution.attemptNumber", { number: attempt.sequence })}</option>)}
           {detail && !attempts.some(attempt => attempt.attemptId === detail.attemptId) ? <option value={detail.attemptId}>{t("execution.currentAttempt")}</option> : null}

@@ -284,12 +284,14 @@ impl ProjectStore {
                 return Err(error(ErrorCode::Unauthorized, "arena-project"));
             }
         }
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| error(ErrorCode::StorageFailed, "arena-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&tx, super::ChangeScope::Arena);
         if let Some(saved) = tx
             .query_row(
                 "SELECT request_digest FROM arena_reveals WHERE action_id=?1",
@@ -305,7 +307,7 @@ impl ProjectStore {
             return Ok(());
         }
         tx.execute("INSERT INTO arena_reveals (comparison_id,project_id,action_id,request_digest) VALUES (?1,?2,?3,?4) ON CONFLICT(comparison_id) DO NOTHING",params![comparison.to_string(),project.to_string(),action.to_string(),digest]).map_err(sql)?;
-        tx.commit().map_err(|_| {
+        commit_observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "arena-commit")
         })
@@ -411,12 +413,14 @@ impl ProjectStore {
             &request.revision_ids,
         )?;
         let order = shuffled_order(request.revision_ids.len(), request.blind);
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| error(ErrorCode::StorageFailed, "arena-write"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&tx, super::ChangeScope::Arena);
         tx.execute(
             "INSERT INTO arena_comparisons VALUES (?1,?2,?3,?4,?5,?6)",
             params![
@@ -440,7 +444,7 @@ impl ProjectStore {
             )
             .map_err(sql)?;
         }
-        tx.commit().map_err(|_| {
+        commit_observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "arena-commit")
         })?;

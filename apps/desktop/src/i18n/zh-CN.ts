@@ -651,6 +651,7 @@ ai: {
   }
 },
     execution: {
+        "updatesUnavailable": "暂时无法更新任务状态。已有工作仍保留，可刷新核对工程。",
       "operation": "项目操作",
       "sampleOperation": "示例更新",
       "willRun": "将执行",

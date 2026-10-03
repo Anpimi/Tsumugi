@@ -650,6 +650,7 @@ ai: {
   }
 },
     execution: {
+        "updatesUnavailable": "Live updates are unavailable. Your work is preserved. Refresh to check the project again.",
       "operation": "Project operation",
       "sampleOperation": "Sample update",
       "willRun": "Will run",

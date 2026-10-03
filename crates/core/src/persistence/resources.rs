@@ -1361,12 +1361,14 @@ impl ProjectStore {
             return Err(failure(ErrorCode::OutcomeUnknown, "context-session"));
         }
         let request_digest = digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "context-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&tx, super::ChangeScope::Resources);
         let prior: Option<(String, String)> = tx
             .query_row(
                 "SELECT revision_id,request_digest FROM context_revisions WHERE action_id=?1",
@@ -1452,7 +1454,7 @@ impl ProjectStore {
                 request.action_id,
             )?;
         }
-        tx.commit().map_err(|_| {
+        commit_observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "context-save-commit")
         })?;
@@ -1477,12 +1479,14 @@ impl ProjectStore {
             return Err(failure(ErrorCode::OutcomeUnknown, "context-session"));
         }
         let request_digest = digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "context-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&tx, super::ChangeScope::Resources);
         if let Some((stored_digest, capture)) =
             capture_by_action(&tx, request.project_id, request.action_id)?
         {
@@ -1608,7 +1612,7 @@ impl ProjectStore {
             ],
         )
         .map_err(sql)?;
-        tx.commit().map_err(|_| {
+        commit_observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "context-capture-commit")
         })?;
@@ -1648,12 +1652,14 @@ impl ProjectStore {
             return Err(failure(ErrorCode::OutcomeUnknown, "resource-session"));
         }
         let file_digest = codec::digest(bytes);
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&tx, super::ChangeScope::Resources);
         let source_locale = check_project(&tx, project_id, &file.target_locale)?;
         if source_locale != file.source_locale {
             return Err(failure(
@@ -1716,7 +1722,7 @@ impl ProjectStore {
             ],
         )
         .map_err(sql)?;
-        tx.commit().map_err(|_| {
+        commit_observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "resource-capture-commit")
         })?;
@@ -1889,12 +1895,14 @@ impl ProjectStore {
             return Err(failure(ErrorCode::OutcomeUnknown, "resource-session"));
         }
         let request_digest = digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&tx, super::ChangeScope::Resources);
         let existing: Option<(String, String)> = tx
             .query_row(
                 "SELECT revision_id,request_digest FROM term_revisions WHERE action_id=?1",
@@ -1975,7 +1983,7 @@ impl ProjectStore {
                 request.action_id,
             )?;
         }
-        tx.commit().map_err(|_| {
+        commit_observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "resource-save-commit")
         })?;
@@ -1990,12 +1998,14 @@ impl ProjectStore {
             return Err(failure(ErrorCode::OutcomeUnknown, "resource-session"));
         }
         let request_digest = digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "resource-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&tx, super::ChangeScope::Resources);
         let prior: Option<(String, Option<String>)> = tx
             .query_row(
                 "SELECT request_digest,result_revision_id FROM resource_decisions
@@ -2148,7 +2158,7 @@ impl ProjectStore {
         .map_err(sql)?;
         #[cfg(test)]
         super::migration_crash_hook("before-resource-decision-commit");
-        tx.commit().map_err(|_| {
+        commit_observer.commit(tx).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "resource-decision-commit")
         })?;

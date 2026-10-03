@@ -156,12 +156,14 @@ impl ProjectStore {
                 };
             }
         };
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&transaction, super::super::ChangeScope::Review);
         if let Some((run, prior_digest)) =
             check_by_action(&transaction, capture.project_id, capture.action_id)?
         {
@@ -215,7 +217,7 @@ impl ProjectStore {
                 capture.project_id.to_string(), target.unit_id.to_string(), target.locale,
                 target.basis, basis_json, CHECK_VERSION, rules_json, capture.request_digest],
         ).map_err(sql)?;
-        transaction.commit().map_err(|_| {
+        commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-check-commit")
         })?;

@@ -9,7 +9,7 @@ use tsumugi_core::{RecoveryPlan, TaskView, execution::*};
 
 macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
-        super::create_project,super::open_project,super::read_project,super::rename_project,
+        super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
@@ -274,6 +274,15 @@ impl ExecutionHost {
     }
 }
 impl ActiveSession {
+    pub(super) fn execution_status_view(&mut self) -> Result<RuntimeStatus, CommandError> {
+        let (host, store) = self.execution_parts()?;
+        Ok(RuntimeStatus {
+            active: host.active(store)?,
+            quiescing: host.quiescing,
+            query_count: host.queries.len() as u32,
+            error: host.last_error.clone(),
+        })
+    }
     fn execution_parts(&mut self) -> Result<(&mut ExecutionHost, &mut ProjectStore), CommandError> {
         if self.execution.is_none() {
             self.execution = Some(ExecutionHost::new(&self.store)?);
@@ -456,7 +465,7 @@ pub struct RecoveryView {
     pub query_started: bool,
 }
 
-fn authorized<'a>(
+pub(super) fn authorized<'a>(
     sessions: &'a mut SessionManager,
     token: &str,
     project: ExecutionId,

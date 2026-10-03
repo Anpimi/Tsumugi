@@ -30,18 +30,21 @@ export interface CommandError {
   recoveryActions?: string[];
 }
 
+const errorCodes = ["invalid-input", "destination-conflict", "missing-project", "permission-denied", "unsupported-schema", "corrupt-project", "stale-revision", "session-invalid", "project-in-use", "busy", "storage-failed", "outcome-unknown", "limit-exceeded", "result-mismatch", "output-invalid", "dependency-conflict", "cancelled"] satisfies CommandErrorCode[];
+const stages = ["create", "open", "read", "rename", "add-target-locale", "set-target-locales", "close", "execution-read", "execution-cancel", "execution-recover", "execution-adopt", "execution-quiesce"] satisfies CommandStage[];
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+const optionalText = (value: unknown) => value === undefined || typeof value === "string";
+const optionalTexts = (value: unknown) => value === undefined || (Array.isArray(value) && value.every(item => typeof item === "string"));
+export function isCommandError(value: unknown): value is CommandError {
+  return isRecord(value) && errorCodes.some(code => code === value.code) && stages.some(stage => stage === value.stage)
+    && (value.outcome === "rejected" || value.outcome === "unknown") && (value.code !== "outcome-unknown" || value.outcome === "unknown")
+    && typeof value.recoveryRequired === "boolean" && optionalText(value.reason) && optionalText(value.field)
+    && (value.currentRevision === undefined || (typeof value.currentRevision === "string" && /^(0|[1-9]\d*)$/.test(value.currentRevision) && BigInt(value.currentRevision) <= 9223372036854775807n))
+    && optionalTexts(value.itemIds) && optionalTexts(value.recoveryActions);
+}
 /** Transport failures do not prove rejection: retain the original action. */
 export function hasUnknownOutcome(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("outcome" in error) || error.outcome !== "rejected" || !("code" in error)) return true;
-  switch (error.code) {
-    case "invalid-input": case "destination-conflict": case "missing-project":
-    case "permission-denied": case "unsupported-schema": case "corrupt-project":
-    case "stale-revision": case "session-invalid": case "project-in-use":
-    case "busy": case "storage-failed": case "limit-exceeded":
-    case "result-mismatch": case "output-invalid": case "dependency-conflict":
-    case "cancelled": return false;
-    default: return true;
-  }
+  return !isRecord(error) || error.outcome !== "rejected" || error.code === "outcome-unknown" || !errorCodes.some(code => code === error.code);
 }
 
 export interface CreateProjectRequest {

@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+mod changes;
 mod dispatch;
 mod execution;
 
@@ -274,6 +275,19 @@ pub struct AppState {
     review_check_cancellations: ReviewCheckRegistry,
     #[cfg(test)]
     review_compute_probe: Mutex<Option<execution::ComputeProbe>>,
+}
+
+impl AppState {
+    pub(crate) fn connect_change_events<R: tauri::Runtime>(&self, handle: tauri::AppHandle<R>) {
+        use tauri::Emitter;
+        self.sessions
+            .set_change_sink(Some(Arc::new(move |notification| {
+                let _ = handle.emit_to("main", "project-changed", notification);
+            })));
+    }
+    pub(crate) fn disconnect_change_events(&self) {
+        self.sessions.set_change_sink(None);
+    }
 }
 
 impl Default for AppState {
@@ -905,14 +919,22 @@ pub async fn close_project(
 }
 
 pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
-    let builder = builder.manage(AppState::default());
-    #[cfg(feature = "execution-test-host")]
-    let builder = builder.setup(|app| {
+    let builder = builder.manage(AppState::default()).setup(|app| {
         use tauri::Manager;
+        app.state::<AppState>()
+            .connect_change_events(app.handle().clone());
+        #[cfg(feature = "execution-test-host")]
         execution::initialize_test_host(&app.state::<AppState>())?;
         Ok(())
     });
-    builder.invoke_handler(execution::handler())
+    builder
+        .on_window_event(|window, event| {
+            use tauri::Manager;
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<AppState>().disconnect_change_events();
+            }
+        })
+        .invoke_handler(execution::handler())
 }
 
 fn validate_locator(raw: &str, stage: CommandStage, field: &str) -> Result<PathBuf, CommandError> {

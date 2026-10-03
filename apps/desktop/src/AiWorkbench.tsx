@@ -1,3 +1,4 @@
+import { useSessionQuery } from "./SessionReadProvider";
 import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import {enUS} from "./i18n/en-US";
@@ -16,10 +17,15 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation}:{project:Pr
   const [connectionOpen,setConnectionOpen]=useState(true);
   const [presetName,setPresetName]=useState("custom");const [open,setOpen]=useWorkbenchView("ai"),[config,setConfig]=useState<AiConfig>(()=>({...defaultAiConfig}));
   const [locale,setLocale]=useState(project.metadata.targetLocales[0]??""),[page,setPage]=useState<ContentPage|null>(null),[selected,setSelected]=useState<string[]>([]);
-  const [prepared,setPrepared]=useState<AiPrepared|null>(null),[consent,setConsent]=useState(false),[attempt,setAttempt]=useState<string|null>(null),[view,setView]=useState<AiView|null>(null);
+  const [prepared,setPrepared]=useState<AiPrepared|null>(null),[consent,setConsent]=useState(false),[attempt,setAttempt]=useState<string|null>(null);
   const [busy,setBusy]=useState(false),[failure,setFailure]=useState<string|null>(null),[dirty,setDirty]=useState(false),[leaving,setLeaving]=useState(false);
   const [pendingStart,setPendingStart]=useState<AiStart|null>(null),[pendingAdopt,setPendingAdopt]=useState<PrepareRequest|null>(null),[receiptMissing,setReceiptMissing]=useState(false);
   const alive=useRef(true),generation=useRef(0),inFlight=useRef(false),leaveResolve=useRef<((v:boolean)=>void)|null>(null),errorRef=useRef<HTMLDivElement>(null);
+  const viewRead = useSessionQuery<AiView | null>({
+    key: ["aiCommands", attempt], scopes: ["execution", "source", "translation", "resources", "arena"], enabled: open && !!attempt && !busy,
+    read: () => aiCommands.read({...context, attemptId: attempt!}),
+  });
+  const view = viewRead.data ?? null, setView = viewRead.setData;
   const active=!!attempt&&(!view||view.detail.progress.queued>0||view.detail.progress.running>0);
   const locked=busy||!!pendingStart||!!pendingAdopt||active;
   useEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++;leaveResolve.current?.(false);};},[]);
@@ -41,13 +47,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation}:{project:Pr
     await perform(async current=>{const scope=await sourceCommands.scope(context);if(!scope.currentSnapshot){if(current())setPage(null);return;}const result=await sourceCommands.content({...context,snapshotId:scope.currentSnapshot,after,limit:50});if(current())setPage(result);});
   }
   useEffect(()=>{if(open&&!page)void loadPage();},[open]);
-  useEffect(()=>{
-    if(!open||!attempt||busy)return;
-    let stopped=false;let timer:ReturnType<typeof setTimeout>|undefined;
-    const ticket=generation.current;
-    async function poll(){try{const result=await aiCommands.read({...context,attemptId:attempt!});if(!stopped&&alive.current&&generation.current===ticket){setView(result);setFailure(previous=>previous==="busy"?null:previous);if(!result.detail.progress.queued&&!result.detail.progress.running)return;}}catch(e){if(!stopped&&alive.current&&generation.current===ticket&&stage(e)!=="busy")setFailure(stage(e));}if(!stopped)timer=setTimeout(()=>void poll(),1500);}
-    void poll();return()=>{stopped=true;clearTimeout(timer);};
-  },[open,attempt,busy,project.sessionToken]);
+  useEffect(()=>{if(viewRead.error)setFailure(stage(viewRead.error));else if(viewRead.isSuccess)setFailure(previous=>previous==="busy"?null:previous);},[viewRead.error,viewRead.isSuccess]);
   function change<K extends keyof AiConfig>(key:K,value:AiConfig[K]){setFailure(null);setConfig(c=>({...c,[key]:value}));setPrepared(null);setConsent(false);setDirty(true);}
   function preset(value:string){setFailure(null);setPresetName(value);setConfig(c=>({...c,endpoint:value==="openai"?"https://api.openai.com/v1/chat/completions":value==="local"?"http://127.0.0.1:11434/v1/chat/completions":"",credentialEnv:value==="local"?"":"OPENAI_API_KEY",tokenField:value==="openai"?"max_completion_tokens":"max_tokens"}));setPrepared(null);setConsent(false);setDirty(true);}
   async function start(request:AiStart,current:()=>boolean){setPendingStart(request);try{const id=await aiCommands.start(request);if(current()){setAttempt(id);setPendingStart(null);setPrepared(null);setConsent(false);setView(null);setDirty(false);}}catch(e){if(current()&&!hasUnknownOutcome(e))setPendingStart(null);throw e;}}

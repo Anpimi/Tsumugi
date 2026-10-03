@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { CommandError, ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import type { UiMessages } from "./i18n/types";
-import { pollExecutionProjection } from "./executionCommands";
+import { useSessionQuery } from "./SessionReadProvider";
 import { SourceHistoryPanel, SourceImpactPanel } from "./SourceMaintenance";
 import { executionCommands as execution, executionContext, type AttemptDetail } from "./executionCommands";
 import { sourceCommands as commands, type ContentPage, type SourceChangePage, type LineageChoice, type Preflight, type SourceAdoptRequest, type SourceSelection, type StartRequest, type IntegrationDescriptor, type SourceHistory, type SourceImpactSummary } from "./sourceCommands";
@@ -25,7 +25,6 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const [declared, setDeclared] = useState(false);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [attempt, setAttempt] = useState<string | null>(null);
-  const [detail, setDetail] = useState<AttemptDetail | null>(null);
   const [page, setPage] = useState<ContentPage | null>(null);
   const [comparison, setComparison] = useState<SourceChangePage | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -45,6 +44,10 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const [pendingApply, setPendingApply] = useState<SourceAdoptRequest | null>(null);
   const [receiptChecked, setReceiptChecked] = useState(false);
   const [leave, setLeave] = useState(false);
+  const detailRead = useSessionQuery<AttemptDetail | null>({ key: ["source-attempt", attempt, 0, 100], scopes: ["execution"], enabled: open && !busy && !!attempt && !page && !comparison,
+    read: () => execution.attempt({ ...context, attemptId: attempt!, offset: 0, limit: 100 }) });
+  const detail = detailRead.data ?? null, setDetail = detailRead.setData;
+
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
   const mounted = useRef(true);
   const sequence = useRef(0);
@@ -76,37 +79,32 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     try { await work(current); } catch (error) { if (current()) showError(error); }
     finally { mutation.current = false; if (mounted.current) setBusy(false); }
   }
-  // Poll persisted execution. Closing this view does not cancel a task.
+  // A ready preview becomes the user's fixed adoption basis, separate from task progress.
   useEffect(() => {
-    if (!open || busy || !attempt || page || comparison) return;
+    if (!open || busy || !attempt || page || comparison || !detail) return;
     const ticket = ++sequence.current;
-    const current = () => mounted.current && ticket === sequence.current;
-    async function read() {
-      try {
-        const next = await execution.attempt({ ...context, attemptId: attempt!, offset: 0, limit: 1 });
-        if (!current()) return;
-        setDetail(next);
-        const result = next.items[0];
-        if (result?.resultId && result.status.validation === "valid" && result.status.execution === "succeeded") {
+    let stopped = false;
+    const current = () => !stopped && mounted.current && ticket === sequence.current;
+    const result = detail.items[0];
+    if (result?.resultId && result.status.validation === "valid" && result.status.execution === "succeeded") {
+      void (async () => {
+        try {
           const scope = await commands.scope(context);
+          if (!current()) return;
           if (scope.currentSnapshot) {
-            const changes = await commands.compare({ ...context, attemptId: attempt!, resultId: result.resultId, after: 0, limit: 50 });
+            const changes = await commands.compare({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
             if (current()) { setUpdating(true); setComparison(changes); setPage(null); setFailure(null); }
           } else {
-            const preview = await commands.preview({ ...context, attemptId: attempt!, resultId: result.resultId, after: 0, limit: 50 });
+            const preview = await commands.preview({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
             if (current()) { setPage(preview); setFailure(null); }
           }
-        } else if (result?.status.execution === "failed" || result?.status.validation === "invalid") {
-          setFailure(result.status.diagnostic ?? "output-invalid");
-        } else if (result?.status.execution === "unknown" || result?.status.execution === "cancelled-before-dispatch") {
-          setFailure(result.status.execution);
-        } else return true;
-      } catch (error) { if (current()) showError(error); }
-      return false;
-    }
-    const stop = pollExecutionProjection(read, current, 750);
-    return () => { sequence.current++; stop(); };
-  }, [open, busy, attempt, page, comparison, project.sessionToken]);
+        } catch (error) { if (current()) showError(error); }
+      })();
+    } else if (result?.status.execution === "failed" || result?.status.validation === "invalid") setFailure(result.status.diagnostic ?? "output-invalid");
+    else if (result?.status.execution === "unknown" || result?.status.execution === "cancelled-before-dispatch") setFailure(result.status.execution);
+    return () => { stopped = true; };
+  }, [open, busy, attempt, page, comparison, detail, project.sessionToken]);
+  useEffect(() => { if (detailRead.error) showError(detailRead.error); }, [detailRead.error]);
   useEffect(() => { if (page || comparison) first.current?.focus(); }, [page, comparison]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
   async function loadCurrent(current: () => boolean) {

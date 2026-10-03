@@ -1138,12 +1138,14 @@ impl ProjectStore {
             matches!(request.kind, ReviewDecisionKind::RequestChanges),
         )?;
         let request_digest = digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&transaction, super::ChangeScope::Review);
         if let Some((decision, prior_digest)) =
             decision_by_action(&transaction, request.project_id, request.action_id)?
         {
@@ -1193,7 +1195,7 @@ impl ProjectStore {
         ).map_err(sql)?;
         #[cfg(test)]
         super::migration_crash_hook("before-review-decision-commit");
-        transaction.commit().map_err(|_| {
+        commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-commit")
         })?;
@@ -1348,12 +1350,14 @@ impl ProjectStore {
             return Err(failure(ErrorCode::InvalidInput, "review-issue"));
         }
         let request_digest = digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&transaction, super::ChangeScope::Review);
         if let Some((waiver, prior_digest)) =
             waiver_by_action(&transaction, request.project_id, request.action_id)?
         {
@@ -1420,7 +1424,7 @@ impl ProjectStore {
                 request.expected_waiver_id.map(|id| id.to_string()), POLICY_VERSION,
                 request.actor, request.reason, request_digest],
         ).map_err(sql)?;
-        transaction.commit().map_err(|_| {
+        commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-waiver-commit")
         })?;
@@ -1444,12 +1448,14 @@ impl ProjectStore {
         checked_actor(&request.actor)?;
         checked_note(&request.reason, true)?;
         let request_digest = digest(request)?;
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
             .connection_mut()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
+        let commit_observer = change_clock.observe(&transaction, super::ChangeScope::Review);
         if let Some((fallback, prior_digest)) =
             fallback_by_action(&transaction, request.project_id, request.action_id)?
         {
@@ -1491,7 +1497,7 @@ impl ProjectStore {
                 request.expected_fallback_id.map(|id| id.to_string()),
                 POLICY_VERSION, request.actor, request.reason, request_digest],
         ).map_err(sql)?;
-        transaction.commit().map_err(|_| {
+        commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-fallback-commit")
         })?;
@@ -2573,13 +2579,7 @@ mod tests {
             )
             .unwrap();
         let delayed_check = store
-            .prepare_review_check(
-                project,
-                units[0],
-                "zh-CN",
-                &newer.basis,
-                ExecutionId::new(),
-            )
+            .prepare_review_check(project, units[0], "zh-CN", &newer.basis, ExecutionId::new())
             .unwrap()
             .compute(&Cancellation::default());
         store

@@ -1,3 +1,4 @@
+import { useSessionQuery } from "./SessionReadProvider";
 import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import {useEffect,useImperativeHandle,useRef,useState,type Ref} from "react";
@@ -22,12 +23,17 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project
  const {t}=useTranslation(),context=executionContext(project);
  const [open,setOpen]=useWorkbenchView("arena"),[config,setConfig]=useState<ArenaConfig>(defaultArenaConfig),[locale,setLocale]=useState(project.metadata.targetLocales[0]??"");
  const [page,setPage]=useState<ContentPage|null>(null),[selected,setSelected]=useState<string[]>([]),[unit,setUnit]=useState("");
- const [prepared,setPrepared]=useState<ArenaPrepared|null>(null),[consent,setConsent]=useState(false),[attempt,setAttempt]=useState<string|null>(null),[view,setView]=useState<ArenaView|null>(null);
+ const [prepared,setPrepared]=useState<ArenaPrepared|null>(null),[consent,setConsent]=useState(false),[attempt,setAttempt]=useState<string|null>(null);
  const [history,setHistory]=useState<TranslationHistory|null>(null),[references,setReferences]=useState<string[]>([]),[comparison,setComparison]=useState<ComparisonView|null>(null),[savedComparisons,setSavedComparisons]=useState<ComparisonSummary[]>([]);
  const [comparisonBlind,setComparisonBlind]=useState(false);
  const [draft,setDraft]=useState<{basis:ComparisonView;text:string}|null>(null),draftRef=useRef(draft);draftRef.current=draft;
  const [dirty,setDirty]=useState(false),[busy,setBusy]=useState(false),[failure,setFailure]=useState<string|null>(null),[pollFailure,setPollFailure]=useState<string|null>(null),[notice,setNotice]=useState<string|null>(null),[pending,setPending]=useState<Pending|null>(null),[retryReady,setRetryReady]=useState(false),[leaving,setLeaving]=useState(false);
  const alive=useRef(true),generation=useRef(0),flight=useRef(false),leaveResolve=useRef<((v:boolean)=>void)|null>(null),errorRef=useRef<HTMLDivElement>(null);
+ const viewRead = useSessionQuery<ArenaView | null>({
+   key: ["arena", attempt], scopes: ["execution", "source", "translation", "resources", "arena"], enabled: open && !!attempt && !busy,
+   read: () => arena.read({...context, attemptId: attempt!}),
+ });
+ const view = viewRead.data ?? null, setView = viewRead.setData;
  const active=!!attempt&&(!view||view.detail.progress.queued>0||view.detail.progress.running>0),locked=busy||!!pending||active;
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++;leaveResolve.current?.(false);};},[]);
  const displayedFailure=failure??pollFailure;
@@ -40,7 +46,7 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project
  function variant(slot:number,key:keyof AiConfig,value:string|number|boolean){changed({...config,variants:config.variants.map((v,i)=>i===slot?{...v,[key]:value}:v)});}
  async function refreshPage(after=0){await perform(async current=>{const scope=await sourceCommands.scope(context);const next=scope.currentSnapshot?await sourceCommands.content({...context,snapshotId:scope.currentSnapshot,after,limit:50}):null;const comparisons=await arena.comparisons(context);if(current()){setPage(next);setSavedComparisons(comparisons);}});}
  useEffect(()=>{if(open&&!page)void refreshPage();},[open]);
- useEffect(()=>{if(!open||!attempt||busy)return;let stopped=false,timer:ReturnType<typeof setTimeout>|undefined;const ticket=generation.current;async function poll(){try{const next=await arena.read({...context,attemptId:attempt!});if(!stopped&&alive.current&&ticket===generation.current){setView(next);setPollFailure(null);if(!next.detail.progress.queued&&!next.detail.progress.running)return;}}catch(e){if(!stopped&&alive.current&&ticket===generation.current)setPollFailure(stage(e));}if(!stopped)timer=setTimeout(()=>void poll(),1500);}void poll();return()=>{stopped=true;clearTimeout(timer);};},[open,attempt,busy,project.sessionToken]);
+ useEffect(()=>{if(viewRead.error)setPollFailure(stage(viewRead.error));else if(viewRead.isSuccess)setPollFailure(null);},[viewRead.error,viewRead.isSuccess]);
  async function loadHistory(id:string,afterOrdinal="0"){
   if(!id){setUnit("");setHistory(null);setComparison(null);setReferences([]);return;}
   const more=afterOrdinal!=="0"&&id===unit&&history?.locale===locale;

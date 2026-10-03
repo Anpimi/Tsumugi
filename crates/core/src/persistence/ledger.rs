@@ -867,13 +867,19 @@ impl ProjectStore {
         if self.is_reconciling() {
             return Err(error(ErrorCode::OutcomeUnknown, "session"));
         }
+        let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let tx = self
             .connection_mut()
             .map_err(|_| error(ErrorCode::StorageFailed, "session"))?
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql_error)?;
-        Ok(ExecutionTransaction { tx, unknown })
+        let observer = change_clock.observe(&tx, super::ChangeScope::Execution);
+        Ok(ExecutionTransaction {
+            tx,
+            unknown,
+            observer,
+        })
     }
 
     pub fn reconcile_execution(&self) -> Result<(), ExecutionError> {
@@ -1423,7 +1429,7 @@ impl ProjectStore {
         &mut self,
         prepared: PreparedAdoption,
     ) -> Result<AdoptionReceipt, ExecutionError> {
-        let tx = self.execution_write()?;
+        let mut tx = self.execution_write()?;
         let action = &prepared.capture.action;
         let current = capture_adoption_in(&tx, action)?;
         if let Some(receipt) = current.receipt {
@@ -1457,6 +1463,10 @@ impl ProjectStore {
             request_digest: current.digest,
             changes,
         };
+        for change in &receipt.changes {
+            tx.observer
+                .add_scope(super::ChangeScope::for_fact(&change.kind));
+        }
         let bytes = codec::encode(&receipt, MAX_INPUT_BYTES)?;
         tx.execute(
             "INSERT INTO adoption_receipts VALUES (?1,?2,?3,?4,?5)",
@@ -1593,6 +1603,7 @@ pub(super) fn read_receipt(
 struct ExecutionTransaction<'a> {
     tx: rusqlite::Transaction<'a>,
     unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    observer: super::changes::CommitObserver,
 }
 impl<'a> std::ops::Deref for ExecutionTransaction<'a> {
     type Target = rusqlite::Transaction<'a>;
@@ -1601,7 +1612,7 @@ impl<'a> std::ops::Deref for ExecutionTransaction<'a> {
     }
 }
 fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), ExecutionError> {
-    transaction.tx.commit().map_err(|_| {
+    transaction.observer.commit(transaction.tx).map_err(|_| {
         transaction
             .unknown
             .store(true, std::sync::atomic::Ordering::Release);

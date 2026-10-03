@@ -1,4 +1,4 @@
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import {cleanup,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
@@ -89,6 +89,7 @@ it("clears a transient poll failure after a successful terminal read",async()=>{
  const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
  await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
  expect(await screen.findByRole("alert")).toHaveTextContent("Another operation is running");
+ await refreshWorkbenchReads();
  await screen.findByRole("heading",{name:"Candidate A"},{timeout:3000});expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 it("preserves a cancellation failure when a background read succeeds",async()=>{
@@ -102,6 +103,7 @@ it("preserves a cancellation failure when a background read succeeds",async()=>{
  const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
  await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
  await user.click(await screen.findByRole("button",{name:"Cancel remaining work"}));await screen.findByRole("alert");const prior=reads;
+ await refreshWorkbenchReads();
  await waitFor(()=>expect(reads).toBeGreaterThan(prior),{timeout:3000});expect(screen.getByRole("alert")).toHaveTextContent("Another operation is running");
 });
 it("keeps newer input when a previous merge save returns successfully",async()=>{const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));let finish:(v:unknown)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="save_arena_merge"?new Promise(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Save merge and select"}));const input=screen.getByRole("textbox",{name:"Merged translation"});expect(input).toBeEnabled();await user.type(input," plus newer edit");finish({revisionId:"merged"});await screen.findByText(/Merge saved and selected/);expect(input).toHaveValue("First {name} plus newer edit");await user.click(screen.getByRole("button",{name:"Back to overview"}));expect(await screen.findByText("Keep your Arena draft?")).toBeInTheDocument();});

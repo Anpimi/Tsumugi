@@ -14,6 +14,8 @@ use rusqlite::{Connection, OpenFlags, params};
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 mod ai;
+mod changes;
+pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;
 mod ledger;
@@ -47,8 +49,8 @@ pub use review::{
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
-    TranslationAdoptionHandler, TranslationHistory, TranslationMatch, TranslationPreview,
-    TranslationEditBasis, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
+    TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
+    TranslationPreview, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
     TranslationSelection, TranslationSelectionDecision,
 };
 
@@ -238,6 +240,7 @@ pub struct ProjectStore {
     pending: Option<PendingChange>,
     execution_unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     review_scopes: review::ReadScopes,
+    changes: std::sync::Arc<changes::ChangeClock>,
     #[cfg(test)]
     fault: Option<StorageFault>,
     #[cfg(test)]
@@ -280,6 +283,7 @@ impl ProjectStore {
             pending: None,
             execution_unknown: Default::default(),
             review_scopes: Default::default(),
+            changes: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -332,6 +336,7 @@ impl ProjectStore {
             pending: None,
             execution_unknown: Default::default(),
             review_scopes: Default::default(),
+            changes: Default::default(),
             #[cfg(test)]
             fault: None,
             #[cfg(test)]
@@ -448,10 +453,12 @@ impl ProjectStore {
         #[cfg(test)]
         let crash = self.crash;
 
+        let change_clock = self.changes.clone();
         let connection = self.connection_mut()?;
         let transaction = connection
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|error| map_sqlite(error, PersistenceStage::Write))?;
+        let commit_observer = change_clock.observe(&transaction, ChangeScope::Project);
         let previous = read_metadata_from(&transaction)?;
         let change = transition(&previous)
             .map_err(|error| map_metadata_error(error, PersistenceStage::Write))?;
@@ -485,7 +492,7 @@ impl ProjectStore {
             });
         }
 
-        let commit_result = transaction.commit();
+        let commit_result = commit_observer.commit(transaction);
         if let Err(error) = commit_result {
             let intended = change.metadata().clone();
             self.pending = Some(PendingChange { previous, intended });

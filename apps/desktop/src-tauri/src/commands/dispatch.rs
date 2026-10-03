@@ -6,7 +6,7 @@
 use super::{CommandError, CommandErrorCode, CommandStage, SessionManager};
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
         mpsc,
     },
@@ -60,14 +60,18 @@ pub(super) struct SessionExecutor {
     sender: mpsc::Sender<Job>,
     normal: Capacity,
     control: Capacity,
+    changes: Arc<Mutex<Option<super::changes::ChangeSink>>>,
 }
 
 impl Default for SessionExecutor {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel::<Job>();
+        let changes: Arc<Mutex<Option<super::changes::ChangeSink>>> = Arc::default();
+        let sink = changes.clone();
         std::thread::Builder::new().name("project-commands".into()).spawn(move || {
             let mut sessions = SessionManager::default();
             let mut last_tick = Instant::now();
+            let mut notifications = super::changes::Notifications::default();
             let mut sequence = 0_u64;
             let mut epoch = 0_u64;
             let mut token = None;
@@ -99,9 +103,17 @@ impl Default for SessionExecutor {
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
+                let callback = sink.lock().expect("change sink poisoned").clone();
+                if let Some(callback) = callback {
+                    notifications.publish(&sessions, &callback);
+                }
                 if last_tick.elapsed() >= TICK_INTERVAL {
                     super::execution::tick_sessions(&mut sessions);
                     last_tick = Instant::now();
+                    let callback = sink.lock().expect("change sink poisoned").clone();
+                    if let Some(callback) = callback {
+                        notifications.publish(&sessions, &callback);
+                    }
                 }
             }
         }).expect("failed to start project command thread");
@@ -109,11 +121,16 @@ impl Default for SessionExecutor {
             sender,
             normal: Capacity::new(PROJECT_CAPACITY),
             control: Capacity::new(CONTROL_CAPACITY),
+            changes,
         }
     }
 }
 
 impl SessionExecutor {
+    pub(super) fn set_change_sink(&self, sink: Option<super::changes::ChangeSink>) {
+        *self.changes.lock().expect("change sink poisoned") = sink;
+    }
+
     pub(super) fn lease(&self, stage: CommandStage) -> Result<SessionLease, CommandError> {
         let capacity = if matches!(
             stage,

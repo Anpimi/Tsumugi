@@ -78,6 +78,15 @@ mod tests {
         .build()
         .unwrap();
 
+        use tauri::{Listener, Manager};
+        // Mock Builder::build does not run the native setup callback.
+        app.state::<crate::commands::AppState>()
+            .connect_change_events(app.handle().clone());
+        let (events, changes) = std::sync::mpsc::channel();
+        let listener = app.listen_any("project-changed", move |event| {
+            let _ = events.send(event.payload().to_owned());
+        });
+
         let created = tauri::test::get_ipc_response(
             &webview,
             request(
@@ -117,6 +126,67 @@ mod tests {
         assert_eq!(read.metadata.display_name, "IPC Demo");
         assert_eq!(read.metadata.metadata_revision, "1");
         assert_eq!(read.metadata.target_locales, vec!["ja", "zh-CN"]);
+
+        let changes_request = |after: &str| {
+            json!({"request": {
+                "projectId": created.metadata.project_id, "sessionToken": created.session_token, "afterSequence": after
+            }})
+        };
+        let initial: Value = tauri::test::get_ipc_response(
+            &webview,
+            request("read_project_changes", changes_request("0")),
+        )
+        .unwrap()
+        .deserialize()
+        .unwrap();
+        assert_eq!(initial["sequence"], "0");
+        assert_eq!(initial["scopes"], json!([]));
+        assert_eq!(initial["runtime"]["active"], false);
+        let _: Value = tauri::test::get_ipc_response(&webview, request("rename_project", json!({"request": {
+            "sessionToken": created.session_token, "expectedRevision": "1", "displayName": "Changed IPC Demo"
+        }}))).unwrap().deserialize().unwrap();
+        let committed: Value = tauri::test::get_ipc_response(
+            &webview,
+            request("read_project_changes", changes_request("0")),
+        )
+        .unwrap()
+        .deserialize()
+        .unwrap();
+        assert_eq!(committed["sequence"], "1");
+        assert_eq!(committed["epoch"], initial["epoch"]);
+        assert_eq!(committed["scopes"], json!(["project"]));
+        let mut saw_change = false;
+        for _ in 0..4 {
+            let payload = changes
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap();
+            let event: Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(event["sessionToken"], created.session_token);
+            if event["kind"] == "change" {
+                assert_eq!(event["sequence"], "1");
+                saw_change = true;
+                break;
+            }
+        }
+        assert!(saw_change);
+        let settled: Value = tauri::test::get_ipc_response(
+            &webview,
+            request("read_project_changes", changes_request("1")),
+        )
+        .unwrap()
+        .deserialize()
+        .unwrap();
+        assert_eq!(settled["scopes"], json!([]));
+        let mut wrong_project = changes_request("0");
+        wrong_project["request"]["projectId"] = json!("533e0710-d5fd-4ca9-8d41-d7e7819af8cb");
+        assert_eq!(
+            tauri::test::get_ipc_response(&webview, request("read_project_changes", wrong_project))
+                .unwrap_err()["code"],
+            "session-invalid"
+        );
+        app.unlisten(listener);
+        app.state::<crate::commands::AppState>()
+            .disconnect_change_events();
 
         let _ = tauri::test::get_ipc_response(
             &webview,
