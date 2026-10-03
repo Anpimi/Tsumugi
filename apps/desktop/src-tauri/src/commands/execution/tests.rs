@@ -787,7 +787,7 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     );
     drop(held);
     let cancelled = tauri::async_runtime::block_on(check).unwrap();
-    assert_eq!(cancelled.outcome, "cancelled");
+    assert_eq!(cancelled.outcome, tsumugi_core::ReviewCheckOutcome::Cancelled);
     assert!(
         cancelled
             .rules

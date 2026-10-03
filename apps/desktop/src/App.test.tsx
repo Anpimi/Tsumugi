@@ -5,6 +5,7 @@ import App from "./App";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
+import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 
 const mocks = vi.hoisted(() => ({
@@ -107,12 +108,12 @@ describe("project lifecycle workbench", () => {
 
   it("guards area navigation and restores the saved editor after returning from Tasks", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
-    const target = { unitId: fixtureIdentity(501), locale: "zh-CN", nativeKey: "first", sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
+    const target = reviewTargetFixture({ unitId: fixtureIdentity(501), nativeKey: "first", sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis" });
     let text: string | null = null;
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
       if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(500) };
       if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(500), scope: { revision: "2", currentSnapshot: fixtureIdentity(500) }, namespace: "Example.Mod", rows: [], total: 1 });
-      if (command === "read_review_summary_page") return { rows: [{ ...target, sourcePreview: target.sourceText, translationPreview: text }], total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: fixtureIdentity(500), readVersion: "view" };
+      if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor({ ...target, translationText: text })]);
       if (command === "read_review_editor_snapshot") return {
         target: { ...target, translationText: text },
         translations: { unitId: fixtureIdentity(501), locale: "zh-CN", total: "0", rows: [], nextOrdinal: null,

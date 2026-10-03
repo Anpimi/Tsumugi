@@ -358,7 +358,7 @@ mod ai;
 mod arena;
 mod release;
 pub(super) mod resource;
-mod review;
+pub(super) mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;

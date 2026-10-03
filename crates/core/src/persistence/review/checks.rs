@@ -269,7 +269,7 @@ mod tests {
             .run_review_checks(project, units[0], "zh-CN", &basis, ExecutionId::new())
             .unwrap();
         writer.join().unwrap();
-        assert_eq!(run.outcome, "completed");
+        assert_eq!(run.outcome, ReviewCheckOutcome::Completed);
         assert!(run.rules.iter().all(|rule| rule.status == "passed"));
         assert_eq!(
             store.metadata().unwrap().display_name(),
@@ -347,7 +347,7 @@ mod tests {
         let computed = first.compute(&signal);
         signal.request();
         let cancelled = store.commit_review_check(computed, &signal).unwrap();
-        assert_eq!(cancelled.outcome, "cancelled");
+        assert_eq!(cancelled.outcome, ReviewCheckOutcome::Cancelled);
         translate(&mut store, project, unit, "zh-CN", "新译文 {{name}}");
         let replayed = store
             .commit_review_check(

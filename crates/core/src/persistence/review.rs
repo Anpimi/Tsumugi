@@ -25,13 +25,13 @@ pub use views::{
     ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
 };
 
-fn check_outcome(rules: &[CheckRuleResult]) -> &'static str {
+fn check_outcome(rules: &[CheckRuleResult]) -> ReviewCheckOutcome {
     if rules.iter().all(|rule| rule.status == "cancelled") {
-        "cancelled"
+        ReviewCheckOutcome::Cancelled
     } else if rules.iter().all(|rule| rule.status == "failed") {
-        "failed"
+        ReviewCheckOutcome::Failed
     } else {
-        "completed"
+        ReviewCheckOutcome::Completed
     }
 }
 
@@ -86,9 +86,19 @@ fn checked_actor(value: &str) -> Result<(), ExecutionError> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum ReviewDecisionKind {
     Approve,
     RequestChanges,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReviewCheckOutcome {
+    Completed,
+    Failed,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -105,6 +115,7 @@ pub struct ReviewBasis {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewWrite {
     pub project_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -119,6 +130,7 @@ pub struct ReviewWrite {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewDecision {
     pub decision_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -137,6 +149,7 @@ pub struct ReviewDecision {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct CheckFinding {
     pub issue_id: String,
     pub rule: String,
@@ -148,6 +161,7 @@ pub struct CheckFinding {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct CheckRuleResult {
     pub rule: String,
     pub status: String,
@@ -157,6 +171,7 @@ pub struct CheckRuleResult {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct CheckRun {
     pub run_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -165,13 +180,14 @@ pub struct CheckRun {
     pub basis: String,
     pub basis_evidence: ReviewBasis,
     pub validator_version: String,
-    pub outcome: String,
+    pub outcome: ReviewCheckOutcome,
     pub rules: Vec<CheckRuleResult>,
     pub created_at: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct WaiverWrite {
     pub project_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -187,6 +203,7 @@ pub struct WaiverWrite {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct Waiver {
     pub waiver_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -204,6 +221,7 @@ pub struct Waiver {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct FallbackDecision {
     pub fallback_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -220,6 +238,7 @@ pub struct FallbackDecision {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct FallbackWrite {
     pub project_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -234,6 +253,7 @@ pub struct FallbackWrite {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewTarget {
     pub unit_id: ExecutionId,
     pub locale: String,
@@ -255,6 +275,7 @@ pub struct ReviewTarget {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewPage {
     pub rows: Vec<ReviewTarget>,
     pub next_ordinal: Option<u32>,
@@ -263,6 +284,7 @@ pub struct ReviewPage {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct EligibilityReason {
     pub unit_id: ExecutionId,
     pub native_key: String,
@@ -272,6 +294,7 @@ pub struct EligibilityReason {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct EligibilityLocale {
     pub locale: String,
     pub ready: bool,
@@ -284,6 +307,7 @@ pub struct EligibilityLocale {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct Eligibility {
     pub policy_version: String,
     pub source_snapshot_id: ExecutionId,
@@ -294,6 +318,7 @@ pub struct Eligibility {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct WorkItem {
     pub unit_id: ExecutionId,
     pub locale: String,
@@ -304,6 +329,7 @@ pub struct WorkItem {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct WorkPage {
     pub items: Vec<WorkItem>,
     pub total: u32,
@@ -313,6 +339,7 @@ pub struct WorkPage {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewHistoryPage {
     pub decisions: Vec<ReviewDecision>,
     pub checks: Vec<CheckRun>,
@@ -3465,7 +3492,7 @@ mod tests {
             .run_review_checks(project, unit, "zh-CN", &basis, failed_action)
             .unwrap();
         CHECK_FAIL.with(|flag| flag.set(false));
-        assert_eq!(failed.outcome, "failed");
+        assert_eq!(failed.outcome, ReviewCheckOutcome::Failed);
         assert!(failed.rules.iter().all(|rule| rule.status == "failed"));
         assert_eq!(
             store
@@ -3495,7 +3522,7 @@ mod tests {
             )
             .unwrap();
         canceller.join().unwrap();
-        assert_eq!(cancelled.outcome, "cancelled");
+        assert_eq!(cancelled.outcome, ReviewCheckOutcome::Cancelled);
         assert!(
             cancelled
                 .rules
@@ -3514,13 +3541,16 @@ mod tests {
 
         let mut store = ProjectStore::open(directory.path().join("project")).unwrap();
         let current = store.review_target(project, unit, "zh-CN").unwrap();
-        assert_eq!(current.current_check.unwrap().outcome, "cancelled");
+        assert_eq!(
+            current.current_check.unwrap().outcome,
+            ReviewCheckOutcome::Cancelled
+        );
         let history = store.review_history(project, unit, "zh-CN", 0, 10).unwrap();
         assert_eq!(history.checks.len(), 2);
-        assert_eq!(history.checks[0].outcome, "cancelled");
-        assert_eq!(history.checks[1].outcome, "failed");
+        assert_eq!(history.checks[0].outcome, ReviewCheckOutcome::Cancelled);
+        assert_eq!(history.checks[1].outcome, ReviewCheckOutcome::Failed);
         let passed = check(&mut store, project, unit, "zh-CN");
-        assert_eq!(passed.outcome, "completed");
+        assert_eq!(passed.outcome, ReviewCheckOutcome::Completed);
         assert!(passed.rules.iter().all(|rule| rule.status == "passed"));
     }
 

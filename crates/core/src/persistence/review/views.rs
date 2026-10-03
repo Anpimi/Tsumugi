@@ -20,6 +20,7 @@ pub(in crate::persistence) struct ReadScopes(RefCell<VecDeque<ReadScope>>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewSummaryDecision {
     pub decision_id: ExecutionId,
     pub basis: String,
@@ -28,15 +29,17 @@ pub struct ReviewSummaryDecision {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewSummaryCheck {
     pub run_id: ExecutionId,
     pub basis: String,
-    pub outcome: String,
+    pub outcome: ReviewCheckOutcome,
     pub has_findings: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewSummary {
     pub unit_id: ExecutionId,
     pub locale: String,
@@ -86,6 +89,7 @@ impl From<ReviewTarget> for ReviewSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewSummaryPage {
     pub rows: Vec<ReviewSummary>,
     pub next_ordinal: Option<u32>,
@@ -97,6 +101,7 @@ pub struct ReviewSummaryPage {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewEditorSnapshot {
     pub target: ReviewTarget,
     pub translations: super::super::translation::TranslationHistory,
@@ -107,6 +112,7 @@ pub struct ReviewEditorSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewNeighbor {
     pub unit_id: Option<ExecutionId>,
     pub after_ordinal: Option<u32>,
@@ -115,6 +121,7 @@ pub struct ReviewNeighbor {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewScopeUnit {
     pub unit_id: ExecutionId,
     pub expected_basis: String,
@@ -123,6 +130,7 @@ pub struct ReviewScopeUnit {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewScopeCapture {
     pub scope_id: ExecutionId,
     pub source_snapshot_id: ExecutionId,

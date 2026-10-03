@@ -155,7 +155,45 @@ struct ResourceResponses {
     impacts: tsumugi_core::ImpactPage,
 }
 
-fn bound_unsigned_integer(schema: &mut Schema) {
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ReviewRequests {
+    page: execution::review::ReviewPageRequest,
+    target: execution::review::ReviewTargetRequest,
+    summary: execution::review::ReviewSummaryPageRequest,
+    neighbor: execution::review::ReviewNeighborRequest,
+    scope: execution::review::ReviewScopeRequest,
+    history: execution::review::ReviewHistoryRequest,
+    decision: execution::review::ReviewWriteRequest,
+    check: execution::review::ReviewCheckRequest,
+    cancel_check: execution::review::ReviewCancelCheckRequest,
+    waiver: execution::review::WaiverRequest,
+    fallback: execution::review::FallbackRequest,
+    work: execution::review::ReviewWorkRequest,
+    eligibility: execution::review::EligibilityRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ReviewResponses {
+    page: tsumugi_core::ReviewPage,
+    target: tsumugi_core::ReviewTarget,
+    summary: tsumugi_core::ReviewSummaryPage,
+    neighbor: tsumugi_core::ReviewNeighbor,
+    scope: tsumugi_core::ReviewScopeCapture,
+    history: tsumugi_core::ReviewHistoryPage,
+    decision: tsumugi_core::ReviewDecision,
+    check: tsumugi_core::CheckRun,
+    cancel_check: bool,
+    waiver: tsumugi_core::Waiver,
+    fallback: tsumugi_core::FallbackDecision,
+    work: tsumugi_core::WorkPage,
+    eligibility: tsumugi_core::Eligibility,
+    editor: tsumugi_core::ReviewEditorSnapshot,
+}
+
+fn bound_integer(schema: &mut Schema) {
     // Schemars marks Rust's integer format but does not emit its upper bound.
     // Apply the primitive bound to scalar and tuple items without copying DTOs.
     let maximum = match schema.get("format").and_then(serde_json::Value::as_str) {
@@ -166,11 +204,15 @@ fn bound_unsigned_integer(schema: &mut Schema) {
     if let Some(maximum) = maximum {
         schema.insert("maximum".into(), maximum.into());
     }
+    if schema.get("format").and_then(serde_json::Value::as_str) == Some("int32") {
+        schema.insert("minimum".into(), i32::MIN.into());
+        schema.insert("maximum".into(), i32::MAX.into());
+    }
 }
 
 fn schemas<Q: JsonSchema, R: JsonSchema>() -> serde_json::Value {
     let settings =
-        SchemaSettings::draft07().with_transform(RecursiveTransform(bound_unsigned_integer));
+        SchemaSettings::draft07().with_transform(RecursiveTransform(bound_integer));
     let requests = settings
         .clone()
         .for_deserialize()
@@ -214,7 +256,8 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
             "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
             "source": schemas::<SourceRequests, SourceResponses>(),
             "translation": schemas::<TranslationRequests, TranslationResponses>(),
-            "resource": schemas::<ResourceRequests, ResourceResponses>()
+            "resource": schemas::<ResourceRequests, ResourceResponses>(),
+            "review": schemas::<ReviewRequests, ReviewResponses>()
         }))? + "\n",
     )?;
     Ok(())

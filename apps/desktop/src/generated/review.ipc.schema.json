@@ -1,0 +1,2155 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "EligibilityRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locales": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locales"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "type": "string"
+      },
+      "FallbackRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "fallback": {
+            "$ref": "#/definitions/FallbackWrite"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "fallback"
+        ],
+        "type": "object"
+      },
+      "FallbackWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "allow": {
+            "type": "boolean"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedFallbackId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "allow",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ReviewCancelCheckRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ReviewDecisionKind": {
+        "enum": [
+          "approve",
+          "request-changes"
+        ],
+        "type": "string"
+      },
+      "ReviewHistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ReviewNeighborRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "format": "int32",
+            "maximum": 2147483647,
+            "minimum": -2147483648,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "scopeId",
+          "unitId",
+          "direction"
+        ],
+        "type": "object"
+      },
+      "ReviewPageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "afterOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "afterOrdinal",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ReviewScopeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "excluded": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "scopeId",
+          "excluded"
+        ],
+        "type": "object"
+      },
+      "ReviewSummaryPageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "afterOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "type": "string"
+          },
+          "scopeId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "query",
+          "afterOrdinal",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ReviewTargetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "ReviewWorkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ReviewWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/definitions/ReviewDecisionKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "actor",
+          "kind",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ReviewWriteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/ReviewWrite"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "WaiverRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "waiver": {
+            "$ref": "#/definitions/WaiverWrite"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "waiver"
+        ],
+        "type": "object"
+      },
+      "WaiverWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedWaiverId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grant": {
+            "type": "boolean"
+          },
+          "issueId": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "expectedBasis",
+          "issueId",
+          "grant",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "cancelCheck": {
+        "$ref": "#/definitions/ReviewCancelCheckRequest"
+      },
+      "check": {
+        "$ref": "#/definitions/ReviewCheckRequest"
+      },
+      "decision": {
+        "$ref": "#/definitions/ReviewWriteRequest"
+      },
+      "eligibility": {
+        "$ref": "#/definitions/EligibilityRequest"
+      },
+      "fallback": {
+        "$ref": "#/definitions/FallbackRequest"
+      },
+      "history": {
+        "$ref": "#/definitions/ReviewHistoryRequest"
+      },
+      "neighbor": {
+        "$ref": "#/definitions/ReviewNeighborRequest"
+      },
+      "page": {
+        "$ref": "#/definitions/ReviewPageRequest"
+      },
+      "scope": {
+        "$ref": "#/definitions/ReviewScopeRequest"
+      },
+      "summary": {
+        "$ref": "#/definitions/ReviewSummaryPageRequest"
+      },
+      "target": {
+        "$ref": "#/definitions/ReviewTargetRequest"
+      },
+      "waiver": {
+        "$ref": "#/definitions/WaiverRequest"
+      },
+      "work": {
+        "$ref": "#/definitions/ReviewWorkRequest"
+      }
+    },
+    "required": [
+      "page",
+      "target",
+      "summary",
+      "neighbor",
+      "scope",
+      "history",
+      "decision",
+      "check",
+      "cancelCheck",
+      "waiver",
+      "fallback",
+      "work",
+      "eligibility"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:review:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "CheckFinding": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "issueId": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "waivable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "issueId",
+          "rule",
+          "code",
+          "detail",
+          "severity",
+          "waivable"
+        ],
+        "type": "object"
+      },
+      "CheckRuleResult": {
+        "additionalProperties": false,
+        "properties": {
+          "findings": {
+            "items": {
+              "$ref": "#/definitions/CheckFinding"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rule": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "status",
+          "reason",
+          "findings"
+        ],
+        "type": "object"
+      },
+      "CheckRun": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "basisEvidence": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ReviewCheckOutcome"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/CheckRuleResult"
+            },
+            "type": "array"
+          },
+          "runId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "validatorVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "runId",
+          "actionId",
+          "unitId",
+          "locale",
+          "basis",
+          "basisEvidence",
+          "validatorVersion",
+          "outcome",
+          "rules",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ContextRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "previousRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "unitId",
+          "locale",
+          "text",
+          "reason",
+          "previousRevisionId"
+        ],
+        "type": "object"
+      },
+      "Eligibility": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "locales": {
+            "items": {
+              "$ref": "#/definitions/EligibilityLocale"
+            },
+            "type": "array"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "policyVersion",
+          "sourceSnapshotId",
+          "basis",
+          "ready",
+          "locales"
+        ],
+        "type": "object"
+      },
+      "EligibilityLocale": {
+        "additionalProperties": false,
+        "properties": {
+          "blockerCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "blockers": {
+            "items": {
+              "$ref": "#/definitions/EligibilityReason"
+            },
+            "type": "array"
+          },
+          "checkedUnits": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exceptionCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exceptions": {
+            "items": {
+              "$ref": "#/definitions/EligibilityReason"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "locale",
+          "ready",
+          "blockers",
+          "exceptions",
+          "checkedUnits",
+          "blockerCount",
+          "exceptionCount"
+        ],
+        "type": "object"
+      },
+      "EligibilityReason": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "nativeKey",
+          "code",
+          "reference"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "FallbackDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "allow": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "fallbackId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "previousFallbackId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "fallbackId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "allow",
+          "previousFallbackId",
+          "policyVersion",
+          "actor",
+          "reason",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReviewBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contextRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "termRevisionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "selectionId",
+          "revisionId",
+          "contextRevisionId",
+          "termRevisionIds"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckOutcome": {
+        "enum": [
+          "completed",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "ReviewDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "basisEvidence": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "decisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/ReviewDecisionKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "decisionId",
+          "actionId",
+          "unitId",
+          "locale",
+          "basis",
+          "basisEvidence",
+          "selectionId",
+          "revisionId",
+          "sourceRevisionId",
+          "actor",
+          "kind",
+          "reason",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReviewDecisionKind": {
+        "enum": [
+          "approve",
+          "request-changes"
+        ],
+        "type": "string"
+      },
+      "ReviewEditorSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "context": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContextRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "readVersion": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/definitions/ReviewTarget"
+          },
+          "terms": {
+            "$ref": "#/definitions/TermResolution"
+          },
+          "translations": {
+            "$ref": "#/definitions/TranslationHistory"
+          }
+        },
+        "required": [
+          "target",
+          "translations",
+          "terms",
+          "context",
+          "readVersion"
+        ],
+        "type": "object"
+      },
+      "ReviewHistoryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/definitions/CheckRun"
+            },
+            "type": "array"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/definitions/ReviewDecision"
+            },
+            "type": "array"
+          },
+          "fallbacks": {
+            "items": {
+              "$ref": "#/definitions/FallbackDecision"
+            },
+            "type": "array"
+          },
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "waivers": {
+            "items": {
+              "$ref": "#/definitions/Waiver"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "decisions",
+          "checks",
+          "waivers",
+          "fallbacks",
+          "nextOffset"
+        ],
+        "type": "object"
+      },
+      "ReviewNeighbor": {
+        "additionalProperties": false,
+        "properties": {
+          "afterOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "unitId",
+          "afterOrdinal",
+          "sourceSnapshotId"
+        ],
+        "type": "object"
+      },
+      "ReviewPage": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ReviewTarget"
+            },
+            "type": "array"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "nextOrdinal",
+          "total"
+        ],
+        "type": "object"
+      },
+      "ReviewScopeCapture": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "readVersion": {
+            "type": "string"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "units": {
+            "items": {
+              "$ref": "#/definitions/ReviewScopeUnit"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "scopeId",
+          "sourceSnapshotId",
+          "locale",
+          "query",
+          "units",
+          "readVersion"
+        ],
+        "type": "object"
+      },
+      "ReviewScopeUnit": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedBasis": {
+            "type": "string"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "expectedBasis",
+          "expectedDecisionId"
+        ],
+        "type": "object"
+      },
+      "ReviewSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "currentCheck": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ReviewSummaryCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentDecision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ReviewSummaryDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "revisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourcePreview": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationPreview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "nativeKey",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "sourcePreview",
+          "translationPreview",
+          "selectionId",
+          "revisionId",
+          "basis",
+          "currentDecision",
+          "currentCheck"
+        ],
+        "type": "object"
+      },
+      "ReviewSummaryCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "hasFindings": {
+            "type": "boolean"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ReviewCheckOutcome"
+          },
+          "runId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "runId",
+          "basis",
+          "outcome",
+          "hasFindings"
+        ],
+        "type": "object"
+      },
+      "ReviewSummaryDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "decisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/ReviewDecisionKind"
+          }
+        },
+        "required": [
+          "decisionId",
+          "basis",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ReviewSummaryPage": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "readVersion": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ReviewSummary"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "nextOrdinal",
+          "total",
+          "scopeId",
+          "sourceSnapshotId",
+          "readVersion"
+        ],
+        "type": "object"
+      },
+      "ReviewTarget": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "basisEvidence": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "currentCheck": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CheckRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentDecision": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ReviewDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentFallback": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/FallbackDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentWaivers": {
+            "items": {
+              "$ref": "#/definitions/Waiver"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "revisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceText": {
+            "type": "string"
+          },
+          "termConflict": {
+            "type": "boolean"
+          },
+          "translationText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "nativeKey",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "sourceText",
+          "selectionId",
+          "revisionId",
+          "translationText",
+          "basis",
+          "basisEvidence",
+          "termConflict",
+          "currentDecision",
+          "currentCheck",
+          "currentFallback",
+          "currentWaivers"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "TermOrigin": {
+        "enum": [
+          "manual",
+          "external"
+        ],
+        "type": "string"
+      },
+      "TermResolution": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/TermResolutionEntry"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "TermResolutionEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "conflicting": {
+            "items": {
+              "$ref": "#/definitions/TermRevision"
+            },
+            "type": "array"
+          },
+          "selected": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TermRevision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "selected",
+          "conflicting"
+        ],
+        "type": "object"
+      },
+      "TermRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "captureId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "externalEntryId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "originKind": {
+            "$ref": "#/definitions/TermOrigin"
+          },
+          "previousRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "removed": {
+            "type": "boolean"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeUnitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "termId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "revisionId",
+          "termId",
+          "locale",
+          "source",
+          "aliases",
+          "target",
+          "protected",
+          "scopeUnitId",
+          "reason",
+          "originKind",
+          "captureId",
+          "externalEntryId",
+          "previousRevisionId",
+          "removed"
+        ],
+        "type": "object"
+      },
+      "TranslationHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TranslationSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextOrdinal": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TranslationRevision"
+            },
+            "type": "array"
+          },
+          "total": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "total",
+          "current",
+          "currentText",
+          "rows",
+          "nextOrdinal"
+        ],
+        "type": "object"
+      },
+      "TranslationOrigin": {
+        "enum": [
+          "import",
+          "manual",
+          "ai"
+        ],
+        "type": "string"
+      },
+      "TranslationRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "artifactId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "declaredLocale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fileDigest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "itemId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "logicalPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nativeKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "$ref": "#/definitions/Revision"
+          },
+          "originKind": {
+            "$ref": "#/definitions/TranslationOrigin"
+          },
+          "resultId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "unitId",
+          "locale",
+          "ordinal",
+          "text",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "originKind",
+          "actionId",
+          "attemptId",
+          "resultId",
+          "itemId",
+          "artifactId",
+          "logicalPath",
+          "declaredLocale",
+          "nativeKey",
+          "fileDigest",
+          "contributors"
+        ],
+        "type": "object"
+      },
+      "TranslationSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "eventId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "previousEventId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "eventId",
+          "unitId",
+          "locale",
+          "sequence",
+          "revisionId",
+          "actionId",
+          "previousEventId"
+        ],
+        "type": "object"
+      },
+      "Waiver": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "grant": {
+            "type": "boolean"
+          },
+          "issueId": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "previousWaiverId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "waiverId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "waiverId",
+          "actionId",
+          "unitId",
+          "locale",
+          "basis",
+          "issueId",
+          "grant",
+          "previousWaiverId",
+          "policyVersion",
+          "actor",
+          "reason",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "WorkItem": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "nativeKey",
+          "reasons",
+          "basis"
+        ],
+        "type": "object"
+      },
+      "WorkPage": {
+        "additionalProperties": false,
+        "properties": {
+          "coverage": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/definitions/WorkItem"
+            },
+            "type": "array"
+          },
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "nextOffset",
+          "coverage"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "cancelCheck": {
+        "type": "boolean"
+      },
+      "check": {
+        "$ref": "#/definitions/CheckRun"
+      },
+      "decision": {
+        "$ref": "#/definitions/ReviewDecision"
+      },
+      "editor": {
+        "$ref": "#/definitions/ReviewEditorSnapshot"
+      },
+      "eligibility": {
+        "$ref": "#/definitions/Eligibility"
+      },
+      "fallback": {
+        "$ref": "#/definitions/FallbackDecision"
+      },
+      "history": {
+        "$ref": "#/definitions/ReviewHistoryPage"
+      },
+      "neighbor": {
+        "$ref": "#/definitions/ReviewNeighbor"
+      },
+      "page": {
+        "$ref": "#/definitions/ReviewPage"
+      },
+      "scope": {
+        "$ref": "#/definitions/ReviewScopeCapture"
+      },
+      "summary": {
+        "$ref": "#/definitions/ReviewSummaryPage"
+      },
+      "target": {
+        "$ref": "#/definitions/ReviewTarget"
+      },
+      "waiver": {
+        "$ref": "#/definitions/Waiver"
+      },
+      "work": {
+        "$ref": "#/definitions/WorkPage"
+      }
+    },
+    "required": [
+      "page",
+      "target",
+      "summary",
+      "neighbor",
+      "scope",
+      "history",
+      "decision",
+      "check",
+      "cancelCheck",
+      "waiver",
+      "fallback",
+      "work",
+      "eligibility",
+      "editor"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:review:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

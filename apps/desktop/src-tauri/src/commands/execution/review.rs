@@ -1,68 +1,172 @@
 use super::*;
+
+#[cfg(test)]
+mod contracts {
+    use super::*;
+
+    #[test]
+    fn review_wire_fixture_matches_actual_rust_requests_and_responses() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/reviewCommands.contract.json"
+        ))
+        .unwrap();
+        macro_rules! round_trip {
+            ($group:literal, $key:literal, $kind:ty) => {
+                let value: $kind = serde_json::from_value(fixture[$group][$key].clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_value(value).unwrap(),
+                    fixture[$group][$key],
+                    $key
+                );
+            };
+        }
+        round_trip!("requests", "page", ReviewPageRequest);
+        round_trip!("requests", "target", ReviewTargetRequest);
+        round_trip!("requests", "summary", ReviewSummaryPageRequest);
+        round_trip!("requests", "neighbor", ReviewNeighborRequest);
+        round_trip!("requests", "scope", ReviewScopeRequest);
+        round_trip!("requests", "history", ReviewHistoryRequest);
+        round_trip!("requests", "decision", ReviewWriteRequest);
+        round_trip!("requests", "check", ReviewCheckRequest);
+        round_trip!("requests", "cancelCheck", ReviewCancelCheckRequest);
+        round_trip!("requests", "waiver", WaiverRequest);
+        round_trip!("requests", "fallback", FallbackRequest);
+        round_trip!("requests", "work", ReviewWorkRequest);
+        round_trip!("requests", "eligibility", EligibilityRequest);
+        round_trip!("responses", "page", ReviewPage);
+        round_trip!("responses", "target", ReviewTarget);
+        round_trip!("responses", "summary", ReviewSummaryPage);
+        round_trip!("responses", "neighbor", ReviewNeighbor);
+        round_trip!("responses", "scope", ReviewScopeCapture);
+        round_trip!("responses", "history", ReviewHistoryPage);
+        round_trip!("responses", "decision", ReviewDecision);
+        round_trip!("responses", "check", CheckRun);
+        round_trip!("responses", "cancelCheck", bool);
+        round_trip!("responses", "waiver", Waiver);
+        round_trip!("responses", "fallback", FallbackDecision);
+        round_trip!("responses", "work", WorkPage);
+        round_trip!("responses", "eligibility", Eligibility);
+        round_trip!("responses", "editor", ReviewEditorSnapshot);
+        let mut optional = fixture["requests"]["decision"].clone();
+        optional["decision"]
+            .as_object_mut()
+            .unwrap()
+            .remove("expectedDecisionId");
+        assert!(
+            serde_json::from_value::<ReviewWriteRequest>(optional)
+                .unwrap()
+                .decision
+                .expected_decision_id
+                .is_none()
+        );
+        let mut missing = fixture["responses"]["target"].clone();
+        missing.as_object_mut().unwrap().remove("basisEvidence");
+        assert!(serde_json::from_value::<ReviewTarget>(missing).is_err());
+        let mut unknown = fixture["responses"]["check"].clone();
+        unknown["outcome"] = serde_json::json!("passed");
+        assert!(serde_json::from_value::<CheckRun>(unknown).is_err());
+        let mut unknown = fixture["requests"]["decision"].clone();
+        unknown["decision"]["kind"] = serde_json::json!("accept-all");
+        assert!(serde_json::from_value::<ReviewWriteRequest>(unknown).is_err());
+        let mut overflow = fixture["requests"]["neighbor"].clone();
+        overflow["direction"] = serde_json::json!(-2147483649i64);
+        assert!(serde_json::from_value::<ReviewNeighborRequest>(overflow).is_err());
+        let mut overflow = fixture["responses"]["summary"].clone();
+        overflow["total"] = serde_json::json!(4294967296u64);
+        assert!(serde_json::from_value::<ReviewSummaryPage>(overflow).is_err());
+    }
+}
 use tsumugi_core::{
     CheckRun, Eligibility, FallbackDecision, FallbackWrite, ReviewDecision, ReviewEditorSnapshot,
     ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewSummaryPage,
     ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkPage,
 };
 
-request!(ReviewPageRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewPageRequest {
     locale: String,
     query: Option<String>,
     after_ordinal: u32,
     limit: u32
 });
-request!(ReviewTargetRequest {
-    unit_id: ExecutionId,
-    locale: String
-});
-request!(ReviewSummaryPageRequest {
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewTargetRequest {
+        unit_id: ExecutionId,
+        locale: String
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewSummaryPageRequest {
     locale: String,
     query: String,
     scope_id: Option<ExecutionId>,
     after_ordinal: u32,
     limit: u32
 });
-request!(ReviewNeighborRequest {
-    locale: String,
-    scope_id: ExecutionId,
-    unit_id: ExecutionId,
-    direction: i32
-});
-request!(ReviewScopeRequest {
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewNeighborRequest {
+        locale: String,
+        scope_id: ExecutionId,
+        unit_id: ExecutionId,
+        direction: i32
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ReviewScopeRequest {
     locale: String,
     scope_id: ExecutionId,
     excluded: Vec<ExecutionId>
 });
-request!(ReviewHistoryRequest {
-    unit_id: ExecutionId,
-    locale: String,
-    offset: u32,
-    limit: u32
-});
-request!(ReviewWriteRequest {
-    decision: ReviewWrite
-});
-request!(ReviewCheckRequest {
-    unit_id: ExecutionId,
-    locale: String,
-    expected_basis: String,
-    action_id: ExecutionId
-});
-request!(ReviewCancelCheckRequest {
-    action_id: ExecutionId
-});
-request!(WaiverRequest {
-    waiver: WaiverWrite
-});
-request!(FallbackRequest {
-    fallback: FallbackWrite
-});
-request!(ReviewWorkRequest {
-    locale: String,
-    offset: u32,
-    limit: u32
-});
-request!(EligibilityRequest { locales: Vec<String> });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewHistoryRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        offset: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewWriteRequest {
+        decision: ReviewWrite
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewCheckRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        expected_basis: String,
+        action_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewCancelCheckRequest {
+        action_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    WaiverRequest {
+        waiver: WaiverWrite
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    FallbackRequest {
+        fallback: FallbackWrite
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReviewWorkRequest {
+        locale: String,
+        offset: u32,
+        limit: u32
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] EligibilityRequest { locales: Vec<String> });
 
 fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
     let result = map_execution(error, stage);

@@ -1,0 +1,804 @@
+{
+  "requests": {
+    "cancelCheck": {
+      "actionId": "40000000-0000-4000-8000-000000000022",
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001"
+    },
+    "work": {
+      "limit": 50,
+      "sessionToken": "synthetic-review-session",
+      "offset": 0,
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN"
+    },
+    "scope": {
+      "excluded": [],
+      "sessionToken": "synthetic-review-session",
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN"
+    },
+    "page": {
+      "locale": "zh-CN",
+      "afterOrdinal": 0,
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "sessionToken": "synthetic-review-session",
+      "limit": 50,
+      "query": null
+    },
+    "fallback": {
+      "sessionToken": "synthetic-review-session",
+      "fallback": {
+        "reason": "需要核对 👩🏽‍💻 é",
+        "allow": true,
+        "expectedFallbackId": null,
+        "actionId": "40000000-0000-4000-8000-000000000024",
+        "locale": "zh-CN",
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "actor": "Synthetic reviewer",
+        "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "projectId": "40000000-0000-4000-8000-000000000001"
+    },
+    "eligibility": {
+      "locales": [
+        "zh-CN"
+      ],
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001"
+    },
+    "target": {
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN"
+    },
+    "decision": {
+      "sessionToken": "synthetic-review-session",
+      "decision": {
+        "expectedDecisionId": null,
+        "reason": "需要核对 👩🏽‍💻 é",
+        "actor": "Synthetic reviewer",
+        "kind": "request-changes",
+        "actionId": "40000000-0000-4000-8000-000000000021",
+        "locale": "zh-CN",
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "projectId": "40000000-0000-4000-8000-000000000001"
+    },
+    "summary": {
+      "locale": "zh-CN",
+      "limit": 50,
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "sessionToken": "synthetic-review-session",
+      "scopeId": null,
+      "query": "",
+      "afterOrdinal": 0
+    },
+    "waiver": {
+      "waiver": {
+        "grant": true,
+        "reason": "需要核对 👩🏽‍💻 é",
+        "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "actor": "Synthetic reviewer",
+        "expectedWaiverId": null,
+        "actionId": "40000000-0000-4000-8000-000000000023",
+        "locale": "zh-CN",
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001"
+    },
+    "history": {
+      "offset": 0,
+      "locale": "zh-CN",
+      "limit": 20,
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001"
+    },
+    "check": {
+      "locale": "zh-CN",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "actionId": "40000000-0000-4000-8000-000000000022",
+      "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "neighbor": {
+      "locale": "zh-CN",
+      "direction": -1,
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "sessionToken": "synthetic-review-session",
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "projectId": "40000000-0000-4000-8000-000000000001"
+    }
+  },
+  "responses": {
+    "cancelCheck": true,
+    "work": {
+      "coverage": "current-snapshot",
+      "items": [
+        {
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "reasons": [
+            "changes-requested"
+          ],
+          "locale": "zh-CN",
+          "nativeKey": "wooden-barrel"
+        }
+      ],
+      "total": 1,
+      "nextOffset": null
+    },
+    "editor": {
+      "terms": {
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "entries": []
+      },
+      "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "target": {
+        "termConflict": false,
+        "sourceText": "Wooden barrel",
+        "currentFallback": {
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "policyVersion": "balanced-1",
+          "allow": true,
+          "fallbackId": "40000000-0000-4000-8000-000000000012",
+          "previousFallbackId": null,
+          "actionId": "40000000-0000-4000-8000-000000000024",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "actor": "Synthetic reviewer"
+        },
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "currentWaivers": [
+          {
+            "locale": "zh-CN",
+            "previousWaiverId": null,
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "policyVersion": "balanced-1",
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "grant": true,
+            "waiverId": "40000000-0000-4000-8000-000000000011",
+            "actionId": "40000000-0000-4000-8000-000000000023",
+            "createdAt": "2026-10-03T00:00:00Z",
+            "reason": "需要核对 👩🏽‍💻 é",
+            "actor": "Synthetic reviewer",
+            "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ],
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+        "currentDecision": {
+          "decisionId": "40000000-0000-4000-8000-000000000009",
+          "actor": "Synthetic reviewer",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "kind": "request-changes",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "actionId": "40000000-0000-4000-8000-000000000021",
+          "basisEvidence": {
+            "termRevisionIds": [
+              "40000000-0000-4000-8000-000000000008"
+            ],
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+          },
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004"
+        },
+        "currentCheck": {
+          "outcome": "completed",
+          "basisEvidence": {
+            "termRevisionIds": [
+              "40000000-0000-4000-8000-000000000008"
+            ],
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+          },
+          "createdAt": "2026-10-03T00:00:00Z",
+          "rules": [
+            {
+              "status": "findings",
+              "findings": [
+                {
+                  "waivable": true,
+                  "code": "protected-term",
+                  "severity": "error",
+                  "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "rule": "terms",
+                  "detail": "保留 木桶 👩🏽‍💻 é"
+                }
+              ],
+              "rule": "terms",
+              "reason": null
+            }
+          ],
+          "actionId": "40000000-0000-4000-8000-000000000022",
+          "validatorVersion": "smapi-prebuild-2",
+          "runId": "40000000-0000-4000-8000-000000000010",
+          "locale": "zh-CN",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "basisEvidence": {
+          "termRevisionIds": [
+            "40000000-0000-4000-8000-000000000008"
+          ],
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+        },
+        "translationText": "木桶 👩🏽‍💻 é",
+        "selectionId": "40000000-0000-4000-8000-000000000005",
+        "locale": "zh-CN",
+        "revisionId": "40000000-0000-4000-8000-000000000006",
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "nativeKey": "wooden-barrel"
+      },
+      "translations": {
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "rows": [
+          {
+            "attemptId": null,
+            "actionId": "40000000-0000-4000-8000-000000000025",
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "contributors": [],
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+            "originKind": "manual",
+            "text": "木桶 👩🏽‍💻 é",
+            "locale": "zh-CN",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "resultId": null,
+            "ordinal": "1",
+            "artifactId": null,
+            "declaredLocale": null,
+            "fileDigest": null,
+            "itemId": null,
+            "logicalPath": null,
+            "nativeKey": null
+          }
+        ],
+        "nextOrdinal": null,
+        "currentText": "木桶 👩🏽‍💻 é",
+        "total": "1",
+        "current": {
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "eventId": "40000000-0000-4000-8000-000000000005",
+          "actionId": "40000000-0000-4000-8000-000000000025",
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "previousEventId": null,
+          "locale": "zh-CN",
+          "sequence": "1"
+        },
+        "locale": "zh-CN"
+      },
+      "context": {
+        "revisionId": "40000000-0000-4000-8000-000000000007",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "text": "Translator note 中文 👩🏽‍💻 é",
+        "reason": "Reviewed context",
+        "previousRevisionId": null
+      }
+    },
+    "scope": {
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "units": [
+        {
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "expectedDecisionId": "40000000-0000-4000-8000-000000000009",
+          "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "query": "",
+      "locale": "zh-CN",
+      "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+    },
+    "page": {
+      "nextOrdinal": null,
+      "total": 1,
+      "rows": [
+        {
+          "termConflict": false,
+          "sourceText": "Wooden barrel",
+          "currentFallback": {
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "locale": "zh-CN",
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "policyVersion": "balanced-1",
+            "allow": true,
+            "fallbackId": "40000000-0000-4000-8000-000000000012",
+            "previousFallbackId": null,
+            "actionId": "40000000-0000-4000-8000-000000000024",
+            "createdAt": "2026-10-03T00:00:00Z",
+            "reason": "需要核对 👩🏽‍💻 é",
+            "actor": "Synthetic reviewer"
+          },
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "currentWaivers": [
+            {
+              "locale": "zh-CN",
+              "previousWaiverId": null,
+              "unitId": "40000000-0000-4000-8000-000000000002",
+              "policyVersion": "balanced-1",
+              "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "grant": true,
+              "waiverId": "40000000-0000-4000-8000-000000000011",
+              "actionId": "40000000-0000-4000-8000-000000000023",
+              "createdAt": "2026-10-03T00:00:00Z",
+              "reason": "需要核对 👩🏽‍💻 é",
+              "actor": "Synthetic reviewer",
+              "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          ],
+          "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+          "currentDecision": {
+            "decisionId": "40000000-0000-4000-8000-000000000009",
+            "actor": "Synthetic reviewer",
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "createdAt": "2026-10-03T00:00:00Z",
+            "reason": "需要核对 👩🏽‍💻 é",
+            "kind": "request-changes",
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "locale": "zh-CN",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "actionId": "40000000-0000-4000-8000-000000000021",
+            "basisEvidence": {
+              "termRevisionIds": [
+                "40000000-0000-4000-8000-000000000008"
+              ],
+              "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+              "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+              "revisionId": "40000000-0000-4000-8000-000000000006",
+              "selectionId": "40000000-0000-4000-8000-000000000005",
+              "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+            },
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004"
+          },
+          "currentCheck": {
+            "outcome": "completed",
+            "basisEvidence": {
+              "termRevisionIds": [
+                "40000000-0000-4000-8000-000000000008"
+              ],
+              "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+              "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+              "revisionId": "40000000-0000-4000-8000-000000000006",
+              "selectionId": "40000000-0000-4000-8000-000000000005",
+              "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+            },
+            "createdAt": "2026-10-03T00:00:00Z",
+            "rules": [
+              {
+                "status": "findings",
+                "findings": [
+                  {
+                    "waivable": true,
+                    "code": "protected-term",
+                    "severity": "error",
+                    "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "rule": "terms",
+                    "detail": "保留 木桶 👩🏽‍💻 é"
+                  }
+                ],
+                "rule": "terms",
+                "reason": null
+              }
+            ],
+            "actionId": "40000000-0000-4000-8000-000000000022",
+            "validatorVersion": "smapi-prebuild-2",
+            "runId": "40000000-0000-4000-8000-000000000010",
+            "locale": "zh-CN",
+            "unitId": "40000000-0000-4000-8000-000000000002",
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "basisEvidence": {
+            "termRevisionIds": [
+              "40000000-0000-4000-8000-000000000008"
+            ],
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+          },
+          "translationText": "木桶 👩🏽‍💻 é",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "locale": "zh-CN",
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "nativeKey": "wooden-barrel"
+        }
+      ]
+    },
+    "fallback": {
+      "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+      "locale": "zh-CN",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "policyVersion": "balanced-1",
+      "allow": true,
+      "fallbackId": "40000000-0000-4000-8000-000000000012",
+      "previousFallbackId": null,
+      "actionId": "40000000-0000-4000-8000-000000000024",
+      "createdAt": "2026-10-03T00:00:00Z",
+      "reason": "需要核对 👩🏽‍💻 é",
+      "actor": "Synthetic reviewer"
+    },
+    "eligibility": {
+      "basis": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "policyVersion": "balanced-1",
+      "ready": false,
+      "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+      "locales": [
+        {
+          "exceptionCount": 0,
+          "blockers": [
+            {
+              "unitId": "40000000-0000-4000-8000-000000000002",
+              "code": "changes-requested",
+              "reference": "40000000-0000-4000-8000-000000000009",
+              "nativeKey": "wooden-barrel"
+            }
+          ],
+          "exceptions": [],
+          "checkedUnits": 1,
+          "blockerCount": 1,
+          "ready": false,
+          "locale": "zh-CN"
+        }
+      ]
+    },
+    "target": {
+      "termConflict": false,
+      "sourceText": "Wooden barrel",
+      "currentFallback": {
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "locale": "zh-CN",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "policyVersion": "balanced-1",
+        "allow": true,
+        "fallbackId": "40000000-0000-4000-8000-000000000012",
+        "previousFallbackId": null,
+        "actionId": "40000000-0000-4000-8000-000000000024",
+        "createdAt": "2026-10-03T00:00:00Z",
+        "reason": "需要核对 👩🏽‍💻 é",
+        "actor": "Synthetic reviewer"
+      },
+      "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "currentWaivers": [
+        {
+          "locale": "zh-CN",
+          "previousWaiverId": null,
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "policyVersion": "balanced-1",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "grant": true,
+          "waiverId": "40000000-0000-4000-8000-000000000011",
+          "actionId": "40000000-0000-4000-8000-000000000023",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "actor": "Synthetic reviewer",
+          "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+      "currentDecision": {
+        "decisionId": "40000000-0000-4000-8000-000000000009",
+        "actor": "Synthetic reviewer",
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-10-03T00:00:00Z",
+        "reason": "需要核对 👩🏽‍💻 é",
+        "kind": "request-changes",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "selectionId": "40000000-0000-4000-8000-000000000005",
+        "actionId": "40000000-0000-4000-8000-000000000021",
+        "basisEvidence": {
+          "termRevisionIds": [
+            "40000000-0000-4000-8000-000000000008"
+          ],
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+        },
+        "revisionId": "40000000-0000-4000-8000-000000000006",
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004"
+      },
+      "currentCheck": {
+        "outcome": "completed",
+        "basisEvidence": {
+          "termRevisionIds": [
+            "40000000-0000-4000-8000-000000000008"
+          ],
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+        },
+        "createdAt": "2026-10-03T00:00:00Z",
+        "rules": [
+          {
+            "status": "findings",
+            "findings": [
+              {
+                "waivable": true,
+                "code": "protected-term",
+                "severity": "error",
+                "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "rule": "terms",
+                "detail": "保留 木桶 👩🏽‍💻 é"
+              }
+            ],
+            "rule": "terms",
+            "reason": null
+          }
+        ],
+        "actionId": "40000000-0000-4000-8000-000000000022",
+        "validatorVersion": "smapi-prebuild-2",
+        "runId": "40000000-0000-4000-8000-000000000010",
+        "locale": "zh-CN",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "basisEvidence": {
+        "termRevisionIds": [
+          "40000000-0000-4000-8000-000000000008"
+        ],
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+        "revisionId": "40000000-0000-4000-8000-000000000006",
+        "selectionId": "40000000-0000-4000-8000-000000000005",
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+      },
+      "translationText": "木桶 👩🏽‍💻 é",
+      "selectionId": "40000000-0000-4000-8000-000000000005",
+      "locale": "zh-CN",
+      "revisionId": "40000000-0000-4000-8000-000000000006",
+      "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "nativeKey": "wooden-barrel"
+    },
+    "decision": {
+      "decisionId": "40000000-0000-4000-8000-000000000009",
+      "actor": "Synthetic reviewer",
+      "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "createdAt": "2026-10-03T00:00:00Z",
+      "reason": "需要核对 👩🏽‍💻 é",
+      "kind": "request-changes",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "selectionId": "40000000-0000-4000-8000-000000000005",
+      "actionId": "40000000-0000-4000-8000-000000000021",
+      "basisEvidence": {
+        "termRevisionIds": [
+          "40000000-0000-4000-8000-000000000008"
+        ],
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+        "revisionId": "40000000-0000-4000-8000-000000000006",
+        "selectionId": "40000000-0000-4000-8000-000000000005",
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+      },
+      "revisionId": "40000000-0000-4000-8000-000000000006",
+      "sourceRevisionId": "40000000-0000-4000-8000-000000000004"
+    },
+    "summary": {
+      "scopeId": "40000000-0000-4000-8000-000000000013",
+      "nextOrdinal": null,
+      "readVersion": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "rows": [
+        {
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "nativeKey": "wooden-barrel",
+          "sourcePreview": "Wooden barrel",
+          "translationPreview": "木桶 👩🏽‍💻 é",
+          "currentDecision": {
+            "kind": "request-changes",
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "decisionId": "40000000-0000-4000-8000-000000000009"
+          },
+          "locale": "zh-CN",
+          "currentCheck": {
+            "outcome": "completed",
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "hasFindings": true,
+            "runId": "40000000-0000-4000-8000-000000000010"
+          },
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "sourceSnapshotId": "40000000-0000-4000-8000-000000000003",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "total": 1,
+      "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+    },
+    "waiver": {
+      "locale": "zh-CN",
+      "previousWaiverId": null,
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "policyVersion": "balanced-1",
+      "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "grant": true,
+      "waiverId": "40000000-0000-4000-8000-000000000011",
+      "actionId": "40000000-0000-4000-8000-000000000023",
+      "createdAt": "2026-10-03T00:00:00Z",
+      "reason": "需要核对 👩🏽‍💻 é",
+      "actor": "Synthetic reviewer",
+      "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "history": {
+      "checks": [
+        {
+          "outcome": "completed",
+          "basisEvidence": {
+            "termRevisionIds": [
+              "40000000-0000-4000-8000-000000000008"
+            ],
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+          },
+          "createdAt": "2026-10-03T00:00:00Z",
+          "rules": [
+            {
+              "status": "findings",
+              "findings": [
+                {
+                  "waivable": true,
+                  "code": "protected-term",
+                  "severity": "error",
+                  "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                  "rule": "terms",
+                  "detail": "保留 木桶 👩🏽‍💻 é"
+                }
+              ],
+              "rule": "terms",
+              "reason": null
+            }
+          ],
+          "actionId": "40000000-0000-4000-8000-000000000022",
+          "validatorVersion": "smapi-prebuild-2",
+          "runId": "40000000-0000-4000-8000-000000000010",
+          "locale": "zh-CN",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "decisions": [
+        {
+          "decisionId": "40000000-0000-4000-8000-000000000009",
+          "actor": "Synthetic reviewer",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "kind": "request-changes",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "selectionId": "40000000-0000-4000-8000-000000000005",
+          "actionId": "40000000-0000-4000-8000-000000000021",
+          "basisEvidence": {
+            "termRevisionIds": [
+              "40000000-0000-4000-8000-000000000008"
+            ],
+            "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+            "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+            "revisionId": "40000000-0000-4000-8000-000000000006",
+            "selectionId": "40000000-0000-4000-8000-000000000005",
+            "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+          },
+          "revisionId": "40000000-0000-4000-8000-000000000006",
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004"
+        }
+      ],
+      "waivers": [
+        {
+          "locale": "zh-CN",
+          "previousWaiverId": null,
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "policyVersion": "balanced-1",
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "grant": true,
+          "waiverId": "40000000-0000-4000-8000-000000000011",
+          "actionId": "40000000-0000-4000-8000-000000000023",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "actor": "Synthetic reviewer",
+          "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ],
+      "fallbacks": [
+        {
+          "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+          "locale": "zh-CN",
+          "unitId": "40000000-0000-4000-8000-000000000002",
+          "policyVersion": "balanced-1",
+          "allow": true,
+          "fallbackId": "40000000-0000-4000-8000-000000000012",
+          "previousFallbackId": null,
+          "actionId": "40000000-0000-4000-8000-000000000024",
+          "createdAt": "2026-10-03T00:00:00Z",
+          "reason": "需要核对 👩🏽‍💻 é",
+          "actor": "Synthetic reviewer"
+        }
+      ],
+      "nextOffset": null
+    },
+    "check": {
+      "outcome": "completed",
+      "basisEvidence": {
+        "termRevisionIds": [
+          "40000000-0000-4000-8000-000000000008"
+        ],
+        "sourceRevisionId": "40000000-0000-4000-8000-000000000004",
+        "contextRevisionId": "40000000-0000-4000-8000-000000000007",
+        "revisionId": "40000000-0000-4000-8000-000000000006",
+        "selectionId": "40000000-0000-4000-8000-000000000005",
+        "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+      },
+      "createdAt": "2026-10-03T00:00:00Z",
+      "rules": [
+        {
+          "status": "findings",
+          "findings": [
+            {
+              "waivable": true,
+              "code": "protected-term",
+              "severity": "error",
+              "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "rule": "terms",
+              "detail": "保留 木桶 👩🏽‍💻 é"
+            }
+          ],
+          "rule": "terms",
+          "reason": null
+        }
+      ],
+      "actionId": "40000000-0000-4000-8000-000000000022",
+      "validatorVersion": "smapi-prebuild-2",
+      "runId": "40000000-0000-4000-8000-000000000010",
+      "locale": "zh-CN",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "neighbor": {
+      "unitId": null,
+      "afterOrdinal": null,
+      "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+    }
+  }
+}

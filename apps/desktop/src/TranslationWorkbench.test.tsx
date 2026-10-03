@@ -8,6 +8,7 @@ import type { ProjectView } from "./projectCommands";
 import type { TranslationHistory, TranslationPreview } from "./translationCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
 
@@ -41,10 +42,10 @@ beforeEach(async () => {
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
-    if (command === "read_review_summary_page") return { rows: content.rows.map(row => ({ unitId: row.unitId, locale: "zh-CN", nativeKey: row.occurrence.key, sourcePreview: row.occurrence.text, sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: row.sourceRevisionId, selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationPreview: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] })), total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: fixtureIdentity(200), readVersion: "view" };
-    if (command === "read_review_target") return { unitId: fixtureIdentity(204), locale: "zh-CN", nativeKey: "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
+    if (command === "read_review_summary_page") return reviewSummaryPageFixture(content.rows.map(row => reviewSummaryFor(reviewTargetFixture({ unitId: row.unitId!, nativeKey: row.occurrence.key, sourceText: row.occurrence.text, sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: row.sourceRevisionId!, selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" }))));
+    if (command === "read_review_target") return reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" });
     if (command === "read_review_editor_snapshot") return {
-      target: { unitId: args.request.unitId, locale: "zh-CN", nativeKey: args.request.unitId === fixtureIdentity(217) ? "second" : "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] },
+      target: reviewTargetFixture({ unitId: String(args.request.unitId), nativeKey: args.request.unitId === fixtureIdentity(217) ? "second" : "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" }),
       translations: history,
       terms: { unitId: args.request.unitId, locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] },
       context: { revisionId: fixtureIdentity(225), unitId: args.request.unitId, locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null },
@@ -163,7 +164,7 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
           sourcePreview: "Source preview", translationPreview: saved.get(fixtureIdentity(1000 + position)) ?? null,
           selectionId: null, revisionId: null, basis: "basis", currentDecision: null, currentCheck: null };
       }), total: 51, nextOrdinal: after + 50 < 51 ? after + 50 : null,
-        scopeId: "fixed-scope", sourceSnapshotId: fixtureIdentity(200), readVersion: "view" };
+        scopeId: fixtureIdentity(226), sourceSnapshotId: fixtureIdentity(200), readVersion: "view" };
     }
     if (command === "read_review_editor_snapshot") {
       const value = await original(command, args);
@@ -346,7 +347,7 @@ it("shows current adopted terms and context beside the editable translation", as
 it("queries the complete current scope and retains a filtered position on return", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_review_summary_page") return Promise.resolve({ rows: [{ unitId: fixtureIdentity(218), locale: "zh-CN", nativeKey: args.request.query ? "later-needle" : "first", sourcePreview: "Source on page two", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(219), selectionId: null, revisionId: null, translationText: null, basis: "later-basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] }], total: args.request.query ? 1 : 60, nextOrdinal: args.request.query ? null : 50, scopeId: "filtered-scope", sourceSnapshotId: fixtureIdentity(200), readVersion: "view" });
+    if (command === "read_review_summary_page") return Promise.resolve(reviewSummaryPageFixture([reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(218), nativeKey: args.request.query ? "later-needle" : "first", sourceText: "Source on page two", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(219), selectionId: null, revisionId: null, translationText: null, basis: "later-basis" }))], { total: args.request.query ? 1 : 60, nextOrdinal: args.request.query ? null : 50, scopeId: fixtureIdentity(227) }));
     return original(command, args);
   });
   render(<TranslationWorkbench project={project} disabled={false} />);
@@ -375,7 +376,7 @@ it("refreshes a clean retained editor against current source and selection on re
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     const value = await original(command, args);
-    return command === "read_review_editor_snapshot" ? { ...value, target: { ...value.target, sourceRevisionId: "updated-source", sourceText: "Updated original" } } : value;
+    return command === "read_review_editor_snapshot" ? { ...value, target: reviewTargetFixture({ ...value.target, basisEvidence: undefined, sourceRevisionId: fixtureIdentity(228), sourceText: "Updated original" }) } : value;
   });
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await waitFor(() => expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("External selection"));
@@ -383,7 +384,7 @@ it("refreshes a clean retained editor against current source and selection on re
   await user.clear(screen.getByRole("textbox", { name: "Your draft" }));
   await user.type(screen.getByRole("textbox", { name: "Your draft" }), "New translation");
   await user.click(screen.getByRole("button", { name: "Save revision" }));
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_translation_revision", { request: expect.objectContaining({ sourceRevisionId: "updated-source", text: "New translation" }) }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("save_translation_revision", { request: expect.objectContaining({ sourceRevisionId: fixtureIdentity(228), text: "New translation" }) }));
 });
 
 it("preserves text entered while a retained editor refresh is awaiting current facts", async () => {
