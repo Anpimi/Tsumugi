@@ -428,9 +428,11 @@ pub async fn seed_execution_fixture(
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct RuntimeStatus {
     pub active: bool,
     pub quiescing: bool,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub query_count: u32,
     pub error: Option<CommandError>,
 }

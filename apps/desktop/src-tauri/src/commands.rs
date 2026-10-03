@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 mod changes;
 mod dispatch;
 mod execution;
+#[cfg(feature = "wire-schema")]
+pub(crate) mod contracts;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -17,6 +19,7 @@ use tsumugi_core::{
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum CommandErrorCode {
     InvalidInput,
@@ -39,6 +42,7 @@ pub enum CommandErrorCode {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum CommandStage {
     Create,
@@ -56,6 +60,7 @@ pub enum CommandStage {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum CommandOutcome {
     Rejected,
@@ -63,16 +68,20 @@ pub enum CommandOutcome {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct CommandError {
     pub code: CommandErrorCode,
     pub stage: CommandStage,
     pub outcome: CommandOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::optional_text"))]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::optional_text"))]
     pub field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::optional_metadata_revision"))]
     pub current_revision: Option<String>,
     pub recovery_required: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -152,6 +161,7 @@ impl fmt::Display for CommandError {
 impl std::error::Error for CommandError {}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct CreateProjectRequest {
     pub destination: String,
@@ -161,12 +171,14 @@ pub struct CreateProjectRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct OpenProjectRequest {
     pub locator: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ReadProjectRequest {
     pub session_token: String,
@@ -175,6 +187,7 @@ pub struct ReadProjectRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct RenameProjectRequest {
     pub session_token: String,
@@ -185,6 +198,7 @@ pub struct RenameProjectRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct AddTargetLocaleRequest {
     pub session_token: String,
@@ -193,6 +207,7 @@ pub struct AddTargetLocaleRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct SetTargetLocalesRequest {
     pub session_token: String,
@@ -201,22 +216,26 @@ pub struct SetTargetLocalesRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct CloseProjectRequest {
     pub session_token: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectMetadataView {
     pub project_id: String,
     pub display_name: String,
     pub source_locale: String,
     pub target_locales: Vec<String>,
+    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::metadata_revision"))]
     pub metadata_revision: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum ReconciliationState {
     Settled,
@@ -225,6 +244,7 @@ pub enum ReconciliationState {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectView {
     pub session_token: String,
@@ -234,6 +254,7 @@ pub struct ProjectView {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum MetadataChangeOutcome {
     Changed,
@@ -241,6 +262,7 @@ pub enum MetadataChangeOutcome {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct MetadataMutationView {
     pub session_token: String,
@@ -251,6 +273,7 @@ pub struct MetadataMutationView {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct CloseProjectView {
     pub closed: bool,
 }

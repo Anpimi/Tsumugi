@@ -53,6 +53,7 @@ import {
   type RecentProject,
 } from "./recentProjects";
 import {
+  isCommandError,
   projectCommands,
   type SetTargetLocalesRequest,
   type CloseProjectView,
@@ -224,9 +225,7 @@ function parseTargetLocales(raw: string) {
 }
 
 function asCommandError(value: unknown, stage: CommandStage): CommandError {
-  if (typeof value === "object" && value !== null && "code" in value && "stage" in value && "outcome" in value && (value.outcome === "rejected" || value.outcome === "unknown")) {
-    return value as CommandError;
-  }
+  if (isCommandError(value)) return value;
   const mutation = stage === "rename" || stage === "set-target-locales" || stage === "add-target-locale";
   return { code: mutation ? "outcome-unknown" : "storage-failed", stage, outcome: mutation ? "unknown" : "rejected", recoveryRequired: mutation };
 }
@@ -675,7 +674,7 @@ function App() {
       const deadline = performance.now() + 6500;
       let result = await executionCommands.quiesce(executionContext(project));
       while (result.quiescing) {
-        if (performance.now() >= deadline) throw { code: "busy", stage: "execution-quiesce", recoveryRequired: false };
+        if (performance.now() >= deadline) throw { code: "busy", stage: "execution-quiesce", outcome: "rejected", recoveryRequired: false };
         await new Promise(resolve => setTimeout(resolve, 100));
         result = await executionCommands.quiesce(executionContext(project));
       }

@@ -3,7 +3,7 @@ import { QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SessionReads, validateChanges, type ChangeScope, type ProjectChanges, type ReadTransport } from "./sessionReads";
 const epoch = "9d6f18a6-3ae0-4591-a6d1-7b2c47676a38";
-const context = { projectId: "project-a", sessionToken: "session-a" };
+const context = { projectId: "cb08ef6f-4511-477c-b1fb-054a43e28460", sessionToken: "session-a" };
 const snapshot = (sequence = "0", progressSequence = "0"): ProjectChanges => ({ ...context, epoch, sequence, progressSequence, scopes: ["translation"], runtime: { active: false, quiescing: false, queryCount: 0, error: null } });
 const stops: (() => void)[] = [];
 beforeEach(() => { vi.useFakeTimers(); });

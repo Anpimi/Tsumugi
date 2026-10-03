@@ -6,10 +6,12 @@ use tsumugi_core::{
 };
 
 #[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ChangeNotification {
     pub project_id: String,
     pub session_token: String,
+    #[cfg_attr(feature = "wire-schema", schemars(with = "ExecutionId"))]
     pub epoch: String,
     pub kind: NotificationKind,
     pub after_sequence: Revision,
@@ -18,6 +20,7 @@ pub(super) struct ChangeNotification {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum NotificationKind {
     Change,
@@ -26,6 +29,7 @@ pub(super) enum NotificationKind {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct ChangesRequest {
     session_token: String,
@@ -34,6 +38,7 @@ pub(super) struct ChangesRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ProjectChanges {
     project_id: ExecutionId,

@@ -1,0 +1,590 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "AddTargetLocaleRequest": {
+        "properties": {
+          "expectedRevision": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "expectedRevision",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "ChangesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "afterSequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "afterSequence"
+        ],
+        "type": "object"
+      },
+      "CloseProjectRequest": {
+        "properties": {
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken"
+        ],
+        "type": "object"
+      },
+      "CreateProjectRequest": {
+        "properties": {
+          "destination": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocales": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "destination",
+          "displayName",
+          "sourceLocale",
+          "targetLocales"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "type": "string"
+      },
+      "OpenProjectRequest": {
+        "properties": {
+          "locator": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "locator"
+        ],
+        "type": "object"
+      },
+      "ReadProjectRequest": {
+        "properties": {
+          "expectedRevision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken"
+        ],
+        "type": "object"
+      },
+      "RenameProjectRequest": {
+        "properties": {
+          "directoryName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "type": "string"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "expectedRevision",
+          "displayName"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "SetTargetLocalesRequest": {
+        "properties": {
+          "expectedRevision": {
+            "type": "string"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "targetLocales": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "expectedRevision",
+          "targetLocales"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "addTargetLocale": {
+        "$ref": "#/definitions/AddTargetLocaleRequest"
+      },
+      "changes": {
+        "$ref": "#/definitions/ChangesRequest"
+      },
+      "close": {
+        "$ref": "#/definitions/CloseProjectRequest"
+      },
+      "create": {
+        "$ref": "#/definitions/CreateProjectRequest"
+      },
+      "open": {
+        "$ref": "#/definitions/OpenProjectRequest"
+      },
+      "read": {
+        "$ref": "#/definitions/ReadProjectRequest"
+      },
+      "rename": {
+        "$ref": "#/definitions/RenameProjectRequest"
+      },
+      "setTargetLocales": {
+        "$ref": "#/definitions/SetTargetLocalesRequest"
+      }
+    },
+    "required": [
+      "create",
+      "open",
+      "read",
+      "rename",
+      "addTargetLocale",
+      "setTargetLocales",
+      "close",
+      "changes"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "ChangeNotification": {
+        "properties": {
+          "afterSequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "epoch": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "kind": {
+            "$ref": "#/definitions/NotificationKind"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/definitions/ChangeScope"
+            },
+            "type": "array"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "sessionToken",
+          "epoch",
+          "kind",
+          "afterSequence",
+          "sequence",
+          "scopes"
+        ],
+        "type": "object"
+      },
+      "ChangeScope": {
+        "enum": [
+          "project",
+          "source",
+          "translation",
+          "resources",
+          "review",
+          "arena",
+          "release",
+          "execution"
+        ],
+        "type": "string"
+      },
+      "CloseProjectView": {
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "closed"
+        ],
+        "type": "object"
+      },
+      "CommandError": {
+        "properties": {
+          "code": {
+            "$ref": "#/definitions/CommandErrorCode"
+          },
+          "currentRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CommandOutcome"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "recoveryActions": {
+            "items": {
+              "$ref": "#/definitions/RecoveryAction"
+            },
+            "type": "array"
+          },
+          "recoveryRequired": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/definitions/CommandStage"
+          }
+        },
+        "required": [
+          "code",
+          "stage",
+          "outcome",
+          "recoveryRequired"
+        ],
+        "type": "object"
+      },
+      "CommandErrorCode": {
+        "enum": [
+          "invalid-input",
+          "destination-conflict",
+          "missing-project",
+          "permission-denied",
+          "unsupported-schema",
+          "corrupt-project",
+          "stale-revision",
+          "session-invalid",
+          "project-in-use",
+          "busy",
+          "storage-failed",
+          "outcome-unknown",
+          "limit-exceeded",
+          "result-mismatch",
+          "output-invalid",
+          "dependency-conflict",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "CommandOutcome": {
+        "enum": [
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "CommandStage": {
+        "enum": [
+          "create",
+          "open",
+          "read",
+          "rename",
+          "add-target-locale",
+          "set-target-locales",
+          "close",
+          "execution-read",
+          "execution-cancel",
+          "execution-recover",
+          "execution-adopt",
+          "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "MetadataChangeOutcome": {
+        "enum": [
+          "changed",
+          "unchanged"
+        ],
+        "type": "string"
+      },
+      "MetadataMutationView": {
+        "properties": {
+          "directoryChanged": {
+            "type": "boolean"
+          },
+          "locator": {
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/definitions/ProjectMetadataView"
+          },
+          "outcome": {
+            "$ref": "#/definitions/MetadataChangeOutcome"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "locator",
+          "metadata",
+          "outcome",
+          "directoryChanged"
+        ],
+        "type": "object"
+      },
+      "NotificationKind": {
+        "enum": [
+          "change",
+          "progress",
+          "resync"
+        ],
+        "type": "string"
+      },
+      "ProjectChanges": {
+        "properties": {
+          "epoch": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "progressSequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "runtime": {
+            "$ref": "#/definitions/RuntimeStatus"
+          },
+          "scopes": {
+            "items": {
+              "$ref": "#/definitions/ChangeScope"
+            },
+            "type": "array"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "sessionToken",
+          "epoch",
+          "sequence",
+          "progressSequence",
+          "scopes",
+          "runtime"
+        ],
+        "type": "object"
+      },
+      "ProjectMetadataView": {
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "metadataRevision": {
+            "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "sourceLocale": {
+            "type": "string"
+          },
+          "targetLocales": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "projectId",
+          "displayName",
+          "sourceLocale",
+          "targetLocales",
+          "metadataRevision"
+        ],
+        "type": "object"
+      },
+      "ProjectView": {
+        "properties": {
+          "locator": {
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/definitions/ProjectMetadataView"
+          },
+          "reconciliationState": {
+            "$ref": "#/definitions/ReconciliationState"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "locator",
+          "metadata",
+          "reconciliationState"
+        ],
+        "type": "object"
+      },
+      "ReconciliationState": {
+        "enum": [
+          "settled",
+          "committed",
+          "previous"
+        ],
+        "type": "string"
+      },
+      "RecoveryAction": {
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure",
+          "validate-output",
+          "adopt-result",
+          "query-outcome",
+          "view-receipt"
+        ],
+        "type": "string"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "RuntimeStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/CommandError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queryCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "quiescing": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "active",
+          "quiescing",
+          "queryCount",
+          "error"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "changes": {
+        "$ref": "#/definitions/ProjectChanges"
+      },
+      "close": {
+        "$ref": "#/definitions/CloseProjectView"
+      },
+      "error": {
+        "$ref": "#/definitions/CommandError"
+      },
+      "metadataMutation": {
+        "$ref": "#/definitions/MetadataMutationView"
+      },
+      "notification": {
+        "$ref": "#/definitions/ChangeNotification"
+      },
+      "projectView": {
+        "$ref": "#/definitions/ProjectView"
+      }
+    },
+    "required": [
+      "projectView",
+      "metadataMutation",
+      "close",
+      "error",
+      "changes",
+      "notification"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

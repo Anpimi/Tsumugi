@@ -1,12 +1,12 @@
 import { isCommandError } from "./projectCommands";
 import { QueryClient, type QueryKey, type Query } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
+import { validateResponseChanges, validateResponseNotification } from "./generated/validators";
+import type { ChangeScope, ProjectChanges, ChangeNotification } from "./generated/responses";
+export type { ChangeScope, ProjectChanges, ChangeNotification } from "./generated/responses";
 import { listen } from "@tauri-apps/api/event";
 import type { RuntimeStatus, SessionRequest } from "./executionCommands";
 
-export type ChangeScope = "project" | "source" | "translation" | "resources" | "review" | "arena" | "release" | "execution";
-export interface ProjectChanges extends SessionRequest { epoch: string; sequence: string; progressSequence: string; scopes: ChangeScope[]; runtime: RuntimeStatus }
-export interface ChangeNotification extends SessionRequest { epoch: string; kind: "change" | "progress" | "resync"; afterSequence: string; sequence: string; scopes: ChangeScope[] }
 export interface ReadTransport {
   listen: (receive: (payload: unknown) => void) => Promise<() => void>;
   snapshot: (request: SessionRequest & { afterSequence: string }) => Promise<unknown>;
@@ -15,22 +15,14 @@ const transport: ReadTransport = {
   listen: receive => listen<unknown>("project-changed", event => receive(event.payload)),
   snapshot: request => invoke<unknown>("read_project_changes", { request }),
 };
-const scopes: readonly ChangeScope[] = ["project", "source", "translation", "resources", "review", "arena", "release", "execution"];
-const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
-const epoch = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
-const counter = (value: unknown): value is string => typeof value === "string" && /^(0|[1-9]\d*)$/.test(value) && BigInt(value) <= 9223372036854775807n;
-const scopeList = (value: unknown): value is ChangeScope[] => Array.isArray(value) && value.every(scope => scopes.includes(scope));
-function contextMatches(value: Record<string, unknown>, context: SessionRequest) { return value.projectId === context.projectId && value.sessionToken === context.sessionToken; }
+function contextMatches(value: SessionRequest, context: SessionRequest) { return value.projectId === context.projectId && value.sessionToken === context.sessionToken; }
 export function validateChanges(value: unknown, context: SessionRequest): ProjectChanges {
-  if (!record(value) || !contextMatches(value, context) || !epoch(value.epoch) || !counter(value.sequence) || !counter(value.progressSequence) || !scopeList(value.scopes) || !record(value.runtime)
-    || typeof value.runtime.active !== "boolean" || typeof value.runtime.quiescing !== "boolean" || !Number.isSafeInteger(value.runtime.queryCount) || Number(value.runtime.queryCount) < 0 || Number(value.runtime.queryCount) > 4294967295
-    || !(value.runtime.error === null || isCommandError(value.runtime.error))) throw new Error("Invalid project change snapshot");
+  if (!validateResponseChanges(value) || !contextMatches(value, context) || (value.runtime.error !== null && !isCommandError(value.runtime.error))) throw new Error("Invalid project change snapshot");
   return { projectId: context.projectId, sessionToken: context.sessionToken, epoch: value.epoch, sequence: value.sequence, progressSequence: value.progressSequence, scopes: value.scopes,
     runtime: { active: value.runtime.active, quiescing: value.runtime.quiescing, queryCount: Number(value.runtime.queryCount), error: value.runtime.error } };
 }
 function notification(value: unknown, context: SessionRequest): ChangeNotification | null {
-  if (!record(value) || !contextMatches(value, context) || !epoch(value.epoch) || !counter(value.sequence) || !counter(value.afterSequence) || !scopeList(value.scopes)
-    || !(value.kind === "change" || value.kind === "progress" || value.kind === "resync")) return null;
+  if (!validateResponseNotification(value) || !contextMatches(value, context)) return null;
   return { projectId: context.projectId, sessionToken: context.sessionToken, epoch: value.epoch, kind: value.kind, afterSequence: value.afterSequence, sequence: value.sequence, scopes: value.scopes };
 }
 function depends(query: Query, affected: readonly ChangeScope[]): boolean {

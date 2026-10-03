@@ -201,7 +201,7 @@ describe("project lifecycle workbench", () => {
     await user.clear(screen.getByRole("textbox", { name: "Project name" }));
     await user.type(screen.getByRole("textbox", { name: "Project name" }), "Occupied");
     await user.click(screen.getByRole("checkbox", { name: "Also rename the project folder" }));
-    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", outcome: "rejected", stage: "write", context: {} });
+    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", outcome: "rejected", stage: "rename", recoveryRequired: false });
     await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
     expect(readRecentProjects().map((item) => item.locator)).toEqual([projectView().locator]);
@@ -399,7 +399,7 @@ describe("project lifecycle workbench", () => {
     expect(field).toHaveValue("ssss");
     await user.clear(field);
     await user.type(field, "fr-FR");
-    mocks.invoke.mockResolvedValueOnce({ sessionToken: "session-1", metadata: { ...metadata("Demo", "2"), targetLocales: ["fr-FR"] }, outcome: "changed" });
+    mocks.invoke.mockResolvedValueOnce({ sessionToken: "session-1", locator: "C:\\Projects\\demo", metadata: { ...metadata("Demo", "2"), targetLocales: ["fr-FR"] }, outcome: "changed", directoryChanged: false });
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument());
     expect(mocks.invoke).toHaveBeenLastCalledWith("set_target_locales", { request: { sessionToken: "session-1", expectedRevision: "1", targetLocales: ["fr-FR"] } });
@@ -627,7 +627,7 @@ describe("project lifecycle workbench", () => {
     await user.type(screen.getByRole("textbox", { name: /Project name/ }), " draft");
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === "rename_project") {
-        return { sessionToken: "session-1", metadata: metadata("Demo draft", "2"), outcome: "changed" };
+        return { sessionToken: "session-1", locator: "C:\\Projects\\demo", metadata: metadata("Demo draft", "2"), outcome: "changed", directoryChanged: false };
       }
       if (command === "close_project") return { closed: true };
       return projectView();

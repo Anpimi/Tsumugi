@@ -116,6 +116,8 @@ impl fmt::Display for ExecutionId {
 #[serde(try_from = "String", into = "String")]
 pub struct Revision(u64);
 pub mod revision_wire;
+#[cfg(feature = "wire-schema")]
+pub mod wire_schema;
 impl Revision {
     pub fn new(value: u64) -> Result<Self, ExecutionError> {
         if value > i64::MAX as u64 {
@@ -531,6 +533,7 @@ pub enum AdoptionState {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum RecoveryAction {
     ResumeUndispatched,
     RetrySafeFailure,

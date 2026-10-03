@@ -3,6 +3,12 @@
 mod commands;
 
 fn main() {
+    #[cfg(feature = "wire-schema")]
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == "--export-ipc-schema") {
+        let destination = std::env::args_os().nth(2).expect("schema destination required");
+        commands::contracts::export(std::path::Path::new(&destination)).expect("export IPC schema");
+        return;
+    }
     commands::register_commands(tauri::Builder::default())
         .plugin(tauri_plugin_dialog::init())
         .run(tauri::generate_context!())

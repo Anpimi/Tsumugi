@@ -21,7 +21,8 @@ export interface ItemView { status: ItemStatus; scope: Scope; resultId: string |
 export interface Progress { total: number; queued: number; running: number; succeeded: number; failed: number; cancelled: number; unknown: number; adopted: number }
 export interface RecoveryUnit { unitId: string; itemIds: string[]; scopes: Scope[]; remainingItemIds: string[]; resultIds: string[]; actions: RecoveryAction[]; blockedReason: string | null; receiptId: string | null }
 export interface AttemptDetail { attemptId: string; taskId: string; operation: string; progress: Progress; items: ItemView[]; recovery: { attemptId: string; units: RecoveryUnit[] }; nextOffset: number | null }
-export interface RuntimeStatus { active: boolean; quiescing: boolean; queryCount: number; error: CommandError | null }
+export type { RuntimeStatus } from "./generated/responses";
+import type { RuntimeStatus } from "./generated/responses";
 export interface RecoveryView { attemptId: string; queryStarted: boolean }
 export interface AdoptionAction { projectId: string; attemptId: string; actionId: string; unitId: string; operation: string; resultIds: string[]; cancellationRevision: string; parameters: unknown }
 export interface Receipt { projectId: string; attemptId: string; actionId: string; unitId: string; requestDigest: string; changes: { kind: string; id: string; revision: string }[] }
