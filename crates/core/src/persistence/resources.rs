@@ -1,6 +1,6 @@
 //! Project-local resource facts. SQLite remains the only authority for adoption.
 
-use super::ProjectStore;
+use super::{ProjectStore, translation::TranslationOrigin};
 use crate::execution::{ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,7 @@ fn id(raw: String) -> Result<ExecutionId, ExecutionError> {
     ExecutionId::parse(&raw).map_err(|_| failure(ErrorCode::CorruptLedger, "resource-identity"))
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GlossaryFile {
@@ -84,6 +85,7 @@ pub struct GlossaryFile {
     pub entries: Vec<GlossaryEntry>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GlossaryEntry {
@@ -96,6 +98,7 @@ pub struct GlossaryEntry {
     pub reason: String,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GlossaryCapture {
@@ -109,6 +112,51 @@ pub struct GlossaryCapture {
     pub count: u32,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TermOrigin {
+    Manual,
+    External,
+}
+impl TermOrigin {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::External => "external",
+        }
+    }
+}
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TmMatchKind {
+    Exact,
+    Fuzzy,
+}
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResourceImpactKind {
+    Term,
+    Context,
+}
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResourceImpactConfidence {
+    ExplicitUnit,
+    LiteralPossible,
+}
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResourceImpactStatus {
+    NeedsRevalidation,
+    Unresolved,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TermRevision {
@@ -121,13 +169,14 @@ pub struct TermRevision {
     pub protected: bool,
     pub scope_unit_id: Option<ExecutionId>,
     pub reason: String,
-    pub origin_kind: String,
+    pub origin_kind: TermOrigin,
     pub capture_id: Option<ExecutionId>,
     pub external_entry_id: Option<String>,
     pub previous_revision_id: Option<ExecutionId>,
     pub removed: bool,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ResourceChangeKind {
@@ -138,6 +187,7 @@ pub enum ResourceChangeKind {
     Override,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourcePreviewRow {
@@ -147,6 +197,7 @@ pub struct ResourcePreviewRow {
     pub scope_unit_id: Option<ExecutionId>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourcePreview {
@@ -155,6 +206,7 @@ pub struct ResourcePreview {
     pub removed: Vec<TermRevision>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveTerm {
@@ -171,6 +223,7 @@ pub struct SaveTerm {
     pub reason: String,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ResourceDecisionKind {
@@ -180,6 +233,7 @@ pub enum ResourceDecisionKind {
     Override,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceDecision {
@@ -191,6 +245,7 @@ pub struct ResourceDecision {
     pub decision: ResourceDecisionKind,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ResourceDecisionResult {
@@ -199,6 +254,7 @@ pub struct ResourceDecisionResult {
     pub revision: Option<TermRevision>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TermResolutionEntry {
@@ -207,6 +263,7 @@ pub struct TermResolutionEntry {
     pub conflicting: Vec<TermRevision>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TermResolution {
@@ -216,6 +273,7 @@ pub struct TermResolution {
     pub entries: Vec<TermResolutionEntry>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveContext {
@@ -229,6 +287,7 @@ pub struct SaveContext {
     pub reason: String,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextRevision {
@@ -240,6 +299,7 @@ pub struct ContextRevision {
     pub previous_revision_id: Option<ExecutionId>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CaptureContext {
@@ -251,6 +311,7 @@ pub struct CaptureContext {
     pub budget_bytes: u32,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextItem {
@@ -260,6 +321,7 @@ pub struct ContextItem {
     pub provenance: String,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextOmission {
@@ -268,6 +330,7 @@ pub struct ContextOmission {
     pub reason: String,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextCapture {
@@ -280,6 +343,7 @@ pub struct ContextCapture {
     pub omitted: Vec<ContextOmission>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TmSuggestion {
@@ -289,26 +353,28 @@ pub struct TmSuggestion {
     pub translation_revision_id: ExecutionId,
     pub translation_text: String,
     pub target_locale: String,
-    pub origin_kind: String,
+    pub origin_kind: TranslationOrigin,
     pub is_current_selection: bool,
     pub has_human_approval: bool,
-    pub match_kind: String,
+    pub match_kind: TmMatchKind,
     pub score_percent: u8,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImpactReason {
     pub change_id: ExecutionId,
-    pub kind: String,
+    pub kind: ResourceImpactKind,
     pub old_revision_id: Option<ExecutionId>,
     pub new_revision_id: ExecutionId,
     pub old_value: Option<String>,
     pub new_value: String,
     pub new_removed: bool,
-    pub confidence: String,
+    pub confidence: ResourceImpactConfidence,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImpactItem {
@@ -319,10 +385,11 @@ pub struct ImpactItem {
     pub source_text: String,
     pub selection_event_id: ExecutionId,
     pub translation_revision_id: ExecutionId,
-    pub status: String,
+    pub status: ResourceImpactStatus,
     pub reasons: Vec<ImpactReason>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImpactPage {
@@ -770,7 +837,11 @@ impl RawTerm {
             protected: self.protected != 0,
             scope_unit_id: self.scope_unit_id.map(id).transpose()?,
             reason: self.reason,
-            origin_kind: self.origin_kind,
+            origin_kind: match self.origin_kind.as_str() {
+                "manual" => TermOrigin::Manual,
+                "external" => TermOrigin::External,
+                _ => return Err(failure(ErrorCode::CorruptLedger, "resource-origin")),
+            },
             capture_id: self.capture_id.map(id).transpose()?,
             external_entry_id: self.external_entry_id,
             previous_revision_id: self.previous_revision_id.map(id).transpose()?,
@@ -1194,18 +1265,21 @@ impl ProjectStore {
                 uncertain |= lexical;
                 reasons.push(ImpactReason {
                     change_id: id(change_id.clone())?,
-                    kind: kind.clone(),
+                    kind: match kind.as_str() {
+                        "term" => ResourceImpactKind::Term,
+                        "context" => ResourceImpactKind::Context,
+                        _ => return Err(failure(ErrorCode::CorruptLedger, "resource-change-kind")),
+                    },
                     old_revision_id: old_revision.clone().map(id).transpose()?,
                     new_revision_id: id(new_revision.clone())?,
                     old_value: old_value.clone(),
                     new_value: new_value.clone(),
                     new_removed: *new_removed,
                     confidence: if direct {
-                        "explicit-unit"
+                        ResourceImpactConfidence::ExplicitUnit
                     } else {
-                        "literal-possible"
-                    }
-                    .into(),
+                        ResourceImpactConfidence::LiteralPossible
+                    },
                 });
             }
             if !reasons.is_empty() {
@@ -1218,11 +1292,10 @@ impl ProjectStore {
                     selection_event_id: id(selection_event)?,
                     translation_revision_id: id(translation_revision)?,
                     status: if uncertain {
-                        "unresolved"
+                        ResourceImpactStatus::Unresolved
                     } else {
-                        "needs-revalidation"
-                    }
-                    .into(),
+                        ResourceImpactStatus::NeedsRevalidation
+                    },
                     reasons,
                 });
             }
@@ -1314,10 +1387,14 @@ impl ProjectStore {
                 translation_revision_id: id(translation_revision)?,
                 translation_text,
                 target_locale: locale.to_owned(),
-                origin_kind,
+                origin_kind: TranslationOrigin::from_stored(&origin_kind)?,
                 is_current_selection,
                 has_human_approval: false,
-                match_kind: if score == 100 { "exact" } else { "fuzzy" }.into(),
+                match_kind: if score == 100 {
+                    TmMatchKind::Exact
+                } else {
+                    TmMatchKind::Fuzzy
+                },
                 score_percent: score,
             });
         }
@@ -1559,7 +1636,7 @@ impl ProjectStore {
                         kind: "term".into(),
                         revision_id: term.revision_id,
                         text,
-                        provenance: term.origin_kind,
+                        provenance: term.origin_kind.as_str().into(),
                     });
                 } else {
                     omitted.push(ContextOmission {
@@ -1834,7 +1911,9 @@ impl ProjectStore {
             )?;
             let kind = match &current {
                 None => ResourceChangeKind::Added,
-                Some(value) if value.origin_kind == "manual" => ResourceChangeKind::Override,
+                Some(value) if value.origin_kind == TermOrigin::Manual => {
+                    ResourceChangeKind::Override
+                }
                 Some(value)
                     if value.source == entry.source
                         && value.aliases == entry.aliases
@@ -2051,7 +2130,7 @@ impl ProjectStore {
         }
         if current
             .as_ref()
-            .is_some_and(|value| value.origin_kind == "manual")
+            .is_some_and(|value| value.origin_kind == TermOrigin::Manual)
             && matches!(request.decision, ResourceDecisionKind::Adopt)
         {
             return Err(failure(ErrorCode::DependencyConflict, "resource-override"));
@@ -2357,12 +2436,12 @@ pub(super) fn resolve_terms_from(
         if specific {
             matches.retain(|value| value.scope_unit_id == Some(unit_id));
         }
-        let overridden = matches
-            .iter()
-            .any(|value| value.origin_kind == "manual" && value.term_id.starts_with("external:"));
+        let overridden = matches.iter().any(|value| {
+            value.origin_kind == TermOrigin::Manual && value.term_id.starts_with("external:")
+        });
         if overridden {
             matches.retain(|value| {
-                value.origin_kind == "manual" && value.term_id.starts_with("external:")
+                value.origin_kind == TermOrigin::Manual && value.term_id.starts_with("external:")
             });
         }
         let unique_targets = matches
@@ -2686,7 +2765,7 @@ mod tests {
             .unwrap();
         assert!(fuzzy.iter().any(|candidate| {
             candidate.unit_id == context_tags
-                && candidate.match_kind == "fuzzy"
+                && candidate.match_kind == TmMatchKind::Fuzzy
                 && candidate.score_percent >= 70
                 && candidate.translation_text == "复数标签描述"
                 && !candidate.has_human_approval
@@ -2704,7 +2783,8 @@ mod tests {
         assert!(
             exact
                 .iter()
-                .all(|candidate| candidate.match_kind == "exact" && !candidate.has_human_approval)
+                .all(|candidate| candidate.match_kind == TmMatchKind::Exact
+                    && !candidate.has_human_approval)
         );
         assert_ne!(
             exact[0].translation_revision_id,

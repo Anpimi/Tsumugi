@@ -35,8 +35,9 @@ pub use release::{
 pub use resources::{
     CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision, GlossaryCapture,
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, ResourceChangeKind,
-    ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourcePreview,
-    ResourcePreviewRow, SaveContext, SaveTerm, TermResolution, TermResolutionEntry, TermRevision,
+    ResourceDecision, ResourceDecisionKind, ResourceDecisionResult, ResourceImpactConfidence,
+    ResourceImpactKind, ResourceImpactStatus, ResourcePreview, ResourcePreviewRow, SaveContext,
+    SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
     TmSuggestion,
 };
 pub use review::{

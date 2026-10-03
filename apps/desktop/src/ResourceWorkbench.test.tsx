@@ -7,13 +7,14 @@ import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import resourceFixture from "../test/fixtures/resourceCommands.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 const project: ProjectView = {
   sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled",
-  metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" },
+  metadata: { projectId: fixtureIdentity(405), displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" },
 };
 const page = sourcePageFixture({
   snapshotId: fixtureIdentity(400), scope: { revision: "2", currentSnapshot: fixtureIdentity(400) },
@@ -30,7 +31,7 @@ beforeEach(async () => {
     if (command === "list_resource_captures") return [];
     if (command === "create_execution_identity") return fixtureIdentity(1);
     if (command === "save_term") return {
-      revisionId: "revision", termId: "term", locale: "zh-CN", source: "Barrel",
+      revisionId: fixtureIdentity(406), termId: "term", locale: "zh-CN", source: "Barrel",
       aliases: ["Cask", "Drum"], target: "木桶", protected: false, scopeUnitId: null,
       reason: "Reviewed", originKind: "manual", captureId: null, externalEntryId: null,
       previousRevisionId: null, removed: false,
@@ -76,11 +77,83 @@ it("keeps edits made while a term save is pending", async () => {
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "save_term")).toBe(true));
   await user.type(target, "B");
   await act(async () => finishSave({
-    revisionId: "revision", termId: "term", locale: "zh-CN", source: "Barrel",
+    revisionId: fixtureIdentity(406), termId: "term", locale: "zh-CN", source: "Barrel",
     aliases: [], target: "A", protected: false, scopeUnitId: null,
     reason: "Reviewed", originKind: "manual", captureId: null, externalEntryId: null,
     previousRevisionId: null, removed: false,
   }));
   await waitFor(() => expect(target).toHaveValue("AB"));
   expect(screen.getByRole("button", { name: "Save term" })).toBeEnabled();
+});
+
+it("keeps newer term edits when checking an uncertain original save", async () => {
+  const originalInvoke = invoke.getMockImplementation()!;
+  const saved = { ...resourceFixture.responses.term, revisionId: fixtureIdentity(406), termId: "term", source: "Barrel", aliases: [], target: "A", reason: "Reviewed", scopeUnitId: null };
+  let saves = 0;
+  invoke.mockImplementation((command: string, request: unknown) => {
+    if (command === "save_term") return Promise.resolve(++saves === 1 ? { ...saved, revisionId: "invalid" } : saved);
+    return originalInvoke(command, request);
+  });
+  render(<ResourceWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  await screen.findByRole("option", { name: "barrel" });
+  await user.type(screen.getByRole("textbox", { name: "Source term" }), "Barrel");
+  const target = screen.getByRole("textbox", { name: "Preferred target form" });
+  await user.type(target, "A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or source note" }), "Reviewed");
+  await user.click(screen.getByRole("button", { name: "Save term" }));
+  const retry = await screen.findByRole("button", { name: "Check or retry the same action" });
+  await user.type(target, "B");
+  await user.click(retry);
+  await screen.findByText("Saved. Earlier revisions remain available.");
+  expect(target).toHaveValue("AB");
+  const requests = invoke.mock.calls.filter(([command]) => command === "save_term").map(([, payload]) => payload.request);
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(requests[0].term.target).toBe("A");
+  expect(screen.getByRole("button", { name: "Discard edits" })).toBeEnabled();
+});
+
+it.each(["delayed", "replayed"] as const)("keeps newer context and reason after a %s save confirmation", async mode => {
+  const originalInvoke = invoke.getMockImplementation()!;
+  let finishSave!: (value: unknown) => void;
+  const pendingSave = new Promise(resolve => { finishSave = resolve; });
+  const saved = { ...resourceFixture.responses.savedContext, revisionId: fixtureIdentity(407), unitId: fixtureIdentity(401), text: "A", reason: "Reason A" };
+  let saves = 0;
+  invoke.mockImplementation((command: string, request: unknown) => {
+    if (command === "read_context_revision") return Promise.resolve(null);
+    if (command === "resolve_terms") return Promise.resolve({ unitId: fixtureIdentity(401), locale: "zh-CN", sourceRevisionId: fixtureIdentity(402), entries: [] });
+    if (command === "tm_suggestions") return Promise.resolve([]);
+    if (command === "save_context") {
+      saves++;
+      return mode === "delayed" ? pendingSave : Promise.resolve(saves === 1 ? { ...saved, revisionId: "invalid" } : saved);
+    }
+    return originalInvoke(command, request);
+  });
+  render(<ResourceWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+  await screen.findByRole("option", { name: "barrel" });
+  await user.click(screen.getByRole("tab", { name: "Context and memory" }));
+  await user.click(screen.getByRole("button", { name: "barrel" }));
+  const context = await screen.findByRole("textbox", { name: "Context you provide" });
+  const reason = screen.getByRole("textbox", { name: "Reason or source note" });
+  await user.type(context, "A");
+  await user.type(reason, "Reason A");
+  await user.click(screen.getByRole("button", { name: "Save context" }));
+  await waitFor(() => expect(saves).toBe(1));
+  if (mode === "replayed") await screen.findByRole("button", { name: "Check or retry the same action" });
+  await user.type(context, "B");
+  await user.type(reason, "B");
+  if (mode === "delayed") await act(async () => finishSave(saved));
+  else await user.click(screen.getByRole("button", { name: "Check or retry the same action" }));
+  await screen.findByText("Saved. Earlier revisions remain available.");
+  expect(context).toHaveValue("AB");
+  expect(reason).toHaveValue("Reason AB");
+  const requests = invoke.mock.calls.filter(([command]) => command === "save_context").map(([, payload]) => payload.request);
+  expect(requests).toHaveLength(mode === "delayed" ? 1 : 2);
+  expect(requests[0].context).toMatchObject({ text: "A", reason: "Reason A" });
+  if (mode === "replayed") expect(requests[1]).toEqual(requests[0]);
+  expect(screen.getByRole("button", { name: "Discard edits" })).toBeEnabled();
 });

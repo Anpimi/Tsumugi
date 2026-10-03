@@ -17,8 +17,8 @@ import type { EditorTarget } from "./TranslationWorkbench";
 type Tab = "terms" | "updates" | "context" | "impact";
 type TermDraft = Pick<SaveTerm, "source" | "aliases" | "target" | "protected" | "scopeUnitId" | "reason">;
 const blankTerm = (): TermDraft => ({ source: "", aliases: [], target: "", protected: false, scopeUnitId: null, reason: "" });
-const termDraftFor = (term: TermRevision | null): TermDraft => term
-  ? { source: term.source, aliases: term.aliases, target: term.target, protected: term.protected, scopeUnitId: term.scopeUnitId, reason: term.reason }
+const termDraftFor = (term: TermDraft | null): TermDraft => term
+  ? { source: term.source, aliases: term.aliases, target: term.target, protected: term.protected, scopeUnitId: term.scopeUnitId ?? null, reason: term.reason }
   : blankTerm();
 const stageOf = (error: unknown): string => {
   const value = error as Partial<CommandError> | null;
@@ -56,6 +56,7 @@ export function ResourceWorkbench({
   const [contextDraft, setContextDraft] = useState("");
   const contextDraftRef = useRef("");
   const [contextReason, setContextReason] = useState("");
+  const contextReasonRef = useRef("");
   const [pendingContext, setPendingContext] = useState<SaveContext | null>(null);
   const [resolution, setResolution] = useState<TermResolution | null>(null);
   const [fixedContext, setFixedContext] = useState<ContextCapture | null>(null);
@@ -134,6 +135,7 @@ export function ResourceWorkbench({
     setAliasInput(term?.aliases.join(", ") ?? "");
   }
   function updateContext(text: string) { contextDraftRef.current = text; setContextDraft(text); }
+  function updateContextReason(reason: string) { contextReasonRef.current = reason; setContextReason(reason); }
   async function run(work: (current: () => boolean) => Promise<void>) {
     if (running.current) return;
     running.current = true;
@@ -156,7 +158,7 @@ export function ResourceWorkbench({
     if (discard) {
       resetTerm(selectedTerm);
       updateContext(contextRevision?.text ?? "");
-      setContextReason(contextRevision?.reason ?? "");
+      updateContextReason(contextRevision?.reason ?? "");
       if (leaveResolver.current) leaveResolver.current(true);
       else { generation.current++; setOpen(false); }
     } else leaveResolver.current?.(false);
@@ -166,7 +168,7 @@ export function ResourceWorkbench({
     if (termDirty || contextDirty || pendingTerm || pendingContext) { setLeavePrompt(true); return; }
     generation.current++;
     setLocale(next); setSelectedTerm(null); resetTerm(null);
-    setSelectedUnit(null); setContextRevision(null); updateContext(""); setContextReason("");
+    setSelectedUnit(null); setContextRevision(null); updateContext(""); updateContextReason("");
     setResolution(null); setSuggestions([]); setFixedContext(null); setImpact(null);
   }
   function selectTerm(term: TermRevision | null) {
@@ -196,7 +198,7 @@ export function ResourceWorkbench({
       const revision = await commands.saveTerm({ ...session, term: request });
       if (!current()) return;
       setPendingTerm(null); setSelectedTerm(revision);
-      if (JSON.stringify(termDraftRef.current) === JSON.stringify(draft)) resetTerm(revision);
+      if (JSON.stringify(termDraftRef.current) === JSON.stringify(termDraftFor(request))) resetTerm(revision);
       await refreshTerms(current);
       if (current()) {
         setTermHistory(await commands.termHistory({ ...session, termId: revision.termId, offset: 0, limit: 100 }));
@@ -245,14 +247,14 @@ export function ResourceWorkbench({
     ]);
     if (current()) {
       setSelectedUnit(row); setContextRevision(manual); updateContext(manual?.text ?? "");
-      setContextReason(manual?.reason ?? ""); setResolution(terms); setSuggestions(tm);
+      updateContextReason(manual?.reason ?? ""); setResolution(terms); setSuggestions(tm);
       setFixedContext(null);
     }
   }
   async function saveContext(current: () => boolean) {
     if (!selectedUnit?.unitId || !selectedUnit.sourceRevisionId) return;
     const submitted = contextDraftRef.current;
-    const reason = contextReason;
+    const reason = contextReasonRef.current;
     const request = pendingContext ?? {
       projectId: session.projectId, actionId: await executionCommands.identity(session),
       unitId: selectedUnit.unitId, locale, sourceRevisionId: selectedUnit.sourceRevisionId,
@@ -264,8 +266,8 @@ export function ResourceWorkbench({
       const saved = await commands.saveContext({ ...session, context: request });
       if (!current()) return;
       setPendingContext(null); setContextRevision(saved);
-      if (contextDraftRef.current === submitted) updateContext(saved.text);
-      if (contextReason === reason) setContextReason(saved.reason);
+      if (contextDraftRef.current === request.text) updateContext(saved.text);
+      if (contextReasonRef.current === request.reason) updateContextReason(saved.reason);
       setMessage(t("resource.saved"));
     } catch (error) {
       if (current() && !unknownOutcome(error)) setPendingContext(null);
@@ -330,13 +332,13 @@ export function ResourceWorkbench({
               <div className="source-table-scroll"><table className="source-table"><thead><tr><th>{t("resource.sourceTerm")}</th><th>{t("resource.currentValue")}</th><th>{t("resource.newValue")}</th><th>{t("resource.change")}</th><th>{t("resource.actions")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.id}><th scope="row">{row.entry.source}<small> · {row.entry.nativeKey ?? t("resource.projectScope")}</small></th><td>{row.current?.target ?? "—"}</td><td>{row.entry.target}</td><td>{t(`resource.changeKind.${row.kind}`)}</td><td><button className="text-button" disabled={busy || row.kind === "unchanged" || !!pendingDecision} onClick={() => void run(current => decide(row.entry.id, row.current?.revisionId ?? null, row.kind === "override" ? "override" : "adopt", current))}>{row.kind === "override" ? t("resource.setOverride") : t("resource.adopt")}</button><button className="text-button" disabled={busy || !!pendingDecision} onClick={() => void run(current => decide(row.entry.id, row.current?.revisionId ?? null, "keep", current))}>{t("resource.keep")}</button><button className="text-button" disabled={busy || !!pendingDecision} onClick={() => void run(current => decide(row.entry.id, row.current?.revisionId ?? null, "ignore", current))}>{t("resource.ignore")}</button></td></tr>)}</tbody></table></div>
               {preview.removed.length ? <><h4>{t("resource.removed")}</h4><ul>{preview.removed.map(term => <li key={term.termId}>{term.source} → {term.target}<button className="text-button" disabled={busy || !!pendingDecision} onClick={() => void run(current => decide(term.externalEntryId!, term.revisionId, "adopt", current))}>{t("resource.adoptRemoval")}</button><button className="text-button" disabled={busy || !!pendingDecision} onClick={() => void run(current => decide(term.externalEntryId!, term.revisionId, "keep", current))}>{t("resource.keep")}</button></li>)}</ul></> : null}
             </> : <p>{t("resource.noPreview")}</p>}
-            {pendingDecision ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={busy} onClick={() => void run(current => decide(pendingDecision.entryId, pendingDecision.expectedRevisionId, pendingDecision.decision, current))}>{t("resource.retry")}</button></div> : null}
+            {pendingDecision ? <div role="status"><p>{t("resource.uncertainAction")}</p><button className="secondary-button" disabled={busy} onClick={() => void run(current => decide(pendingDecision.entryId, pendingDecision.expectedRevisionId ?? null, pendingDecision.decision, current))}>{t("resource.retry")}</button></div> : null}
           </section> : null}
           {tab === "context" && locale ? <section><h3>{t("resource.contextAndMemory")}</h3><p>{t("resource.chooseUnit")}</p>{sourcePage ? <><div className="source-table-scroll"><ul>{sourceRows.map(row => <li key={row.occurrence.ordinal}><button className="text-button" disabled={busy || !row.unitId} onClick={() => void run(current => selectUnit(row, current))}>{row.occurrence.key}</button></li>)}</ul></div><button className="secondary-button" disabled={busy || sourcePage.nextOrdinal === null} onClick={() => void run(async current => { const next = await sourceCommands.content({ ...session, snapshotId: sourcePage.snapshotId!, after: sourcePage.nextOrdinal!, limit: 50 }); if (current()) setSourcePage(next); })}>{t("execution.nextPage")}</button></> : null}
             {selectedUnit?.unitId && selectedUnit.sourceRevisionId ? <div className="translation-editor"><h4>{selectedUnit.occurrence.key}</h4><p>{selectedUnit.occurrence.text}</p>
               <label>{t("resource.manualContext")}<textarea value={contextDraft} onChange={event => updateContext(event.target.value)} /></label>
-              <label>{t("resource.reason")}<input value={contextReason} onChange={event => setContextReason(event.target.value)} /></label>
-              <div className="execution-actions"><button className="primary-button" disabled={busy || !contextReason.trim()} onClick={() => void run(saveContext)}>{pendingContext ? t("resource.retry") : t("resource.saveContext")}</button><button className="secondary-button" disabled={busy || !contextDirty || !!pendingContext} onClick={() => { updateContext(contextRevision?.text ?? ""); setContextReason(contextRevision?.reason ?? ""); }}>{t("resource.discardDraft")}</button><button className="secondary-button" disabled={busy} onClick={() => void run(fixContext)}>{t("resource.fixInput")}</button></div>
+              <label>{t("resource.reason")}<input value={contextReason} onChange={event => updateContextReason(event.target.value)} /></label>
+              <div className="execution-actions"><button className="primary-button" disabled={busy || !contextReason.trim()} onClick={() => void run(saveContext)}>{pendingContext ? t("resource.retry") : t("resource.saveContext")}</button><button className="secondary-button" disabled={busy || !contextDirty || !!pendingContext} onClick={() => { updateContext(contextRevision?.text ?? ""); updateContextReason(contextRevision?.reason ?? ""); }}>{t("resource.discardDraft")}</button><button className="secondary-button" disabled={busy} onClick={() => void run(fixContext)}>{t("resource.fixInput")}</button></div>
               {resolution ? <><h4>{t("resource.applicableTerms")}</h4>{resolution.entries.length ? <ul>{resolution.entries.map(entry => <li key={entry.source}>{entry.source}: {entry.selected ? entry.selected.target : t("resource.conflict")}</li>)}</ul> : <p>{t("resource.noApplicableTerms")}</p>}</> : null}
               {fixedContext ? <><h4>{t("resource.fixedInput")}</h4><ul>{fixedContext.included.map(item => <li key={item.revisionId}>{item.kind}: {item.text}</li>)}</ul>{fixedContext.omitted.length ? <><h5>{t("resource.omitted")}</h5><ul>{fixedContext.omitted.map((item, index) => <li key={index}>{item.kind}: {item.reference} · {item.reason}</li>)}</ul></> : null}</> : null}
               <h4>{t("resource.tm")}</h4><p>{t("resource.tmLimit")}</p>{suggestions.length ? <ul>{suggestions.map(item => <li key={item.translationRevisionId}><p>{item.sourceText} → {item.translationText}</p><p>{t(`resource.match.${item.matchKind}`)} · {item.scorePercent}% · {item.originKind === "manual" ? t("resource.manual") : t("resource.imported")} · {t("resource.noApproval")}</p><button className="secondary-button" disabled={busy} onClick={() => openTranslation({ unitId: selectedUnit.unitId!, sourceRevisionId: selectedUnit.sourceRevisionId!, key: selectedUnit.occurrence.key, sourceText: selectedUnit.occurrence.text }, item.translationText)}>{t("resource.useAsDraft")}</button></li>)}</ul> : <p>{t("resource.noSuggestions")}</p>}

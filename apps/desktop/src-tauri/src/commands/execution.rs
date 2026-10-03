@@ -357,7 +357,7 @@ macro_rules! request {
 mod ai;
 mod arena;
 mod release;
-mod resource;
+pub(super) mod resource;
 mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;

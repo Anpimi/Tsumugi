@@ -120,16 +120,57 @@ struct TranslationResponses {
     selected: tsumugi_core::TranslationSelection,
 }
 
-fn bound_u32(schema: &mut Schema) {
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ResourceRequests {
+    session: execution::SessionRequest,
+    captures: execution::resource::CaptureListRequest,
+    capture: execution::resource::CaptureRequest,
+    term: execution::resource::TermRequest,
+    decision: execution::resource::DecisionRequest,
+    terms: execution::resource::TermListRequest,
+    term_history: execution::resource::TermHistoryRequest,
+    unit_locale: execution::resource::UnitLocaleRequest,
+    context: execution::resource::ContextWriteRequest,
+    context_capture: execution::resource::ContextCaptureRequest,
+    suggestions: execution::resource::SuggestionRequest,
+    impacts: execution::resource::ImpactRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ResourceResponses {
+    captures: Vec<tsumugi_core::GlossaryCapture>,
+    capture: Option<tsumugi_core::GlossaryCapture>,
+    preview: tsumugi_core::ResourcePreview,
+    decision: tsumugi_core::ResourceDecisionResult,
+    term: tsumugi_core::TermRevision,
+    terms: Vec<tsumugi_core::TermRevision>,
+    resolution: tsumugi_core::TermResolution,
+    context: Option<tsumugi_core::ContextRevision>,
+    saved_context: tsumugi_core::ContextRevision,
+    context_capture: tsumugi_core::ContextCapture,
+    suggestions: Vec<tsumugi_core::TmSuggestion>,
+    impacts: tsumugi_core::ImpactPage,
+}
+
+fn bound_unsigned_integer(schema: &mut Schema) {
     // Schemars marks Rust's integer format but does not emit its upper bound.
     // Apply the primitive bound to scalar and tuple items without copying DTOs.
-    if schema.get("format").and_then(serde_json::Value::as_str) == Some("uint32") {
-        schema.insert("maximum".into(), u32::MAX.into());
+    let maximum = match schema.get("format").and_then(serde_json::Value::as_str) {
+        Some("uint8") => Some(u32::from(u8::MAX)),
+        Some("uint32") => Some(u32::MAX),
+        _ => None,
+    };
+    if let Some(maximum) = maximum {
+        schema.insert("maximum".into(), maximum.into());
     }
 }
 
 fn schemas<Q: JsonSchema, R: JsonSchema>() -> serde_json::Value {
-    let settings = SchemaSettings::draft07().with_transform(RecursiveTransform(bound_u32));
+    let settings =
+        SchemaSettings::draft07().with_transform(RecursiveTransform(bound_unsigned_integer));
     let requests = settings
         .clone()
         .for_deserialize()
@@ -172,7 +213,8 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
             "project": schemas::<Requests, Responses>(),
             "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
             "source": schemas::<SourceRequests, SourceResponses>(),
-            "translation": schemas::<TranslationRequests, TranslationResponses>()
+            "translation": schemas::<TranslationRequests, TranslationResponses>(),
+            "resource": schemas::<ResourceRequests, ResourceResponses>()
         }))? + "\n",
     )?;
     Ok(())

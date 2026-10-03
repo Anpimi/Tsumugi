@@ -133,6 +133,16 @@ pub enum TranslationOrigin {
     Manual,
     Ai,
 }
+impl TranslationOrigin {
+    pub(super) fn from_stored(raw: &str) -> Result<Self, ExecutionError> {
+        match raw {
+            "import" => Ok(Self::Import),
+            "manual" => Ok(Self::Manual),
+            "ai" => Ok(Self::Ai),
+            _ => Err(error(ErrorCode::CorruptLedger, "translation-origin")),
+        }
+    }
+}
 
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1589,12 +1599,7 @@ impl RawRevision {
             text: self.text,
             source_snapshot_id: id(self.source_snapshot_id)?,
             source_revision_id: id(self.source_revision_id)?,
-            origin_kind: match self.origin_kind.as_str() {
-                "import" => TranslationOrigin::Import,
-                "manual" => TranslationOrigin::Manual,
-                "ai" => TranslationOrigin::Ai,
-                _ => return Err(error(ErrorCode::CorruptLedger, "translation-origin")),
-            },
+            origin_kind: TranslationOrigin::from_stored(&self.origin_kind)?,
             action_id: id(self.action_id)?,
             attempt_id: optional_id(self.attempt_id)?,
             result_id: optional_id(self.result_id)?,

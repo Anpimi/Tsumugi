@@ -122,7 +122,7 @@ describe("project lifecycle workbench", () => {
       };
       if (command === "read_review_target") return { ...target, translationText: text };
       if (command === "read_translation_history") return { unitId: fixtureIdentity(501), locale: "zh-CN", total: "0", rows: [], nextOrdinal: null, currentText: text, current: text === null ? null : { eventId: fixtureIdentity(503), revisionId: fixtureIdentity(504), unitId: fixtureIdentity(501), locale: "zh-CN", actionId: fixtureIdentity(1), sequence: "1", previousEventId: null } };
-      if (command === "resolve_terms") return { entries: [] };
+      if (command === "resolve_terms") return { unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502), entries: [] };
       if (command === "read_context_revision") return null;
       if (command === "create_execution_identity") return fixtureIdentity(1);
       if (command === "save_translation_revision") {

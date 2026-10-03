@@ -8,46 +8,76 @@ use tsumugi_core::{
     TmSuggestion,
 };
 
-request!(CaptureListRequest { limit: u32 });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CaptureListRequest { limit: u32 }
+);
 
-request!(CaptureRequest {
-    capture_id: ExecutionId
-});
-request!(TermRequest { term: SaveTerm });
-request!(DecisionRequest {
-    decision: ResourceDecision
-});
-request!(TermListRequest {
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CaptureRequest {
+        capture_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TermRequest { term: SaveTerm }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    DecisionRequest {
+        decision: ResourceDecision
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TermListRequest {
     locale: String,
     after_term_id: Option<String>,
     limit: u32
 });
-request!(TermHistoryRequest {
-    term_id: String,
-    offset: u32,
-    limit: u32
-});
-request!(UnitLocaleRequest {
-    unit_id: ExecutionId,
-    locale: String
-});
-request!(ContextWriteRequest {
-    context: SaveContext
-});
-request!(ContextCaptureRequest {
-    capture: CaptureContext
-});
-request!(SuggestionRequest {
-    unit_id: ExecutionId,
-    locale: String,
-    offset: u32,
-    limit: u32
-});
-request!(ImpactRequest {
-    locale: String,
-    offset: u32,
-    limit: u32
-});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TermHistoryRequest {
+        term_id: String,
+        offset: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    UnitLocaleRequest {
+        unit_id: ExecutionId,
+        locale: String
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextWriteRequest {
+        context: SaveContext
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContextCaptureRequest {
+        capture: CaptureContext
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SuggestionRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        offset: u32,
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ImpactRequest {
+        locale: String,
+        offset: u32,
+        limit: u32
+    }
+);
 
 fn resource_error(error: ExecutionError, stage: CommandStage) -> CommandError {
     let mapped = map_execution(error, stage);
@@ -483,4 +513,91 @@ pub async fn resource_impacts(
             },
         )
         .await
+}
+
+#[cfg(test)]
+mod contracts {
+    use super::*;
+
+    #[test]
+    fn resource_wire_fixture_matches_actual_rust_requests_and_responses() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/resourceCommands.contract.json"
+        ))
+        .unwrap();
+        macro_rules! round_trip {
+            ($group:literal, $key:literal, $kind:ty) => {
+                let value: $kind = serde_json::from_value(fixture[$group][$key].clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_value(value).unwrap(),
+                    fixture[$group][$key],
+                    $key
+                );
+            };
+        }
+        round_trip!("requests", "session", SessionRequest);
+        round_trip!("requests", "captures", CaptureListRequest);
+        round_trip!("requests", "capture", CaptureRequest);
+        round_trip!("requests", "term", TermRequest);
+        round_trip!("requests", "decision", DecisionRequest);
+        round_trip!("requests", "terms", TermListRequest);
+        round_trip!("requests", "termHistory", TermHistoryRequest);
+        round_trip!("requests", "unitLocale", UnitLocaleRequest);
+        round_trip!("requests", "context", ContextWriteRequest);
+        round_trip!("requests", "contextCapture", ContextCaptureRequest);
+        round_trip!("requests", "suggestions", SuggestionRequest);
+        round_trip!("requests", "impacts", ImpactRequest);
+        round_trip!("responses", "captures", Vec<GlossaryCapture>);
+        round_trip!("responses", "capture", Option<GlossaryCapture>);
+        round_trip!("responses", "preview", ResourcePreview);
+        round_trip!("responses", "decision", ResourceDecisionResult);
+        round_trip!("responses", "term", TermRevision);
+        round_trip!("responses", "terms", Vec<TermRevision>);
+        round_trip!("responses", "resolution", TermResolution);
+        round_trip!("responses", "context", Option<ContextRevision>);
+        round_trip!("responses", "savedContext", ContextRevision);
+        round_trip!("responses", "contextCapture", ContextCapture);
+        round_trip!("responses", "suggestions", Vec<TmSuggestion>);
+        round_trip!("responses", "impacts", ImpactPage);
+        assert!(
+            serde_json::from_value::<Option<GlossaryCapture>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            serde_json::from_value::<Option<ContextRevision>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        let mut request = fixture["requests"]["term"].clone();
+        request["term"]
+            .as_object_mut()
+            .unwrap()
+            .remove("expectedRevisionId");
+        request["term"].as_object_mut().unwrap().remove("termId");
+        let decoded: TermRequest = serde_json::from_value(request).unwrap();
+        assert_eq!(decoded.term.expected_revision_id, None);
+        assert_eq!(decoded.term.term_id, None);
+        let mut unknown = fixture["requests"]["decision"].clone();
+        unknown["decision"]["decision"] = serde_json::json!("apply-all");
+        assert!(serde_json::from_value::<DecisionRequest>(unknown).is_err());
+        let mut unknown = fixture["responses"]["term"].clone();
+        unknown["originKind"] = serde_json::json!("import");
+        assert!(serde_json::from_value::<TermRevision>(unknown).is_err());
+        let mut unknown = fixture["responses"]["impacts"].clone();
+        unknown["items"][0]["status"] = serde_json::json!("invalidated");
+        assert!(serde_json::from_value::<ImpactPage>(unknown).is_err());
+        let mut unknown = fixture["responses"]["suggestions"].clone();
+        unknown[0]["matchKind"] = serde_json::json!("best");
+        assert!(serde_json::from_value::<Vec<TmSuggestion>>(unknown).is_err());
+        let mut overflow = fixture["requests"]["captures"].clone();
+        overflow["limit"] = serde_json::json!(4294967296u64);
+        assert!(serde_json::from_value::<CaptureListRequest>(overflow).is_err());
+        let mut overflow = fixture["responses"]["suggestions"].clone();
+        overflow[0]["scorePercent"] = serde_json::json!(256);
+        assert!(serde_json::from_value::<Vec<TmSuggestion>>(overflow).is_err());
+        let mut unknown = fixture["responses"]["contextCapture"].clone();
+        unknown["included"][0]["extra"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<ContextCapture>(unknown).is_err());
+    }
 }

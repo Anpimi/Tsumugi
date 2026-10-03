@@ -1,0 +1,393 @@
+{
+  "requests": {
+    "session": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001"
+    },
+    "captures": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "limit": 100
+    },
+    "capture": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "captureId": "30000000-0000-4000-8000-000000000006"
+    },
+    "term": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "term": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000009",
+        "termId": null,
+        "locale": "zh-CN",
+        "source": "Barrel",
+        "aliases": [
+          "Cask",
+          "Drum"
+        ],
+        "target": "木桶 👩🏽‍💻 é",
+        "protected": true,
+        "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+        "expectedRevisionId": null,
+        "reason": "Reviewed 世界"
+      }
+    },
+    "decision": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "decision": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000010",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "entryId": "barrel",
+        "expectedRevisionId": null,
+        "decision": "adopt"
+      }
+    },
+    "terms": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "afterTermId": null,
+      "limit": 100
+    },
+    "termHistory": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "termId": "30000000-0000-4000-8000-000000000005",
+      "offset": 0,
+      "limit": 100
+    },
+    "unitLocale": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN"
+    },
+    "context": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "context": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000011",
+        "unitId": "30000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+        "expectedRevisionId": null,
+        "text": "Translator note 中文 👩🏽‍💻 é",
+        "reason": "Reviewed context"
+      }
+    },
+    "contextCapture": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "capture": {
+        "projectId": "30000000-0000-4000-8000-000000000001",
+        "actionId": "30000000-0000-4000-8000-000000000012",
+        "unitId": "30000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+        "budgetBytes": 16384
+      }
+    },
+    "suggestions": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "offset": 0,
+      "limit": 20
+    },
+    "impacts": {
+      "sessionToken": "isolated-resource-session",
+      "projectId": "30000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "offset": 0,
+      "limit": 100
+    }
+  },
+  "responses": {
+    "captures": [
+      {
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "resourceId": "contract-glossary",
+        "revision": "glossary-v1",
+        "license": "MIT",
+        "sourceLocale": "en-US",
+        "targetLocale": "zh-CN",
+        "digest": "abcdef0123456789",
+        "count": 1
+      }
+    ],
+    "capture": {
+      "captureId": "30000000-0000-4000-8000-000000000006",
+      "resourceId": "contract-glossary",
+      "revision": "glossary-v1",
+      "license": "MIT",
+      "sourceLocale": "en-US",
+      "targetLocale": "zh-CN",
+      "digest": "abcdef0123456789",
+      "count": 1
+    },
+    "preview": {
+      "capture": {
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "resourceId": "contract-glossary",
+        "revision": "glossary-v1",
+        "license": "MIT",
+        "sourceLocale": "en-US",
+        "targetLocale": "zh-CN",
+        "digest": "abcdef0123456789",
+        "count": 1
+      },
+      "rows": [
+        {
+          "entry": {
+            "id": "barrel",
+            "source": "Barrel",
+            "aliases": [
+              "Cask",
+              "Drum"
+            ],
+            "target": "木桶 👩🏽‍💻 é",
+            "protected": true,
+            "nativeKey": null,
+            "reason": "Fixed glossary entry"
+          },
+          "kind": "added",
+          "current": null,
+          "scopeUnitId": null
+        }
+      ],
+      "removed": [
+        {
+          "revisionId": "30000000-0000-4000-8000-000000000007",
+          "termId": "external:contract-glossary:obsolete",
+          "locale": "zh-CN",
+          "source": "Obsolete phrase",
+          "aliases": [
+            "Cask",
+            "Drum"
+          ],
+          "target": "木桶 👩🏽‍💻 é",
+          "protected": true,
+          "scopeUnitId": null,
+          "reason": "Fixed glossary entry",
+          "originKind": "external",
+          "captureId": "30000000-0000-4000-8000-000000000018",
+          "externalEntryId": "obsolete",
+          "previousRevisionId": null,
+          "removed": false
+        }
+      ]
+    },
+    "decision": {
+      "actionId": "30000000-0000-4000-8000-000000000010",
+      "decision": "adopt",
+      "revision": {
+        "revisionId": "30000000-0000-4000-8000-000000000007",
+        "termId": "external:contract-glossary:barrel",
+        "locale": "zh-CN",
+        "source": "Barrel",
+        "aliases": [
+          "Cask",
+          "Drum"
+        ],
+        "target": "木桶 👩🏽‍💻 é",
+        "protected": true,
+        "scopeUnitId": null,
+        "reason": "Fixed glossary entry",
+        "originKind": "external",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "externalEntryId": "barrel",
+        "previousRevisionId": null,
+        "removed": false
+      }
+    },
+    "term": {
+      "revisionId": "30000000-0000-4000-8000-000000000004",
+      "termId": "30000000-0000-4000-8000-000000000005",
+      "locale": "zh-CN",
+      "source": "Barrel",
+      "aliases": [
+        "Cask",
+        "Drum"
+      ],
+      "target": "木桶 👩🏽‍💻 é",
+      "protected": true,
+      "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+      "reason": "Reviewed 世界",
+      "originKind": "manual",
+      "captureId": null,
+      "externalEntryId": null,
+      "previousRevisionId": null,
+      "removed": false
+    },
+    "terms": [
+      {
+        "revisionId": "30000000-0000-4000-8000-000000000004",
+        "termId": "30000000-0000-4000-8000-000000000005",
+        "locale": "zh-CN",
+        "source": "Barrel",
+        "aliases": [
+          "Cask",
+          "Drum"
+        ],
+        "target": "木桶 👩🏽‍💻 é",
+        "protected": true,
+        "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+        "reason": "Reviewed 世界",
+        "originKind": "manual",
+        "captureId": null,
+        "externalEntryId": null,
+        "previousRevisionId": null,
+        "removed": false
+      },
+      {
+        "revisionId": "30000000-0000-4000-8000-000000000007",
+        "termId": "external:contract-glossary:barrel",
+        "locale": "zh-CN",
+        "source": "Barrel",
+        "aliases": [
+          "Cask",
+          "Drum"
+        ],
+        "target": "木桶 👩🏽‍💻 é",
+        "protected": true,
+        "scopeUnitId": null,
+        "reason": "Fixed glossary entry",
+        "originKind": "external",
+        "captureId": "30000000-0000-4000-8000-000000000006",
+        "externalEntryId": "barrel",
+        "previousRevisionId": null,
+        "removed": false
+      }
+    ],
+    "resolution": {
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+      "entries": [
+        {
+          "source": "Barrel",
+          "selected": {
+            "revisionId": "30000000-0000-4000-8000-000000000004",
+            "termId": "30000000-0000-4000-8000-000000000005",
+            "locale": "zh-CN",
+            "source": "Barrel",
+            "aliases": [
+              "Cask",
+              "Drum"
+            ],
+            "target": "木桶 👩🏽‍💻 é",
+            "protected": true,
+            "scopeUnitId": "30000000-0000-4000-8000-000000000002",
+            "reason": "Reviewed 世界",
+            "originKind": "manual",
+            "captureId": null,
+            "externalEntryId": null,
+            "previousRevisionId": null,
+            "removed": false
+          },
+          "conflicting": []
+        }
+      ]
+    },
+    "context": {
+      "revisionId": "30000000-0000-4000-8000-000000000008",
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "text": "Translator note 中文 👩🏽‍💻 é",
+      "reason": "Reviewed context",
+      "previousRevisionId": null
+    },
+    "savedContext": {
+      "revisionId": "30000000-0000-4000-8000-000000000008",
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "text": "Translator note 中文 👩🏽‍💻 é",
+      "reason": "Reviewed context",
+      "previousRevisionId": null
+    },
+    "contextCapture": {
+      "captureId": "30000000-0000-4000-8000-000000000013",
+      "unitId": "30000000-0000-4000-8000-000000000002",
+      "locale": "zh-CN",
+      "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+      "budgetBytes": 16384,
+      "included": [
+        {
+          "kind": "source",
+          "revisionId": "30000000-0000-4000-8000-000000000003",
+          "text": "Example.Mod/barrel: Barrel",
+          "provenance": "extracted-current-source"
+        },
+        {
+          "kind": "manual",
+          "revisionId": "30000000-0000-4000-8000-000000000008",
+          "text": "Translator note 中文 👩🏽‍💻 é",
+          "provenance": "Reviewed context"
+        },
+        {
+          "kind": "term",
+          "revisionId": "30000000-0000-4000-8000-000000000004",
+          "text": "Barrel → 木桶 👩🏽‍💻 é",
+          "provenance": "manual"
+        }
+      ],
+      "omitted": [
+        {
+          "kind": "term",
+          "reference": "Cask",
+          "reason": "conflict"
+        }
+      ]
+    },
+    "suggestions": [
+      {
+        "unitId": "30000000-0000-4000-8000-000000000002",
+        "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+        "sourceText": "Barrel",
+        "translationRevisionId": "30000000-0000-4000-8000-000000000014",
+        "translationText": "木桶 👩🏽‍💻 é",
+        "targetLocale": "zh-CN",
+        "originKind": "manual",
+        "isCurrentSelection": true,
+        "hasHumanApproval": false,
+        "matchKind": "exact",
+        "scorePercent": 100
+      }
+    ],
+    "impacts": {
+      "items": [
+        {
+          "unitId": "30000000-0000-4000-8000-000000000002",
+          "locale": "zh-CN",
+          "sourceRevisionId": "30000000-0000-4000-8000-000000000003",
+          "nativeKey": "barrel",
+          "sourceText": "Barrel",
+          "selectionEventId": "30000000-0000-4000-8000-000000000015",
+          "translationRevisionId": "30000000-0000-4000-8000-000000000014",
+          "status": "needs-revalidation",
+          "reasons": [
+            {
+              "changeId": "30000000-0000-4000-8000-000000000016",
+              "kind": "context",
+              "oldRevisionId": null,
+              "newRevisionId": "30000000-0000-4000-8000-000000000008",
+              "oldValue": null,
+              "newValue": "Translator note 中文 👩🏽‍💻 é",
+              "newRemoved": false,
+              "confidence": "explicit-unit"
+            }
+          ]
+        }
+      ],
+      "totalAffected": 1,
+      "nextOffset": null,
+      "coverage": "current-snapshot; explicit unit and literal possible matches"
+    }
+  }
+}
