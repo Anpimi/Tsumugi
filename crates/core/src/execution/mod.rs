@@ -115,6 +115,7 @@ impl fmt::Display for ExecutionId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Revision(u64);
+pub mod revision_wire;
 impl Revision {
     pub fn new(value: u64) -> Result<Self, ExecutionError> {
         if value > i64::MAX as u64 {

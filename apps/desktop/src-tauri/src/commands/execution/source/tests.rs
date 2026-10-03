@@ -262,7 +262,7 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     );
     assert_eq!(
         editor.target.selection_id.unwrap().to_string(),
-        saved["eventId"].as_str().unwrap()
+        saved["selection"]["eventId"].as_str().unwrap()
     );
     assert_eq!(editor.translations.total, 1);
     assert_ne!(editor.target.basis, typed.rows[49].basis);
@@ -510,10 +510,10 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     let mut history = context.clone();
     history["unitId"] = page["rows"][0]["unitId"].clone();
     history["locale"] = json!("zh-CN");
-    history["afterOrdinal"] = json!(0);
+    history["afterOrdinal"] = json!("0");
     history["limit"] = json!(10);
     let imported = call(&view, "read_translation_history", history.clone()).unwrap();
-    assert_eq!(imported["total"], 1);
+    assert_eq!(imported["total"], "1");
     assert_eq!(imported["current"], Value::Null);
     let mut save = context.clone();
     save["actionId"] = json!(ExecutionId::new());
@@ -532,7 +532,7 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     select["unitId"] = history["unitId"].clone();
     select["locale"] = json!("zh-CN");
     select["sourceRevisionId"] = page["rows"][0]["sourceRevisionId"].clone();
-    select["expectedSelectionId"] = manual["eventId"].clone();
+    select["expectedSelectionId"] = manual["selection"]["eventId"].clone();
     select["revisionId"] = imported["rows"][0]["revisionId"].clone();
     let restored = call(&view, "select_translation_revision", select).unwrap();
     assert_eq!(restored["revisionId"], imported["rows"][0]["revisionId"]);
@@ -552,7 +552,7 @@ fn translation_ipc_imports_candidates_edits_and_reopens() {
     context["sessionToken"] = reopened["sessionToken"].clone();
     history["sessionToken"] = reopened["sessionToken"].clone();
     let saved = call(&view, "read_translation_history", history).unwrap();
-    assert_eq!(saved["total"], 2);
+    assert_eq!(saved["total"], "2");
     assert_eq!(saved["current"]["revisionId"], restored["revisionId"]);
     assert_eq!(saved["rows"][0]["originKind"], "import");
 }

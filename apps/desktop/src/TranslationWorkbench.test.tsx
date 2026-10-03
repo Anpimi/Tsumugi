@@ -13,14 +13,28 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const content = { snapshotId: "snapshot", attemptId: "source-attempt", resultId: "source-result", scope: { revision: "2", currentSnapshot: "snapshot" }, confirmation: { resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en" }, namespace: "Example.Mod", coverage: [], total: 1, nextOrdinal: null, diagnostics: [], rows: [{ occurrenceId: "occurrence", unitId: "unit", sourceRevisionId: "source-revision", occurrence: { ordinal: 0, artifactId: "source-file", namespace: "Example.Mod", key: "first", text: "Original", keyByteRange: [1, 8], valueByteRange: [9, 19], identityBasis: "native-key" } }] };
 const preview: TranslationPreview = { attemptId: "attempt", bundleId: "bundle", fixedSourceSnapshotId: "snapshot", currentSourceSnapshotId: "snapshot", resultDigest: "all-results", fileDigest: "file-digest", logicalPath: "i18n/zh.json", declaredLocale: "zh", targetLocale: "zh-CN", basis: "basis", total: 1, unique: 1, unmatched: 0, ambiguous: 0, selectedConflicts: 0, sourceChanged: 0, applied: 0, nextOrdinal: null, rows: [{ entry: { ordinal: 0, artifactId: "file", nativeKey: "FIRST", text: "你好", keyByteRange: [1, 8], valueByteRange: [9, 19] }, itemId: "item", resultId: "result", resultDigest: "result-digest", unitId: "unit", occurrenceId: "occurrence", sourceRevisionId: "source-revision", sourceText: "Original", currentSelection: null, currentText: null, status: "unique" }] };
-const emptyHistory: TranslationHistory = { unitId: "unit", locale: "zh-CN", total: 0, current: null, currentText: null, rows: [], nextOrdinal: null };
+const emptyHistory: TranslationHistory = { unitId: "unit", locale: "zh-CN", total: "0", current: null, currentText: null, rows: [], nextOrdinal: null };
 let history: TranslationHistory;
 let applied: boolean;
 let conflicting: boolean;
 let identity: number;
+let savedActions: Map<string, ReturnType<typeof saveReceipt>>;
+function saveReceipt(request: Record<string, unknown>) {
+  const prior = history.current?.unitId === request.unitId ? history.current : null;
+  const sequence = (BigInt(prior?.sequence ?? "0") + 1n).toString();
+  const actionId = String(request.actionId), unitId = String(request.unitId), locale = String(request.locale);
+  const selection = { eventId: sequence === "1" ? "selected" : `selected-${sequence}`, unitId, locale, sequence,
+    revisionId: `manual-${sequence}`, actionId, previousEventId: typeof request.expectedSelectionId === "string" ? request.expectedSelectionId : null };
+  const revision = { revisionId: selection.revisionId, unitId, locale, ordinal: sequence, text: String(request.text),
+    sourceSnapshotId: "snapshot", sourceRevisionId: String(request.sourceRevisionId), originKind: "manual" as const,
+    actionId, contributors: [], attemptId: null, resultId: null, itemId: null, artifactId: null,
+    logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null };
+  return { projectId: String(request.projectId), actionId, selection, revision,
+    basis: { sourceSnapshotId: revision.sourceSnapshotId, sourceRevisionId: revision.sourceRevisionId, selectionId: selection.eventId } };
+}
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
-  invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0;
+  invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: "snapshot" };
     if (command === "read_source_content") return content;
@@ -42,18 +56,96 @@ beforeEach(async () => {
     if (command === "preflight_translation") return { fileName: "zh.json", fileDigest: "file-digest", declaredLocale: "zh", targetLocale: "zh-CN", count: 1, sourceSnapshotId: "snapshot" };
     if (command === "create_execution_identity") return `action-${++identity}`;
     if (command === "start_translation_import") return "attempt";
-    if (command === "read_translation_preview") return applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: "old-selection", unitId: "unit", locale: "zh-CN", sequence: 1, revisionId: "old-revision", actionId: "old-action", previousEventId: null } }] } : preview;
+    if (command === "read_translation_preview") return applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: "old-selection", unitId: "unit", locale: "zh-CN", sequence: "1", revisionId: "old-revision", actionId: "old-action", previousEventId: null } }] } : preview;
     if (command === "prepare_translation_adoption") return {};
     if (command === "adopt_execution") { applied = true; return { changes: [{ kind: "translation-revision", id: "revision", revision: "1" }] }; }
     if (command === "save_translation_revision") {
-      history = { ...emptyHistory, total: 1, current: { eventId: "selected", unitId: "unit", locale: "zh-CN", sequence: 1, revisionId: "manual", actionId: args.request.actionId as string, previousEventId: null }, currentText: args.request.text as string, rows: [{ revisionId: "manual", unitId: "unit", locale: "zh-CN", ordinal: 1, text: args.request.text as string, sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", originKind: "manual", actionId: args.request.actionId as string, attemptId: null, resultId: null, itemId: null, artifactId: null, logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null }] };
-      return history.current;
+      const existing = savedActions.get(String(args.request.actionId));
+      if (existing) return existing;
+      const receipt = saveReceipt(args.request);
+      savedActions.set(receipt.actionId, receipt);
+      history = { ...emptyHistory, total: receipt.revision.ordinal, current: receipt.selection,
+        currentText: receipt.revision.text, rows: [receipt.revision] };
+      return receipt;
     }
     if (command === "read_execution_receipt") return null;
     throw new Error(command);
   });
 });
 afterEach(cleanup);
+
+it("keeps a confirmed save and allows leaving when the list refresh fails", async () => {
+  const ref = createRef<TranslationHandle>();
+  const original = invoke.getMockImplementation()!;
+  let summaries = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page" && ++summaries === 2) throw new Error("Read unavailable");
+    return original(command, args);
+  });
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Committed draft");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Your revision was saved, but the entry list could not refresh");
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
+  expect(await ref.current!.allowLeave()).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Find" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+});
+
+it("confirms a save without a second editor or history read and preserves newer input", async () => {
+  const original = invoke.getMockImplementation()!;
+  let editorReads = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_editor_snapshot" && ++editorReads > 1) throw new Error("Later read unavailable");
+    return original(command, args);
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "Confirmed draft");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+  expect(editor).toHaveValue("Confirmed draft");
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_history")).toHaveLength(0);
+  await user.type(editor, " plus newer input");
+  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByRole("button", { name: "Refresh history" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_translation_history")).toHaveLength(2));
+  expect(editor).toHaveValue("Confirmed draft plus newer input");
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+});
+
+it("retains the action when a committed save has a malformed acknowledgement", async () => {
+  const original = invoke.getMockImplementation()!;
+  let malformed = true;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const value = await original(command, args);
+    if (command === "save_translation_revision" && malformed) {
+      malformed = false;
+      return { ...value, actionId: "unrelated-action" };
+    }
+    return value;
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Saved once");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+  const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
+  expect(saves).toHaveLength(2);
+  expect(saves[1][1].request).toEqual(saves[0][1].request);
+});
 
 it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 51 without manual paging, then reports the end (%s)", async mode => {
   const original = invoke.getMockImplementation()!;
@@ -81,7 +173,7 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
     }
     if (command === "save_translation_revision") {
       saved.set(String(args.request.unitId), String(args.request.text));
-      return {};
+      return saveReceipt(args.request);
     }
     if (command === "read_review_neighbor") {
       const next = Number(String(args.request.unitId).split("-")[1]) + Number(args.request.direction);
@@ -214,7 +306,7 @@ it("keeps text typed after an earlier save and checks the new selection before s
   let complete!: (value: unknown) => void;
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "save_translation_revision"
-    ? new Promise(resolve => { complete = value => { history = { ...emptyHistory, total: 1, current: { eventId: "selected", unitId: "unit", locale: "zh-CN", sequence: 1, revisionId: "manual", actionId: args.request.actionId as string, previousEventId: null }, currentText: "A", rows: [] }; resolve(value); }; })
+    ? new Promise(resolve => { complete = () => { const receipt = saveReceipt(args.request); history = { ...emptyHistory, total: "1", current: receipt.selection, currentText: "A", rows: [] }; resolve(receipt); }; })
     : original(command, args));
   await user.click(screen.getByRole("button", { name: "Save revision" }));
   await user.type(editor, "B");
@@ -276,7 +368,7 @@ it("refreshes a clean retained editor against current source and selection on re
   await user.click(await screen.findByRole("button", { name: "first" }));
   await screen.findByRole("textbox", { name: "Your draft" });
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
-  history = { ...emptyHistory, total: 1, currentText: "External selection" };
+  history = { ...emptyHistory, total: "1", currentText: "External selection" };
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     const value = await original(command, args);

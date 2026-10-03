@@ -48,7 +48,8 @@ pub use review::{
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
     TranslationAdoptionHandler, TranslationHistory, TranslationMatch, TranslationPreview,
-    TranslationPreviewRow, TranslationRevision, TranslationSelection, TranslationSelectionDecision,
+    TranslationEditBasis, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
+    TranslationSelection, TranslationSelectionDecision,
 };
 
 const DATABASE_FILENAME: &str = "project.sqlite3";

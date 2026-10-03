@@ -713,7 +713,7 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
         &context,
         json!({
             "actionId":save_action, "unitId":unit.unit_id, "locale":"zh-CN",
-            "sourceRevisionId":unit.source_revision_id, "expectedSelectionId":first["eventId"], "text":"Accepted during QA"
+            "sourceRevisionId":unit.source_revision_id, "expectedSelectionId":first["selection"]["eventId"], "text":"Accepted during QA"
         }),
     );
     let mut save = Box::pin(source::translation::save_translation_revision(
@@ -791,14 +791,14 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
         request(
             &current,
             json!({
-                "unitId":unit.unit_id, "locale":"zh-CN", "afterOrdinal":0, "limit":10
+                "unitId":unit.unit_id, "locale":"zh-CN", "afterOrdinal":"0", "limit":10
             }),
         ),
     )
     .unwrap();
-    assert_eq!(history["total"], 2);
+    assert_eq!(history["total"], "2");
     assert_eq!(history["currentText"], "Accepted during QA");
-    assert_eq!(history["current"]["eventId"], json!(saved.event_id));
+    assert_eq!(history["current"]["eventId"], json!(saved.selection.event_id));
     assert_eq!(
         call(
             &webview,
@@ -811,12 +811,12 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
             )
         )
         .unwrap(),
-        serde_json::to_value(&saved).unwrap()
+        serde_json::to_value(&saved.selection).unwrap()
     );
     // A saved acknowledgement can be reconciled after close without duplicating its revision.
     assert_eq!(call(&webview, "save_translation_revision", request(&current, json!({
         "actionId":save_action, "unitId":unit.unit_id, "locale":"zh-CN",
-        "sourceRevisionId":unit.source_revision_id, "expectedSelectionId":first["eventId"], "text":"Accepted during QA"
+        "sourceRevisionId":unit.source_revision_id, "expectedSelectionId":first["selection"]["eventId"], "text":"Accepted during QA"
     }))).unwrap(), serde_json::to_value(&saved).unwrap());
     assert_eq!(
         call(
@@ -825,7 +825,7 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
             request(
                 &current,
                 json!({
-                    "unitId":unit.unit_id, "locale":"zh-CN", "afterOrdinal":0, "limit":10
+                    "unitId":unit.unit_id, "locale":"zh-CN", "afterOrdinal":"0", "limit":10
                 })
             )
         )

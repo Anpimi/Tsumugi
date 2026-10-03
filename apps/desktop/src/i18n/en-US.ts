@@ -493,6 +493,7 @@ ai: {
       savedNewerDraft: "The earlier text was saved. Your newer draft is still here; save it separately when ready.",
       history: "Revision history",
         refreshHistory: "Refresh history",
+        historyStale: "This save is confirmed. Refresh history to include the latest revisions.",
       noHistory: "No revisions for this key and language.",
       selectRevision: "Select this revision",
       importOrigin: "Imported from {{file}}",
@@ -506,6 +507,7 @@ ai: {
       discard: "Discard draft and continue",
       errors: {
       query: "Use a query of at most 256 UTF-8 bytes.",
+      saveRefresh: "Your revision was saved, but the entry list could not refresh. Use Find to reload the list.",
         sourceScope: "The source range changed. Search again to refresh the list; your draft has been kept.",
         scopeExpired: "This result list has expired. Search again to start a new list; your draft has been kept.",
         navigationEdited: "Your draft changed while the next entry was loading. It has been kept; save or discard it before switching.",

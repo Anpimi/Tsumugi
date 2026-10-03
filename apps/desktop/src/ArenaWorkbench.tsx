@@ -41,9 +41,9 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project
  async function refreshPage(after=0){await perform(async current=>{const scope=await sourceCommands.scope(context);const next=scope.currentSnapshot?await sourceCommands.content({...context,snapshotId:scope.currentSnapshot,after,limit:50}):null;const comparisons=await arena.comparisons(context);if(current()){setPage(next);setSavedComparisons(comparisons);}});}
  useEffect(()=>{if(open&&!page)void refreshPage();},[open]);
  useEffect(()=>{if(!open||!attempt||busy)return;let stopped=false,timer:ReturnType<typeof setTimeout>|undefined;const ticket=generation.current;async function poll(){try{const next=await arena.read({...context,attemptId:attempt!});if(!stopped&&alive.current&&ticket===generation.current){setView(next);setPollFailure(null);if(!next.detail.progress.queued&&!next.detail.progress.running)return;}}catch(e){if(!stopped&&alive.current&&ticket===generation.current)setPollFailure(stage(e));}if(!stopped)timer=setTimeout(()=>void poll(),1500);}void poll();return()=>{stopped=true;clearTimeout(timer);};},[open,attempt,busy,project.sessionToken]);
- async function loadHistory(id:string,afterOrdinal=0){
+ async function loadHistory(id:string,afterOrdinal="0"){
   if(!id){setUnit("");setHistory(null);setComparison(null);setReferences([]);return;}
-  const more=afterOrdinal>0&&id===unit&&history?.locale===locale;
+  const more=afterOrdinal!=="0"&&id===unit&&history?.locale===locale;
   await perform(async current=>{
    const next=await translations.history({...context,unitId:id,locale,afterOrdinal,limit:50});
    if(current()){

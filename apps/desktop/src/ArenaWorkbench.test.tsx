@@ -20,7 +20,7 @@ beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:"att
   if(command==="preview_arena_translation"){prepared.preview.config=args.request.config as typeof prepared.preview.config;return prepared;}
   if(command==="start_arena_translation")return"attempt";
   if(command==="read_arena_translation")return{detail:{attemptId:"attempt",taskId:"task",operation:"arena-translation",progress:{queued:0,running:0,succeeded:2,failed:0,unknown:0,adopted:0},items:[],recovery:{units:[]}},rows:[{item,itemId:"i2",sourceOrder:0,label:0,resultId:"out2",output:{text:"Second output",usage:null,requests:1,usageIncomplete:true}},{item,itemId:"i1",sourceOrder:0,label:1,resultId:"out1",output:{text:"First output",usage:null,requests:1,usageIncomplete:true}}],variants:null,blind:true,revealed:false,differentInputs:false,repeatedSampling:true,parentAttemptId:null};
-  if(command==="read_translation_history")return{unitId:"unit",locale:"zh-CN",total:2,current:{eventId:"selected",revisionId:"r1"},currentText:"First {name}",rows:comparison.rows.map((r,i)=>({...r,ordinal:i+1})),nextOrdinal:null};
+  if(command==="read_translation_history")return{unitId:"unit",locale:"zh-CN",total:"2",current:{eventId:"selected",revisionId:"r1"},currentText:"First {name}",rows:comparison.rows.map((r,i)=>({...r,ordinal:String(i+1)})),nextOrdinal:null};
   if(command==="create_arena_comparison"||command==="read_arena_comparison")return comparison;
   if(command==="create_execution_identity")return"action";
   if(command==="read_translation_action")return null;
@@ -45,8 +45,8 @@ it("keeps selected revisions while loading another history page",async()=>{
  const original=invoke.getMockImplementation()!;
  invoke.mockImplementation(async(c:string,a:{request:Record<string,unknown>})=>{
   const value=await original(c,a);
-  if(c==="read_translation_history")return a.request.afterOrdinal===50?{...value,rows:[{...comparison.rows[1],revisionId:"r51",ordinal:51}],nextOrdinal:null}:
-   {...value,rows:[{...comparison.rows[0],ordinal:1}],nextOrdinal:50};
+  if(c==="read_translation_history")return a.request.afterOrdinal==="50"?{...value,rows:[{...comparison.rows[1],revisionId:"r51",ordinal:"51"}],nextOrdinal:null}:
+   {...value,rows:[{...comparison.rows[0],ordinal:"1"}],nextOrdinal:"50"};
   return value;
  });
  const user=await open();await user.selectOptions(screen.getByRole("combobox",{name:"Original string"}),"unit");

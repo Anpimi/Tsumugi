@@ -1,7 +1,7 @@
 use super::*;
 use tsumugi_core::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
-    TranslationHistory, TranslationPreview, TranslationSelection,
+    TranslationHistory, TranslationPreview, TranslationSaveReceipt, TranslationSelection,
 };
 
 request!(TranslationFilesRequest {
@@ -37,7 +37,7 @@ request!(TranslationAdoptRequest {
 request!(TranslationHistoryRequest {
     unit_id: ExecutionId,
     locale: String,
-    after_ordinal: u64,
+    after_ordinal: Revision,
     limit: u32,
 });
 request!(TranslationSaveRequest {
@@ -471,7 +471,7 @@ pub async fn read_translation_history(
                     request.project_id,
                     request.unit_id,
                     &request.locale,
-                    request.after_ordinal,
+                    request.after_ordinal.get(),
                     request.limit,
                 )
                 .map_err(map_source)
@@ -514,7 +514,7 @@ pub async fn read_translation_action(
 pub async fn save_translation_revision(
     state: State<'_, AppState>,
     request: TranslationSaveRequest,
-) -> Result<TranslationSelection, CommandError> {
+) -> Result<TranslationSaveReceipt, CommandError> {
     state
         .sessions
         .run(
@@ -530,7 +530,7 @@ pub async fn save_translation_revision(
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 store
-                    .save_translation_revision(&SaveTranslationRevision {
+                    .save_translation_edit(&SaveTranslationRevision {
                         project_id: request.project_id,
                         action_id: request.action_id,
                         unit_id: request.unit_id,
@@ -539,7 +539,7 @@ pub async fn save_translation_revision(
                         expected_selection_id: request.expected_selection_id,
                         text: request.text,
                     })
-                    .map_err(map_source)
+                    .map_err(map_adopt)
             },
         )
         .await
@@ -593,7 +593,13 @@ mod contracts {
         let start: TranslationStartRequest =
             serde_json::from_value(fixture["start"].clone()).unwrap();
         let save: TranslationSaveRequest = serde_json::from_value(fixture["save"].clone()).unwrap();
+        let receipt: TranslationSaveReceipt =
+            serde_json::from_value(fixture["receipt"].clone()).unwrap();
+        let history: TranslationHistoryRequest =
+            serde_json::from_value(fixture["history"].clone()).unwrap();
         assert_eq!(serde_json::to_value(start).unwrap(), fixture["start"]);
         assert_eq!(serde_json::to_value(save).unwrap(), fixture["save"]);
+        assert_eq!(serde_json::to_value(receipt).unwrap(), fixture["receipt"]);
+        assert_eq!(serde_json::to_value(history).unwrap(), fixture["history"]);
     }
 }

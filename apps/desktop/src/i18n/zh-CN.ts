@@ -494,6 +494,7 @@ ai: {
       savedNewerDraft: "较早的文本已保存。您继续输入的新草稿仍在，可另行保存。",
       history: "修订历史",
         refreshHistory: "刷新历史",
+        historyStale: "本次保存已确认。刷新历史可查看最新修订。",
       noHistory: "此键和语言尚无修订。",
       selectRevision: "选中此修订",
       importOrigin: "由 {{file}} 导入",
@@ -507,6 +508,7 @@ ai: {
       discard: "放弃草稿并继续",
       errors: {
       query: "查询不能超过 256 个 UTF-8 字节。",
+      saveRefresh: "修订已保存，但条目列表未能刷新。请点击“查找”重新加载列表。",
         sourceScope: "源内容范围已改变。请重新查找以刷新列表；您的草稿已保留。",
         scopeExpired: "此结果列表已过期。请重新查找以生成新列表；您的草稿已保留。",
         navigationEdited: "加载下一条期间，您修改了草稿。新草稿已保留，请保存或放弃后再切换。",

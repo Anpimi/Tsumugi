@@ -109,6 +109,7 @@ pub struct TranslationSelection {
     pub event_id: ExecutionId,
     pub unit_id: ExecutionId,
     pub locale: String,
+    #[serde(with = "crate::execution::revision_wire")]
     pub sequence: u64,
     pub revision_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -121,6 +122,7 @@ pub struct TranslationRevision {
     pub revision_id: ExecutionId,
     pub unit_id: ExecutionId,
     pub locale: String,
+    #[serde(with = "crate::execution::revision_wire")]
     pub ordinal: u64,
     pub text: String,
     pub source_snapshot_id: ExecutionId,
@@ -143,11 +145,33 @@ pub struct TranslationRevision {
 pub struct TranslationHistory {
     pub unit_id: ExecutionId,
     pub locale: String,
+    #[serde(with = "crate::execution::revision_wire")]
     pub total: u64,
     pub current: Option<TranslationSelection>,
     pub current_text: Option<String>,
     pub rows: Vec<TranslationRevision>,
+    #[serde(with = "crate::execution::revision_wire::optional")]
     pub next_ordinal: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationEditBasis {
+    pub source_snapshot_id: ExecutionId,
+    pub source_revision_id: ExecutionId,
+    pub selection_id: ExecutionId,
+}
+
+/// Immutable confirmation of one save, including the basis for the next edit.
+/// The selection sequence is scoped to this unit and locale.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationSaveReceipt {
+    pub project_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub basis: TranslationEditBasis,
+    pub selection: TranslationSelection,
+    pub revision: TranslationRevision,
 }
 
 const TABLES: &[(&str, &str)] = &[
@@ -619,6 +643,7 @@ fn check_expected(
         selection
             .sequence
             .checked_add(1)
+            .filter(|sequence| *sequence <= i64::MAX as u64)
             .ok_or_else(|| error(ErrorCode::LimitExceeded, "translation-selection"))
     })
 }
@@ -1243,20 +1268,30 @@ impl ProjectStore {
         &mut self,
         request: &SaveTranslationRevision,
     ) -> Result<TranslationSelection, ExecutionError> {
-        self.save_revision(request, None)
+        self.save_revision(request, None, |_, selection| Ok(selection.clone()))
+    }
+
+    pub fn save_translation_edit(
+        &mut self,
+        request: &SaveTranslationRevision,
+    ) -> Result<TranslationSaveReceipt, ExecutionError> {
+        self.save_revision(request, None, |connection, selection| {
+            save_receipt_in(connection, request.project_id, selection)
+        })
     }
     pub fn save_merged_translation(
         &mut self,
         request: &SaveTranslationRevision,
         merge: &super::arena::MergeBasis,
     ) -> Result<TranslationSelection, ExecutionError> {
-        self.save_revision(request, Some(merge))
+        self.save_revision(request, Some(merge), |_, selection| Ok(selection.clone()))
     }
-    fn save_revision(
+    fn save_revision<T>(
         &mut self,
         request: &SaveTranslationRevision,
         merge: Option<&super::arena::MergeBasis>,
-    ) -> Result<TranslationSelection, ExecutionError> {
+        project_result: impl FnOnce(&Connection, &TranslationSelection) -> Result<T, ExecutionError>,
+    ) -> Result<T, ExecutionError> {
         if request.text.len() > 16 * 1024 {
             return Err(error(ErrorCode::LimitExceeded, "translation-text"));
         }
@@ -1277,7 +1312,7 @@ impl ProjectStore {
             selection_by_action(&transaction, request.action_id)?
         {
             return if saved_digest == digest {
-                Ok(selection)
+                project_result(&transaction, &selection)
             } else {
                 Err(error(ErrorCode::ResultMismatch, "translation-action"))
             };
@@ -1293,14 +1328,17 @@ impl ProjectStore {
         }
         let current = current_selection(&transaction, request.unit_id, &request.locale)?;
         let next_sequence = check_expected(&current, request.expected_selection_id)?;
-        let ordinal: i64 = transaction
+        let previous_ordinal: i64 = transaction
             .query_row(
-                "SELECT COALESCE(MAX(ordinal),0)+1 FROM translation_revisions
+                "SELECT COALESCE(MAX(ordinal),0) FROM translation_revisions
                  WHERE unit_id=?1 AND locale=?2",
                 params![request.unit_id.to_string(), request.locale],
                 |row| row.get(0),
             )
             .map_err(super::ledger::sql_error)?;
+        let ordinal = previous_ordinal
+            .checked_add(1)
+            .ok_or_else(|| error(ErrorCode::LimitExceeded, "translation-ordinal"))?;
         let revision = ExecutionId::new();
         transaction
             .execute(
@@ -1350,6 +1388,9 @@ impl ProjectStore {
                 transaction.execute("INSERT INTO translation_contributors (revision_id,parent_revision_id,ordinal) VALUES (?1,?2,?3)", params![revision.to_string(), parent.to_string(), index as i64]).map_err(super::ledger::sql_error)?;
             }
         }
+        // Build the response before commit: a projection failure must roll back,
+        // rather than misreporting an already committed save as rejected.
+        let result = project_result(&transaction, &selection)?;
         #[cfg(test)]
         if merge.is_some() {
             super::migration_crash_hook("before-arena-merge-commit");
@@ -1362,7 +1403,7 @@ impl ProjectStore {
         if merge.is_some() {
             super::migration_crash_hook("after-arena-merge-commit");
         }
-        Ok(selection)
+        Ok(result)
     }
 
     pub fn select_translation_revision(
@@ -1428,6 +1469,42 @@ impl ProjectStore {
         })?;
         Ok(selection)
     }
+}
+
+fn save_receipt_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    selection: &TranslationSelection,
+) -> Result<TranslationSaveReceipt, ExecutionError> {
+    let revision = connection
+        .query_row(
+            "SELECT revision_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,
+                    origin_kind,action_id,attempt_id,result_id,item_id,artifact_id,
+                    logical_path,declared_locale,native_key,file_digest
+             FROM translation_revisions WHERE project_id=?1 AND revision_id=?2",
+            params![project_id.to_string(), selection.revision_id.to_string()],
+            RawRevision::from_row,
+        )
+        .map_err(super::ledger::sql_error)?
+        .parse()?;
+    if revision.unit_id != selection.unit_id
+        || revision.locale != selection.locale
+        || revision.action_id != selection.action_id
+        || revision.origin_kind != "manual"
+    {
+        return Err(error(ErrorCode::CorruptLedger, "translation-save-receipt"));
+    }
+    Ok(TranslationSaveReceipt {
+        project_id,
+        action_id: selection.action_id,
+        basis: TranslationEditBasis {
+            source_snapshot_id: revision.source_snapshot_id,
+            source_revision_id: revision.source_revision_id,
+            selection_id: selection.event_id,
+        },
+        selection: selection.clone(),
+        revision,
+    })
 }
 
 struct RawRevision {
@@ -1583,6 +1660,114 @@ mod tests {
         let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
         let rows = store.source_content(snapshot, 0, 10).unwrap().rows;
         (temp, store, rows)
+    }
+
+    #[test]
+    fn translation_counter_limits_reject_overflow_and_lossy_wire_values() {
+        let selection = TranslationSelection {
+            event_id: ExecutionId::new(),
+            unit_id: ExecutionId::new(),
+            locale: "zh-CN".into(),
+            sequence: i64::MAX as u64,
+            revision_id: ExecutionId::new(),
+            action_id: ExecutionId::new(),
+            previous_event_id: Some(ExecutionId::new()),
+        };
+        assert_eq!(
+            check_expected(&Some(selection.clone()), Some(selection.event_id))
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+        let wire = serde_json::to_value(&selection).unwrap();
+        assert_eq!(wire["sequence"], "9223372036854775807");
+        assert_eq!(
+            serde_json::from_value::<TranslationSelection>(wire.clone()).unwrap(),
+            selection
+        );
+        for value in [
+            serde_json::json!(9007199254740993_u64),
+            serde_json::json!("01"),
+            serde_json::json!("9223372036854775808"),
+        ] {
+            let mut invalid = wire.clone();
+            invalid["sequence"] = value;
+            assert!(serde_json::from_value::<TranslationSelection>(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn save_receipts_confirm_original_basis_and_roll_back_projection_failures() {
+        let (temp, mut store, rows) = project_with_source();
+        let project_id =
+            ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let first = SaveTranslationRevision {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id: rows[0].unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: rows[0].source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "译文👩‍💻e\u{301}".into(),
+        };
+        let original = store.save_translation_edit(&first).unwrap();
+        assert_eq!(original.action_id, first.action_id);
+        assert_eq!(original.project_id, project_id);
+        assert_eq!(original.basis.source_revision_id, first.source_revision_id);
+        assert_eq!(original.basis.selection_id, original.selection.event_id);
+        assert_eq!(original.revision.text, first.text);
+        assert_eq!(original.revision.ordinal, 1);
+        assert_eq!(original.selection.sequence, 1);
+        let second = SaveTranslationRevision {
+            action_id: ExecutionId::new(),
+            expected_selection_id: Some(original.selection.event_id),
+            text: "Newer selection".into(),
+            ..first.clone()
+        };
+        let newer = store.save_translation_edit(&second).unwrap();
+        // A lost ACK is reconciled by the original action, even after another save.
+        assert_eq!(store.save_translation_edit(&first).unwrap(), original);
+        let different = SaveTranslationRevision {
+            text: "Different request".into(),
+            ..first.clone()
+        };
+        assert_eq!(
+            store.save_translation_edit(&different).unwrap_err().code,
+            ErrorCode::ResultMismatch
+        );
+        let failed = SaveTranslationRevision {
+            action_id: ExecutionId::new(),
+            expected_selection_id: Some(newer.selection.event_id),
+            ..second.clone()
+        };
+        assert_eq!(
+            store
+                .save_revision::<()>(&failed, None, |_, _| {
+                    Err(error(ErrorCode::StorageFailed, "synthetic-projection"))
+                })
+                .unwrap_err()
+                .code,
+            ErrorCode::StorageFailed
+        );
+        assert!(
+            store
+                .translation_selection_by_action(
+                    project_id,
+                    first.unit_id,
+                    &first.locale,
+                    failed.action_id
+                )
+                .unwrap()
+                .is_none()
+        );
+        let history = store
+            .translation_history(project_id, first.unit_id, &first.locale, 0, 10)
+            .unwrap();
+        assert_eq!(history.total, 2);
+        assert_eq!(history.current, Some(newer.selection));
+        store.close().unwrap();
+        let mut reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(reopened.save_translation_edit(&first).unwrap(), original);
     }
 
     #[test]
