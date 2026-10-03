@@ -361,7 +361,7 @@ mod resource;
 mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
-mod source;
+pub(super) mod source;
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SessionRequest {});
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ListRequest {
     after: Revision,

@@ -43,7 +43,7 @@
     "actionId": "00000000-0000-4000-8000-000000000006",
     "confirmation": {
       "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "identityPolicy": "smapi-native-key/v1",
+      "identityPolicy": "smapi-native-key/1",
       "expectedContentRevision": "9007199254740993",
       "sourceLanguage": "en",
       "expectedCurrentSnapshot": null,
@@ -62,7 +62,7 @@
     },
     "confirmation": {
       "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "identityPolicy": "smapi-native-key/v1",
+      "identityPolicy": "smapi-native-key/1",
       "expectedContentRevision": "9007199254740993",
       "sourceLanguage": "en",
       "expectedCurrentSnapshot": null,
@@ -101,9 +101,290 @@
             9,
             34
           ],
-          "identityBasis": "smapi-native-key/v1"
+          "identityBasis": "smapi-native-key/1"
         }
       }
     ]
-  }
+  },
+  "history": {
+    "snapshots": [
+      {
+        "snapshotId": "00000000-0000-4000-8000-000000000005",
+        "revision": "9007199254740993",
+        "current": true,
+        "total": 1,
+        "actionId": "00000000-0000-4000-8000-000000000006",
+        "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "coverage": [
+          {
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "logicalPath": "i18n/default.json",
+            "role": "source",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ]
+      }
+    ],
+    "total": 1,
+    "nextOffset": null
+  },
+  "historyRequest": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "offset": 0,
+    "limit": 100
+  },
+  "preflight": {
+    "namespace": "Fixture.Mod",
+    "count": 1,
+    "sourceLanguage": "en",
+    "diagnostics": [],
+    "files": [
+      {
+        "artifactId": "00000000-0000-4000-8000-000000000007",
+        "logicalPath": "i18n/default.json",
+        "role": "source",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "integration": {
+    "id": "stardew-smapi",
+    "version": "0.1.0",
+    "capabilityId": "stardew-smapi.extract",
+    "capabilityVersion": "1",
+    "inputVersion": 1,
+    "outputVersion": 1,
+    "formatProfiles": [
+      "smapi-i18n-flat"
+    ],
+    "requiredFiles": [
+      "manifest.json",
+      "i18n/default.json"
+    ],
+    "permissions": [
+      "captured-input-only"
+    ],
+    "available": true,
+    "reason": null
+  },
+  "comparisonRequest": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "attemptId": "00000000-0000-4000-8000-000000000003",
+    "resultId": "00000000-0000-4000-8000-000000000004",
+    "after": 0,
+    "limit": 100,
+    "base": null,
+    "filter": ""
+  },
+  "historyContent": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "snapshotId": "00000000-0000-4000-8000-000000000005",
+    "after": 0,
+    "limit": 100,
+    "query": ""
+  },
+  "lineageRequest": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "snapshotId": "00000000-0000-4000-8000-000000000005",
+    "ordinal": 0
+  },
+  "impactRequest": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "snapshotId": "00000000-0000-4000-8000-000000000005",
+    "after": 0,
+    "limit": 100,
+    "locale": "zh-CN"
+  },
+  "comparison": {
+    "scope": {
+      "revision": "9007199254740993",
+      "currentSnapshot": null
+    },
+    "attemptId": "00000000-0000-4000-8000-000000000003",
+    "resultId": "00000000-0000-4000-8000-000000000004",
+    "previousSnapshotId": "00000000-0000-4000-8000-000000000005",
+    "confirmation": {
+      "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "identityPolicy": "smapi-native-key/1",
+      "expectedContentRevision": "9007199254740993",
+      "sourceLanguage": "en",
+      "expectedCurrentSnapshot": null,
+      "lineageBaseSnapshot": null,
+      "lineage": [],
+      "actor": null
+    },
+    "total": 1,
+    "filteredTotal": 1,
+    "unchanged": 0,
+    "moved": 0,
+    "changed": 0,
+    "added": 1,
+    "ambiguous": 0,
+    "removed": 0,
+    "nextOrdinal": null,
+    "rows": [
+      {
+        "kind": "added",
+        "old": null,
+        "new": {
+          "ordinal": 0,
+          "artifactId": "00000000-0000-4000-8000-000000000007",
+          "namespace": "Fixture.Mod",
+          "key": "hello",
+          "text": "Hello {{name}} 世界",
+          "keyByteRange": [
+            1,
+            8
+          ],
+          "valueByteRange": [
+            9,
+            34
+          ],
+          "identityBasis": "smapi-native-key/1"
+        },
+        "candidates": []
+      }
+    ]
+  },
+  "estimates": [
+    {
+      "locale": "zh-CN",
+      "preserved": 0,
+      "reassess": 0,
+      "unresolved": 1,
+      "total": 1
+    }
+  ],
+  "impact": {
+    "snapshotId": "00000000-0000-4000-8000-000000000005",
+    "summary": {
+      "locale": "zh-CN",
+      "preserved": 0,
+      "reassess": 0,
+      "unresolved": 1,
+      "total": 1
+    },
+    "nextOrdinal": null,
+    "rows": [
+      {
+        "current": {
+          "occurrenceId": "00000000-0000-4000-8000-000000000008",
+          "unitId": "00000000-0000-4000-8000-000000000009",
+          "sourceRevisionId": "00000000-0000-4000-8000-000000000010",
+          "occurrence": {
+            "ordinal": 0,
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "namespace": "Fixture.Mod",
+            "key": "hello",
+            "text": "Hello {{name}} 世界",
+            "keyByteRange": [
+              1,
+              8
+            ],
+            "valueByteRange": [
+              9,
+              34
+            ],
+            "identityBasis": "smapi-native-key/1"
+          }
+        },
+        "locale": "zh-CN",
+        "status": "unresolved",
+        "reasons": [
+          "no-selection"
+        ],
+        "selectionId": null,
+        "translationRevisionId": null,
+        "reviewBasis": "source-current",
+        "previous": null,
+        "lineage": [
+          {
+            "oldSnapshotId": "00000000-0000-4000-8000-000000000005",
+            "old": {
+              "occurrenceId": "00000000-0000-4000-8000-000000000008",
+              "unitId": "00000000-0000-4000-8000-000000000009",
+              "sourceRevisionId": "00000000-0000-4000-8000-000000000010",
+              "occurrence": {
+                "ordinal": 0,
+                "artifactId": "00000000-0000-4000-8000-000000000007",
+                "namespace": "Fixture.Mod",
+                "key": "hello",
+                "text": "Hello {{name}} 世界",
+                "keyByteRange": [
+                  1,
+                  8
+                ],
+                "valueByteRange": [
+                  9,
+                  34
+                ],
+                "identityBasis": "smapi-native-key/1"
+              }
+            },
+            "policy": "smapi-native-key/1",
+            "relationship": "same-native-key",
+            "decision": "continue",
+            "actor": "Fixture reviewer",
+            "reason": "Same stable key",
+            "actionId": "00000000-0000-4000-8000-000000000006",
+            "appliedRelation": "continued"
+          }
+        ],
+        "previousBases": [
+          {
+            "kind": "review",
+            "basis": "historical",
+            "translationText": "历史文字",
+            "actionId": "00000000-0000-4000-8000-000000000006",
+            "evidence": {
+              "sourceSnapshotId": "00000000-0000-4000-8000-000000000005",
+              "sourceRevisionId": "00000000-0000-4000-8000-000000000010",
+              "selectionId": null,
+              "revisionId": null,
+              "contextRevisionId": null,
+              "termRevisionIds": []
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "lineage": [
+    {
+      "oldSnapshotId": "00000000-0000-4000-8000-000000000005",
+      "old": {
+        "occurrenceId": "00000000-0000-4000-8000-000000000008",
+        "unitId": "00000000-0000-4000-8000-000000000009",
+        "sourceRevisionId": "00000000-0000-4000-8000-000000000010",
+        "occurrence": {
+          "ordinal": 0,
+          "artifactId": "00000000-0000-4000-8000-000000000007",
+          "namespace": "Fixture.Mod",
+          "key": "hello",
+          "text": "Hello {{name}} 世界",
+          "keyByteRange": [
+            1,
+            8
+          ],
+          "valueByteRange": [
+            9,
+            34
+          ],
+          "identityBasis": "smapi-native-key/1"
+        }
+      },
+      "policy": "smapi-native-key/1",
+      "relationship": "same-native-key",
+      "decision": "continue",
+      "actor": "Fixture reviewer",
+      "reason": "Same stable key",
+      "actionId": "00000000-0000-4000-8000-000000000006",
+      "appliedRelation": "continued"
+    }
+  ]
 }

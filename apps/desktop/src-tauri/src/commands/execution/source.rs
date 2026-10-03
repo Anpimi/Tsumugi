@@ -39,12 +39,14 @@ impl SourceSession {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceSelection {
     pub selection_id: ExecutionId,
     pub folder_name: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct Preflight {
     pub namespace: String,
     pub count: u32,
@@ -52,27 +54,27 @@ pub struct Preflight {
     pub diagnostics: Vec<String>,
     pub files: Vec<content::FileCoverage>,
 }
-request!(CaptureRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] CaptureRequest {
     selection_id: ExecutionId,
     source_language: String
 });
-request!(StartRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] StartRequest {
     selection_id: ExecutionId,
     source_language: String,
     attempt_id: ExecutionId
 });
-request!(PreviewRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] PreviewRequest {
     attempt_id: ExecutionId,
     result_id: ExecutionId,
     after: u32,
     limit: u32
 });
-request!(ContentRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ContentRequest {
     snapshot_id: ExecutionId,
     after: u32,
     limit: u32
 });
-request!(ComparisonRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ComparisonRequest {
     attempt_id: ExecutionId,
     result_id: ExecutionId,
     base: Option<ExecutionId>,
@@ -80,27 +82,27 @@ request!(ComparisonRequest {
     after: u32,
     limit: u32
 });
-request!(HistoryRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] HistoryRequest {
     offset: u32,
     limit: u32
 });
-request!(HistoryContentRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] HistoryContentRequest {
     snapshot_id: ExecutionId,
     query: String,
     after: u32,
     limit: u32
 });
-request!(LineageRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] LineageRequest {
     snapshot_id: ExecutionId,
     ordinal: u32
 });
-request!(ImpactRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ImpactRequest {
     snapshot_id: ExecutionId,
     locale: String,
     after: u32,
     limit: u32
 });
-request!(SourceAdoptRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SourceAdoptRequest {
     attempt_id: ExecutionId,
     result_id: ExecutionId,
     action_id: ExecutionId,

@@ -19,6 +19,39 @@ fn source_wire_fixture_matches_rust_types() {
     round_trip::<ContentRequest>(&fixture["content"]);
     round_trip::<SourceAdoptRequest>(&fixture["prepare"]);
     round_trip::<ContentPage>(&fixture["page"]);
+    round_trip::<Preflight>(&fixture["preflight"]);
+    round_trip::<content::IntegrationDescriptor>(&fixture["integration"]);
+    assert_eq!(serde_json::to_value(content::integration_descriptor(true)).unwrap(), fixture["integration"]);
+    round_trip::<HistoryRequest>(&fixture["historyRequest"]);
+    round_trip::<ComparisonRequest>(&fixture["comparisonRequest"]);
+    round_trip::<HistoryContentRequest>(&fixture["historyContent"]);
+    round_trip::<LineageRequest>(&fixture["lineageRequest"]);
+    round_trip::<ImpactRequest>(&fixture["impactRequest"]);
+    round_trip::<content::SourceHistory>(&fixture["history"]);
+    round_trip::<Vec<content::LineageEvidence>>(&fixture["lineage"]);
+    round_trip::<content::SourceChangePage>(&fixture["comparison"]);
+    round_trip::<content::SourceImpactPage>(&fixture["impact"]);
+    round_trip::<Vec<content::SourceImpactSummary>>(&fixture["estimates"]);
+    let mut rounded = fixture["history"].clone();
+    rounded["snapshots"][0]["revision"] = serde_json::json!(9_007_199_254_740_993u64);
+    assert!(serde_json::from_value::<content::SourceHistory>(rounded).is_err());
+    let mut history = fixture["history"].clone();
+    history["snapshots"][0]["revision"] = serde_json::json!("9223372036854775807");
+    round_trip::<content::SourceHistory>(&history);
+    history["snapshots"][0]["revision"] = serde_json::json!("9223372036854775808");
+    assert!(serde_json::from_value::<content::SourceHistory>(history).is_err());
+    let mut overflow = fixture["preview"].clone();
+    overflow["after"] = serde_json::json!(4_294_967_296u64);
+    assert!(serde_json::from_value::<PreviewRequest>(overflow).is_err());
+    let mut invalid_range = fixture["page"].clone();
+    invalid_range["rows"][0]["occurrence"]["keyByteRange"] = serde_json::json!([0, 1, 2]);
+    assert!(serde_json::from_value::<ContentPage>(invalid_range).is_err());
+    let mut unknown_kind = fixture["comparison"].clone();
+    unknown_kind["rows"][0]["kind"] = serde_json::json!("future-kind");
+    assert!(serde_json::from_value::<content::SourceChangePage>(unknown_kind).is_err());
+    let mut unknown_status = fixture["impact"].clone();
+    unknown_status["rows"][0]["status"] = serde_json::json!("future-status");
+    assert!(serde_json::from_value::<content::SourceImpactPage>(unknown_status).is_err());
     let mut unknown = fixture["prepare"].clone();
     unknown["confirmation"]["requiredExtension"] = serde_json::json!("unknown/v1");
     assert!(serde_json::from_value::<SourceAdoptRequest>(unknown).is_err());
@@ -221,6 +254,14 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     read["limit"] = json!(100);
     let content = call(&view, "read_source_content", read.clone()).unwrap();
     assert_eq!(content["total"], 532);
+    let mut source_history_request = context.clone();
+    source_history_request["offset"] = json!(0);
+    source_history_request["limit"] = json!(100);
+    let source_history = call(&view, "read_source_history", source_history_request.clone()).unwrap();
+    assert_eq!(source_history["snapshots"][0]["snapshotId"], snapshot);
+    let expected_revision = (preview["scope"]["revision"].as_str().unwrap().parse::<u64>().unwrap() + 1).to_string();
+    assert_eq!(source_history["snapshots"][0]["revision"], expected_revision);
+    assert_eq!(source_history["snapshots"][0]["revision"], receipt["changes"][0]["revision"]);
     let mut summary_request = context.clone();
     summary_request["locale"] = json!("zh-CN");
     summary_request["query"] = json!("");
@@ -321,6 +362,8 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     );
     read["sessionToken"] = reopened["sessionToken"].clone();
     assert_eq!(call(&view, "read_source_content", read).unwrap(), content);
+    source_history_request["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(call(&view, "read_source_history", source_history_request).unwrap(), source_history);
     call(
         &view,
         "close_project",

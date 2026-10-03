@@ -52,6 +52,7 @@ pub const PLUGIN_VERSION: &str = "0.1.0";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct IntegrationDescriptor {
     pub id: String,
     pub version: String,
@@ -349,18 +350,22 @@ impl SourceBundle {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceOccurrence {
     pub ordinal: u32,
     pub artifact_id: ExecutionId,
     pub namespace: String,
     pub key: String,
     pub text: String,
+    /// Half-open UTF-8 byte offsets into the captured artifact, using its format profile.
     pub key_byte_range: [u32; 2],
+    /// Half-open UTF-8 byte offsets into the original artifact, not the decoded text.
     pub value_byte_range: [u32; 2],
     pub identity_basis: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct FileCoverage {
     pub artifact_id: ExecutionId,
     pub logical_path: String,
@@ -412,12 +417,14 @@ pub fn validate_output(
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ContentScope {
     pub revision: Revision,
     pub current_snapshot: Option<ExecutionId>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceConfirmation {
     pub result_digest: String,
     pub identity_policy: String,
@@ -434,6 +441,7 @@ pub struct SourceConfirmation {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct LineageChoice {
     pub new_ordinal: u32,
     pub old_occurrence_id: ExecutionId,
@@ -442,20 +450,48 @@ pub struct LineageChoice {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum LineageDecision {
     Continue,
     Reject,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum SourceChangeKind {
+    Unchanged,
+    Moved,
+    Changed,
+    Added,
+    RenameCandidate,
+    Ambiguous,
+    Removed,
+}
+impl SourceChangeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unchanged => "unchanged",
+            Self::Moved => "moved",
+            Self::Changed => "changed",
+            Self::Added => "added",
+            Self::RenameCandidate => "rename-candidate",
+            Self::Ambiguous => "ambiguous",
+            Self::Removed => "removed",
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceChange {
-    pub kind: String,
+    pub kind: SourceChangeKind,
     pub old: Option<ContentRow>,
     pub new: Option<SourceOccurrence>,
     pub candidates: Vec<ContentRow>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceChangePage {
     pub scope: ContentScope,
     pub attempt_id: ExecutionId,
@@ -475,6 +511,7 @@ pub struct SourceChangePage {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceHistory {
     pub snapshots: Vec<SourceHistoryEntry>,
     pub next_offset: Option<u32>,
@@ -482,8 +519,11 @@ pub struct SourceHistory {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceHistoryEntry {
     pub snapshot_id: ExecutionId,
+    #[serde(with = "crate::execution::revision_wire")]
+    #[cfg_attr(feature = "wire-schema", schemars(with = "Revision"))]
     pub revision: u64,
     pub current: bool,
     pub total: u32,
@@ -493,6 +533,7 @@ pub struct SourceHistoryEntry {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct LineageEvidence {
     pub old: ContentRow,
     pub old_snapshot_id: ExecutionId,
@@ -506,6 +547,7 @@ pub struct LineageEvidence {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceImpactBasis {
     pub basis: String,
     pub evidence: crate::ReviewBasis,
@@ -515,6 +557,7 @@ pub struct SourceImpactBasis {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceImpactSummary {
     pub locale: String,
     pub preserved: u32,
@@ -522,14 +565,23 @@ pub struct SourceImpactSummary {
     pub unresolved: u32,
     pub total: u32,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum SourceImpactStatus {
+    Preserved,
+    Reassess,
+    Unresolved,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceImpactRow {
     pub current: ContentRow,
     pub previous: Option<ContentRow>,
     pub previous_bases: Vec<SourceImpactBasis>,
     pub locale: String,
-    pub status: String,
+    pub status: SourceImpactStatus,
     pub reasons: Vec<String>,
     pub selection_id: Option<ExecutionId>,
     pub translation_revision_id: Option<ExecutionId>,
@@ -538,6 +590,7 @@ pub struct SourceImpactRow {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceImpactPage {
     pub snapshot_id: ExecutionId,
     pub summary: SourceImpactSummary,
@@ -546,6 +599,7 @@ pub struct SourceImpactPage {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ContentRow {
     pub occurrence_id: Option<ExecutionId>,
     pub unit_id: Option<ExecutionId>,
@@ -554,6 +608,7 @@ pub struct ContentRow {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ContentPage {
     pub snapshot_id: Option<ExecutionId>,
     pub attempt_id: ExecutionId,

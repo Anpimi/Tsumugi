@@ -1,0 +1,1622 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "CaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "selectionId",
+          "sourceLanguage"
+        ],
+        "type": "object"
+      },
+      "ComparisonRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "base": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filter": {
+            "type": "string"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "resultId",
+          "filter",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ContentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "snapshotId",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "type": "string"
+      },
+      "HistoryContentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "query": {
+            "type": "string"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "snapshotId",
+          "query",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "HistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "offset",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ImpactRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "snapshotId",
+          "locale",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "LineageChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/LineageDecision"
+          },
+          "newOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "oldOccurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "newOrdinal",
+          "oldOccurrenceId",
+          "decision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "LineageDecision": {
+        "enum": [
+          "continue",
+          "reject"
+        ],
+        "type": "string"
+      },
+      "LineageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "snapshotId",
+          "ordinal"
+        ],
+        "type": "object"
+      },
+      "PreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "resultId",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "SessionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId"
+        ],
+        "type": "object"
+      },
+      "SourceAdoptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmation": {
+            "$ref": "#/definitions/SourceConfirmation"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "resultId",
+          "actionId",
+          "confirmation"
+        ],
+        "type": "object"
+      },
+      "SourceConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedContentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedCurrentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "identityPolicy": {
+            "type": "string"
+          },
+          "lineage": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/LineageChoice"
+            },
+            "type": "array"
+          },
+          "lineageBaseSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resultDigest",
+          "identityPolicy",
+          "expectedContentRevision",
+          "sourceLanguage"
+        ],
+        "type": "object"
+      },
+      "StartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "selectionId",
+          "sourceLanguage",
+          "attemptId"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "adopt": {
+        "$ref": "#/definitions/SourceAdoptRequest"
+      },
+      "capture": {
+        "$ref": "#/definitions/CaptureRequest"
+      },
+      "comparison": {
+        "$ref": "#/definitions/ComparisonRequest"
+      },
+      "content": {
+        "$ref": "#/definitions/ContentRequest"
+      },
+      "history": {
+        "$ref": "#/definitions/HistoryRequest"
+      },
+      "historyContent": {
+        "$ref": "#/definitions/HistoryContentRequest"
+      },
+      "impact": {
+        "$ref": "#/definitions/ImpactRequest"
+      },
+      "lineage": {
+        "$ref": "#/definitions/LineageRequest"
+      },
+      "preview": {
+        "$ref": "#/definitions/PreviewRequest"
+      },
+      "session": {
+        "$ref": "#/definitions/SessionRequest"
+      },
+      "start": {
+        "$ref": "#/definitions/StartRequest"
+      }
+    },
+    "required": [
+      "session",
+      "capture",
+      "start",
+      "preview",
+      "content",
+      "comparison",
+      "history",
+      "historyContent",
+      "lineage",
+      "impact",
+      "adopt"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:source:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "AdoptionAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "parameters": true,
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "operation",
+          "resultIds",
+          "cancellationRevision",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "ContentPage": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmation": {
+            "$ref": "#/definitions/SourceConfirmation"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/definitions/FileCoverage"
+            },
+            "type": "array"
+          },
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/ContentRow"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "snapshotId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "attemptId",
+          "resultId",
+          "scope",
+          "confirmation",
+          "namespace",
+          "coverage",
+          "total",
+          "nextOrdinal",
+          "diagnostics",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "ContentRow": {
+        "additionalProperties": false,
+        "properties": {
+          "occurrence": {
+            "$ref": "#/definitions/SourceOccurrence"
+          },
+          "occurrenceId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "unitId",
+          "sourceRevisionId",
+          "occurrence"
+        ],
+        "type": "object"
+      },
+      "ContentScope": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          }
+        },
+        "required": [
+          "revision",
+          "currentSnapshot"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "FileCoverage": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifactId",
+          "logicalPath",
+          "role",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "IntegrationDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "capabilityId": {
+            "type": "string"
+          },
+          "capabilityVersion": {
+            "type": "string"
+          },
+          "formatProfiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "id": {
+            "type": "string"
+          },
+          "inputVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outputVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requiredFiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "capabilityId",
+          "capabilityVersion",
+          "inputVersion",
+          "outputVersion",
+          "formatProfiles",
+          "requiredFiles",
+          "permissions",
+          "available",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "LineageChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/LineageDecision"
+          },
+          "newOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "oldOccurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "newOrdinal",
+          "oldOccurrenceId",
+          "decision",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "LineageDecision": {
+        "enum": [
+          "continue",
+          "reject"
+        ],
+        "type": "string"
+      },
+      "LineageEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "appliedRelation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "type": "string"
+          },
+          "old": {
+            "$ref": "#/definitions/ContentRow"
+          },
+          "oldSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "policy": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relationship": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "old",
+          "oldSnapshotId",
+          "relationship",
+          "decision",
+          "actor",
+          "reason",
+          "actionId",
+          "policy",
+          "appliedRelation"
+        ],
+        "type": "object"
+      },
+      "Preflight": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/definitions/FileCoverage"
+            },
+            "type": "array"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace",
+          "count",
+          "sourceLanguage",
+          "diagnostics",
+          "files"
+        ],
+        "type": "object"
+      },
+      "ReviewBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "contextRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "termRevisionIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "selectionId",
+          "revisionId",
+          "contextRevisionId",
+          "termRevisionIds"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "SourceChange": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/definitions/ContentRow"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/definitions/SourceChangeKind"
+          },
+          "new": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceOccurrence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "old": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContentRow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "old",
+          "new",
+          "candidates"
+        ],
+        "type": "object"
+      },
+      "SourceChangeKind": {
+        "enum": [
+          "unchanged",
+          "moved",
+          "changed",
+          "added",
+          "rename-candidate",
+          "ambiguous",
+          "removed"
+        ],
+        "type": "string"
+      },
+      "SourceChangePage": {
+        "additionalProperties": false,
+        "properties": {
+          "added": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ambiguous": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "changed": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "confirmation": {
+            "$ref": "#/definitions/SourceConfirmation"
+          },
+          "filteredTotal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "moved": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "previousSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "removed": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/SourceChange"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/definitions/ContentScope"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unchanged": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope",
+          "attemptId",
+          "resultId",
+          "previousSnapshotId",
+          "confirmation",
+          "total",
+          "filteredTotal",
+          "unchanged",
+          "moved",
+          "changed",
+          "added",
+          "ambiguous",
+          "removed",
+          "nextOrdinal",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "SourceConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedContentRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expectedCurrentSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "identityPolicy": {
+            "type": "string"
+          },
+          "lineage": {
+            "default": [],
+            "items": {
+              "$ref": "#/definitions/LineageChoice"
+            },
+            "type": "array"
+          },
+          "lineageBaseSnapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "resultDigest",
+          "identityPolicy",
+          "expectedContentRevision",
+          "sourceLanguage",
+          "expectedCurrentSnapshot",
+          "lineage",
+          "actor",
+          "lineageBaseSnapshot"
+        ],
+        "type": "object"
+      },
+      "SourceHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOffset": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "snapshots": {
+            "items": {
+              "$ref": "#/definitions/SourceHistoryEntry"
+            },
+            "type": "array"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "snapshots",
+          "nextOffset",
+          "total"
+        ],
+        "type": "object"
+      },
+      "SourceHistoryEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/definitions/FileCoverage"
+            },
+            "type": "array"
+          },
+          "current": {
+            "type": "boolean"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "revision",
+          "current",
+          "total",
+          "actionId",
+          "resultDigest",
+          "coverage"
+        ],
+        "type": "object"
+      },
+      "SourceImpactBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/definitions/ReviewBasis"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "translationText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "basis",
+          "evidence",
+          "actionId",
+          "kind",
+          "translationText"
+        ],
+        "type": "object"
+      },
+      "SourceImpactPage": {
+        "additionalProperties": false,
+        "properties": {
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/SourceImpactRow"
+            },
+            "type": "array"
+          },
+          "snapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "summary": {
+            "$ref": "#/definitions/SourceImpactSummary"
+          }
+        },
+        "required": [
+          "snapshotId",
+          "summary",
+          "nextOrdinal",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "SourceImpactRow": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "$ref": "#/definitions/ContentRow"
+          },
+          "lineage": {
+            "items": {
+              "$ref": "#/definitions/LineageEvidence"
+            },
+            "type": "array"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContentRow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previousBases": {
+            "items": {
+              "$ref": "#/definitions/SourceImpactBasis"
+            },
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "reviewBasis": {
+            "type": "string"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/definitions/SourceImpactStatus"
+          },
+          "translationRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "current",
+          "previous",
+          "previousBases",
+          "locale",
+          "status",
+          "reasons",
+          "selectionId",
+          "translationRevisionId",
+          "reviewBasis",
+          "lineage"
+        ],
+        "type": "object"
+      },
+      "SourceImpactStatus": {
+        "enum": [
+          "preserved",
+          "reassess",
+          "unresolved"
+        ],
+        "type": "string"
+      },
+      "SourceImpactSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "preserved": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reassess": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unresolved": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "locale",
+          "preserved",
+          "reassess",
+          "unresolved",
+          "total"
+        ],
+        "type": "object"
+      },
+      "SourceOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "identityBasis": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "keyByteRange": {
+            "description": "Half-open UTF-8 byte offsets into the captured artifact, using its format profile.",
+            "items": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "valueByteRange": {
+            "description": "Half-open UTF-8 byte offsets into the original artifact, not the decoded text.",
+            "items": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          }
+        },
+        "required": [
+          "ordinal",
+          "artifactId",
+          "namespace",
+          "key",
+          "text",
+          "keyByteRange",
+          "valueByteRange",
+          "identityBasis"
+        ],
+        "type": "object"
+      },
+      "SourceSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "folderName": {
+            "type": "string"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "selectionId",
+          "folderName"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "action": {
+        "$ref": "#/definitions/AdoptionAction"
+      },
+      "attempt": {
+        "$ref": "#/definitions/ExecutionId"
+      },
+      "cancelled": {
+        "type": "null"
+      },
+      "comparison": {
+        "$ref": "#/definitions/SourceChangePage"
+      },
+      "estimates": {
+        "items": {
+          "$ref": "#/definitions/SourceImpactSummary"
+        },
+        "type": "array"
+      },
+      "history": {
+        "$ref": "#/definitions/SourceHistory"
+      },
+      "impact": {
+        "$ref": "#/definitions/SourceImpactPage"
+      },
+      "integration": {
+        "$ref": "#/definitions/IntegrationDescriptor"
+      },
+      "lineage": {
+        "items": {
+          "$ref": "#/definitions/LineageEvidence"
+        },
+        "type": "array"
+      },
+      "page": {
+        "$ref": "#/definitions/ContentPage"
+      },
+      "preflight": {
+        "$ref": "#/definitions/Preflight"
+      },
+      "scope": {
+        "$ref": "#/definitions/ContentScope"
+      },
+      "selection": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/SourceSelection"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "integration",
+      "selection",
+      "preflight",
+      "attempt",
+      "cancelled",
+      "scope",
+      "page",
+      "comparison",
+      "history",
+      "lineage",
+      "estimates",
+      "impact",
+      "action"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:source:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

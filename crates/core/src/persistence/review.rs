@@ -93,6 +93,7 @@ pub enum ReviewDecisionKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReviewBasis {
     pub source_snapshot_id: ExecutionId,
     pub source_revision_id: ExecutionId,

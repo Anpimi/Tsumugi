@@ -7,6 +7,7 @@ import type { ProjectView } from "./projectCommands";
 import type { DeliveryView } from "./releaseCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -28,7 +29,7 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string) => {
     if (command === "list_releases") return releases;
-    if (command === "read_source_integration") return { id: "stardew-smapi" };
+    if (command === "read_source_integration") return sourceIntegrationFixture;
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: "snapshot", basis: "basis", ready: true,
       locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 532, blockerCount: 0, exceptionCount: 0 }] };
     if (command === "create_execution_identity") return fixtureIdentity(1);
@@ -49,7 +50,7 @@ it.each(["en-US", "zh-CN"])("describes root caption delivery in %s", async local
   await i18n.changeLanguage(locale);
   releases = [{ ...release, artifacts: [{ locale: "zh-CN", fileName: "zh-CN.vtt", sha256: "hash", entryCount: 2 }] }];
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve({ id: "webvtt" }) : original(command));
+  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve(captionIntegrationFixture) : original(command));
   const user = userEvent.setup();
   render(<ReleaseWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
@@ -61,7 +62,7 @@ it.each(["en-US", "zh-CN"])("describes root caption delivery in %s", async local
 
 it("routes WebVTT builds to a root subtitle filename and preserves an edited mapping", async () => {
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve({ id: "webvtt" }) : original(command));
+  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve(captionIntegrationFixture) : original(command));
   const user = userEvent.setup();
   render(<ReleaseWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Build and export" }));

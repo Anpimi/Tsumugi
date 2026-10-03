@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { sourcePageFixture } from "./testSupport/sourceFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 
 const mocks = vi.hoisted(() => ({
@@ -109,8 +110,8 @@ describe("project lifecycle workbench", () => {
     const target = { unitId: "unit", locale: "zh-CN", nativeKey: "first", sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
     let text: string | null = null;
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
-      if (command === "read_content_scope") return { revision: "2", currentSnapshot: "snapshot" };
-      if (command === "read_source_content") return { snapshotId: "snapshot", namespace: "Example.Mod", rows: [], nextOrdinal: null, total: 1 };
+      if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(500) };
+      if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(500), scope: { revision: "2", currentSnapshot: fixtureIdentity(500) }, namespace: "Example.Mod", rows: [], total: 1 });
       if (command === "read_review_summary_page") return { rows: [{ ...target, sourcePreview: target.sourceText, translationPreview: text }], total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: "snapshot", readVersion: "view" };
       if (command === "read_review_editor_snapshot") return {
         target: { ...target, translationText: text },

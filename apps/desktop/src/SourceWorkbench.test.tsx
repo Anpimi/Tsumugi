@@ -8,25 +8,28 @@ import type { ContentPage, SourceChangePage } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import { fixtureIdentity } from "./testSupport/executionFixture";
+import { sourcePageFixture, sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
-const preview: ContentPage = { snapshotId: null, attemptId: "attempt", resultId: "result", scope: { revision: "1", currentSnapshot: null }, confirmation: { resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: "file", logicalPath: "i18n/default.json", role: "source", sha256: "hash" }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [{ occurrenceId: null, unitId: null, sourceRevisionId: null, occurrence: { ordinal: 0, artifactId: "file", namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", keyByteRange: [1, 8], valueByteRange: [9, 30], identityBasis: "native-key" } }] };
+const preview: ContentPage = { snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: "hash" }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [{ occurrenceId: null, unitId: null, sourceRevisionId: null, occurrence: { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", keyByteRange: [1, 8], valueByteRange: [9, 30], identityBasis: "native-key" } }] };
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); invoke.mockReset();
   invoke.mockImplementation(async (command: string) => {
-    if (command === "read_source_integration") return { id: "stardew-smapi", version: "0.1.0", available: true, formatProfiles: ["smapi-i18n-flat"] };
+    if (command === "read_source_integration") return sourceIntegrationFixture;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: null };
-    if (command === "select_source") return { selectionId: "selection", folderName: "Example Mod" };
+    if (command === "select_source") return { selectionId: fixtureIdentity(102), folderName: "Example Mod" };
     if (command === "preflight_source") return { namespace: "Example.Mod", count: 2, sourceLanguage: "en-US", diagnostics: [], files: [] };
     if (command === "create_execution_identity") return executionFixture.prepare.actionId;
-    if (command === "start_source_import") return "attempt";
+    if (command === "start_source_import") return executionFixture.detail.attemptId;
     if (command === "read_execution_attempt") return { ...executionFixture.detail, items: [{ ...executionFixture.detail.items[0], resultId: executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: "succeeded", validation: "valid" } }] };
     if (command === "read_source_preview") return preview;
-    if (command === "prepare_source_adoption" || command === "cancel_source_capture") return {};
-    if (command === "adopt_execution" || command === "read_execution_receipt") return { ...executionFixture.receipt, changes: [{ kind: "source-snapshot", id: "snapshot", revision: "2" }] };
-    if (command === "read_source_content") return { ...preview, snapshotId: "snapshot", scope: { revision: "2", currentSnapshot: "snapshot" } };
-    if (command === "read_source_impact") return { snapshotId: "snapshot", summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null };
+    if (command === "prepare_source_adoption") return executionFixture.action;
+    if (command === "cancel_source_capture") return null;
+    if (command === "adopt_execution" || command === "read_execution_receipt") return { ...executionFixture.receipt, changes: [{ kind: "source-snapshot", id: fixtureIdentity(100), revision: "2" }] };
+    if (command === "read_source_content") return { ...preview, snapshotId: fixtureIdentity(100), scope: { revision: "2", currentSnapshot: fixtureIdentity(100) } };
+    if (command === "read_source_impact") return { snapshotId: fixtureIdentity(100), summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null };
     throw new Error(command);
   });
 });
@@ -36,8 +39,8 @@ it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", 
   const original = invoke.getMockImplementation()!;
   let invalid = true;
   invoke.mockImplementation((command: string, args: unknown) => {
-    if (command === "read_webvtt_integration") return Promise.resolve({ id: "webvtt", version: "0.1.0", available: true, formatProfiles: ["webvtt-captions"] });
-    if (command === "select_webvtt_source") return Promise.resolve({ selectionId: "captions", folderName: "Captions" });
+    if (command === "read_webvtt_integration") return Promise.resolve(captionIntegrationFixture);
+    if (command === "select_webvtt_source") return Promise.resolve({ selectionId: fixtureIdentity(103), folderName: "Captions" });
     if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", outcome: "rejected", reason: "vtt-timing" });
     return original(command, args);
   });
@@ -60,7 +63,7 @@ it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", 
 
 it("retains an update selection when reopening an already imported project", async () => {
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args: unknown) => command === "read_content_scope" ? Promise.resolve({ revision: "2", currentSnapshot: "snapshot" }) : original(command, args));
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_content_scope" ? Promise.resolve({ revision: "2", currentSnapshot: fixtureIdentity(100) }) : original(command, args));
   render(<SourceWorkbench project={project} disabled={false} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));
@@ -85,7 +88,7 @@ it("ignores a late domain descriptor after the user returns to SMAPI", async () 
   const format = await screen.findByRole("combobox", { name: "Source format" });
   await user.selectOptions(format, "webvtt");
   await user.selectOptions(format, "stardew-smapi");
-  await act(async () => complete({ id: "webvtt", version: "0.1.0", available: true, formatProfiles: ["webvtt-captions"] }));
+  await act(async () => complete(captionIntegrationFixture));
   expect(format).toHaveValue("stardew-smapi");
   expect(screen.getByRole("button", { name: "Choose Mod folder" })).toBeEnabled();
 });
@@ -135,7 +138,7 @@ it("requires a language declaration and full-range confirmation, retaining liter
   await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
   await user.click(screen.getByRole("button", { name: "Apply to project" }));
   await screen.findByRole("heading", { name: "Imported source content" });
-  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: "project", attemptId: "attempt", resultId: "result", actionId: executionFixture.prepare.actionId, confirmation: preview.confirmation } });
+  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: "project", attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], actionId: executionFixture.prepare.actionId, confirmation: preview.confirmation } });
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
 });
 it("keeps the selection across view changes and requires a decision before leaving the project", async () => {
@@ -160,7 +163,7 @@ it("queries a lost acknowledgement without applying a second time", async () => 
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     if (command === "adopt_execution") throw { code: "outcome-unknown" };
-    if (command === "read_content_scope" && invoke.mock.calls.some(([name]) => name === "read_execution_receipt")) return { revision: "2", currentSnapshot: "snapshot" };
+    if (command === "read_content_scope" && invoke.mock.calls.some(([name]) => name === "read_execution_receipt")) return { revision: "2", currentSnapshot: fixtureIdentity(100) };
     return original(command, args);
   });
   render(<SourceWorkbench project={project} disabled={false} />);
@@ -207,13 +210,13 @@ it("ignores a preflight response invalidated by leaving, and supports Chinese la
   act(() => { decision = ref.current!.allowLeave(); });
   await user.click(screen.getByRole("button", { name: "放弃选择并继续" }));
   expect(await decision).toBe(true);
-  await act(async () => { complete({ namespace: "STALE", count: 1, diagnostics: [] }); });
+  await act(async () => { complete({ namespace: "STALE", sourceLanguage: "en", count: 1, files: [], diagnostics: [] }); });
   await waitFor(() => expect(screen.queryByText(/STALE/)).not.toBeInTheDocument());
 });
 
 function updateComparison(): SourceChangePage {
-  const old = { ...preview.rows[0], occurrenceId: "old", unitId: "unit", sourceRevisionId: "source-revision" };
-  return { scope: { revision: "2", currentSnapshot: "s1" }, attemptId: "update", resultId: "result", previousSnapshotId: "s1", confirmation: { ...preview.confirmation, expectedContentRevision: "2", expectedCurrentSnapshot: "s1", lineageBaseSnapshot: "s1" }, total: 3, filteredTotal: 3, unchanged: 1, moved: 0, changed: 1, added: 0, ambiguous: 0, removed: 1, nextOrdinal: 1, rows: [{ kind: "changed", old, new: { ...old.occurrence, text: "New source {{name}} 世界" }, candidates: [old] }] };
+  const old = { ...preview.rows[0], occurrenceId: fixtureIdentity(106), unitId: fixtureIdentity(107), sourceRevisionId: fixtureIdentity(108) };
+  return { scope: { revision: "2", currentSnapshot: fixtureIdentity(105) }, attemptId: fixtureIdentity(104), resultId: executionFixture.prepare.resultIds[0], previousSnapshotId: fixtureIdentity(105), confirmation: { ...preview.confirmation, expectedContentRevision: "2", expectedCurrentSnapshot: fixtureIdentity(105), lineageBaseSnapshot: fixtureIdentity(105) }, total: 3, filteredTotal: 3, unchanged: 1, moved: 0, changed: 1, added: 0, ambiguous: 0, removed: 1, nextOrdinal: 1, rows: [{ kind: "changed", old, new: { ...old.occurrence, text: "New source {{name}} 世界" }, candidates: [old] }] };
 }
 
 it("keeps identity drafts across filtering and applies the whole range only after reviewing impact", async () => {
@@ -228,11 +231,11 @@ it("keeps identity drafts across filtering and applies the whole range only afte
     return original(command, args);
   });
   render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
-  act(() => ref.current!.showAttempt("update"));
+  act(() => ref.current!.showAttempt(fixtureIdentity(104)));
   await screen.findByRole("heading", { name: "Review upstream changes" });
   const user = userEvent.setup();
   await user.type(screen.getByRole("textbox", { name: "Reviewer for identity decisions" }), "Maintainer");
-  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), "continue:old");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), `continue:${fixtureIdentity(106)}`);
   await user.type(screen.getByRole("textbox", { name: "Reason for this decision" }), "Same content identity with updated wording");
   await user.type(screen.getByRole("textbox", { name: "Find a key, text or change type" }), "hello");
   await user.click(screen.getByRole("button", { name: "Search" }));
@@ -246,7 +249,7 @@ it("keeps identity drafts across filtering and applies the whole range only afte
   expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Same content identity with updated wording");
   expect(screen.getByRole("button", { name: "Refresh comparison against current source" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "Check recorded outcome" })).not.toBeInTheDocument();
-  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: expect.objectContaining({ confirmation: expect.objectContaining({ expectedCurrentSnapshot: "s1", lineageBaseSnapshot: "s1", lineage: [{ newOrdinal: 0, oldOccurrenceId: "old", decision: "continue", reason: "Same content identity with updated wording" }] }) }) });
+  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: expect.objectContaining({ confirmation: expect.objectContaining({ expectedCurrentSnapshot: fixtureIdentity(105), lineageBaseSnapshot: fixtureIdentity(105), lineage: [{ newOrdinal: 0, oldOccurrenceId: fixtureIdentity(106), decision: "continue", reason: "Same content identity with updated wording" }] }) }) });
 });
 
 it("does not overwrite a newer identity draft after a delayed estimate or project leave", async () => {
@@ -260,10 +263,10 @@ it("does not overwrite a newer identity draft after a delayed estimate or projec
     return original(command, args);
   });
   render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
-  act(() => ref.current!.showAttempt("update"));
+  act(() => ref.current!.showAttempt(fixtureIdentity(104)));
   await screen.findByRole("heading", { name: "Review upstream changes" });
   const user = userEvent.setup();
-  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), "continue:old");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Identity decision" }), `continue:${fixtureIdentity(106)}`);
   await user.type(screen.getByRole("textbox", { name: "Reason for this decision" }), "Preserved draft");
   await user.click(screen.getByRole("button", { name: "Review estimated impact" }));
   expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toBeDisabled();

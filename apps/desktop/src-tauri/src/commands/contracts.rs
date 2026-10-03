@@ -1,6 +1,6 @@
 //! Generate IPC shapes from the same Rust definitions used by Tauri and Serde.
 use super::*;
-use schemars::{JsonSchema, generate::SchemaSettings};
+use schemars::{JsonSchema, Schema, generate::SchemaSettings, transform::RecursiveTransform};
 
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -56,6 +56,63 @@ struct ExecutionResponses {
     adoption: tsumugi_core::execution::AdoptionReceipt,
     receipt: Option<tsumugi_core::execution::AdoptionReceipt>,
 }
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct SourceRequests {
+    session: execution::SessionRequest,
+    capture: execution::source::CaptureRequest,
+    start: execution::source::StartRequest,
+    preview: execution::source::PreviewRequest,
+    content: execution::source::ContentRequest,
+    comparison: execution::source::ComparisonRequest,
+    history: execution::source::HistoryRequest,
+    history_content: execution::source::HistoryContentRequest,
+    lineage: execution::source::LineageRequest,
+    impact: execution::source::ImpactRequest,
+    adopt: execution::source::SourceAdoptRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct SourceResponses {
+    integration: tsumugi_core::content::IntegrationDescriptor,
+    selection: Option<execution::source::SourceSelection>,
+    preflight: execution::source::Preflight,
+    attempt: tsumugi_core::execution::ExecutionId,
+    cancelled: (),
+    scope: tsumugi_core::content::ContentScope,
+    page: tsumugi_core::content::ContentPage,
+    comparison: tsumugi_core::content::SourceChangePage,
+    history: tsumugi_core::content::SourceHistory,
+    lineage: Vec<tsumugi_core::content::LineageEvidence>,
+    estimates: Vec<tsumugi_core::content::SourceImpactSummary>,
+    impact: tsumugi_core::content::SourceImpactPage,
+    action: tsumugi_core::execution::AdoptionAction,
+}
+
+fn bound_u32(schema: &mut Schema) {
+    // Schemars marks Rust's integer format but does not emit its upper bound.
+    // Apply the primitive bound to scalar and tuple items without copying DTOs.
+    if schema.get("format").and_then(serde_json::Value::as_str) == Some("uint32") {
+        schema.insert("maximum".into(), u32::MAX.into());
+    }
+}
+
+fn schemas<Q: JsonSchema, R: JsonSchema>() -> serde_json::Value {
+    let settings = SchemaSettings::draft07().with_transform(RecursiveTransform(bound_u32));
+    let requests = settings
+        .clone()
+        .for_deserialize()
+        .into_generator()
+        .into_root_schema_for::<Q>();
+    let responses = settings
+        .for_serialize()
+        .into_generator()
+        .into_root_schema_for::<R>();
+    serde_json::json!({"requests": requests, "responses": responses})
+}
+
 pub(super) fn metadata_revision(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
     tsumugi_core::execution::wire_schema::unsigned_decimal(u64::MAX)
 }
@@ -80,28 +137,13 @@ pub(super) fn optional_text(
 }
 
 pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    let requests = SchemaSettings::draft07()
-        .for_deserialize()
-        .into_generator()
-        .into_root_schema_for::<Requests>();
-    let responses = SchemaSettings::draft07()
-        .for_serialize()
-        .into_generator()
-        .into_root_schema_for::<Responses>();
-    let execution_requests = SchemaSettings::draft07()
-        .for_deserialize()
-        .into_generator()
-        .into_root_schema_for::<ExecutionRequests>();
-    let execution_responses = SchemaSettings::draft07()
-        .for_serialize()
-        .into_generator()
-        .into_root_schema_for::<ExecutionResponses>();
     std::fs::write(
         path,
         serde_json::to_string_pretty(
             &serde_json::json!({
-                "project": {"requests":requests, "responses":responses},
-                "execution": {"requests":execution_requests, "responses":execution_responses}
+                "project": schemas::<Requests, Responses>(),
+                "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
+                "source": schemas::<SourceRequests, SourceResponses>()
             }),
         )? + "\n",
     )?;

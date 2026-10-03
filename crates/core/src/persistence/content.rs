@@ -791,15 +791,15 @@ fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChang
                     && old.occurrence.identity_basis == row.identity_basis
                     && old.occurrence.ordinal == row.ordinal =>
             {
-                ("unchanged", Some(old), vec![old.clone()])
+                (SourceChangeKind::Unchanged, Some(old), vec![old.clone()])
             }
             Some(old)
                 if old.occurrence.text == row.text
                     && old.occurrence.identity_basis == row.identity_basis =>
             {
-                ("moved", Some(old), vec![old.clone()])
+                (SourceChangeKind::Moved, Some(old), vec![old.clone()])
             }
-            Some(old) => ("changed", Some(old), vec![old.clone()]),
+            Some(old) => (SourceChangeKind::Changed, Some(old), vec![old.clone()]),
             None => {
                 let matches: Vec<ContentRow> = removed
                     .iter()
@@ -815,7 +815,7 @@ fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChang
                     .count();
                 if matches.len() == 1 && successors == 1 {
                     (
-                        "rename-candidate",
+                        SourceChangeKind::RenameCandidate,
                         Some(
                             *removed
                                 .iter()
@@ -825,14 +825,14 @@ fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChang
                         matches,
                     )
                 } else if !matches.is_empty() {
-                    ("ambiguous", None, matches)
+                    (SourceChangeKind::Ambiguous, None, matches)
                 } else {
-                    ("added", None, matches)
+                    (SourceChangeKind::Added, None, matches)
                 }
             }
         };
         changes.push(SourceChange {
-            kind: kind.into(),
+            kind,
             old: candidate.cloned(),
             new: Some(row.clone()),
             candidates,
@@ -840,7 +840,7 @@ fn compare_rows(old: &[ContentRow], new: &[SourceOccurrence]) -> Vec<SourceChang
     }
     for old in removed {
         changes.push(SourceChange {
-            kind: "removed".into(),
+            kind: SourceChangeKind::Removed,
             old: Some(old.clone()),
             new: None,
             candidates: Vec::new(),
@@ -985,18 +985,18 @@ impl ProjectStore {
             filtered_total: 0,
             unchanged: rows
                 .iter()
-                .filter(|row| row.kind == "unchanged" || row.kind == "moved")
+                .filter(|row| row.kind == SourceChangeKind::Unchanged || row.kind == SourceChangeKind::Moved)
                 .count() as u32,
-            moved: rows.iter().filter(|row| row.kind == "moved").count() as u32,
-            changed: rows.iter().filter(|row| row.kind == "changed").count() as u32,
+            moved: rows.iter().filter(|row| row.kind == SourceChangeKind::Moved).count() as u32,
+            changed: rows.iter().filter(|row| row.kind == SourceChangeKind::Changed).count() as u32,
             added: rows
                 .iter()
                 .filter(|row| {
-                    row.kind == "added" || row.kind == "rename-candidate" || row.kind == "ambiguous"
+                    row.kind == SourceChangeKind::Added || row.kind == SourceChangeKind::RenameCandidate || row.kind == SourceChangeKind::Ambiguous
                 })
                 .count() as u32,
-            ambiguous: rows.iter().filter(|row| row.kind == "ambiguous").count() as u32,
-            removed: rows.iter().filter(|row| row.kind == "removed").count() as u32,
+            ambiguous: rows.iter().filter(|row| row.kind == SourceChangeKind::Ambiguous).count() as u32,
+            removed: rows.iter().filter(|row| row.kind == SourceChangeKind::Removed).count() as u32,
             next_ordinal: None,
             rows: Vec::new(),
         };
@@ -1005,7 +1005,7 @@ impl ProjectStore {
             .into_iter()
             .filter(|row| {
                 filter.is_empty()
-                    || row.kind.contains(&filter)
+                    || row.kind.as_str().contains(&filter)
                     || row.new.as_ref().is_some_and(|r| {
                         r.key.to_lowercase().contains(&filter)
                             || r.text.to_lowercase().contains(&filter)

@@ -422,18 +422,18 @@ impl ProjectStore {
             reasons.sort();
             reasons.dedup();
             let status = if reasons.is_empty() {
-                "preserved"
+                SourceImpactStatus::Preserved
             } else if target.selection_id.is_none() {
-                "unresolved"
+                SourceImpactStatus::Unresolved
             } else {
-                "reassess"
+                SourceImpactStatus::Reassess
             };
             rows.push(SourceImpactRow {
                 current: row,
                 previous,
                 previous_bases,
                 locale: locale.into(),
-                status: status.into(),
+                status,
                 reasons,
                 selection_id: target.selection_id,
                 translation_revision_id: target.revision_id,

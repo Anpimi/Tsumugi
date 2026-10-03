@@ -305,7 +305,7 @@ fn caption_project_maintains_timing_basis_reviews_releases_and_receipts_on_reope
     let mut confirmation = comparison.confirmation;
     confirmation.actor = Some("Caption reviewer".into());
     for row in &comparison.rows {
-        if row.kind == "changed" {
+        if row.kind == SourceChangeKind::Changed {
             confirmation.lineage.push(LineageChoice {
                 new_ordinal: row.new.as_ref().unwrap().ordinal,
                 old_occurrence_id: row.old.as_ref().unwrap().occurrence_id.unwrap(),

@@ -6,6 +6,7 @@ import { ResourceWorkbench } from "./ResourceWorkbench";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -14,16 +15,16 @@ const project: ProjectView = {
   sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled",
   metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" },
 };
-const page = {
-  snapshotId: "snapshot", nextOrdinal: null,
-  rows: [{ unitId: "unit", sourceRevisionId: "source-revision", occurrence: { ordinal: 0, key: "barrel", text: "Barrel" } }],
-};
+const page = sourcePageFixture({
+  snapshotId: fixtureIdentity(400), scope: { revision: "2", currentSnapshot: fixtureIdentity(400) },
+  rows: [sourceRowFixture({ unitId: fixtureIdentity(401), sourceRevisionId: fixtureIdentity(402) }, { ordinal: 0, key: "barrel", text: "Barrel" })],
+});
 
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   invoke.mockReset();
   invoke.mockImplementation(async (command: string) => {
-    if (command === "read_content_scope") return { currentSnapshot: "snapshot" };
+    if (command === "read_content_scope") return page.scope;
     if (command === "read_source_content") return page;
     if (command === "read_terms") return [];
     if (command === "list_resource_captures") return [];

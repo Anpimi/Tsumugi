@@ -153,7 +153,7 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
     ] {
         for key in oracle[keys].as_array().unwrap() {
             assert!(comparison.rows.iter().any(|row| {
-                (row.kind == kind || (kind == "unchanged" && row.kind == "moved"))
+                (row.kind.as_str() == kind || (kind == "unchanged" && row.kind == SourceChangeKind::Moved))
                     && row
                         .new
                         .as_ref()
@@ -168,7 +168,7 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
         comparison
             .rows
             .iter()
-            .any(|row| row.kind == "moved" && row.new.as_ref().unwrap().key == "moved")
+            .any(|row| row.kind == SourceChangeKind::Moved && row.new.as_ref().unwrap().key == "moved")
     );
     assert_eq!(comparison.ambiguous, 3);
     for (key, candidates) in [
@@ -181,7 +181,7 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
             .iter()
             .find(|row| row.new.as_ref().is_some_and(|item| item.key == key))
             .unwrap();
-        assert_eq!(row.kind, "ambiguous");
+        assert_eq!(row.kind, SourceChangeKind::Ambiguous);
         let actual: Vec<_> = row
             .candidates
             .iter()
@@ -193,7 +193,7 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
         comparison
             .rows
             .iter()
-            .any(|row| row.kind == "rename-candidate"
+            .any(|row| row.kind == SourceChangeKind::RenameCandidate
                 && row.new.as_ref().unwrap().key == "rename-new"
                 && row.old.as_ref().unwrap().occurrence.key == "rename-old")
     );
@@ -961,6 +961,72 @@ fn real_source_matches_independent_oracle_and_keeps_byte_locations() {
         bundle.files[1].sha256,
         "29c4c299dee077481a98c1de612a678a6a16e55988ba88a73fa8f1cd92deb609"
     );
+}
+
+#[test]
+fn unicode_source_fixture_keeps_original_utf8_ranges_in_both_profiles() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/source-unicode.contract.json"
+    ))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let raw = case["raw"].as_str().unwrap();
+        let json_profile = case["profile"] == "smapi-json";
+        let bundle = if json_profile {
+            small(raw)
+        } else {
+            SourceBundle::capture_webvtt(raw.as_bytes(), "en").unwrap()
+        };
+        let source = bundle
+            .files
+            .iter()
+            .find(|file| file.role == "source")
+            .unwrap();
+        let output = extract(&bundle, &Cancellation::default()).unwrap();
+        let rows = case["rows"].as_array().unwrap();
+        assert_eq!(output.occurrences.len(), rows.len());
+        for (actual, expected) in output.occurrences.iter().zip(rows) {
+            let mut occurrence: SourceOccurrence =
+                serde_json::from_value(expected["occurrence"].clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(&occurrence).unwrap(),
+                expected["occurrence"]
+            );
+            occurrence.artifact_id = source.artifact_id;
+            assert_eq!(*actual, occurrence);
+            for (range, text, utf16) in [
+                (
+                    actual.key_byte_range,
+                    &actual.key,
+                    &expected["keyUtf16Range"],
+                ),
+                (
+                    actual.value_byte_range,
+                    &actual.text,
+                    &expected["valueUtf16Range"],
+                ),
+            ] {
+                let [start, end] = range.map(|offset| offset as usize);
+                let token = raw
+                    .get(start..end)
+                    .expect("range must end at UTF-8 boundaries");
+                let decoded = if json_profile {
+                    serde_json::from_str::<String>(token).unwrap()
+                } else {
+                    token.replace("\r\n", "\n").replace('\r', "\n")
+                };
+                assert_eq!(&decoded, text);
+                assert_eq!(
+                    raw[..start].encode_utf16().count() as u64,
+                    utf16[0].as_u64().unwrap()
+                );
+                assert_eq!(
+                    raw[..end].encode_utf16().count() as u64,
+                    utf16[1].as_u64().unwrap()
+                );
+            }
+        }
+    }
 }
 
 #[test]
