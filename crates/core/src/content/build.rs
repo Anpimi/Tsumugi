@@ -43,6 +43,7 @@ pub struct BuildLocale {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct BuildSourceFile {
     pub logical_path: String,
     pub sha256: String,

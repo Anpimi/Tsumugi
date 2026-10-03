@@ -356,7 +356,7 @@ macro_rules! request {
 }
 mod ai;
 mod arena;
-mod release;
+pub(super) mod release;
 pub(super) mod resource;
 pub(super) mod review;
 #[cfg(test)]

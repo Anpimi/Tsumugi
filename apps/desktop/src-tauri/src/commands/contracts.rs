@@ -193,6 +193,29 @@ struct ReviewResponses {
     editor: tsumugi_core::ReviewEditorSnapshot,
 }
 
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ReleaseRequests {
+    session: execution::SessionRequest,
+    build: execution::release::BuildRequest,
+    release: execution::release::ReleaseRequest,
+    preview: execution::release::PreviewRequest,
+    export: execution::release::ExportRequest,
+    reconcile: execution::release::ReconcileRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ReleaseResponses {
+    identity: tsumugi_core::execution::ExecutionId,
+    releases: Vec<tsumugi_core::ReleaseView>,
+    selection: Option<execution::release::DeliverySelection>,
+    preview: execution::release::DeliveryPreview,
+    delivery: tsumugi_core::DeliveryView,
+    deliveries: Vec<tsumugi_core::DeliveryView>,
+}
+
 fn bound_integer(schema: &mut Schema) {
     // Schemars marks Rust's integer format but does not emit its upper bound.
     // Apply the primitive bound to scalar and tuple items without copying DTOs.
@@ -211,8 +234,7 @@ fn bound_integer(schema: &mut Schema) {
 }
 
 fn schemas<Q: JsonSchema, R: JsonSchema>() -> serde_json::Value {
-    let settings =
-        SchemaSettings::draft07().with_transform(RecursiveTransform(bound_integer));
+    let settings = SchemaSettings::draft07().with_transform(RecursiveTransform(bound_integer));
     let requests = settings
         .clone()
         .for_deserialize()
@@ -257,7 +279,8 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
             "source": schemas::<SourceRequests, SourceResponses>(),
             "translation": schemas::<TranslationRequests, TranslationResponses>(),
             "resource": schemas::<ResourceRequests, ResourceResponses>(),
-            "review": schemas::<ReviewRequests, ReviewResponses>()
+            "review": schemas::<ReviewRequests, ReviewResponses>(),
+            "release": schemas::<ReleaseRequests, ReleaseResponses>()
         }))? + "\n",
     )?;
     Ok(())

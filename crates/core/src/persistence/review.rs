@@ -4150,7 +4150,7 @@ mod tests {
         let pending = store
             .begin_delivery(delivery_action, release_id, "C:\\isolated\\export", false)
             .unwrap();
-        assert_eq!(pending.state, "pending");
+        assert_eq!(pending.state, crate::DeliveryState::Pending);
         assert_eq!(
             store
                 .begin_delivery(delivery_action, release_id, "C:\\isolated\\export", false)
@@ -4165,10 +4165,10 @@ mod tests {
         );
         let mut files = pending.files;
         files[0].actual_sha256 = Some(artifact.sha256.clone());
-        files[0].state = "succeeded".into();
+        files[0].state = crate::DeliveryFileState::Succeeded;
         assert_eq!(
             store.finish_delivery(delivery_action, files).unwrap().state,
-            "succeeded"
+            crate::DeliveryState::Succeeded
         );
         assert_eq!(
             store
@@ -4224,7 +4224,7 @@ mod tests {
         assert_eq!(reopened.list_releases(project).unwrap().len(), 1);
         assert_eq!(
             reopened.list_deliveries(release_id).unwrap()[0].state,
-            "succeeded"
+            crate::DeliveryState::Succeeded
         );
         assert!(!reopened.list_deliveries(release_id).unwrap()[0].overwrite_conflicts);
         drop(reopened);
@@ -4468,12 +4468,8 @@ mod tests {
         let release_id = ExecutionId::parse(&receipt.changes[0].id).unwrap();
         let release = store.release_view(release_id).unwrap();
         assert_eq!(release.exceptions.len(), 2);
-        assert!(
-            release
-                .exceptions
-                .iter()
-                .all(|item| item.locale == "fr-FR" && item.kind == "source-fallback")
-        );
+        assert!(release.exceptions.iter().all(|item| item.locale == "fr-FR"
+            && item.kind == crate::ReleaseExceptionKind::SourceFallback));
         let second = store
             .prepare_locale_build(project, ExecutionId::new(), &choices, &eligibility.basis)
             .unwrap();
@@ -4531,25 +4527,25 @@ mod tests {
         assert!(pending.overwrite_conflicts);
         let mut files = pending.files;
         files[0].actual_sha256 = Some(files[0].expected_sha256.clone());
-        files[0].state = "succeeded".into();
-        files[1].state = "failed".into();
+        files[0].state = crate::DeliveryFileState::Succeeded;
+        files[1].state = crate::DeliveryFileState::Failed;
         assert_eq!(
             store.finish_delivery(action_id, files).unwrap().state,
-            "partial"
+            crate::DeliveryState::Partial
         );
         let uncertain_id = ExecutionId::new();
         let mut uncertain = store
             .begin_delivery(uncertain_id, release_id, "C:\\isolated\\two-locale", false)
             .unwrap()
             .files;
-        uncertain[0].state = "unknown".into();
-        uncertain[1].state = "failed".into();
+        uncertain[0].state = crate::DeliveryFileState::Unknown;
+        uncertain[1].state = crate::DeliveryFileState::Failed;
         assert_eq!(
             store
                 .finish_delivery(uncertain_id, uncertain)
                 .unwrap()
                 .state,
-            "unknown"
+            crate::DeliveryState::Unknown
         );
         assert_eq!(
             store
@@ -4574,16 +4570,16 @@ mod tests {
                 .reconcile_delivery(uncertain_id, observed.clone())
                 .unwrap()
                 .state,
-            "unknown"
+            crate::DeliveryState::Unknown
         );
         observed[0].actual_sha256 = Some(observed[0].expected_sha256.clone());
-        observed[0].state = "succeeded".into();
+        observed[0].state = crate::DeliveryFileState::Succeeded;
         assert_eq!(
             store
                 .reconcile_delivery(uncertain_id, observed)
                 .unwrap()
                 .state,
-            "partial"
+            crate::DeliveryState::Partial
         );
         assert_eq!(
             store
@@ -4595,21 +4591,21 @@ mod tests {
                 )
                 .unwrap()
                 .state,
-            "pending"
+            crate::DeliveryState::Pending
         );
         let missing_id = ExecutionId::new();
         let mut missing = store
             .begin_delivery(missing_id, release_id, "C:\\isolated\\missing", false)
             .unwrap()
             .files;
-        missing[0].state = "unknown".into();
-        missing[1].state = "failed".into();
+        missing[0].state = crate::DeliveryFileState::Unknown;
+        missing[1].state = crate::DeliveryFileState::Failed;
         store.finish_delivery(missing_id, missing).unwrap();
         let mut missing = store.delivery_by_action(missing_id).unwrap().unwrap().files;
-        missing[0].state = "failed".into();
+        missing[0].state = crate::DeliveryFileState::Failed;
         assert_eq!(
             store.reconcile_delivery(missing_id, missing).unwrap().state,
-            "failed"
+            crate::DeliveryState::Failed
         );
         assert_eq!(
             store
@@ -4621,7 +4617,7 @@ mod tests {
                 )
                 .unwrap()
                 .state,
-            "pending"
+            crate::DeliveryState::Pending
         );
         let zh_basis = store
             .review_eligibility(project, &["zh-CN".into()])

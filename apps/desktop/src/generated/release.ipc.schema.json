@@ -1,0 +1,581 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "BuildLocaleChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "fileName": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "locale",
+          "fileName"
+        ],
+        "type": "object"
+      },
+      "BuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/definitions/BuildLocaleChoice"
+            },
+            "type": "array"
+          },
+          "expectedEligibilityBasis": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "choices",
+          "expectedEligibilityBasis"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "type": "string"
+      },
+      "ExportRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "overwriteConflicts": {
+            "type": "boolean"
+          },
+          "previewId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "releaseId",
+          "selectionId",
+          "previewId",
+          "actionId",
+          "overwriteConflicts"
+        ],
+        "type": "object"
+      },
+      "PreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "releaseId",
+          "selectionId"
+        ],
+        "type": "object"
+      },
+      "ReconcileRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId",
+          "selectionId"
+        ],
+        "type": "object"
+      },
+      "ReleaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "releaseId"
+        ],
+        "type": "object"
+      },
+      "SessionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "build": {
+        "$ref": "#/definitions/BuildRequest"
+      },
+      "export": {
+        "$ref": "#/definitions/ExportRequest"
+      },
+      "preview": {
+        "$ref": "#/definitions/PreviewRequest"
+      },
+      "reconcile": {
+        "$ref": "#/definitions/ReconcileRequest"
+      },
+      "release": {
+        "$ref": "#/definitions/ReleaseRequest"
+      },
+      "session": {
+        "$ref": "#/definitions/SessionRequest"
+      }
+    },
+    "required": [
+      "session",
+      "build",
+      "release",
+      "preview",
+      "export",
+      "reconcile"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:release:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "BuildSourceFile": {
+        "additionalProperties": false,
+        "properties": {
+          "logicalPath": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "logicalPath",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "DeliveryFile": {
+        "additionalProperties": false,
+        "properties": {
+          "actualSha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedSha256": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/definitions/DeliveryFileState"
+          }
+        },
+        "required": [
+          "locale",
+          "fileName",
+          "expectedSha256",
+          "actualSha256",
+          "state"
+        ],
+        "type": "object"
+      },
+      "DeliveryFileState": {
+        "enum": [
+          "pending",
+          "succeeded",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "DeliveryPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "$ref": "#/definitions/PreviewFile"
+            },
+            "type": "array"
+          },
+          "folderName": {
+            "type": "string"
+          },
+          "previewId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "previewId",
+          "releaseId",
+          "selectionId",
+          "folderName",
+          "files"
+        ],
+        "type": "object"
+      },
+      "DeliveryPreviewState": {
+        "enum": [
+          "absent",
+          "same",
+          "conflict"
+        ],
+        "type": "string"
+      },
+      "DeliverySelection": {
+        "additionalProperties": false,
+        "properties": {
+          "folderName": {
+            "type": "string"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "selectionId",
+          "folderName"
+        ],
+        "type": "object"
+      },
+      "DeliveryState": {
+        "enum": [
+          "pending",
+          "succeeded",
+          "partial",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "DeliveryView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "deliveryId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/definitions/DeliveryFile"
+            },
+            "type": "array"
+          },
+          "overwriteConflicts": {
+            "type": "boolean"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "state": {
+            "$ref": "#/definitions/DeliveryState"
+          }
+        },
+        "required": [
+          "deliveryId",
+          "actionId",
+          "releaseId",
+          "directory",
+          "overwriteConflicts",
+          "state",
+          "files",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "PreviewFile": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expectedSha256": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/definitions/DeliveryPreviewState"
+          }
+        },
+        "required": [
+          "locale",
+          "fileName",
+          "expectedSha256",
+          "currentSha256",
+          "state"
+        ],
+        "type": "object"
+      },
+      "ReleaseException": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/definitions/ReleaseExceptionKind"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nativeKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "locale",
+          "nativeKey",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "ReleaseExceptionKind": {
+        "enum": [
+          "source-fallback",
+          "qa-waiver"
+        ],
+        "type": "string"
+      },
+      "ReleaseView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/definitions/ReleasedArtifact"
+            },
+            "type": "array"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "builderVersion": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "eligibilityBasis": {
+            "type": "string"
+          },
+          "exceptions": {
+            "items": {
+              "$ref": "#/definitions/ReleaseException"
+            },
+            "type": "array"
+          },
+          "manifestSha256": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "releaseId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceFiles": {
+            "items": {
+              "$ref": "#/definitions/BuildSourceFile"
+            },
+            "type": "array"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "validatorVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "releaseId",
+          "actionId",
+          "attemptId",
+          "sourceSnapshotId",
+          "policyVersion",
+          "eligibilityBasis",
+          "manifestSha256",
+          "builderVersion",
+          "validatorVersion",
+          "sourceFiles",
+          "exceptions",
+          "artifacts",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "ReleasedArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "entryCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "locale",
+          "fileName",
+          "sha256",
+          "entryCount"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "deliveries": {
+        "items": {
+          "$ref": "#/definitions/DeliveryView"
+        },
+        "type": "array"
+      },
+      "delivery": {
+        "$ref": "#/definitions/DeliveryView"
+      },
+      "identity": {
+        "$ref": "#/definitions/ExecutionId"
+      },
+      "preview": {
+        "$ref": "#/definitions/DeliveryPreview"
+      },
+      "releases": {
+        "items": {
+          "$ref": "#/definitions/ReleaseView"
+        },
+        "type": "array"
+      },
+      "selection": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/DeliverySelection"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "identity",
+      "releases",
+      "selection",
+      "preview",
+      "delivery",
+      "deliveries"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:release:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

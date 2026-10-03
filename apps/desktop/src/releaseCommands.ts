@@ -1,23 +1,41 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { SessionRequest } from "./executionCommands";
+import { checkedInvoke } from "./ipc";
+import type { SessionRequest, BuildRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest } from "./generated/release.requests";
+import * as validators from "./generated/release.validators";
 
-export interface BuildLocaleChoice { locale: string; fileName: string }
-export interface ReleasedArtifact { locale: string; fileName: string; sha256: string; entryCount: number }
-export interface ReleaseException { locale: string; nativeKey: string; kind: "source-fallback" | "qa-waiver" }
-export interface ReleaseSourceFile { logicalPath: string; sha256: string }
-export interface ReleaseView { releaseId: string; actionId: string; attemptId: string; sourceSnapshotId: string; policyVersion: string; eligibilityBasis: string; manifestSha256: string; builderVersion: string; validatorVersion: string; sourceFiles: ReleaseSourceFile[]; exceptions: ReleaseException[]; artifacts: ReleasedArtifact[]; createdAt: string }
-export interface DeliverySelection { selectionId: string; folderName: string }
-export interface PreviewFile { locale: string; fileName: string; expectedSha256: string; currentSha256: string | null; state: "absent" | "same" | "conflict" }
-export interface DeliveryPreview { previewId: string; releaseId: string; selectionId: string; folderName: string; files: PreviewFile[] }
-export interface DeliveryFile { locale: string; fileName: string; expectedSha256: string; actualSha256: string | null; state: "pending" | "succeeded" | "failed" | "unknown" }
-export interface DeliveryView { deliveryId: string; actionId: string; releaseId: string; directory: string; overwriteConflicts: boolean; state: "pending" | "succeeded" | "partial" | "failed" | "unknown"; files: DeliveryFile[]; createdAt: string }
+export type { BuildLocaleChoice } from "./generated/release.requests";
+export type { ReleaseView, ReleasedArtifact, ReleaseException, ReleaseExceptionKind, BuildSourceFile as ReleaseSourceFile, DeliverySelection, PreviewFile, DeliveryPreview, DeliveryPreviewState, DeliveryFile, DeliveryFileState, DeliveryView, DeliveryState } from "./generated/release.responses";
+
+function requireConfirmation(condition: boolean) {
+  if (!condition) throw new Error("Invalid IPC acknowledgement: release action");
+}
 
 export const releaseCommands = {
-  start: (request: SessionRequest & { attemptId: string; choices: BuildLocaleChoice[]; expectedEligibilityBasis: string }) => invoke<string>("start_locale_build", { request }),
-  releases: (request: SessionRequest) => invoke<ReleaseView[]>("list_releases", { request }),
-  choose: (request: SessionRequest) => invoke<DeliverySelection | null>("choose_delivery_folder", { request }),
-  preview: (request: SessionRequest & { releaseId: string; selectionId: string }) => invoke<DeliveryPreview>("preview_delivery", { request }),
-  export: (request: SessionRequest & { releaseId: string; selectionId: string; previewId: string; actionId: string; overwriteConflicts: boolean }) => invoke<DeliveryView>("export_release", { request }),
-  deliveries: (request: SessionRequest & { releaseId: string }) => invoke<DeliveryView[]>("list_deliveries", { request }),
-  reconcile: (request: SessionRequest & { actionId: string; selectionId: string }) => invoke<DeliveryView>("reconcile_delivery", { request }),
+  start: async (request: BuildRequest) => {
+    const result = await checkedInvoke("start_locale_build", request, validators.validateResponseIdentity);
+    requireConfirmation(result === request.attemptId);
+    return result;
+  },
+  releases: (request: SessionRequest) => checkedInvoke("list_releases", request, validators.validateResponseReleases),
+  choose: (request: SessionRequest) => checkedInvoke("choose_delivery_folder", request, validators.validateResponseSelection),
+  preview: async (request: PreviewRequest) => {
+    const result = await checkedInvoke("preview_delivery", request, validators.validateResponsePreview);
+    requireConfirmation(result.releaseId === request.releaseId && result.selectionId === request.selectionId);
+    return result;
+  },
+  export: async (request: ExportRequest) => {
+    const result = await checkedInvoke("export_release", request, validators.validateResponseDelivery);
+    requireConfirmation(result.actionId === request.actionId && result.releaseId === request.releaseId
+      && result.overwriteConflicts === request.overwriteConflicts);
+    return result;
+  },
+  deliveries: async (request: ReleaseRequest) => {
+    const result = await checkedInvoke("list_deliveries", request, validators.validateResponseDeliveries);
+    requireConfirmation(result.every(delivery => delivery.releaseId === request.releaseId));
+    return result;
+  },
+  reconcile: async (request: ReconcileRequest) => {
+    const result = await checkedInvoke("reconcile_delivery", request, validators.validateResponseDelivery);
+    requireConfirmation(result.actionId === request.actionId);
+    return result;
+  },
 };

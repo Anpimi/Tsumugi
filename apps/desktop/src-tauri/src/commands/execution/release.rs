@@ -7,7 +7,9 @@ use std::{
 };
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::content::artifact_digest;
-use tsumugi_core::{BuildLocaleChoice, DeliveryFile, DeliveryView, ReleaseView};
+use tsumugi_core::{
+    BuildLocaleChoice, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, ReleaseView,
+};
 
 #[derive(Default)]
 pub(super) struct ReleaseSession {
@@ -23,6 +25,7 @@ impl ReleaseSession {
     }
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeliverySelection {
@@ -31,15 +34,25 @@ pub struct DeliverySelection {
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PreviewFile {
     pub locale: String,
     pub file_name: String,
     pub expected_sha256: String,
     pub current_sha256: Option<String>,
-    pub state: String,
+    pub state: DeliveryPreviewState,
+}
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeliveryPreviewState {
+    Absent,
+    Same,
+    Conflict,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct DeliveryPreview {
     pub preview_id: ExecutionId,
     pub release_id: ExecutionId,
@@ -47,25 +60,37 @@ pub struct DeliveryPreview {
     pub folder_name: String,
     pub files: Vec<PreviewFile>,
 }
-request!(BuildRequest { attempt_id: ExecutionId, choices: Vec<BuildLocaleChoice>, expected_eligibility_basis: String });
-request!(ReleaseRequest {
-    release_id: ExecutionId
-});
-request!(PreviewRequest {
-    release_id: ExecutionId,
-    selection_id: ExecutionId
-});
-request!(ExportRequest {
-    release_id: ExecutionId,
-    selection_id: ExecutionId,
-    preview_id: ExecutionId,
-    action_id: ExecutionId,
-    overwrite_conflicts: bool
-});
-request!(ReconcileRequest {
-    action_id: ExecutionId,
-    selection_id: ExecutionId
-});
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] BuildRequest { attempt_id: ExecutionId, choices: Vec<BuildLocaleChoice>, expected_eligibility_basis: String });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReleaseRequest {
+        release_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PreviewRequest {
+        release_id: ExecutionId,
+        selection_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ExportRequest {
+        release_id: ExecutionId,
+        selection_id: ExecutionId,
+        preview_id: ExecutionId,
+        action_id: ExecutionId,
+        overwrite_conflicts: bool
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReconcileRequest {
+        action_id: ExecutionId,
+        selection_id: ExecutionId
+    }
+);
 
 fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
     let result = map_execution(error, stage);
@@ -322,11 +347,10 @@ fn preview_files(
             };
             let current_sha256 = current_digest(&destination.join(name))?;
             let state = match &current_sha256 {
-                None => "absent",
-                Some(current) if *current == artifact.sha256 => "same",
-                Some(_) => "conflict",
-            }
-            .to_owned();
+                None => DeliveryPreviewState::Absent,
+                Some(current) if *current == artifact.sha256 => DeliveryPreviewState::Same,
+                Some(_) => DeliveryPreviewState::Conflict,
+            };
             Ok(PreviewFile {
                 locale: artifact.locale,
                 file_name: artifact.file_name,
@@ -435,7 +459,7 @@ fn export_one_with_digest(
             file_name: file.file_name.clone(),
             expected_sha256: file.expected_sha256.clone(),
             actual_sha256: current,
-            state: "succeeded".into(),
+            state: DeliveryFileState::Succeeded,
         });
     }
     if current.is_some() && !overwrite {
@@ -488,9 +512,9 @@ fn export_one_with_digest(
     }
     let observed = digest(&target);
     let state = match &observed {
-        Ok(Some(value)) if value == &file.expected_sha256 => "succeeded",
-        Ok(_) if commit.is_err() => "failed",
-        _ => "unknown",
+        Ok(Some(value)) if value == &file.expected_sha256 => DeliveryFileState::Succeeded,
+        Ok(_) if commit.is_err() => DeliveryFileState::Failed,
+        _ => DeliveryFileState::Unknown,
     };
     let actual = observed.ok().flatten();
     Ok(DeliveryFile {
@@ -498,7 +522,7 @@ fn export_one_with_digest(
         file_name: file.file_name.clone(),
         expected_sha256: file.expected_sha256.clone(),
         actual_sha256: actual,
-        state: state.into(),
+        state,
     })
 }
 
@@ -540,7 +564,7 @@ pub async fn export_release(
                             CommandStage::ExecutionAdopt,
                         ));
                     }
-                    if existing.state == "pending" {
+                    if existing.state == DeliveryState::Pending {
                         return Err(CommandError::simple(
                             CommandErrorCode::OutcomeUnknown,
                             CommandStage::ExecutionAdopt,
@@ -564,7 +588,10 @@ pub async fn export_release(
                             CommandStage::ExecutionAdopt,
                         )
                     })?;
-                if preview.files.iter().any(|file| file.state == "conflict")
+                if preview
+                    .files
+                    .iter()
+                    .any(|file| file.state == DeliveryPreviewState::Conflict)
                     && !request.overwrite_conflicts
                 {
                     return Err(CommandError::simple(
@@ -593,7 +620,7 @@ pub async fn export_release(
                                 .iter()
                                 .find(|current| current.locale == file.locale)
                                 .and_then(|current| current.current_sha256.clone()),
-                            state: "failed".into(),
+                            state: DeliveryFileState::Failed,
                         })
                         .collect();
                     store
@@ -639,7 +666,7 @@ pub async fn export_release(
                             file_name: file.file_name.clone(),
                             expected_sha256: file.expected_sha256.clone(),
                             actual_sha256: None,
-                            state: "failed".into(),
+                            state: DeliveryFileState::Failed,
                         },
                     });
                 }
@@ -684,17 +711,17 @@ fn observe_delivery_files(
     files
         .into_iter()
         .map(|mut file| {
-            if file.state != "pending" && file.state != "unknown" {
+            if file.state != DeliveryFileState::Pending && file.state != DeliveryFileState::Unknown
+            {
                 return Ok(file);
             }
             let name = delivery_name(&file.file_name)?;
             let observation = current_digest(&i18n.join(name));
             file.state = match &observation {
-                Ok(Some(digest)) if digest == &file.expected_sha256 => "succeeded",
-                Ok(None) => "failed",
-                _ => "unknown",
-            }
-            .into();
+                Ok(Some(digest)) if digest == &file.expected_sha256 => DeliveryFileState::Succeeded,
+                Ok(None) => DeliveryFileState::Failed,
+                _ => DeliveryFileState::Unknown,
+            };
             file.actual_sha256 = observation.ok().flatten();
             Ok(file)
         })
@@ -734,7 +761,10 @@ pub async fn reconcile_delivery(
                         CommandStage::ExecutionRecover,
                     ));
                 }
-                if !matches!(current.state.as_str(), "pending" | "unknown") {
+                if !matches!(
+                    current.state,
+                    DeliveryState::Pending | DeliveryState::Unknown
+                ) {
                     return Ok(current);
                 }
                 let folder = if current
@@ -755,6 +785,64 @@ pub async fn reconcile_delivery(
         .await
 }
 
+#[cfg(test)]
+mod contracts {
+    use super::*;
+
+    #[test]
+    fn release_wire_fixture_matches_actual_rust_requests_and_responses() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/releaseCommands.contract.json"
+        ))
+        .unwrap();
+        macro_rules! round_trip {
+            ($group:literal, $key:literal, $kind:ty) => {
+                let value: $kind = serde_json::from_value(fixture[$group][$key].clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_value(value).unwrap(),
+                    fixture[$group][$key],
+                    $key
+                );
+            };
+        }
+        round_trip!("requests", "session", SessionRequest);
+        round_trip!("requests", "build", BuildRequest);
+        round_trip!("requests", "release", ReleaseRequest);
+        round_trip!("requests", "preview", PreviewRequest);
+        round_trip!("requests", "export", ExportRequest);
+        round_trip!("requests", "reconcile", ReconcileRequest);
+        round_trip!("responses", "identity", ExecutionId);
+        round_trip!("responses", "releases", Vec<ReleaseView>);
+        round_trip!("responses", "selection", Option<DeliverySelection>);
+        round_trip!("responses", "preview", DeliveryPreview);
+        round_trip!("responses", "delivery", DeliveryView);
+        round_trip!("responses", "deliveries", Vec<DeliveryView>);
+        assert!(
+            serde_json::from_value::<Option<DeliverySelection>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        let mut value = fixture["responses"]["delivery"].clone();
+        value["state"] = serde_json::json!("completed");
+        assert!(serde_json::from_value::<DeliveryView>(value).is_err());
+        let mut value = fixture["responses"]["delivery"].clone();
+        value["files"][0]["state"] = serde_json::json!("partial");
+        assert!(serde_json::from_value::<DeliveryView>(value).is_err());
+        let mut value = fixture["responses"]["preview"].clone();
+        value["files"][0]["state"] = serde_json::json!("unknown");
+        assert!(serde_json::from_value::<DeliveryPreview>(value).is_err());
+        let mut value = fixture["responses"]["releases"][0].clone();
+        value["exceptions"][0]["kind"] = serde_json::json!("approved");
+        assert!(serde_json::from_value::<ReleaseView>(value).is_err());
+        let mut value = fixture["responses"]["releases"][0].clone();
+        value["artifacts"][0]["entryCount"] = serde_json::json!(4294967296u64);
+        assert!(serde_json::from_value::<ReleaseView>(value).is_err());
+        let mut value = fixture["responses"]["delivery"].clone();
+        value.as_object_mut().unwrap().remove("files");
+        assert!(serde_json::from_value::<DeliveryView>(value).is_err());
+    }
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -769,34 +857,38 @@ mod tests {
             file_name: "zh-CN.vtt".into(),
             expected_sha256: artifact_digest(bytes),
             current_sha256: None,
-            state: "absent".into(),
+            state: DeliveryPreviewState::Absent,
         };
         assert_eq!(
             export_one(root.path(), &file, bytes, false).unwrap().state,
-            "succeeded"
+            DeliveryFileState::Succeeded
         );
         assert_eq!(fs::read(root.path().join("zh-CN.vtt")).unwrap(), bytes);
         assert!(!root.path().join("i18n").exists());
         assert!(export_one(root.path(), &file, bytes, true).is_err());
         let same = PreviewFile {
             current_sha256: Some(artifact_digest(bytes)),
-            state: "same".into(),
+            state: DeliveryPreviewState::Same,
             ..file
         };
         assert_eq!(
             export_one(root.path(), &same, bytes, false).unwrap().state,
-            "succeeded"
+            DeliveryFileState::Succeeded
         );
         assert!(delivery_name("../zh-CN.vtt").is_err());
     }
 
-    fn preview(state: &str, current_sha256: Option<String>, bytes: &[u8]) -> PreviewFile {
+    fn preview(
+        state: DeliveryPreviewState,
+        current_sha256: Option<String>,
+        bytes: &[u8],
+    ) -> PreviewFile {
         PreviewFile {
             locale: "zh-CN".into(),
             file_name: "i18n/zh.json".into(),
             expected_sha256: artifact_digest(bytes),
             current_sha256,
-            state: state.into(),
+            state,
         }
     }
 
@@ -806,25 +898,33 @@ mod tests {
         let i18n = directory.path().join("i18n");
         fs::create_dir(&i18n).unwrap();
         let bytes = b"{\n  \"hello\": \"world\"\n}\n";
-        let absent = preview("absent", None, bytes);
+        let absent = preview(DeliveryPreviewState::Absent, None, bytes);
         let first = export_one(&i18n, &absent, bytes, false).unwrap();
-        assert_eq!(first.state, "succeeded");
+        assert_eq!(first.state, DeliveryFileState::Succeeded);
         assert_eq!(fs::read(i18n.join("zh.json")).unwrap(), bytes);
         assert_eq!(
             export_one(&i18n, &absent, bytes, false).unwrap_err().code,
             CommandErrorCode::DestinationConflict
         );
-        let same = preview("same", Some(artifact_digest(bytes)), bytes);
+        let same = preview(
+            DeliveryPreviewState::Same,
+            Some(artifact_digest(bytes)),
+            bytes,
+        );
         assert_eq!(
             export_one(&i18n, &same, bytes, false).unwrap().state,
-            "succeeded"
+            DeliveryFileState::Succeeded
         );
         fs::write(i18n.join("zh.json"), b"different").unwrap();
         assert_eq!(
             export_one(&i18n, &same, bytes, true).unwrap_err().code,
             CommandErrorCode::DestinationConflict
         );
-        let different = preview("conflict", Some(artifact_digest(b"different")), bytes);
+        let different = preview(
+            DeliveryPreviewState::Conflict,
+            Some(artifact_digest(b"different")),
+            bytes,
+        );
         assert_eq!(
             export_one(&i18n, &different, bytes, false)
                 .unwrap_err()
@@ -834,7 +934,7 @@ mod tests {
         assert_eq!(fs::read(i18n.join("zh.json")).unwrap(), b"different");
         assert_eq!(
             export_one(&i18n, &different, bytes, true).unwrap().state,
-            "succeeded"
+            DeliveryFileState::Succeeded
         );
         assert_eq!(fs::read(i18n.join("zh.json")).unwrap(), bytes);
     }
@@ -846,17 +946,17 @@ mod tests {
         fs::create_dir(&i18n).unwrap();
         let zh = b"{\"hello\":\"zh\"}";
         let fr = b"{\"hello\":\"fr\"}";
-        let first = preview("absent", None, zh);
+        let first = preview(DeliveryPreviewState::Absent, None, zh);
         let second = PreviewFile {
             locale: "fr-FR".into(),
             file_name: "i18n/fr.json".into(),
             expected_sha256: artifact_digest(fr),
             current_sha256: None,
-            state: "absent".into(),
+            state: DeliveryPreviewState::Absent,
         };
         assert_eq!(
             export_one(&i18n, &first, zh, false).unwrap().state,
-            "succeeded"
+            DeliveryFileState::Succeeded
         );
         assert!(export_one(&i18n, &second, b"bad bytes", false).is_err());
         assert_eq!(fs::read(i18n.join("zh.json")).unwrap(), zh);
@@ -870,7 +970,7 @@ mod tests {
         let i18n = directory.path().join("i18n");
         fs::create_dir(&i18n).unwrap();
         let bytes = b"{\"hello\":\"world\"}";
-        let file = preview("absent", None, bytes);
+        let file = preview(DeliveryPreviewState::Absent, None, bytes);
         let target = i18n.join("zh.json");
         let result = export_one_with_digest(&i18n, &file, bytes, false, |path| {
             if path == target && path.exists() {
@@ -883,19 +983,19 @@ mod tests {
             }
         })
         .unwrap();
-        assert_eq!(result.state, "unknown");
+        assert_eq!(result.state, DeliveryFileState::Unknown);
         assert!(result.actual_sha256.is_none());
         assert_eq!(fs::read(target).unwrap(), bytes);
         assert_eq!(fs::read_dir(&i18n).unwrap().count(), 1);
         let reconciled = observe_delivery_files(&i18n, vec![result.clone()]).unwrap();
-        assert_eq!(reconciled[0].state, "succeeded");
+        assert_eq!(reconciled[0].state, DeliveryFileState::Succeeded);
         assert_eq!(
             reconciled[0].actual_sha256.as_deref(),
             Some(file.expected_sha256.as_str())
         );
         fs::remove_file(i18n.join("zh.json")).unwrap();
         let missing = observe_delivery_files(&i18n, vec![result]).unwrap();
-        assert_eq!(missing[0].state, "failed");
+        assert_eq!(missing[0].state, DeliveryFileState::Failed);
         assert!(missing[0].actual_sha256.is_none());
     }
 }

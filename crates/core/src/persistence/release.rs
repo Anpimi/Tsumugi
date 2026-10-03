@@ -247,7 +247,7 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
                     || file.file_name != artifact.1
                     || file.expected_sha256 != artifact.2
                     || file.actual_sha256.is_some()
-                    || file.state != "pending"
+                    || file.state != DeliveryFileState::Pending
             })
         {
             return Err(rusqlite::Error::InvalidQuery);
@@ -262,8 +262,13 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
                         file.locale != prior.locale
                             || file.file_name != prior.file_name
                             || file.expected_sha256 != prior.expected_sha256
-                            || !matches!(file.state.as_str(), "succeeded" | "failed" | "unknown")
-                            || (file.state == "succeeded"
+                            || !matches!(
+                                file.state,
+                                DeliveryFileState::Succeeded
+                                    | DeliveryFileState::Failed
+                                    | DeliveryFileState::Unknown
+                            )
+                            || (file.state == DeliveryFileState::Succeeded
                                 && file.actual_sha256.as_deref() != Some(&file.expected_sha256))
                     })
                 {
@@ -271,11 +276,14 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
                 }
                 let success = files
                     .iter()
-                    .filter(|file| file.state == "succeeded")
+                    .filter(|file| file.state == DeliveryFileState::Succeeded)
                     .count();
                 let actual_state = if success == files.len() {
                     "succeeded"
-                } else if files.iter().any(|file| file.state == "unknown") {
+                } else if files
+                    .iter()
+                    .any(|file| file.state == DeliveryFileState::Unknown)
+                {
                     "unknown"
                 } else if success > 0 {
                     "partial"
@@ -302,6 +310,48 @@ fn parse_id(value: String) -> Result<ExecutionId, ExecutionError> {
     ExecutionId::parse(&value).map_err(|_| failure(ErrorCode::CorruptLedger, "release-identity"))
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReleaseExceptionKind {
+    SourceFallback,
+    QaWaiver,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeliveryFileState {
+    Pending,
+    Succeeded,
+    Failed,
+    Unknown,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeliveryState {
+    Pending,
+    Succeeded,
+    Partial,
+    Failed,
+    Unknown,
+}
+impl DeliveryState {
+    fn from_stored(value: &str) -> Result<Self, ExecutionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "succeeded" => Ok(Self::Succeeded),
+            "partial" => Ok(Self::Partial),
+            "failed" => Ok(Self::Failed),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err(failure(ErrorCode::CorruptLedger, "delivery-state")),
+        }
+    }
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildLocaleChoice {
@@ -311,6 +361,7 @@ pub struct BuildLocaleChoice {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReleasedArtifact {
     pub locale: String,
     pub file_name: String,
@@ -320,14 +371,16 @@ pub struct ReleasedArtifact {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReleaseException {
     pub locale: String,
     pub native_key: String,
-    pub kind: String,
+    pub kind: ReleaseExceptionKind,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReleaseView {
     pub release_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -346,23 +399,25 @@ pub struct ReleaseView {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct DeliveryFile {
     pub locale: String,
     pub file_name: String,
     pub expected_sha256: String,
     pub actual_sha256: Option<String>,
-    pub state: String,
+    pub state: DeliveryFileState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct DeliveryView {
     pub delivery_id: ExecutionId,
     pub action_id: ExecutionId,
     pub release_id: ExecutionId,
     pub directory: String,
     pub overwrite_conflicts: bool,
-    pub state: String,
+    pub state: DeliveryState,
     pub files: Vec<DeliveryFile>,
     pub created_at: String,
 }
@@ -429,7 +484,7 @@ impl ProjectStore {
                 file_name: artifact.file_name,
                 expected_sha256: artifact.sha256,
                 actual_sha256: None,
-                state: "pending".into(),
+                state: DeliveryFileState::Pending,
             })
             .collect();
         let delivery_id = ExecutionId::new();
@@ -475,7 +530,7 @@ impl ProjectStore {
             release_id: parse_id(release)?,
             directory,
             overwrite_conflicts,
-            state,
+            state: DeliveryState::from_stored(&state)?,
             files,
             created_at,
         }))
@@ -489,7 +544,7 @@ impl ProjectStore {
         let current = self
             .delivery_by_action(action_id)?
             .ok_or_else(|| failure(ErrorCode::InvalidInput, "delivery-action"))?;
-        if current.state != "pending" {
+        if current.state != DeliveryState::Pending {
             return Err(failure(ErrorCode::DependencyConflict, "delivery-final"));
         }
         if current.files.len() != files.len()
@@ -497,8 +552,13 @@ impl ProjectStore {
                 item.locale != prior.locale
                     || item.file_name != prior.file_name
                     || item.expected_sha256 != prior.expected_sha256
-                    || !matches!(item.state.as_str(), "succeeded" | "failed" | "unknown")
-                    || (item.state == "succeeded"
+                    || !matches!(
+                        item.state,
+                        DeliveryFileState::Succeeded
+                            | DeliveryFileState::Failed
+                            | DeliveryFileState::Unknown
+                    )
+                    || (item.state == DeliveryFileState::Succeeded
                         && item.actual_sha256.as_deref() != Some(&item.expected_sha256))
             })
         {
@@ -506,11 +566,14 @@ impl ProjectStore {
         }
         let success = files
             .iter()
-            .filter(|file| file.state == "succeeded")
+            .filter(|file| file.state == DeliveryFileState::Succeeded)
             .count();
         let state = if success == files.len() {
             "succeeded"
-        } else if files.iter().any(|file| file.state == "unknown") {
+        } else if files
+            .iter()
+            .any(|file| file.state == DeliveryFileState::Unknown)
+        {
             "unknown"
         } else if success > 0 {
             "partial"
@@ -538,10 +601,10 @@ impl ProjectStore {
         let current = self
             .delivery_by_action(action_id)?
             .ok_or_else(|| failure(ErrorCode::InvalidInput, "delivery-action"))?;
-        if current.state == "pending" {
+        if current.state == DeliveryState::Pending {
             return self.finish_delivery(action_id, files);
         }
-        if current.state != "unknown" {
+        if current.state != DeliveryState::Unknown {
             return Err(failure(
                 ErrorCode::DependencyConflict,
                 "delivery-reconcile-state",
@@ -552,13 +615,18 @@ impl ProjectStore {
                 item.locale != prior.locale
                     || item.file_name != prior.file_name
                     || item.expected_sha256 != prior.expected_sha256
-                    || (prior.state != "unknown" && item != prior)
-                    || (prior.state == "unknown"
-                        && !matches!(item.state.as_str(), "unknown" | "succeeded" | "failed"))
-                    || (item.state == "succeeded"
+                    || (prior.state != DeliveryFileState::Unknown && item != prior)
+                    || (prior.state == DeliveryFileState::Unknown
+                        && !matches!(
+                            item.state,
+                            DeliveryFileState::Unknown
+                                | DeliveryFileState::Succeeded
+                                | DeliveryFileState::Failed
+                        ))
+                    || (item.state == DeliveryFileState::Succeeded
                         && item.actual_sha256.as_deref() != Some(&item.expected_sha256))
-                    || (prior.state == "unknown"
-                        && item.state == "failed"
+                    || (prior.state == DeliveryFileState::Unknown
+                        && item.state == DeliveryFileState::Failed
                         && item.actual_sha256.is_some())
             })
         {
@@ -569,11 +637,14 @@ impl ProjectStore {
         }
         let success = files
             .iter()
-            .filter(|file| file.state == "succeeded")
+            .filter(|file| file.state == DeliveryFileState::Succeeded)
             .count();
         let state = if success == files.len() {
             "succeeded"
-        } else if files.iter().any(|file| file.state == "unknown") {
+        } else if files
+            .iter()
+            .any(|file| file.state == DeliveryFileState::Unknown)
+        {
             "unknown"
         } else if success > 0 {
             "partial"
@@ -815,14 +886,14 @@ impl ProjectStore {
                         rows.push(ReleaseException {
                             locale: locale.locale.clone(),
                             native_key: entry.native_key.clone(),
-                            kind: "source-fallback".into(),
+                            kind: ReleaseExceptionKind::SourceFallback,
                         });
                     }
                     if !entry.waiver_ids.is_empty() {
                         rows.push(ReleaseException {
                             locale: locale.locale.clone(),
                             native_key: entry.native_key.clone(),
-                            kind: "qa-waiver".into(),
+                            kind: ReleaseExceptionKind::QaWaiver,
                         });
                     }
                     rows

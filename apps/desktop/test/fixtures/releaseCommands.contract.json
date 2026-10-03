@@ -1,0 +1,177 @@
+{
+  "requests": {
+    "session": {
+      "sessionToken": "synthetic-release-session",
+      "projectId": "50000000-0000-4000-8000-000000000700"
+    },
+    "build": {
+      "sessionToken": "synthetic-release-session",
+      "projectId": "50000000-0000-4000-8000-000000000700",
+      "attemptId": "50000000-0000-4000-8000-000000000701",
+      "choices": [
+        {
+          "locale": "zh-CN",
+          "fileName": "i18n/zh.json"
+        },
+        {
+          "locale": "fr-FR",
+          "fileName": "i18n/fr.json"
+        }
+      ],
+      "expectedEligibilityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "release": {
+      "sessionToken": "synthetic-release-session",
+      "projectId": "50000000-0000-4000-8000-000000000700",
+      "releaseId": "50000000-0000-4000-8000-000000000702"
+    },
+    "preview": {
+      "sessionToken": "synthetic-release-session",
+      "projectId": "50000000-0000-4000-8000-000000000700",
+      "releaseId": "50000000-0000-4000-8000-000000000702",
+      "selectionId": "50000000-0000-4000-8000-000000000704"
+    },
+    "export": {
+      "sessionToken": "synthetic-release-session",
+      "projectId": "50000000-0000-4000-8000-000000000700",
+      "releaseId": "50000000-0000-4000-8000-000000000702",
+      "selectionId": "50000000-0000-4000-8000-000000000704",
+      "previewId": "50000000-0000-4000-8000-000000000705",
+      "actionId": "50000000-0000-4000-8000-000000000703",
+      "overwriteConflicts": true
+    },
+    "reconcile": {
+      "sessionToken": "synthetic-release-session",
+      "projectId": "50000000-0000-4000-8000-000000000700",
+      "actionId": "50000000-0000-4000-8000-000000000703",
+      "selectionId": "50000000-0000-4000-8000-000000000704"
+    }
+  },
+  "responses": {
+    "identity": "50000000-0000-4000-8000-000000000701",
+    "releases": [
+      {
+        "releaseId": "50000000-0000-4000-8000-000000000702",
+        "actionId": "50000000-0000-4000-8000-000000000706",
+        "attemptId": "50000000-0000-4000-8000-000000000701",
+        "sourceSnapshotId": "50000000-0000-4000-8000-000000000707",
+        "policyVersion": "balanced-1",
+        "eligibilityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "manifestSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "builderVersion": "smapi-i18n-1",
+        "validatorVersion": "smapi-artifact-1",
+        "sourceFiles": [
+          {
+            "logicalPath": "语言/木桶 👩🏽‍💻 é.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "exceptions": [
+          {
+            "locale": "zh-CN",
+            "nativeKey": "木桶 👩🏽‍💻 é",
+            "kind": "source-fallback"
+          },
+          {
+            "locale": "fr-FR",
+            "nativeKey": "欢迎",
+            "kind": "qa-waiver"
+          }
+        ],
+        "artifacts": [
+          {
+            "locale": "zh-CN",
+            "fileName": "i18n/zh.json",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entryCount": 4294967295
+          },
+          {
+            "locale": "fr-FR",
+            "fileName": "i18n/fr.json",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "entryCount": 2
+          }
+        ],
+        "createdAt": "2026-10-04T00:00:00Z"
+      }
+    ],
+    "selection": {
+      "selectionId": "50000000-0000-4000-8000-000000000704",
+      "folderName": "木桶 👩🏽‍💻 é"
+    },
+    "preview": {
+      "previewId": "50000000-0000-4000-8000-000000000705",
+      "releaseId": "50000000-0000-4000-8000-000000000702",
+      "selectionId": "50000000-0000-4000-8000-000000000704",
+      "folderName": "木桶 👩🏽‍💻 é",
+      "files": [
+        {
+          "locale": "zh-CN",
+          "fileName": "i18n/zh.json",
+          "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "currentSha256": null,
+          "state": "absent"
+        },
+        {
+          "locale": "fr-FR",
+          "fileName": "i18n/fr.json",
+          "expectedSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "currentSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "state": "conflict"
+        }
+      ]
+    },
+    "delivery": {
+      "deliveryId": "50000000-0000-4000-8000-000000000708",
+      "actionId": "50000000-0000-4000-8000-000000000703",
+      "releaseId": "50000000-0000-4000-8000-000000000702",
+      "directory": "C:\\isolated\\木桶 👩🏽‍💻 é",
+      "overwriteConflicts": true,
+      "state": "partial",
+      "files": [
+        {
+          "locale": "zh-CN",
+          "fileName": "i18n/zh.json",
+          "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "actualSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "state": "succeeded"
+        },
+        {
+          "locale": "fr-FR",
+          "fileName": "i18n/fr.json",
+          "expectedSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "actualSha256": null,
+          "state": "failed"
+        }
+      ],
+      "createdAt": "2026-10-04T00:00:01Z"
+    },
+    "deliveries": [
+      {
+        "deliveryId": "50000000-0000-4000-8000-000000000708",
+        "actionId": "50000000-0000-4000-8000-000000000703",
+        "releaseId": "50000000-0000-4000-8000-000000000702",
+        "directory": "C:\\isolated\\木桶 👩🏽‍💻 é",
+        "overwriteConflicts": true,
+        "state": "partial",
+        "files": [
+          {
+            "locale": "zh-CN",
+            "fileName": "i18n/zh.json",
+            "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "actualSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "state": "succeeded"
+          },
+          {
+            "locale": "fr-FR",
+            "fileName": "i18n/fr.json",
+            "expectedSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "actualSha256": null,
+            "state": "failed"
+          }
+        ],
+        "createdAt": "2026-10-04T00:00:01Z"
+      }
+    ]
+  }
+}
