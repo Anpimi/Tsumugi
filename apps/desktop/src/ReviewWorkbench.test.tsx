@@ -104,7 +104,7 @@ it("uses fixed item bases for batch approval and reports a changed item separate
         : reviewSummaryPageFixture([reviewSummaryFor(targets.second)], { total: 2 });
     }
     if (command === "write_review_decision" && (args.request.decision as { unitId: string }).unitId === targets.second.unitId) {
-      throw { code: "dependency-conflict", outcome: "rejected", reason: "review-current" };
+      throw { code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false, reason: "review-current" };
     }
     return original(command, args);
   });

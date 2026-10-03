@@ -1,5 +1,4 @@
 import { checkedInvoke } from "./ipc";
-import { CommandErrorCodeValues } from "./generated/enums";
 import { validateResponseClose, validateResponseError, validateResponseMetadataMutation, validateResponseProjectView } from "./generated/validators";
 import type { CommandError } from "./generated/responses";
 import type { CreateProjectRequest, OpenProjectRequest, ReadProjectRequest, RenameProjectRequest, AddTargetLocaleRequest, SetTargetLocalesRequest, CloseProjectRequest } from "./generated/requests";
@@ -11,8 +10,7 @@ export function isCommandError(value: unknown): value is CommandError {
 }
 /** Transport failures do not prove rejection: retain the original action. */
 export function hasUnknownOutcome(error: unknown): boolean {
-  return typeof error !== "object" || error === null || !("outcome" in error) || error.outcome !== "rejected"
-    || !("code" in error) || error.code === "outcome-unknown" || !CommandErrorCodeValues.some(code => code === error.code);
+  return !isCommandError(error) || error.outcome !== "rejected";
 }
 
 export const projectCommands = {

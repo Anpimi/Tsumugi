@@ -237,7 +237,7 @@ it.each([
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_review_summary_page") {
-      if (args.request.scopeId) throw { code: "dependency-conflict", outcome: "rejected", reason: field };
+      if (args.request.scopeId) throw { code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false, reason: field };
       return { ...await original(command, args), nextOrdinal: 1 };
     }
     return original(command, args);
@@ -430,6 +430,8 @@ it("keeps the current editor when a neighboring entry is requested with a dirty 
 it.each([
   { code: "outcome-unknown", outcome: "unknown", reason: "commit" },
   new Error("IPC response lost"),
+  { code: "dependency-conflict", outcome: "rejected" },
+  { code: "dependency-conflict", outcome: "rejected", stage: "execution-write", recoveryRequired: false },
 ])("saves before leaving and retains an uncertain action for a checked retry: %s", async (failure) => {
   const ref = createRef<TranslationHandle>();
   render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
@@ -482,7 +484,7 @@ it("reports a partial batch without treating an uncommitted conflict as applied"
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_translation_preview" && !applied) return Promise.resolve({ ...preview, total: 2, unique: 2, rows: [preview.rows[0], { ...preview.rows[0], entry: { ...preview.rows[0].entry, ordinal: 1, nativeKey: "SECOND" }, itemId: fixtureIdentity(215), resultId: fixtureIdentity(216) }] });
-    if (command === "prepare_translation_adoption" && args.request.itemId === fixtureIdentity(215)) return Promise.reject({ code: "dependency-conflict", outcome: "rejected", reason: "translation-selection" });
+    if (command === "prepare_translation_adoption" && args.request.itemId === fixtureIdentity(215)) return Promise.reject({ code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false, reason: "translation-selection" });
     return original(command, args);
   });
   render(<TranslationWorkbench project={project} disabled={false} />);

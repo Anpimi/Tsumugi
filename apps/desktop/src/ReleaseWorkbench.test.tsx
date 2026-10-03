@@ -166,7 +166,7 @@ it("requires a fresh destination preview after an exact export lookup finds no a
 it("preserves a rejected export error when its history refresh also fails", async () => {
   const { user, ref } = await readyExport();
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject({ code: "destination-conflict", outcome: "rejected" })
+  invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject({ code: "destination-conflict", outcome: "rejected", stage: "execution-adopt", recoveryRequired: false })
     : command === "list_deliveries" ? Promise.reject({ code: "storage-failed" }) : original(command, args));
   await user.click(screen.getByRole("button", { name: "Export these files" }));
   const alert = await screen.findByRole("alert");
@@ -188,6 +188,29 @@ it("keeps an uncertain export locked when the exact action lookup fails", async 
   expect(screen.queryByText(/This export did not start/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Export these files" })).not.toBeInTheDocument();
   expect(invoke.mock.calls.filter(([c]) => c === "export_release")).toHaveLength(1);
+});
+
+it.each([
+  { code: "destination-conflict", outcome: "rejected" },
+  { code: "destination-conflict", outcome: "rejected", stage: "execution-write", recoveryRequired: false },
+])("checks the original export when a known-code rejection is malformed: %s", async failure => {
+  const { user, ref } = await readyExport();
+  const original = invoke.getMockImplementation()!;
+  const delivery = await original("export_release");
+  invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(failure)
+    : command === "read_delivery_action" ? Promise.resolve(delivery) : original(command, args));
+  await user.click(screen.getByRole("button", { name: "Export these files" }));
+  await screen.findByText(/These files may have been exported/);
+  expect(await ref.current!.allowLeave()).toBe(false);
+  expect(screen.getByRole("alert")).toHaveTextContent("The action may have completed");
+  expect(screen.getByRole("button", { name: "Back to overview" })).toBeDisabled();
+  const originalRequest = invoke.mock.calls.find(([command]) => command === "export_release")![1].request;
+  await user.click(screen.getByRole("button", { name: "Check this export" }));
+  expect(await screen.findByText("Export verified")).toBeInTheDocument();
+  expect(await ref.current!.allowLeave()).toBe(true);
+  expect(invoke.mock.calls.find(([command]) => command === "read_delivery_action")![1].request.actionId).toBe(originalRequest.actionId);
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
 });
 afterEach(() => {
   cleanup();

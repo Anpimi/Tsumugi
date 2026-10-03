@@ -227,7 +227,7 @@ it("keeps identity drafts across filtering and applies the whole range only afte
     if (command === "read_content_scope") return comparison.scope;
     if (command === "read_source_comparison") return { ...comparison, filteredTotal: args.request?.filter ? 1 : 3 };
     if (command === "estimate_source_update") return [{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }];
-    if (command === "adopt_execution") throw { code: "dependency-conflict", outcome: "rejected", reason: "stale-preview" };
+    if (command === "adopt_execution") throw { code: "dependency-conflict", outcome: "rejected", stage: "execution-adopt", recoveryRequired: false, reason: "stale-preview" };
     return original(command, args);
   });
   render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
