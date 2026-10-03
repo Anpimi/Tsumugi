@@ -1,3 +1,4 @@
+import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -23,8 +24,7 @@ const stageOf = (error: unknown): string => {
   const value = error as Partial<CommandError> | null;
   return value?.field ?? value?.code ?? "failed";
 };
-const unknownOutcome = (error: unknown) => stageOf(error).includes("unknown")
-  || (error as Partial<CommandError> | null)?.code === "outcome-unknown";
+const unknownOutcome = hasUnknownOutcome;
 
 export interface ResourceHandle { allowLeave: () => Promise<boolean> }
 export function ResourceWorkbench({

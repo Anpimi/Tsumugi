@@ -1,3 +1,4 @@
+import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import {enUS} from "./i18n/en-US";
 import {useEffect,useImperativeHandle,useRef,useState,type Ref} from "react";
@@ -49,8 +50,8 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation}:{project:Pr
   },[open,attempt,busy,project.sessionToken]);
   function change<K extends keyof AiConfig>(key:K,value:AiConfig[K]){setFailure(null);setConfig(c=>({...c,[key]:value}));setPrepared(null);setConsent(false);setDirty(true);}
   function preset(value:string){setFailure(null);setPresetName(value);setConfig(c=>({...c,endpoint:value==="openai"?"https://api.openai.com/v1/chat/completions":value==="local"?"http://127.0.0.1:11434/v1/chat/completions":"",credentialEnv:value==="local"?"":"OPENAI_API_KEY",tokenField:value==="openai"?"max_completion_tokens":"max_tokens"}));setPrepared(null);setConsent(false);setDirty(true);}
-  async function start(request:AiStart,current:()=>boolean){setPendingStart(request);try{const id=await aiCommands.start(request);if(current()){setAttempt(id);setPendingStart(null);setPrepared(null);setConsent(false);setView(null);setDirty(false);}}catch(e){if(current()&&!stage(e).includes("unknown"))setPendingStart(null);throw e;}}
-  async function adopt(request:PrepareRequest,current:()=>boolean){setPendingAdopt(request);setReceiptMissing(false);try{await execution.prepare(request);await execution.adopt({...context,actionId:request.actionId});const next=await aiCommands.read({...context,attemptId:request.attemptId});if(current()){setView(next);setPendingAdopt(null);}}catch(e){if(current()&&!stage(e).includes("unknown"))setPendingAdopt(null);throw e;}}
+  async function start(request:AiStart,current:()=>boolean){setPendingStart(request);try{const id=await aiCommands.start(request);if(current()){setAttempt(id);setPendingStart(null);setPrepared(null);setConsent(false);setView(null);setDirty(false);}}catch(e){if(current()&&!hasUnknownOutcome(e))setPendingStart(null);throw e;}}
+  async function adopt(request:PrepareRequest,current:()=>boolean){setPendingAdopt(request);setReceiptMissing(false);try{await execution.prepare(request);await execution.adopt({...context,actionId:request.actionId});const next=await aiCommands.read({...context,attemptId:request.attemptId});if(current()){setView(next);setPendingAdopt(null);}}catch(e){if(current()&&!hasUnknownOutcome(e))setPendingAdopt(null);throw e;}}
   const numeric=[['maxItems',1,100],['concurrency',1,2],['maxRequests',1,300],['maxOutputTokens',1,16384],['maxRetries',0,2],['timeoutSeconds',1,120]] as const;
   const fieldFailure=(key:string)=>failure===`ai-${key==="credentialEnv"?"credential":key}`;
   const fieldError=(key:string)=>fieldFailure(key)?<span id={`ai-error-${key}`} className="field-error">{t(`ai.errors.${failure}`,{defaultValue:t("ai.errors.failed")})}</span>:null;

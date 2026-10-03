@@ -331,7 +331,10 @@ it("keeps the current editor when a neighboring entry is requested with a dirty 
   expect(screen.getByRole("button", { name: "first" })).toHaveAttribute("aria-current", "true");
 });
 
-it("saves before leaving and retains an uncertain action for a checked retry", async () => {
+it.each([
+  { code: "outcome-unknown", field: "commit" },
+  new Error("IPC response lost"),
+])("saves before leaving and retains an uncertain action for a checked retry: %s", async (failure) => {
   const ref = createRef<TranslationHandle>();
   render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
   const user = userEvent.setup();
@@ -343,7 +346,7 @@ it("saves before leaving and retains an uncertain action for a checked retry", a
   act(() => { decision = ref.current!.allowLeave(); });
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "save_translation_revision"
-    ? Promise.reject({ code: "outcome-unknown", field: "outcome-unknown" })
+    ? Promise.reject(failure)
     : original(command, args));
   await user.click(screen.getByRole("button", { name: "Save and continue" }));
   expect(await screen.findByRole("button", { name: "Retry the same action" })).toBeInTheDocument();

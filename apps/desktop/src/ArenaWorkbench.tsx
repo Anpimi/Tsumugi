@@ -1,3 +1,4 @@
+import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import {useEffect,useImperativeHandle,useRef,useState,type Ref} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -14,7 +15,7 @@ import type {EditorTarget} from "./TranslationWorkbench";
 
 type Pending={kind:"start";request:AiStart}|{kind:"adopt";request:PrepareRequest}|{kind:"compare";request:CompareRequest}|{kind:"merge";request:MergeRequest}|{kind:"select";request:TranslationSelectRequest}|{kind:"cancel";request:CancelRequest;attemptId:string}|{kind:"reveal";request:{sessionToken:string;projectId:string;comparisonId:string;actionId:string}};
 const stage=(e:unknown)=>{const v=e as Partial<CommandError>|null;return v?.code==="outcome-unknown"?"outcome-unknown":v?.field??v?.code??"outcome-unknown";};
-const unknown=(e:unknown)=>(e as Partial<CommandError>|null)?.code==="outcome-unknown"||stage(e).includes("unknown");
+const unknown=hasUnknownOutcome;
 const letter=(i:number)=>String.fromCharCode(65+i);
 
 export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean}) {

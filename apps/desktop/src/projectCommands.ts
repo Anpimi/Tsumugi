@@ -28,6 +28,21 @@ export interface CommandError {
   recoveryActions?: string[];
 }
 
+/** Only a recognized backend rejection proves that a mutation did not have an
+ * uncertain outcome. Transport errors retain the original action for recovery. */
+export function hasUnknownOutcome(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return true;
+  switch (error.code) {
+    case "invalid-input": case "destination-conflict": case "missing-project":
+    case "permission-denied": case "unsupported-schema": case "corrupt-project":
+    case "stale-revision": case "session-invalid": case "project-in-use":
+    case "busy": case "storage-failed": case "limit-exceeded":
+    case "result-mismatch": case "output-invalid": case "dependency-conflict":
+    case "cancelled": return false;
+    default: return true;
+  }
+}
+
 export interface CreateProjectRequest {
   destination: string;
   displayName: string;

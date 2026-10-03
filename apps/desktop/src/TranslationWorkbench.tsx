@@ -1,3 +1,4 @@
+import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { reviewCommands, type ReviewSummaryPage, type ReviewSummary, type ReviewTarget } from "./reviewCommands";
@@ -220,7 +221,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       const id = await commands.start(request);
       if (current()) { setAttempt(id); setPendingStart(null); setPreview(null); setBatchOutcome(null); }
     } catch (error) {
-      if (current() && !errorStage(error).includes("unknown")) setPendingStart(null);
+      if (current() && !hasUnknownOutcome(error)) setPendingStart(null);
       throw error;
     }
   }
@@ -288,7 +289,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
         details.push({ key: row.entry.nativeKey, status: "applied" });
         } catch (error) {
           const code = (error as Partial<CommandError> | null)?.code;
-          if (code === "outcome-unknown" || errorStage(error).includes("unknown")) { outcome.unknown++; details.push({ key: row.entry.nativeKey, status: "unknown" }); setUncertain(list => [...list, request]); }
+          if (hasUnknownOutcome(error)) { outcome.unknown++; details.push({ key: row.entry.nativeKey, status: "unknown" }); setUncertain(list => [...list, request]); }
           else if (code === "dependency-conflict") { outcome.conflicted++; details.push({ key: row.entry.nativeKey, status: "conflicted" }); }
           else { outcome.failed++; details.push({ key: row.entry.nativeKey, status: "failed" }); }
         }
@@ -322,7 +323,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       await execution.adopt({ ...context, actionId: request.actionId });
       if (current()) { setRowAction(null); await loadPreview(0, null, current); }
     } catch (error) {
-      if (current() && errorStage(error).includes("unknown")) {
+      if (current() && hasUnknownOutcome(error)) {
         setUncertain(list => [...list, request]);
         setRowAction(null);
       }
@@ -358,7 +359,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     try {
       await commands.save(request);
     } catch (error) {
-      if (!errorStage(error).includes("unknown") && current()) setPendingSave(null);
+      if (!hasUnknownOutcome(error) && current()) setPendingSave(null);
       throw error;
     }
     const snapshot = await reviewCommands.editorSnapshot({ ...context, unitId: request.unitId, locale: request.locale });
