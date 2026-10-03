@@ -107,9 +107,7 @@ request!(SourceAdoptRequest {
     confirmation: SourceConfirmation
 });
 fn map_source(error: ExecutionError) -> CommandError {
-    let reason = error.stage.clone();
-    let mut mapped = map_execution(error, CommandStage::ExecutionRead);
-    mapped.field = Some(reason);
+    let mapped = map_execution(error, CommandStage::ExecutionRead);
     mapped
 }
 fn stale() -> CommandError {

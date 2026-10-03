@@ -21,6 +21,8 @@ export type CommandStage = "create" | "open" | "read" | "rename" | "add-target-l
 export interface CommandError {
   code: CommandErrorCode;
   stage: CommandStage;
+  outcome: "rejected" | "unknown";
+  reason?: string;
   field?: string;
   currentRevision?: string;
   recoveryRequired: boolean;
@@ -28,10 +30,9 @@ export interface CommandError {
   recoveryActions?: string[];
 }
 
-/** Only a recognized backend rejection proves that a mutation did not have an
- * uncertain outcome. Transport errors retain the original action for recovery. */
+/** Transport failures do not prove rejection: retain the original action. */
 export function hasUnknownOutcome(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error)) return true;
+  if (typeof error !== "object" || error === null || !("outcome" in error) || error.outcome !== "rejected" || !("code" in error)) return true;
   switch (error.code) {
     case "invalid-input": case "destination-conflict": case "missing-project":
     case "permission-denied": case "unsupported-schema": case "corrupt-project":

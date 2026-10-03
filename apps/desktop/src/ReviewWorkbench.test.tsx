@@ -73,7 +73,7 @@ it("uses fixed item bases for batch approval and reports a changed item separate
         : { rows: [targets.second], nextOrdinal: null, total: 2 };
     }
     if (command === "write_review_decision" && (args.request.decision as { unitId: string }).unitId === "second") {
-      throw { code: "dependency-conflict", field: "review-current" };
+      throw { code: "dependency-conflict", outcome: "rejected", reason: "review-current" };
     }
     return original(command, args);
   });

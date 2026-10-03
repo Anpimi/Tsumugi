@@ -60,6 +60,7 @@
   },
   "error": {
     "code": "outcome-unknown",
+    "outcome": "unknown",
     "stage": "rename",
     "recoveryRequired": true
   }

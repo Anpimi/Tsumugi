@@ -50,9 +50,7 @@ request!(ImpactRequest {
 });
 
 fn resource_error(error: ExecutionError, stage: CommandStage) -> CommandError {
-    let field = error.stage.clone();
-    let mut mapped = map_execution(error, stage);
-    mapped.field = Some(field);
+    let mapped = map_execution(error, stage);
     mapped
 }
 

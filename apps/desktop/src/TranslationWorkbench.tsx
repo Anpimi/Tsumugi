@@ -23,7 +23,7 @@ export interface TranslationHandle {
 
 function errorStage(error: unknown): string {
   const value = error as Partial<CommandError> | null;
-  return value?.field ?? value?.code ?? "failed";
+  return value?.reason ?? value?.field ?? value?.code ?? "failed";
 }
 function errorKey(stage: string) {
   if (stage === "query-limit") return "query";

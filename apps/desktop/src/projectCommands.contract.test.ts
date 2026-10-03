@@ -43,6 +43,7 @@ const error: CommandError = {
   ...contract.error,
   code: contract.error.code as CommandError["code"],
   stage: contract.error.stage as CommandError["stage"],
+  outcome: contract.error.outcome as CommandError["outcome"],
 };
 
 describe("project command wire contract", () => {
@@ -60,7 +61,7 @@ describe("project command wire contract", () => {
     expect(responses.metadataMutation.directoryChanged).toBe(false);
     expect(responses.close.closed).toBe(true);
     expect(error).toEqual({
-      code: "outcome-unknown",
+      code: "outcome-unknown", outcome: "unknown",
       stage: "rename",
       recoveryRequired: true,
     });

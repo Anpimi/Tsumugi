@@ -14,7 +14,7 @@ import type {AiHandle} from "./AiWorkbench";
 import type {EditorTarget} from "./TranslationWorkbench";
 
 type Pending={kind:"start";request:AiStart}|{kind:"adopt";request:PrepareRequest}|{kind:"compare";request:CompareRequest}|{kind:"merge";request:MergeRequest}|{kind:"select";request:TranslationSelectRequest}|{kind:"cancel";request:CancelRequest;attemptId:string}|{kind:"reveal";request:{sessionToken:string;projectId:string;comparisonId:string;actionId:string}};
-const stage=(e:unknown)=>{const v=e as Partial<CommandError>|null;return v?.code==="outcome-unknown"?"outcome-unknown":v?.field??v?.code??"outcome-unknown";};
+const stage=(e:unknown)=>{const v=e as Partial<CommandError>|null;return v?.code==="outcome-unknown"?"outcome-unknown":v?.reason??v?.field??v?.code??"outcome-unknown";};
 const unknown=hasUnknownOutcome;
 const letter=(i:number)=>String.fromCharCode(65+i);
 

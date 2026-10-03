@@ -323,6 +323,7 @@ fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
     };
     let mut mapped = CommandError::simple(code, stage);
     mapped.recovery_required = code == CommandErrorCode::OutcomeUnknown;
+    mapped.reason = Some(error.stage);
     mapped.item_ids = error.item_ids;
     mapped
 }

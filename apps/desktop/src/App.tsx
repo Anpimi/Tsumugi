@@ -223,11 +223,11 @@ function parseTargetLocales(raw: string) {
 }
 
 function asCommandError(value: unknown, stage: CommandStage): CommandError {
-  if (typeof value === "object" && value !== null && "code" in value && "stage" in value) {
+  if (typeof value === "object" && value !== null && "code" in value && "stage" in value && "outcome" in value && (value.outcome === "rejected" || value.outcome === "unknown")) {
     return value as CommandError;
   }
   const mutation = stage === "rename" || stage === "set-target-locales" || stage === "add-target-locale";
-  return { code: mutation ? "outcome-unknown" : "storage-failed", stage, recoveryRequired: mutation };
+  return { code: mutation ? "outcome-unknown" : "storage-failed", stage, outcome: mutation ? "unknown" : "rejected", recoveryRequired: mutation };
 }
 
 function failureMessageKey(failure: CommandError): TranslationKey {

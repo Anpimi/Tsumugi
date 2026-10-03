@@ -313,7 +313,7 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
     assert!(call(&view, "read_review_summary_page", summary_request.clone()).is_err());
     summary_request["sessionToken"] = reopened["sessionToken"].clone();
     let expired = call(&view, "read_review_summary_page", summary_request.clone()).unwrap_err();
-    assert_eq!(expired["field"], "review-scope-expired");
+    assert_eq!(expired["reason"], "review-scope-expired");
     summary_request["scopeId"] = Value::Null;
     assert_eq!(
         call(&view, "read_review_summary_page", summary_request).unwrap()["total"],

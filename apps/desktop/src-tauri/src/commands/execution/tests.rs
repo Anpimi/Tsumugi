@@ -259,7 +259,7 @@ fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
         before
     );
     let start = json!({"attemptId":prepared["attemptId"],"digest":prepared["preview"]["digest"],"confirmed":true});
-    assert_eq!(call(&webview,"start_ai_translation",request(&context,json!({"attemptId":prepared["attemptId"],"digest":prepared["preview"]["digest"],"confirmed":false}))).unwrap_err()["field"],"ai-consent");
+    assert_eq!(call(&webview,"start_ai_translation",request(&context,json!({"attemptId":prepared["attemptId"],"digest":prepared["preview"]["digest"],"confirmed":false}))).unwrap_err()["reason"],"ai-consent");
     assert!(
         call(
             &webview,
@@ -452,7 +452,7 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
     };
     assert!(call(&webview, "start_arena_translation", start(&first, true)).is_err());
     assert_eq!(
-        call(&webview, "start_arena_translation", start(&second, false)).unwrap_err()["field"],
+        call(&webview, "start_arena_translation", start(&second, false)).unwrap_err()["reason"],
         "arena-consent"
     );
     let mut forged = start(&second, true);
@@ -491,7 +491,7 @@ fn arena_ipc_preview_checks_all_variants_current_resources_consent_and_redaction
         })
     }
     assert_eq!(
-        call(&webview, "start_arena_translation", start(&second, true)).unwrap_err()["field"],
+        call(&webview, "start_arena_translation", start(&second, true)).unwrap_err()["reason"],
         "arena-preview"
     );
     assert_eq!(counts(), before);
@@ -1204,7 +1204,7 @@ fn review_computation_allows_save_close_and_completion_after_waiter_loss() {
             release.send(()).unwrap();
             let error = tauri::async_runtime::block_on(pending).unwrap_err();
             if scenario == "save" {
-                assert_eq!(error.field.as_deref(), Some("review-current"));
+                assert_eq!(error.reason.as_deref(), Some("review-current"));
             } else {
                 assert_eq!(error.code, CommandErrorCode::SessionInvalid);
             }

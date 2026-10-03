@@ -67,7 +67,7 @@ describe("project lifecycle workbench", () => {
     let stopped = false;
     mocks.invoke.mockImplementation(async (command: string) => {
       if (command === "close_project") {
-        if (!stopped) throw { code: "busy", stage: "close", recoveryRequired: false };
+        if (!stopped) throw { code: "busy", outcome: "rejected", stage: "close", recoveryRequired: false };
         return { closed: true };
       }
       if (command === "quiesce_execution") { stopped = true; return { active: false, quiescing: false, queryCount: 0, error: null }; }
@@ -145,7 +145,7 @@ describe("project lifecycle workbench", () => {
   it("clears a rejected create result after explicitly discarding the draft", async () => {
     const user = userEvent.setup();
     await renderApp();
-    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", stage: "create", context: {} });
+    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", outcome: "rejected", stage: "create", context: {} });
     await user.click(screen.getByRole("button", { name: "Create project" }));
     await user.type(screen.getByLabelText(/Parent folder/), "C:\\Projects");
     await user.type(screen.getByLabelText(/Project name/), "Occupied");
@@ -187,7 +187,7 @@ describe("project lifecycle workbench", () => {
     await user.clear(screen.getByRole("textbox", { name: "Project name" }));
     await user.type(screen.getByRole("textbox", { name: "Project name" }), "Occupied");
     await user.click(screen.getByRole("checkbox", { name: "Also rename the project folder" }));
-    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", stage: "write", context: {} });
+    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", outcome: "rejected", stage: "write", context: {} });
     await user.click(screen.getByRole("button", { name: "Save" }));
     await screen.findByRole("alert");
     expect(readRecentProjects().map((item) => item.locator)).toEqual([projectView().locator]);
@@ -223,11 +223,11 @@ describe("project lifecycle workbench", () => {
     mocks.invoke.mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(checkbox).toBeDisabled());
-    rejectSave({ code: "destination-conflict", stage: "rename", recoveryRequired: false });
+    rejectSave({ code: "destination-conflict", outcome: "rejected", stage: "rename", recoveryRequired: false });
     await waitFor(() => expect(checkbox).toBeEnabled());
     expect(checkbox).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Close project" }));
-    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", stage: "rename", recoveryRequired: false });
+    mocks.invoke.mockRejectedValueOnce({ code: "destination-conflict", outcome: "rejected", stage: "rename", recoveryRequired: false });
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save and continue" }));
     await waitFor(() => expect(mocks.invoke).toHaveBeenLastCalledWith("rename_project", {
       request: { sessionToken: "session-1", expectedRevision: "1", displayName: "Occupied", directoryName: "Occupied" },
@@ -282,7 +282,7 @@ describe("project lifecycle workbench", () => {
     await user.type(screen.getByRole("textbox", { name: "Project name" }), "Committed");
     let reads = 0;
     mocks.invoke.mockImplementation(async (command: string) => {
-      if (command === "rename_project") throw { code: "outcome-unknown", stage: "rename", recoveryRequired: true };
+      if (command === "rename_project") throw { code: "outcome-unknown", outcome: "unknown", stage: "rename", recoveryRequired: true };
       if (command === "read_project") {
         reads += 1;
         if (reads === 1) throw new Error("read acknowledgement lost");
@@ -331,7 +331,7 @@ describe("project lifecycle workbench", () => {
     await waitFor(() => expect(rejectCreate).toBeDefined());
     expect(screen.getByLabelText(/Project name/)).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Common source languages" })).toBeDisabled();
-    rejectCreate({ code: "destination-conflict", stage: "create", recoveryRequired: false });
+    rejectCreate({ code: "destination-conflict", outcome: "rejected", stage: "create", recoveryRequired: false });
     await waitFor(() => expect(screen.getByLabelText(/Project name/)).toBeEnabled());
     expect(screen.getByLabelText(/Project name/)).toHaveValue("Submitted");
   });
@@ -379,7 +379,7 @@ describe("project lifecycle workbench", () => {
     expect(field).toHaveValue("zh-CN");
     await user.clear(field);
     await user.type(field, "ssss");
-    mocks.invoke.mockRejectedValueOnce({ code: "invalid-input", stage: "set-target-locales", field: "targetLocales", recoveryRequired: false });
+    mocks.invoke.mockRejectedValueOnce({ code: "invalid-input", outcome: "rejected", stage: "set-target-locales", field: "targetLocales", recoveryRequired: false });
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
     expect(field).toHaveValue("ssss");
@@ -562,7 +562,7 @@ describe("project lifecycle workbench", () => {
     const nameInput = screen.getByRole("textbox", { name: /Project name/ });
     await user.clear(nameInput);
     await user.type(nameInput, "Failed draft");
-    mocks.invoke.mockRejectedValueOnce({ code: "storage-failed", stage: "rename", recoveryRequired: false });
+    mocks.invoke.mockRejectedValueOnce({ code: "storage-failed", outcome: "rejected", stage: "rename", recoveryRequired: false });
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.getByText("The project could not be read or saved. Your current draft is still here.")).toBeInTheDocument());
     expect(nameInput).toHaveValue("Failed draft");
@@ -637,7 +637,7 @@ describe("project lifecycle workbench", () => {
     await user.clear(nameInput);
     await user.type(nameInput, "Committed");
     mocks.invoke.mockImplementationOnce(async (command: string) => {
-      if (command === "rename_project") throw { code: "outcome-unknown", stage: "rename", recoveryRequired: true };
+      if (command === "rename_project") throw { code: "outcome-unknown", outcome: "unknown", stage: "rename", recoveryRequired: true };
       return projectView();
     }).mockImplementationOnce(async (command: string) => {
       if (command === "read_project") return projectView("Committed", "2", "committed");
@@ -659,7 +659,7 @@ describe("project lifecycle workbench", () => {
     await user.clear(nameInput);
     await user.type(nameInput, "Not committed");
     mocks.invoke.mockImplementationOnce(async (command: string) => {
-      if (command === "rename_project") throw { code: "outcome-unknown", stage: "rename", recoveryRequired: true };
+      if (command === "rename_project") throw { code: "outcome-unknown", outcome: "unknown", stage: "rename", recoveryRequired: true };
       return projectView();
     }).mockImplementationOnce(async (command: string) => {
       if (command === "read_project") return projectView("Demo", "1", "previous");

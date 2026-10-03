@@ -11,6 +11,6 @@
     "nextOffset":null
   },
   "status":{"active":false,"quiescing":false,"queryCount":0,"error":null},
-  "error":{"code":"outcome-unknown","stage":"execution-recover","recoveryRequired":true,"itemIds":["10000000-0000-4000-8000-000000000004"],"recoveryActions":["query-outcome"]},
+  "error":{"code":"outcome-unknown","outcome":"unknown","stage":"execution-recover","recoveryRequired":true,"itemIds":["10000000-0000-4000-8000-000000000004"],"recoveryActions":["query-outcome"]},
   "receipt":{"projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","actionId":"10000000-0000-4000-8000-000000000005","unitId":"10000000-0000-4000-8000-000000000003","requestDigest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","changes":[{"kind":"sample-update","id":"Sample A","revision":"9007199254740993"}]}
 }

@@ -20,7 +20,7 @@ it("reveals invalid connection fields when preview fails after settings were col
  const connection=screen.getByText("Connection",{selector:"summary"});
  await user.click(connection);expect(connection.closest("details")).not.toHaveAttribute("open");
  const original=invoke.getMockImplementation()!;
- invoke.mockImplementation((command:string,args:unknown)=>command==="preview_ai_translation"?Promise.reject({code:"invalid-input",field:"ai-model"}):original(command,args));
+ invoke.mockImplementation((command:string,args:unknown)=>command==="preview_ai_translation"?Promise.reject({code:"invalid-input", outcome: "rejected",reason:"ai-model"}):original(command,args));
  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
  await waitFor(()=>expect(connection.closest("details")).toHaveAttribute("open"));
  expect(screen.getByRole("textbox",{name:"Model"})).toHaveAttribute("aria-invalid","true");

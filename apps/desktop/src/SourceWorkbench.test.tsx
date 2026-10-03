@@ -37,7 +37,7 @@ it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", 
   invoke.mockImplementation((command: string, args: unknown) => {
     if (command === "read_webvtt_integration") return Promise.resolve({ id: "webvtt", version: "0.1.0", available: true, formatProfiles: ["webvtt-captions"] });
     if (command === "select_webvtt_source") return Promise.resolve({ selectionId: "captions", folderName: "Captions" });
-    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", field: "vtt-timing" });
+    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", outcome: "rejected", reason: "vtt-timing" });
     return original(command, args);
   });
   render(<SourceWorkbench project={project} disabled={false} />);
@@ -96,7 +96,7 @@ it.each([
   const original = invoke.getMockImplementation()!;
   let invalid = true;
   invoke.mockImplementation((command: string, args: unknown) => {
-    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", field: "source-value-not-string" });
+    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", outcome: "rejected", reason: "source-value-not-string" });
     return original(command, args);
   });
   render(<SourceWorkbench project={project} disabled={false} />);
@@ -223,7 +223,7 @@ it("keeps identity drafts across filtering and applies the whole range only afte
     if (command === "read_content_scope") return comparison.scope;
     if (command === "read_source_comparison") return { ...comparison, filteredTotal: args.request?.filter ? 1 : 3 };
     if (command === "estimate_source_update") return [{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }];
-    if (command === "adopt_execution") throw { code: "dependency-conflict", field: "stale-preview" };
+    if (command === "adopt_execution") throw { code: "dependency-conflict", outcome: "rejected", reason: "stale-preview" };
     return original(command, args);
   });
   render(<SourceWorkbench ref={ref} project={project} disabled={false} />);

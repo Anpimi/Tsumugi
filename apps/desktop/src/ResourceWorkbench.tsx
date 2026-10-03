@@ -22,7 +22,7 @@ const termDraftFor = (term: TermRevision | null): TermDraft => term
   : blankTerm();
 const stageOf = (error: unknown): string => {
   const value = error as Partial<CommandError> | null;
-  return value?.field ?? value?.code ?? "failed";
+  return value?.reason ?? value?.field ?? value?.code ?? "failed";
 };
 const unknownOutcome = hasUnknownOutcome;
 

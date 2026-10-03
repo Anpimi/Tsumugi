@@ -65,9 +65,7 @@ request!(ReviewWorkRequest {
 request!(EligibilityRequest { locales: Vec<String> });
 
 fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
-    let reason = error.stage.clone();
-    let mut result = map_execution(error, stage);
-    result.field = Some(reason);
+    let result = map_execution(error, stage);
     result
 }
 

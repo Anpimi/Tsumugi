@@ -54,11 +54,21 @@ pub enum CommandStage {
     ExecutionQuiesce,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CommandOutcome {
+    Rejected,
+    Unknown,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandError {
     pub code: CommandErrorCode,
     pub stage: CommandStage,
+    pub outcome: CommandOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,6 +85,12 @@ impl CommandError {
         Self {
             code,
             stage,
+            outcome: if code == CommandErrorCode::OutcomeUnknown {
+                CommandOutcome::Unknown
+            } else {
+                CommandOutcome::Rejected
+            },
+            reason: None,
             field: None,
             current_revision: None,
             recovery_required: false,
@@ -87,6 +103,8 @@ impl CommandError {
         Self {
             code: CommandErrorCode::InvalidInput,
             stage,
+            outcome: CommandOutcome::Rejected,
+            reason: None,
             field: field.map(str::to_owned),
             current_revision: None,
             recovery_required: false,
@@ -99,6 +117,8 @@ impl CommandError {
         Self {
             code: CommandErrorCode::StaleRevision,
             stage,
+            outcome: CommandOutcome::Rejected,
+            reason: None,
             field: None,
             current_revision: Some(current_revision.to_string()),
             recovery_required: false,
@@ -111,6 +131,8 @@ impl CommandError {
         Self {
             code: CommandErrorCode::OutcomeUnknown,
             stage,
+            outcome: CommandOutcome::Unknown,
+            reason: None,
             field: None,
             current_revision: None,
             recovery_required: true,

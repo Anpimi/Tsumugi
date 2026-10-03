@@ -65,7 +65,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   }));
   function showError(error: unknown) {
     const value = error as Partial<CommandError> | null;
-    setFailure(value?.field ?? value?.code ?? "failed");
+    setFailure(value?.reason ?? value?.field ?? value?.code ?? "failed");
   }
   async function perform(work: (current: () => boolean) => Promise<void>) {
     if (mutation.current) return;

@@ -4,7 +4,7 @@ import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "reac
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { executionCommands, executionContext } from "./executionCommands";
-import type { ProjectView } from "./projectCommands";
+import { hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { reviewCommands as commands, type Eligibility, type EligibilityReason, type FallbackWrite,
   type ReviewHistoryPage, type ReviewTarget, type ReviewSummary, type ReviewSummaryPage, type ReviewWrite, type WaiverWrite, type WorkPage } from "./reviewCommands";
@@ -17,11 +17,11 @@ const MAX_BATCH = 100;
 export interface ReviewHandle { allowLeave: () => Promise<boolean>; showWork: () => void }
 
 function errorReason(error: unknown): string {
-  const value = error as { field?: string; code?: string } | null;
-  return value?.field ?? value?.code ?? "failed";
+  const value = error as Partial<CommandError> | null;
+  return value?.reason ?? value?.field ?? value?.code ?? "failed";
 }
 function isUncertain(error: unknown) {
-  return (error as { code?: string } | null)?.code === "outcome-unknown";
+  return hasUnknownOutcome(error);
 }
 function isConflict(error: unknown) {
   return (error as { code?: string } | null)?.code === "dependency-conflict";

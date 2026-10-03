@@ -36,9 +36,7 @@ pub struct AiView {
     rows: Vec<AiRow>,
 }
 fn map_ai(e: ExecutionError) -> CommandError {
-    let field = e.stage.clone();
-    let mut result = map_read(e);
-    result.field = Some(field);
+    let result = map_read(e);
     result
 }
 #[tauri::command]

@@ -57,9 +57,7 @@ pub struct View {
     parent_attempt_id: Option<ExecutionId>,
 }
 fn mapped(e: ExecutionError) -> CommandError {
-    let field = e.stage.clone();
-    let mut e = map_read(e);
-    e.field = Some(field);
+    let e = map_read(e);
     e
 }
 

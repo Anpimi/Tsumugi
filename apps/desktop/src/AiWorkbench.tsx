@@ -10,7 +10,7 @@ import {sourceCommands,type ContentPage} from "./sourceCommands";
 import {aiCommands,aiTarget,defaultAiConfig,type AiConfig,type AiPrepared,type AiStart,type AiView} from "./aiCommands";
 import type {EditorTarget} from "./TranslationWorkbench";
 export interface AiHandle {allowLeave:()=>Promise<boolean>;showAttempt:(id:string)=>void}
-const stage=(e:unknown)=>{const value=e as Partial<CommandError>|null;return value?.field??value?.code??"outcome-unknown";};
+const stage=(e:unknown)=>{const value=e as Partial<CommandError>|null;return value?.reason??value?.field??value?.code??"outcome-unknown";};
 export function AiWorkbench({project,disabled,ref,onOpenTranslation}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean}) {
   const {t}=useTranslation();const context=executionContext(project);
   const [connectionOpen,setConnectionOpen]=useState(true);

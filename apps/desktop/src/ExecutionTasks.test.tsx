@@ -49,7 +49,7 @@ it("keeps an uncertain adoption recoverable inside the confirmation dialog witho
   value.recovery.units[0].actions = ["adopt-result"]; value.recovery.units[0].resultIds = fixture.prepare.resultIds; value.recovery.units[0].blockedReason = null;
   const user = await openTasks(value);
   await user.click(screen.getByRole("button", { name: "Apply saved results" }));
-  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce({}).mockRejectedValueOnce({ code: "outcome-unknown", stage: "execution-adopt", recoveryRequired: true });
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce({}).mockRejectedValueOnce({ code: "outcome-unknown", outcome: "unknown", stage: "execution-adopt", recoveryRequired: true });
   await user.click(within(screen.getByRole("dialog", { name: "Apply saved results" })).getByRole("button", { name: "Apply saved results" }));
   const check = await screen.findByRole("button", { name: "Check recorded outcome" });
   invoke.mockResolvedValueOnce(project).mockResolvedValueOnce(fixture.receipt);

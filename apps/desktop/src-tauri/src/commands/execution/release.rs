@@ -68,9 +68,7 @@ request!(ReconcileRequest {
 });
 
 fn mapped(error: ExecutionError, stage: CommandStage) -> CommandError {
-    let field = error.stage.clone();
-    let mut result = map_execution(error, stage);
-    result.field = Some(field);
+    let result = map_execution(error, stage);
     result
 }
 fn invalid(stage: CommandStage, field: &str) -> CommandError {
