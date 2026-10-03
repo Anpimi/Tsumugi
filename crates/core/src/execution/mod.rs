@@ -156,6 +156,7 @@ impl From<Revision> for String {
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct Scope {
     pub kind: String,
     pub id: String,
@@ -507,6 +508,7 @@ impl FixedInput {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum ExecutionState {
     Queued,
     Dispatched,
@@ -517,6 +519,7 @@ pub enum ExecutionState {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum ValidationState {
     Absent,
     Pending,
@@ -525,6 +528,7 @@ pub enum ValidationState {
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum AdoptionState {
     Unapplied,
     Committed,
@@ -545,6 +549,7 @@ pub enum RecoveryAction {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ItemStatus {
     pub item_id: ExecutionId,
     pub execution: ExecutionState,
@@ -581,14 +586,23 @@ impl ItemStatus {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct Progress {
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub total: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub queued: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub running: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub succeeded: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub failed: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub cancelled: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub unknown: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub adopted: u32,
 }
 impl Progress {
@@ -635,6 +649,7 @@ impl ExecutionState {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct Diagnostic {
     pub code: String,
     pub retry_safe: bool,
@@ -648,6 +663,7 @@ impl Diagnostic {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ResultEnvelope {
     pub project_id: ExecutionId,
     pub attempt_id: ExecutionId,
@@ -778,6 +794,7 @@ impl FixedResult {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AdoptionAction {
     pub project_id: ExecutionId,
     pub attempt_id: ExecutionId,
@@ -862,6 +879,7 @@ impl AdoptionAction {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ChangeReference {
     pub kind: String,
     pub id: String,
@@ -870,6 +888,7 @@ pub struct ChangeReference {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AdoptionReceipt {
     pub project_id: ExecutionId,
     pub attempt_id: ExecutionId,

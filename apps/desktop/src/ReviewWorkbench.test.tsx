@@ -6,6 +6,7 @@ import { ReviewWorkbench } from "./ReviewWorkbench";
 import type { ProjectView } from "./projectCommands";
 import type { ReviewTarget } from "./reviewCommands";
 import { i18n } from "./i18n";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -32,7 +33,7 @@ beforeEach(async () => {
     if (command === "read_review_summary_page") return { rows: [targets.first], nextOrdinal: null, total: 1, scopeId: "read-scope", sourceSnapshotId: "snapshot", readVersion: "view" };
     if (command === "read_review_target") return targets[args.request.unitId as string];
     if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
-    if (command === "create_execution_identity") return `action-${++nextIdentity}`;
+    if (command === "create_execution_identity") return fixtureIdentity(++nextIdentity);
     if (command === "write_review_decision") return { decisionId: "decision", ...(args.request.decision as object) };
     if (command === "read_review_work") return { items: [], total: 0, nextOffset: null, coverage: "current" };
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: "snapshot", basis: "eligibility",

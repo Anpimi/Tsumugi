@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ResourceWorkbench } from "./ResourceWorkbench";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -26,7 +27,7 @@ beforeEach(async () => {
     if (command === "read_source_content") return page;
     if (command === "read_terms") return [];
     if (command === "list_resource_captures") return [];
-    if (command === "create_execution_identity") return "action";
+    if (command === "create_execution_identity") return fixtureIdentity(1);
     if (command === "save_term") return {
       revisionId: "revision", termId: "term", locale: "zh-CN", source: "Barrel",
       aliases: ["Cask", "Drum"], target: "木桶", protected: false, scopeUnitId: null,

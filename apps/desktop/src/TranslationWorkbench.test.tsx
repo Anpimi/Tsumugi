@@ -7,6 +7,8 @@ import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkb
 import type { ProjectView } from "./projectCommands";
 import type { TranslationHistory, TranslationPreview } from "./translationCommands";
 import { i18n } from "./i18n";
+import { fixtureIdentity } from "./testSupport/executionFixture";
+import executionFixture from "../test/fixtures/executionCommands.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -54,11 +56,11 @@ beforeEach(async () => {
     if (command === "select_source") return { selectionId: "selection", folderName: "Example Mod" };
     if (command === "list_translation_files") return ["zh.json"];
     if (command === "preflight_translation") return { fileName: "zh.json", fileDigest: "file-digest", declaredLocale: "zh", targetLocale: "zh-CN", count: 1, sourceSnapshotId: "snapshot" };
-    if (command === "create_execution_identity") return `action-${++identity}`;
+    if (command === "create_execution_identity") return fixtureIdentity(++identity);
     if (command === "start_translation_import") return "attempt";
     if (command === "read_translation_preview") return applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: "old-selection", unitId: "unit", locale: "zh-CN", sequence: "1", revisionId: "old-revision", actionId: "old-action", previousEventId: null } }] } : preview;
     if (command === "prepare_translation_adoption") return {};
-    if (command === "adopt_execution") { applied = true; return { changes: [{ kind: "translation-revision", id: "revision", revision: "1" }] }; }
+    if (command === "adopt_execution") { applied = true; return { ...executionFixture.receipt, actionId: args.request.actionId, changes: [{ kind: "translation-revision", id: "revision", revision: "1" }] }; }
     if (command === "save_translation_revision") {
       const existing = savedActions.get(String(args.request.actionId));
       if (existing) return existing;

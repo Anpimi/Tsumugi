@@ -233,6 +233,7 @@ pub(super) fn migrate_v3_result_limit(connection: &mut Connection) -> rusqlite::
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct TaskView {
     pub task_id: ExecutionId,
     pub project_id: ExecutionId,
@@ -253,6 +254,7 @@ pub struct AttemptView {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct RecoveryUnit {
     pub unit_id: ExecutionId,
     pub item_ids: Vec<ExecutionId>,
@@ -265,6 +267,7 @@ pub struct RecoveryUnit {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct RecoveryPlan {
     pub attempt_id: ExecutionId,
     pub units: Vec<RecoveryUnit>,

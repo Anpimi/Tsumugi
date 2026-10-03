@@ -7,6 +7,7 @@ import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
 import type { ContentPage, SourceChangePage } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
+import executionFixture from "../test/fixtures/executionCommands.contract.json";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
@@ -18,12 +19,12 @@ beforeEach(async () => {
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: null };
     if (command === "select_source") return { selectionId: "selection", folderName: "Example Mod" };
     if (command === "preflight_source") return { namespace: "Example.Mod", count: 2, sourceLanguage: "en-US", diagnostics: [], files: [] };
-    if (command === "create_execution_identity") return "action";
+    if (command === "create_execution_identity") return executionFixture.prepare.actionId;
     if (command === "start_source_import") return "attempt";
-    if (command === "read_execution_attempt") return { attemptId: "attempt", taskId: "task", items: [{ resultId: "result", status: { execution: "succeeded", validation: "valid" } }] };
+    if (command === "read_execution_attempt") return { ...executionFixture.detail, items: [{ ...executionFixture.detail.items[0], resultId: executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: "succeeded", validation: "valid" } }] };
     if (command === "read_source_preview") return preview;
     if (command === "prepare_source_adoption" || command === "cancel_source_capture") return {};
-    if (command === "adopt_execution" || command === "read_execution_receipt") return { changes: [{ kind: "source-snapshot", id: "snapshot", revision: "2" }] };
+    if (command === "adopt_execution" || command === "read_execution_receipt") return { ...executionFixture.receipt, changes: [{ kind: "source-snapshot", id: "snapshot", revision: "2" }] };
     if (command === "read_source_content") return { ...preview, snapshotId: "snapshot", scope: { revision: "2", currentSnapshot: "snapshot" } };
     if (command === "read_source_impact") return { snapshotId: "snapshot", summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null };
     throw new Error(command);
@@ -134,7 +135,7 @@ it("requires a language declaration and full-range confirmation, retaining liter
   await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
   await user.click(screen.getByRole("button", { name: "Apply to project" }));
   await screen.findByRole("heading", { name: "Imported source content" });
-  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: "project", attemptId: "attempt", resultId: "result", actionId: "action", confirmation: preview.confirmation } });
+  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: "project", attemptId: "attempt", resultId: "result", actionId: executionFixture.prepare.actionId, confirmation: preview.confirmation } });
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
 });
 it("keeps the selection across view changes and requires a decision before leaving the project", async () => {

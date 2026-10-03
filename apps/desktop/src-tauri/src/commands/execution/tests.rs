@@ -26,6 +26,25 @@ fn execution_wire_fixture_matches_rust_types() {
     round_trip::<RuntimeStatus>(&fixture["status"]);
     round_trip::<CommandError>(&fixture["error"]);
     round_trip::<AdoptionReceipt>(&fixture["receipt"]);
+    round_trip::<AdoptionAction>(&fixture["action"]);
+    round_trip::<ResultEnvelope>(&fixture["output"]);
+    round_trip::<TaskView>(&fixture["task"]);
+    round_trip::<AttemptSummary>(&fixture["summary"]);
+    round_trip::<RecoveryView>(&fixture["recovery"]);
+    round_trip::<OutputRequest>(&fixture["outputRequest"]);
+    round_trip::<CancelRequest>(&fixture["cancel"]);
+    round_trip::<AdoptRequest>(&fixture["adopt"]);
+    round_trip::<TaskRequest>(&fixture["taskRequest"]);
+    round_trip::<AttemptRequest>(&fixture["attempt"]);
+    let mut overflow = fixture["attempt"].clone();
+    overflow["offset"] = json!(u64::from(u32::MAX) + 1);
+    assert!(serde_json::from_value::<AttemptRequest>(overflow).is_err());
+    let mut integer = fixture["task"].clone();
+    integer["sequence"] = json!(9_007_199_254_740_993u64);
+    assert!(serde_json::from_value::<TaskView>(integer).is_err());
+    let mut unknown = fixture["detail"].clone();
+    unknown["items"][0]["status"]["execution"] = json!("future-state");
+    assert!(serde_json::from_value::<AttemptDetail>(unknown).is_err());
 }
 
 #[test]

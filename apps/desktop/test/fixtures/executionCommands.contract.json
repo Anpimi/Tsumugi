@@ -12,5 +12,15 @@
   },
   "status":{"active":false,"quiescing":false,"queryCount":0,"error":null},
   "error":{"code":"outcome-unknown","outcome":"unknown","stage":"execution-recover","recoveryRequired":true,"itemIds":["10000000-0000-4000-8000-000000000004"],"recoveryActions":["query-outcome"]},
-  "receipt":{"projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","actionId":"10000000-0000-4000-8000-000000000005","unitId":"10000000-0000-4000-8000-000000000003","requestDigest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","changes":[{"kind":"sample-update","id":"Sample A","revision":"9007199254740993"}]}
+  "receipt":{"projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","actionId":"10000000-0000-4000-8000-000000000005","unitId":"10000000-0000-4000-8000-000000000003","requestDigest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","changes":[{"kind":"sample-update","id":"Sample A","revision":"9007199254740993"}]},
+  "action":{"projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","actionId":"10000000-0000-4000-8000-000000000005","unitId":"10000000-0000-4000-8000-000000000003","operation":"sample-update","resultIds":["10000000-0000-4000-8000-000000000006"],"cancellationRevision":"9007199254740993","parameters":{"text":"中文 👩🏽‍💻 é"}},
+  "output":{"projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","itemId":"10000000-0000-4000-8000-000000000004","resultId":"10000000-0000-4000-8000-000000000006","supersedes":null,"dispatchToken":"10000000-0000-4000-8000-000000000008","capabilityId":"sample-update-1","capabilityVersion":"1","outcome":"failed","output":null,"diagnostic":{"code":"known-failure","retrySafe":true}},
+  "task":{"taskId":"10000000-0000-4000-8000-000000000007","projectId":"10000000-0000-4000-8000-000000000001","operation":"sample-update","sequence":"9007199254740993","cancellationRevision":"9223372036854775807"},
+  "summary":{"attemptId":"10000000-0000-4000-8000-000000000002","sequence":"9007199254740993"},
+  "recovery":{"attemptId":"10000000-0000-4000-8000-000000000002","queryStarted":true},
+  "outputRequest":{"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","resultId":"10000000-0000-4000-8000-000000000006"},
+  "cancel":{"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","taskId":"10000000-0000-4000-8000-000000000007","requestId":"10000000-0000-4000-8000-000000000005"},
+  "adopt":{"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","actionId":"10000000-0000-4000-8000-000000000005"},
+  "taskRequest":{"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","taskId":"10000000-0000-4000-8000-000000000007","after":"9007199254740993","limit":100},
+  "attempt":{"sessionToken":"session-1","projectId":"10000000-0000-4000-8000-000000000001","attemptId":"10000000-0000-4000-8000-000000000002","offset":4294967295,"limit":100}
 }

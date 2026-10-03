@@ -6,6 +6,7 @@ import { ReleaseWorkbench } from "./ReleaseWorkbench";
 import type { ProjectView } from "./projectCommands";
 import type { DeliveryView } from "./releaseCommands";
 import { i18n } from "./i18n";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -30,7 +31,7 @@ beforeEach(async () => {
     if (command === "read_source_integration") return { id: "stardew-smapi" };
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: "snapshot", basis: "basis", ready: true,
       locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 532, blockerCount: 0, exceptionCount: 0 }] };
-    if (command === "create_execution_identity") return "action-id";
+    if (command === "create_execution_identity") return fixtureIdentity(1);
     if (command === "start_locale_build") return "action-id";
     if (command === "choose_delivery_folder") return { selectionId: "folder", folderName: "export" };
     if (command === "preview_delivery") return { previewId: "preview", releaseId: "release", selectionId: "folder", folderName: "export",
@@ -73,7 +74,7 @@ it("routes WebVTT builds to a root subtitle filename and preserves an edited map
   await screen.findByText(/Ready to build/);
   await user.click(screen.getByRole("button", { name: "Start build" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_locale_build", { request: {
-    sessionToken: "session", projectId: "project", attemptId: "action-id", expectedEligibilityBasis: "basis",
+    sessionToken: "session", projectId: "project", attemptId: fixtureIdentity(1), expectedEligibilityBasis: "basis",
     choices: [{ locale: "zh-CN", fileName: "captions-zh.vtt" }],
   } }));
 });
@@ -88,7 +89,7 @@ it("sends the explicit locale mapping and current eligibility basis to the nativ
   await screen.findByText(/Ready to build/);
   await user.click(screen.getByRole("button", { name: "Start build" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_locale_build", { request: {
-    sessionToken: "session", projectId: "project", attemptId: "action-id", expectedEligibilityBasis: "basis",
+    sessionToken: "session", projectId: "project", attemptId: fixtureIdentity(1), expectedEligibilityBasis: "basis",
     choices: [{ locale: "zh-CN", fileName: "i18n/zh.json" }],
   } }));
 });
@@ -106,7 +107,7 @@ it("requires explicit confirmation for a conflicting file before export", async 
   await user.click(screen.getByRole("button", { name: "Export these files" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("export_release", { request: {
     sessionToken: "session", projectId: "project", releaseId: "release", selectionId: "folder",
-    previewId: "preview", actionId: "action-id", overwriteConflicts: true,
+    previewId: "preview", actionId: fixtureIdentity(1), overwriteConflicts: true,
   } }));
 });
 

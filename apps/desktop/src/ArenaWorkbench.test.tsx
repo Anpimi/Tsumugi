@@ -8,6 +8,7 @@ import type {AiHandle} from "./AiWorkbench";
 import type {ProjectView} from "./projectCommands";
 import {defaultArenaConfig,type ArenaPrepared,type ComparisonView} from "./arenaCommands";
 import {i18n} from "./i18n";
+import {fixtureIdentity} from "./testSupport/executionFixture";
 const invoke=vi.hoisted(()=>vi.fn());vi.mock("@tauri-apps/api/core",()=>({invoke}));
 const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:"project",displayName:"Arena test",sourceLocale:"en",targetLocales:["zh-CN","ja"],metadataRevision:"1"}};
 const item={unitId:"unit",sourceRevisionId:"source",sourceSnapshotId:"snapshot",nativeKey:"first",sourceLocale:"en",sourceText:"Hello {name}",targetLocale:"zh-CN",terms:[],context:null,omissions:["terms-not-shared","context-not-shared"],resourceBaseline:0};
@@ -22,7 +23,7 @@ beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:"att
   if(command==="read_arena_translation")return{detail:{attemptId:"attempt",taskId:"task",operation:"arena-translation",progress:{queued:0,running:0,succeeded:2,failed:0,unknown:0,adopted:0},items:[],recovery:{units:[]}},rows:[{item,itemId:"i2",sourceOrder:0,label:0,resultId:"out2",output:{text:"Second output",usage:null,requests:1,usageIncomplete:true}},{item,itemId:"i1",sourceOrder:0,label:1,resultId:"out1",output:{text:"First output",usage:null,requests:1,usageIncomplete:true}}],variants:null,blind:true,revealed:false,differentInputs:false,repeatedSampling:true,parentAttemptId:null};
   if(command==="read_translation_history")return{unitId:"unit",locale:"zh-CN",total:"2",current:{eventId:"selected",revisionId:"r1"},currentText:"First {name}",rows:comparison.rows.map((r,i)=>({...r,ordinal:String(i+1)})),nextOrdinal:null};
   if(command==="create_arena_comparison"||command==="read_arena_comparison")return comparison;
-  if(command==="create_execution_identity")return"action";
+  if(command==="create_execution_identity")return fixtureIdentity(1);
   if(command==="read_translation_action")return null;
   if(command==="save_arena_merge")return{eventId:"merged",revisionId:"merged-revision",actionId:"action"};
   if(command==="select_translation_revision")return{eventId:"new-selection",revisionId:args.request.revisionId,actionId:"action"};
@@ -122,7 +123,7 @@ it("reconciles a committed merge after a newer selection without resaving",async
  await user.click(screen.getByRole("button",{name:"Check saved result"}));await screen.findByText(/The saved action has been confirmed/);
  expect(screen.queryByRole("textbox",{name:"Merged translation"})).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([c])=>c==="save_arena_merge")).toHaveLength(1);
- expect(invoke.mock.calls.find(([c])=>c==="read_translation_action")?.[1].request).toMatchObject({unitId:"unit",locale:"zh-CN",actionId:"action"});
+ expect(invoke.mock.calls.find(([c])=>c==="read_translation_action")?.[1].request).toMatchObject({unitId:"unit",locale:"zh-CN",actionId:fixtureIdentity(1)});
 });
 it("reports a committed save separately from a failed projection refresh",async()=>{
  const user=await compare();await user.click(screen.getByRole("button",{name:"Edit a manual merge"}));
@@ -152,6 +153,6 @@ it("reconciles an uncertain cancellation before allowing another action",async()
  expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
  await user.click(screen.getByRole("button",{name:"Check saved result"}));await screen.findByText(/The saved action has been confirmed/);
  expect(invoke.mock.calls.filter(([c])=>c==="cancel_execution_task")).toHaveLength(1);
- expect(invoke.mock.calls.find(([c])=>c==="cancel_execution_task")?.[1].request).toMatchObject({taskId:"task",requestId:"action"});
+ expect(invoke.mock.calls.find(([c])=>c==="cancel_execution_task")?.[1].request).toMatchObject({taskId:"task",requestId:fixtureIdentity(1)});
 });
 it("drops a late preview after the project session is replaced",async()=>{const user=userEvent.setup();const ref=createRef<AiHandle>();const rendered=render(<ArenaWorkbench key="old" ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await user.click(await screen.findByRole("checkbox",{name:/first: Hello/}));let finish:(p:ArenaPrepared)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="preview_arena_translation"?new Promise<ArenaPrepared>(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<ArenaWorkbench key="new" ref={ref} project={{...project,sessionToken:"new"}} disabled={false} onOpenTranslation={()=>true}/>);finish(prepared);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await waitFor(()=>expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument());});

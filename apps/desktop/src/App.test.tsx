@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { i18n } from "./i18n";
+import { fixtureIdentity } from "./testSupport/executionFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 
 const mocks = vi.hoisted(() => ({
@@ -122,7 +123,7 @@ describe("project lifecycle workbench", () => {
       if (command === "read_translation_history") return { unitId: "unit", locale: "zh-CN", total: "0", rows: [], nextOrdinal: null, currentText: text, current: text === null ? null : { eventId: "selection", revisionId: "revision" } };
       if (command === "resolve_terms") return { entries: [] };
       if (command === "read_context_revision") return null;
-      if (command === "create_execution_identity") return "action";
+      if (command === "create_execution_identity") return fixtureIdentity(1);
       if (command === "save_translation_revision") {
         text = String(args.request.text);
         const actionId = args.request.actionId, unitId = args.request.unitId, locale = args.request.locale;
@@ -133,7 +134,7 @@ describe("project lifecycle workbench", () => {
             sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", originKind: "manual", contributors: [],
             attemptId: null, resultId: null, itemId: null, artifactId: null, logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null } };
       }
-      if (command === "execution_status") return { active: false, error: null };
+      if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
       if (command === "list_execution_tasks") return [];
       return projectView();
     });

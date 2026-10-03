@@ -347,10 +347,11 @@ fn map_adopt(error: ExecutionError) -> CommandError {
 }
 
 macro_rules! request {
-    ($name:ident { $($field:ident : $kind:ty),* $(,)? }) => {
+    ($(#[$schema:meta])* $name:ident { $($(#[$attribute:meta])* $field:ident : $kind:ty),* $(,)? }) => {
         #[derive(Clone, Debug, Deserialize, Serialize)]
         #[serde(rename_all="camelCase", deny_unknown_fields)]
-        pub struct $name { pub session_token:String, pub project_id:ExecutionId, $(pub $field:$kind,)* }
+        $(#[$schema])*
+        pub struct $name { pub session_token:String, pub project_id:ExecutionId, $($(#[$attribute])* pub $field:$kind,)* }
     }
 }
 mod ai;
@@ -361,32 +362,36 @@ mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 mod source;
-request!(SessionRequest {});
-request!(ListRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SessionRequest {});
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ListRequest {
     after: Revision,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     limit: u32
 });
-request!(TaskRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TaskRequest {
     task_id: ExecutionId,
     after: Revision,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     limit: u32
 });
-request!(AttemptRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AttemptRequest {
     attempt_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     offset: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     limit: u32
 });
-request!(OutputRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] OutputRequest {
     attempt_id: ExecutionId,
     result_id: ExecutionId
 });
-request!(CancelRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] CancelRequest {
     task_id: ExecutionId,
     request_id: ExecutionId
 });
-request!(RecoveryRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action:RecoveryAction, item_ids:Vec<ExecutionId> });
-request!(PrepareRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action_id:ExecutionId, result_ids:Vec<ExecutionId> });
-request!(AdoptRequest {
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] RecoveryRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action:RecoveryAction, item_ids:Vec<ExecutionId> });
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] PrepareRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action_id:ExecutionId, result_ids:Vec<ExecutionId> });
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AdoptRequest {
     action_id: ExecutionId
 });
 
@@ -438,12 +443,14 @@ pub struct RuntimeStatus {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AttemptSummary {
     pub attempt_id: ExecutionId,
     pub sequence: Revision,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ItemView {
     pub status: ItemStatus,
     pub scope: Scope,
@@ -451,6 +458,7 @@ pub struct ItemView {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AttemptDetail {
     pub attempt_id: ExecutionId,
     pub task_id: ExecutionId,
@@ -458,10 +466,12 @@ pub struct AttemptDetail {
     pub progress: Progress,
     pub items: Vec<ItemView>,
     pub recovery: RecoveryPlan,
+    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
     pub next_offset: Option<u32>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct RecoveryView {
     pub attempt_id: ExecutionId,
     pub query_started: bool,
