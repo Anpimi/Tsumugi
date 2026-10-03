@@ -19,6 +19,7 @@ pub(crate) fn error(code: ErrorCode, stage: &str) -> ExecutionError {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AiConfig {
     pub endpoint: String,
     pub model: String,
@@ -107,6 +108,7 @@ impl AiConfig {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SharedTerm {
     pub revision_id: ExecutionId,
     pub source: String,

@@ -354,8 +354,9 @@ macro_rules! request {
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $($(#[$attribute])* pub $field:$kind,)* }
     }
 }
-mod ai;
-mod arena;
+pub(super) mod ai;
+pub(super) mod ai_wire;
+pub(super) mod arena;
 pub(super) mod release;
 pub(super) mod resource;
 pub(super) mod review;

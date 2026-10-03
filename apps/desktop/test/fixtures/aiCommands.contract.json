@@ -1,0 +1,216 @@
+{
+  "requests": {
+    "start": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "sessionToken": "isolated-ai-arena-session",
+      "confirmed": true
+    },
+    "read": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "sessionToken": "isolated-ai-arena-session"
+    },
+    "preview": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ],
+      "sessionToken": "isolated-ai-arena-session",
+      "config": {
+        "maxItems": 20,
+        "tokenField": "max_tokens",
+        "shareTerms": true,
+        "concurrency": 1,
+        "timeoutSeconds": 60,
+        "model": "synthetic-model",
+        "shareContext": true,
+        "maxRequests": 20,
+        "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+        "maxOutputTokens": 2000,
+        "credentialEnv": "",
+        "maxRetries": 0
+      }
+    }
+  },
+  "responses": {
+    "prepared": {
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "preview": {
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "items": [
+          {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en"
+          }
+        ],
+        "config": {
+          "maxItems": 20,
+          "tokenField": "max_tokens",
+          "shareTerms": true,
+          "concurrency": 1,
+          "timeoutSeconds": 60,
+          "model": "synthetic-model",
+          "shareContext": true,
+          "maxRequests": 20,
+          "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+          "maxOutputTokens": 2000,
+          "credentialEnv": "",
+          "maxRetries": 0
+        },
+        "recipe": "direct-translation-1"
+      }
+    },
+    "view": {
+      "rows": [
+        {
+          "itemId": "60000000-0000-4000-8000-000000000008",
+          "item": {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en"
+          },
+          "output": {
+            "text": "木桶 👩🏽‍💻 é {name}",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "usageIncomplete": false,
+            "requests": 1,
+            "targetLocale": "zh-CN",
+            "usage": {
+              "promptTokens": "9007199254740993",
+              "completionTokens": "18446744073709551615"
+            }
+          },
+          "resultId": "60000000-0000-4000-8000-000000000009"
+        }
+      ],
+      "detail": {
+        "attemptId": "60000000-0000-4000-8000-000000000002",
+        "taskId": "60000000-0000-4000-8000-000000000007",
+        "operation": "ai-translation",
+        "progress": {
+          "failed": 0,
+          "unknown": 0,
+          "succeeded": 1,
+          "total": 1,
+          "running": 0,
+          "adopted": 0,
+          "cancelled": 0,
+          "queued": 0
+        },
+        "items": [
+          {
+            "status": {
+              "itemId": "60000000-0000-4000-8000-000000000008",
+              "execution": "succeeded",
+              "validation": "valid",
+              "adoption": "unapplied",
+              "cancellationRequested": false,
+              "retrySafe": false,
+              "diagnostic": null
+            },
+            "scope": {
+              "kind": "translation",
+              "locale": "zh-CN",
+              "id": "60000000-0000-4000-8000-000000000003"
+            },
+            "resultId": "60000000-0000-4000-8000-000000000009"
+          }
+        ],
+        "recovery": {
+          "attemptId": "60000000-0000-4000-8000-000000000002",
+          "units": [
+            {
+              "unitId": "60000000-0000-4000-8000-000000000010",
+              "itemIds": [
+                "60000000-0000-4000-8000-000000000008"
+              ],
+              "scopes": [
+                {
+                  "kind": "translation",
+                  "locale": "zh-CN",
+                  "id": "60000000-0000-4000-8000-000000000003"
+                }
+              ],
+              "remainingItemIds": [
+                "60000000-0000-4000-8000-000000000008"
+              ],
+              "resultIds": [
+                "60000000-0000-4000-8000-000000000009"
+              ],
+              "actions": [
+                "adopt-result"
+              ],
+              "blockedReason": null,
+              "receiptId": null
+            }
+          ]
+        },
+        "nextOffset": null
+      },
+      "config": {
+        "maxItems": 20,
+        "tokenField": "max_tokens",
+        "shareTerms": true,
+        "concurrency": 1,
+        "timeoutSeconds": 60,
+        "model": "synthetic-model",
+        "shareContext": true,
+        "maxRequests": 20,
+        "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+        "maxOutputTokens": 2000,
+        "credentialEnv": "",
+        "maxRetries": 0
+      },
+      "recipe": "direct-translation-1"
+    },
+    "identity": "60000000-0000-4000-8000-000000000002"
+  }
+}

@@ -13,7 +13,7 @@ const root = resolve(desktop, "../..");
 const check = process.argv.includes("--check");
 const arguments_ = process.argv.slice(2);
 const selection = arguments_.filter(arg => arg.startsWith("--domain="));
-if (selection.length > 1 || arguments_.some(arg => arg !== "--check" && !/^--domain=(project|execution|source|translation|resource|review|release)$/.test(arg))) throw new Error("Usage: generate-contracts.mjs [--check] [--domain=project|execution|source|translation|resource|review|release]");
+if (selection.length > 1 || arguments_.some(arg => arg !== "--check" && !/^--domain=(project|execution|source|translation|resource|review|release|ai|arena)$/.test(arg))) throw new Error("Usage: generate-contracts.mjs [--check] [--domain=project|execution|source|translation|resource|review|release|ai|arena]");
 const selectedDomain = selection[0]?.slice("--domain=".length);
 const temporary = await mkdtemp(join(tmpdir(), "tsumugi-ipc-"));
 try {

@@ -1,34 +1,44 @@
+use super::ai_wire::{AiItemView, AiOutputView, AiPreviewView};
 use super::*;
-use tsumugi_core::ai::{AiConfig, AiOutput, AiPreview};
+use tsumugi_core::ai::{AiConfig, AiPreview};
 #[derive(Default)]
 pub(super) struct AiSession {
     preview: Option<(AiPreview, FixedInput)>,
 }
-request!(AiPreviewRequest {config:AiConfig,locale:String,unit_ids:Vec<ExecutionId>});
-request!(AiStartRequest {
-    attempt_id: ExecutionId,
-    digest: String,
-    confirmed: bool
-});
-request!(AiReadRequest {
-    attempt_id: ExecutionId
-});
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AiPreviewRequest {config:AiConfig,locale:String,unit_ids:Vec<ExecutionId>});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    AiStartRequest {
+        attempt_id: ExecutionId,
+        digest: String,
+        confirmed: bool
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    AiReadRequest {
+        attempt_id: ExecutionId
+    }
+);
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiPrepared {
-    preview: AiPreview,
+    preview: AiPreviewView,
     attempt_id: ExecutionId,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiRow {
-    item: tsumugi_core::ai::AiItem,
+    item: AiItemView,
     item_id: ExecutionId,
     result_id: Option<ExecutionId>,
-    output: Option<AiOutput>,
+    output: Option<AiOutputView>,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiView {
     config: AiConfig,
     recipe: String,
@@ -38,6 +48,41 @@ pub struct AiView {
 fn map_ai(e: ExecutionError) -> CommandError {
     let result = map_read(e);
     result
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    #[test]
+    fn ai_wire_fixture_matches_actual_rust_requests_and_responses() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/aiCommands.contract.json"
+        ))
+        .unwrap();
+        macro_rules! round_trip {
+            ($group:literal, $key:literal, $kind:ty) => {
+                let value: $kind = serde_json::from_value(fixture[$group][$key].clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_value(value).unwrap(),
+                    fixture[$group][$key],
+                    $key
+                );
+            };
+        }
+        round_trip!("requests", "preview", AiPreviewRequest);
+        round_trip!("requests", "start", AiStartRequest);
+        round_trip!("requests", "read", AiReadRequest);
+        round_trip!("responses", "prepared", AiPrepared);
+        round_trip!("responses", "identity", ExecutionId);
+        round_trip!("responses", "view", AiView);
+        let mut value = fixture["responses"]["view"].clone();
+        value["rows"][0]["output"]["usage"]["promptTokens"] = serde_json::json!(1);
+        assert!(serde_json::from_value::<AiView>(value).is_err());
+        let mut value = fixture["responses"]["prepared"].clone();
+        value["preview"]["items"][0]["resourceBaseline"] =
+            serde_json::json!("18446744073709551616");
+        assert!(serde_json::from_value::<AiPrepared>(value).is_err());
+    }
 }
 #[tauri::command]
 pub async fn preview_ai_translation(
@@ -72,7 +117,7 @@ pub async fn preview_ai_translation(
                 let attempt_id = input.envelope().attempt_id;
                 host.ai.preview = Some((preview.clone(), input));
                 Ok(AiPrepared {
-                    preview,
+                    preview: preview.into(),
                     attempt_id,
                 })
             },
@@ -204,10 +249,10 @@ pub async fn read_ai_translation(
                             None
                         };
                         Ok(AiRow {
-                            item,
+                            item: item.into(),
                             item_id: row.status.item_id,
                             result_id: row.result_id,
-                            output,
+                            output: output.map(Into::into),
                         })
                     })
                     .collect::<Result<Vec<_>, ExecutionError>>()

@@ -216,6 +216,48 @@ struct ReleaseResponses {
     deliveries: Vec<tsumugi_core::DeliveryView>,
 }
 
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct AiRequests {
+    preview: execution::ai::AiPreviewRequest,
+    start: execution::ai::AiStartRequest,
+    read: execution::ai::AiReadRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct AiResponses {
+    prepared: execution::ai::AiPrepared,
+    identity: tsumugi_core::execution::ExecutionId,
+    view: execution::ai::AiView,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ArenaRequests {
+    preview: execution::arena::PreviewRequest,
+    start: execution::arena::StartRequest,
+    read: execution::arena::ReadRequest,
+    compare: execution::arena::ComparisonCommand,
+    comparison: execution::arena::ComparisonRead,
+    session: execution::SessionRequest,
+    reveal: execution::arena::RevealRequest,
+    merge: execution::arena::MergeRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ArenaResponses {
+    prepared: execution::arena::Prepared,
+    identity: tsumugi_core::execution::ExecutionId,
+    view: execution::arena::View,
+    comparison: tsumugi_core::ComparisonView,
+    comparisons: Vec<tsumugi_core::ComparisonSummary>,
+    reveal: (),
+    selection: tsumugi_core::TranslationSelection,
+}
+
 fn bound_integer(schema: &mut Schema) {
     // Schemars marks Rust's integer format but does not emit its upper bound.
     // Apply the primitive bound to scalar and tuple items without copying DTOs.
@@ -280,7 +322,9 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
             "translation": schemas::<TranslationRequests, TranslationResponses>(),
             "resource": schemas::<ResourceRequests, ResourceResponses>(),
             "review": schemas::<ReviewRequests, ReviewResponses>(),
-            "release": schemas::<ReleaseRequests, ReleaseResponses>()
+            "release": schemas::<ReleaseRequests, ReleaseResponses>(),
+            "ai": schemas::<AiRequests, AiResponses>(),
+            "arena": schemas::<ArenaRequests, ArenaResponses>()
         }))? + "\n",
     )?;
     Ok(())

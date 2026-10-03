@@ -1,0 +1,471 @@
+{
+  "requests": {
+    "compare": {
+      "sessionToken": "isolated-ai-arena-session",
+      "locale": "zh-CN",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "revisionIds": [
+        "60000000-0000-4000-8000-000000000013",
+        "60000000-0000-4000-8000-000000000014"
+      ],
+      "blind": true,
+      "actionId": "60000000-0000-4000-8000-000000000011",
+      "projectId": "60000000-0000-4000-8000-000000000001"
+    },
+    "read": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "sessionToken": "isolated-ai-arena-session"
+    },
+    "reveal": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "comparisonId": "60000000-0000-4000-8000-000000000011",
+      "sessionToken": "isolated-ai-arena-session",
+      "actionId": "60000000-0000-4000-8000-000000000015"
+    },
+    "session": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session"
+    },
+    "start": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "sessionToken": "isolated-ai-arena-session",
+      "confirmed": true
+    },
+    "comparison": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "comparisonId": "60000000-0000-4000-8000-000000000011"
+    },
+    "preview": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ],
+      "sessionToken": "isolated-ai-arena-session",
+      "config": {
+        "maxItems": 20,
+        "variants": [
+          {
+            "maxItems": 20,
+            "tokenField": "max_tokens",
+            "shareTerms": true,
+            "concurrency": 1,
+            "timeoutSeconds": 60,
+            "model": "synthetic-model",
+            "shareContext": true,
+            "maxRequests": 20,
+            "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+            "maxOutputTokens": 2000,
+            "credentialEnv": "",
+            "maxRetries": 0
+          },
+          {
+            "maxItems": 20,
+            "tokenField": "max_tokens",
+            "shareTerms": true,
+            "concurrency": 1,
+            "timeoutSeconds": 60,
+            "model": "synthetic-model",
+            "shareContext": true,
+            "maxRequests": 20,
+            "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+            "maxOutputTokens": 2000,
+            "credentialEnv": "",
+            "maxRetries": 0
+          }
+        ],
+        "maxRequests": 40,
+        "parentAttemptId": null,
+        "concurrency": 1,
+        "blind": true
+      }
+    },
+    "merge": {
+      "sessionToken": "isolated-ai-arena-session",
+      "actionId": "60000000-0000-4000-8000-000000000016",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "merge": {
+        "contributors": [
+          "60000000-0000-4000-8000-000000000013",
+          "60000000-0000-4000-8000-000000000014"
+        ],
+        "expectedBasis": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "locale": "zh-CN",
+      "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+      "text": "Merged 木桶 👩🏽‍💻 é {name}",
+      "expectedSelectionId": "60000000-0000-4000-8000-000000000012",
+      "projectId": "60000000-0000-4000-8000-000000000001"
+    }
+  },
+  "responses": {
+    "prepared": {
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "preview": {
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "items": [
+          {
+            "sourceOrder": 0,
+            "item": {
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "targetLocale": "zh-CN",
+              "omissions": [],
+              "resourceBaseline": "18446744073709551615",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "context": {
+                "revisionId": "30000000-0000-4000-8000-000000000008",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "locale": "zh-CN",
+                "text": "Translator note 中文 👩🏽‍💻 é",
+                "reason": "Reviewed context",
+                "previousRevisionId": null
+              },
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "nativeKey": "barrel",
+              "terms": [
+                {
+                  "target": "木桶 👩🏽‍💻 é",
+                  "revisionId": "60000000-0000-4000-8000-000000000006",
+                  "source": "barrel",
+                  "protected": true
+                }
+              ],
+              "sourceText": "Barrel {name}",
+              "sourceLocale": "en"
+            },
+            "slot": 0
+          },
+          {
+            "sourceOrder": 0,
+            "item": {
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "targetLocale": "zh-CN",
+              "omissions": [],
+              "resourceBaseline": "18446744073709551615",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "context": {
+                "revisionId": "30000000-0000-4000-8000-000000000008",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "locale": "zh-CN",
+                "text": "Translator note 中文 👩🏽‍💻 é",
+                "reason": "Reviewed context",
+                "previousRevisionId": null
+              },
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "nativeKey": "barrel",
+              "terms": [
+                {
+                  "target": "木桶 👩🏽‍💻 é",
+                  "revisionId": "60000000-0000-4000-8000-000000000006",
+                  "source": "barrel",
+                  "protected": true
+                }
+              ],
+              "sourceText": "Barrel {name}",
+              "sourceLocale": "en"
+            },
+            "slot": 1
+          }
+        ],
+        "config": {
+          "maxItems": 20,
+          "variants": [
+            {
+              "maxItems": 20,
+              "tokenField": "max_tokens",
+              "shareTerms": true,
+              "concurrency": 1,
+              "timeoutSeconds": 60,
+              "model": "synthetic-model",
+              "shareContext": true,
+              "maxRequests": 20,
+              "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+              "maxOutputTokens": 2000,
+              "credentialEnv": "",
+              "maxRetries": 0
+            },
+            {
+              "maxItems": 20,
+              "tokenField": "max_tokens",
+              "shareTerms": true,
+              "concurrency": 1,
+              "timeoutSeconds": 60,
+              "model": "synthetic-model",
+              "shareContext": true,
+              "maxRequests": 20,
+              "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+              "maxOutputTokens": 2000,
+              "credentialEnv": "",
+              "maxRetries": 0
+            }
+          ],
+          "maxRequests": 40,
+          "parentAttemptId": null,
+          "concurrency": 1,
+          "blind": true
+        }
+      }
+    },
+    "view": {
+      "parentAttemptId": null,
+      "revealed": false,
+      "detail": {
+        "attemptId": "60000000-0000-4000-8000-000000000002",
+        "taskId": "60000000-0000-4000-8000-000000000007",
+        "operation": "arena-translation",
+        "progress": {
+          "failed": 0,
+          "unknown": 0,
+          "succeeded": 2,
+          "total": 2,
+          "running": 0,
+          "adopted": 0,
+          "cancelled": 0,
+          "queued": 0
+        },
+        "items": [
+          {
+            "status": {
+              "itemId": "60000000-0000-4000-8000-000000000008",
+              "execution": "succeeded",
+              "validation": "valid",
+              "adoption": "unapplied",
+              "cancellationRequested": false,
+              "retrySafe": false,
+              "diagnostic": null
+            },
+            "scope": {
+              "kind": "translation",
+              "locale": "zh-CN",
+              "id": "60000000-0000-4000-8000-000000000003"
+            },
+            "resultId": "60000000-0000-4000-8000-000000000009"
+          },
+          {
+            "status": {
+              "itemId": "60000000-0000-4000-8000-000000000019",
+              "execution": "succeeded",
+              "validation": "valid",
+              "adoption": "unapplied",
+              "cancellationRequested": false,
+              "retrySafe": false,
+              "diagnostic": null
+            },
+            "scope": {
+              "kind": "translation",
+              "locale": "zh-CN",
+              "id": "60000000-0000-4000-8000-000000000003"
+            },
+            "resultId": "60000000-0000-4000-8000-000000000020"
+          }
+        ],
+        "recovery": {
+          "attemptId": "60000000-0000-4000-8000-000000000002",
+          "units": [
+            {
+              "unitId": "60000000-0000-4000-8000-000000000010",
+              "itemIds": [
+                "60000000-0000-4000-8000-000000000008"
+              ],
+              "scopes": [
+                {
+                  "kind": "translation",
+                  "locale": "zh-CN",
+                  "id": "60000000-0000-4000-8000-000000000003"
+                }
+              ],
+              "remainingItemIds": [
+                "60000000-0000-4000-8000-000000000008"
+              ],
+              "resultIds": [
+                "60000000-0000-4000-8000-000000000009"
+              ],
+              "actions": [
+                "adopt-result"
+              ],
+              "blockedReason": null,
+              "receiptId": null
+            },
+            {
+              "unitId": "60000000-0000-4000-8000-000000000021",
+              "itemIds": [
+                "60000000-0000-4000-8000-000000000019"
+              ],
+              "scopes": [
+                {
+                  "kind": "translation",
+                  "locale": "zh-CN",
+                  "id": "60000000-0000-4000-8000-000000000003"
+                }
+              ],
+              "remainingItemIds": [
+                "60000000-0000-4000-8000-000000000019"
+              ],
+              "resultIds": [
+                "60000000-0000-4000-8000-000000000020"
+              ],
+              "actions": [
+                "adopt-result"
+              ],
+              "blockedReason": null,
+              "receiptId": null
+            }
+          ]
+        },
+        "nextOffset": null
+      },
+      "repeatedSampling": true,
+      "variants": null,
+      "blind": true,
+      "rows": [
+        {
+          "output": {
+            "text": "木桶 👩🏽‍💻 é {name}",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "usageIncomplete": false,
+            "requests": 1,
+            "targetLocale": "zh-CN",
+            "usage": {
+              "promptTokens": "9007199254740993",
+              "completionTokens": "18446744073709551615"
+            }
+          },
+          "label": 0,
+          "sourceOrder": 0,
+          "itemId": "60000000-0000-4000-8000-000000000008",
+          "resultId": "60000000-0000-4000-8000-000000000009",
+          "item": {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en"
+          }
+        },
+        {
+          "output": {
+            "text": "木桶 👩🏽‍💻 é {name}",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "usageIncomplete": false,
+            "requests": 1,
+            "targetLocale": "zh-CN",
+            "usage": {
+              "promptTokens": "9007199254740993",
+              "completionTokens": "18446744073709551615"
+            }
+          },
+          "label": 1,
+          "sourceOrder": 0,
+          "itemId": "60000000-0000-4000-8000-000000000019",
+          "resultId": "60000000-0000-4000-8000-000000000020",
+          "item": {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en"
+          }
+        }
+      ],
+      "differentInputs": false
+    },
+    "selection": {
+      "previousEventId": "60000000-0000-4000-8000-000000000012",
+      "eventId": "60000000-0000-4000-8000-000000000017",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "actionId": "60000000-0000-4000-8000-000000000016",
+      "revisionId": "60000000-0000-4000-8000-000000000018",
+      "sequence": "9007199254740993",
+      "locale": "zh-CN"
+    },
+    "comparisons": [
+      {
+        "comparisonId": "60000000-0000-4000-8000-000000000011",
+        "locale": "zh-CN",
+        "nativeKey": "barrel"
+      }
+    ],
+    "identity": "60000000-0000-4000-8000-000000000002",
+    "reveal": null,
+    "comparison": {
+      "revealed": false,
+      "selectedRevisionId": "60000000-0000-4000-8000-000000000013",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN",
+      "blind": true,
+      "basis": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "comparisonId": "60000000-0000-4000-8000-000000000011",
+      "rows": [
+        {
+          "revisionId": "60000000-0000-4000-8000-000000000013",
+          "contributors": [],
+          "basisCurrent": true,
+          "text": "木桶 👩🏽‍💻 é {name}",
+          "recipe": null,
+          "originKind": "ai",
+          "model": null,
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004"
+        },
+        {
+          "revisionId": "60000000-0000-4000-8000-000000000014",
+          "contributors": [],
+          "basisCurrent": true,
+          "text": "Manual {name}",
+          "recipe": null,
+          "originKind": "manual",
+          "model": null,
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004"
+        }
+      ],
+      "selectionId": "60000000-0000-4000-8000-000000000012",
+      "sourceText": "Barrel {name}",
+      "nativeKey": "barrel",
+      "selectedText": "木桶 👩🏽‍💻 é {name}",
+      "sourceRevisionId": "60000000-0000-4000-8000-000000000004"
+    }
+  }
+}

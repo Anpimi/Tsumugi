@@ -1,23 +1,33 @@
-import {invoke} from "@tauri-apps/api/core";
-import {defaultAiConfig, type AiConfig, type AiItem, type AiOutput, type AiStart} from "./aiCommands";
-import type {SessionRequest, AttemptDetail} from "./executionCommands";
-import type {TranslationSaveRequest, TranslationSelection} from "./translationCommands";
-export interface ArenaConfig {variants:AiConfig[];maxItems:number;maxRequests:number;concurrency:number;blind:boolean;parentAttemptId:string|null}
-export const defaultArenaConfig=():ArenaConfig=>({variants:[{...defaultAiConfig},{...defaultAiConfig}],maxItems:20,maxRequests:40,concurrency:1,blind:false,parentAttemptId:null});
-export interface ArenaPrepared {attemptId:string;preview:{config:ArenaConfig;items:Array<{slot:number;sourceOrder:number;item:AiItem}>;digest:string}}
-export interface ArenaView {detail:AttemptDetail;rows:Array<{item:AiItem;itemId:string;sourceOrder:number;label:number;resultId:string|null;output:AiOutput|null}>;variants:AiConfig[]|null;blind:boolean;revealed:boolean;differentInputs:boolean;repeatedSampling:boolean;parentAttemptId:string|null}
-export interface ComparisonEntry {revisionId:string;text:string;sourceRevisionId:string;originKind:string;contributors:string[];model:string|null;recipe:string|null;basisCurrent:boolean}
-export interface ComparisonView {comparisonId:string|null;unitId:string;locale:string;sourceRevisionId:string;sourceText:string;nativeKey:string;selectionId:string|null;selectedRevisionId:string|null;selectedText:string|null;basis:string;blind:boolean;revealed:boolean;rows:ComparisonEntry[]}
-export type ComparisonSummary = Pick<ComparisonView,"comparisonId"|"nativeKey"|"locale">;
-export interface CompareRequest extends SessionRequest {actionId:string;unitId:string;locale:string;revisionIds:string[];blind:boolean}
-export interface MergeRequest extends TranslationSaveRequest {merge:{contributors:string[];expectedBasis:string}}
+import {checkedInvoke} from "./ipc";
+import {defaultAiConfig} from "./aiCommands";
+import type {ArenaConfig,PreviewRequest,StartRequest,ReadRequest,ComparisonCommand,ComparisonRead,SessionRequest,RevealRequest,MergeRequest} from "./generated/arena.requests";
+import * as validators from "./generated/arena.validators";
+export type {ArenaConfig,ComparisonCommand as CompareRequest,MergeRequest} from "./generated/arena.requests";
+export type {Prepared as ArenaPrepared,View as ArenaView,ComparisonEntry,ComparisonView,ComparisonSummary} from "./generated/arena.responses";
+export const defaultArenaConfig=():Required<ArenaConfig>=>({variants:[{...defaultAiConfig},{...defaultAiConfig}],maxItems:20,maxRequests:40,concurrency:1,blind:false,parentAttemptId:null});
+function requireConfirmation(condition:boolean):asserts condition{if(!condition)throw new Error("Invalid IPC acknowledgement: Arena action");}
 export const arenaCommands={
- preview:(request:SessionRequest&{config:ArenaConfig;locale:string;unitIds:string[]})=>invoke<ArenaPrepared>("preview_arena_translation",{request}),
- start:(request:AiStart)=>invoke<string>("start_arena_translation",{request}),
- read:(request:SessionRequest&{attemptId:string})=>invoke<ArenaView>("read_arena_translation",{request}),
- compare:(request:CompareRequest)=>invoke<ComparisonView>("create_arena_comparison",{request}),
- comparison:(request:SessionRequest&{comparisonId:string})=>invoke<ComparisonView>("read_arena_comparison",{request}),
- comparisons:(request:SessionRequest)=>invoke<ComparisonSummary[]>("list_arena_comparisons",{request}),
- reveal:(request:SessionRequest&{comparisonId:string;actionId:string})=>invoke<void>("reveal_arena_identity",{request}),
- merge:(request:MergeRequest)=>invoke<TranslationSelection>("save_arena_merge",{request}),
+ preview:(request:PreviewRequest)=>checkedInvoke("preview_arena_translation",request,validators.validateResponsePrepared),
+ start:async(request:StartRequest)=>{
+  const result=await checkedInvoke("start_arena_translation",request,validators.validateResponseIdentity);
+  requireConfirmation(result===request.attemptId);return result;
+ },
+ read:async(request:ReadRequest)=>{
+  const result=await checkedInvoke("read_arena_translation",request,validators.validateResponseView);
+  requireConfirmation(result.detail.attemptId===request.attemptId&&result.rows.every(row=>!row.output||(row.output.unitId===row.item.unitId&&row.output.targetLocale===row.item.targetLocale)));return result;
+ },
+ compare:async(request:ComparisonCommand)=>{
+  const result=await checkedInvoke("create_arena_comparison",request,validators.validateResponseComparison);
+  requireConfirmation(result.comparisonId===request.actionId&&result.unitId===request.unitId&&result.locale===request.locale&&result.blind===request.blind&&result.rows.length===request.revisionIds.length&&new Set(result.rows.map(row=>row.revisionId)).size===request.revisionIds.length&&result.rows.every(row=>request.revisionIds.includes(row.revisionId)));return {...result,comparisonId:result.comparisonId};
+ },
+ comparison:async(request:ComparisonRead)=>{
+  const result=await checkedInvoke("read_arena_comparison",request,validators.validateResponseComparison);
+  requireConfirmation(result.comparisonId===request.comparisonId);return result;
+ },
+ comparisons:(request:SessionRequest)=>checkedInvoke("list_arena_comparisons",request,validators.validateResponseComparisons),
+ reveal:async(request:RevealRequest)=>{await checkedInvoke("reveal_arena_identity",request,validators.validateResponseReveal);},
+ merge:async(request:MergeRequest)=>{
+  const result=await checkedInvoke("save_arena_merge",request,validators.validateResponseSelection);
+  requireConfirmation(result.actionId===request.actionId&&result.unitId===request.unitId&&result.locale===request.locale&&result.previousEventId===(request.expectedSelectionId??null)&&BigInt(result.sequence)>0n&&(result.sequence==="1")===(result.previousEventId===null));return result;
+ },
 };

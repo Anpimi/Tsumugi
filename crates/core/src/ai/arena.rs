@@ -7,6 +7,7 @@ pub const CAPABILITY: &str = "openai-compatible.arena";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ArenaConfig {
     pub variants: Vec<AiConfig>,
     pub max_items: u32,

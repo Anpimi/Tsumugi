@@ -111,6 +111,39 @@ impl fmt::Display for ExecutionId {
     }
 }
 
+fn parse_decimal(value: &str) -> Option<u64> {
+    let parsed = value.parse::<u64>().ok()?;
+    (parsed.to_string() == value).then_some(parsed)
+}
+
+/// Full unsigned counters on display IPC, without changing stored AI payloads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct UnsignedDecimal(u64);
+impl From<u64> for UnsignedDecimal {
+    fn from(value: u64) -> Self {
+        Self(value)
+    }
+}
+impl UnsignedDecimal {
+    pub fn get(self) -> u64 {
+        self.0
+    }
+}
+impl TryFrom<String> for UnsignedDecimal {
+    type Error = ExecutionError;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        parse_decimal(&value)
+            .map(Self)
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "unsigned-decimal"))
+    }
+}
+impl From<UnsignedDecimal> for String {
+    fn from(value: UnsignedDecimal) -> Self {
+        value.0.to_string()
+    }
+}
+
 /// Decimal strings on the wire prevent JavaScript precision loss.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -139,12 +172,8 @@ impl Revision {
 impl TryFrom<String> for Revision {
     type Error = ExecutionError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        let parsed = value
-            .parse::<u64>()
-            .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "revision"))?;
-        if parsed.to_string() != value {
-            return Err(ExecutionError::new(ErrorCode::InvalidInput, "revision"));
-        }
+        let parsed = parse_decimal(&value)
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "revision"))?;
         Self::new(parsed)
     }
 }

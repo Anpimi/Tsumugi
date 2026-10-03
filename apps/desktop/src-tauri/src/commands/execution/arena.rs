@@ -1,51 +1,66 @@
+use super::ai_wire::{AiItemView, AiOutputView, ArenaPreviewView, index};
 use super::*;
 use tsumugi_core::{
     ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis, SaveTranslationRevision,
-    TranslationSelection,
-    ai::{AiItem, AiOutput, arena::*},
+    TranslationSelection, ai::arena::*,
 };
 
 #[derive(Default)]
 pub(super) struct ArenaSession {
     preview: Option<(ArenaPreview, FixedInput)>,
 }
-request!(PreviewRequest { config:ArenaConfig, locale:String, unit_ids:Vec<ExecutionId> });
-request!(StartRequest {
-    attempt_id: ExecutionId,
-    digest: String,
-    confirmed: bool
-});
-request!(ReadRequest {
-    attempt_id: ExecutionId
-});
-request!(ComparisonCommand { action_id:ExecutionId, unit_id:ExecutionId, locale:String, revision_ids:Vec<ExecutionId>, blind:bool });
-request!(ComparisonRead {
-    comparison_id: ExecutionId
-});
-request!(RevealRequest {
-    comparison_id: ExecutionId,
-    action_id: ExecutionId
-});
-request!(MergeRequest { action_id:ExecutionId, unit_id:ExecutionId, locale:String, source_revision_id:ExecutionId, expected_selection_id:Option<ExecutionId>, text:String, merge:MergeBasis });
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] PreviewRequest { config:ArenaConfig, locale:String, unit_ids:Vec<ExecutionId> });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    StartRequest {
+        attempt_id: ExecutionId,
+        digest: String,
+        confirmed: bool
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ReadRequest {
+        attempt_id: ExecutionId
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ComparisonCommand { action_id:ExecutionId, unit_id:ExecutionId, locale:String, revision_ids:Vec<ExecutionId>, blind:bool });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ComparisonRead {
+        comparison_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    RevealRequest {
+        comparison_id: ExecutionId,
+        action_id: ExecutionId
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] MergeRequest { action_id:ExecutionId, unit_id:ExecutionId, locale:String, source_revision_id:ExecutionId, expected_selection_id:Option<ExecutionId>, text:String, merge:MergeBasis });
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Prepared {
-    preview: ArenaPreview,
+    preview: ArenaPreviewView,
     attempt_id: ExecutionId,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Row {
-    item: AiItem,
+    item: AiItemView,
     item_id: ExecutionId,
-    source_order: usize,
-    label: usize,
+    source_order: u32,
+    label: u32,
     result_id: Option<ExecutionId>,
-    output: Option<AiOutput>,
+    output: Option<AiOutputView>,
 }
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct View {
     detail: AttemptDetail,
     rows: Vec<Row>,
@@ -59,6 +74,49 @@ pub struct View {
 fn mapped(e: ExecutionError) -> CommandError {
     let e = map_read(e);
     e
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+    #[test]
+    fn arena_wire_fixture_matches_actual_rust_requests_and_responses() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/arenaCommands.contract.json"
+        ))
+        .unwrap();
+        macro_rules! round_trip {
+            ($group:literal, $key:literal, $kind:ty) => {
+                let value: $kind = serde_json::from_value(fixture[$group][$key].clone()).unwrap();
+                assert_eq!(
+                    serde_json::to_value(value).unwrap(),
+                    fixture[$group][$key],
+                    $key
+                );
+            };
+        }
+        round_trip!("requests", "preview", PreviewRequest);
+        round_trip!("requests", "start", StartRequest);
+        round_trip!("requests", "read", ReadRequest);
+        round_trip!("requests", "compare", ComparisonCommand);
+        round_trip!("requests", "comparison", ComparisonRead);
+        round_trip!("requests", "session", SessionRequest);
+        round_trip!("requests", "reveal", RevealRequest);
+        round_trip!("requests", "merge", MergeRequest);
+        round_trip!("responses", "prepared", Prepared);
+        round_trip!("responses", "identity", ExecutionId);
+        round_trip!("responses", "view", View);
+        round_trip!("responses", "comparison", ComparisonView);
+        round_trip!("responses", "comparisons", Vec<ComparisonSummary>);
+        round_trip!("responses", "reveal", ());
+        round_trip!("responses", "selection", TranslationSelection);
+        let mut value = fixture["responses"]["comparison"].clone();
+        value["rows"][0]["originKind"] = serde_json::json!("best");
+        assert!(serde_json::from_value::<ComparisonView>(value).is_err());
+        let mut value = fixture["responses"]["view"].clone();
+        value["rows"][0]["sourceOrder"] = serde_json::json!(4294967296u64);
+        assert!(serde_json::from_value::<View>(value).is_err());
+    }
 }
 
 #[tauri::command]
@@ -94,7 +152,7 @@ pub async fn preview_arena_translation(
                 let attempt_id = input.envelope().attempt_id;
                 host.arena.preview = Some((preview.clone(), input));
                 Ok(Prepared {
-                    preview,
+                    preview: preview.try_into().map_err(mapped)?,
                     attempt_id,
                 })
             },
@@ -220,18 +278,23 @@ pub async fn read_arena_translation(
                         None
                     };
                     rows.push(Row {
-                        item: p.item,
+                        item: p.item.into(),
                         item_id: row.status.item_id,
-                        source_order: p.source_order,
-                        label: s
-                            .display_order
-                            .iter()
-                            .position(|slot| *slot == p.slot)
-                            .ok_or_else(|| {
-                                mapped(ExecutionError::new(ErrorCode::CorruptLedger, "arena-order"))
-                            })?,
+                        source_order: index(p.source_order).map_err(mapped)?,
+                        label: index(
+                            s.display_order
+                                .iter()
+                                .position(|slot| *slot == p.slot)
+                                .ok_or_else(|| {
+                                    mapped(ExecutionError::new(
+                                        ErrorCode::CorruptLedger,
+                                        "arena-order",
+                                    ))
+                                })?,
+                        )
+                        .map_err(mapped)?,
                         result_id: row.result_id,
-                        output,
+                        output: output.map(Into::into),
                     });
                 }
                 rows.sort_by_key(|r| (r.source_order, r.label));

@@ -2,6 +2,47 @@ use super::*;
 use serde_json::json;
 use std::sync::{Mutex, mpsc};
 
+#[test]
+fn decimal_wire_values_are_canonical_and_keep_their_distinct_bounds() {
+    for number in [0, 9007199254740993, u64::MAX] {
+        let value = UnsignedDecimal::from(number);
+        let json = serde_json::to_string(&value).unwrap();
+        assert_eq!(json, format!("\"{number}\""));
+        assert_eq!(
+            serde_json::from_str::<UnsignedDecimal>(&json)
+                .unwrap()
+                .get(),
+            number
+        );
+    }
+    for text in [
+        "",
+        "01",
+        "-1",
+        "+1",
+        "1.0",
+        "1e3",
+        " 1",
+        "18446744073709551616",
+    ] {
+        let json = serde_json::to_string(text).unwrap();
+        assert!(
+            serde_json::from_str::<UnsignedDecimal>(&json).is_err(),
+            "{text}"
+        );
+        assert!(serde_json::from_str::<Revision>(&json).is_err(), "{text}");
+    }
+    assert!(serde_json::from_str::<UnsignedDecimal>("1").is_err());
+    assert!(serde_json::from_str::<Revision>("1").is_err());
+    assert_eq!(
+        serde_json::from_str::<Revision>("\"9223372036854775807\"")
+            .unwrap()
+            .get(),
+        i64::MAX as u64
+    );
+    assert!(serde_json::from_str::<Revision>("\"9223372036854775808\"").is_err());
+}
+
 fn input() -> FixedInput {
     let items = ["a", "b", "c"]
         .into_iter()

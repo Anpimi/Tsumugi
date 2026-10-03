@@ -40,7 +40,9 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
-- Project lifecycle responses, change notifications, execution results, source content, translations, resources, reviews and build/delivery records are checked against generated Rust contracts; malformed confirmations remain unconfirmed, and revision counters retain their full integer range, including source history revisions.
+- Project lifecycle responses, change notifications, execution results, source content, translations, resources, reviews, build/delivery, AI and Arena records are checked against generated Rust contracts; malformed confirmations remain unconfirmed, and revision counters retain their full integer range, including source history revisions.
+
+- AI resource baselines and reported token usage retain full unsigned integer precision. Arena totals remain exact across candidates; start, comparison and merge confirmations must match the submitted attempt or action.
 
 - Term and context saves preserve newer content and source notes when a delayed response arrives or an uncertain original action is checked again.
 

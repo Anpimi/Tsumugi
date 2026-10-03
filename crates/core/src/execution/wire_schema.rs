@@ -1,5 +1,5 @@
 //! Schema descriptions of the existing scalar Serde contracts.
-use super::{ExecutionId, Revision};
+use super::{ExecutionId, Revision, UnsignedDecimal};
 use schemars::{
     JsonSchema, Schema,
     generate::{Contract, SchemaGenerator},
@@ -36,6 +36,14 @@ impl JsonSchema for Revision {
     }
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         unsigned_decimal(i64::MAX as u64)
+    }
+}
+impl JsonSchema for UnsignedDecimal {
+    fn schema_name() -> Cow<'static, str> {
+        "UnsignedDecimal".into()
+    }
+    fn json_schema(_: &mut SchemaGenerator) -> Schema {
+        unsigned_decimal(u64::MAX)
     }
 }
 impl JsonSchema for ExecutionId {

@@ -108,12 +108,14 @@ pub(super) fn validate(c: &Connection) -> rusqlite::Result<()> {
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct MergeBasis {
     pub contributors: Vec<ExecutionId>,
     pub expected_basis: String,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ComparisonRequest {
     pub project_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -123,19 +125,21 @@ pub struct ComparisonRequest {
     pub blind: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ComparisonEntry {
     pub revision_id: ExecutionId,
     pub text: String,
     pub source_revision_id: ExecutionId,
-    pub origin_kind: String,
+    pub origin_kind: crate::TranslationOrigin,
     pub contributors: Vec<ExecutionId>,
     pub model: Option<String>,
     pub recipe: Option<String>,
     pub basis_current: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ComparisonView {
     pub comparison_id: Option<ExecutionId>,
     pub unit_id: ExecutionId,
@@ -152,7 +156,8 @@ pub struct ComparisonView {
     pub rows: Vec<ComparisonEntry>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ComparisonSummary {
     pub comparison_id: ExecutionId,
     pub native_key: String,
@@ -358,7 +363,7 @@ impl ProjectStore {
                 revision_id: *revision,
                 text,
                 source_revision_id: source_id,
-                origin_kind: origin,
+                origin_kind: crate::TranslationOrigin::from_stored(&origin)?,
                 contributors: contributors(c, *revision)?,
                 model,
                 recipe,
