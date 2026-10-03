@@ -3940,6 +3940,94 @@ mod tests {
     }
 
     #[test]
+    fn locale_build_lookup_and_retry_keep_original_input_after_new_edits() {
+        use crate::execution::Revision;
+        let (directory, mut store, project, units) = fixture();
+        let choices = [crate::BuildLocaleChoice {
+            locale: "zh-CN".into(),
+            file_name: "i18n/zh.json".into(),
+        }];
+        for (unit, text) in [(units[0], "你好 {{name}}"), (units[1], "普通")] {
+            translate(&mut store, project, unit, "zh-CN", text);
+            check(&mut store, project, unit, "zh-CN");
+            approve(&mut store, project, unit, "zh-CN");
+        }
+        let ready = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(ready.ready);
+        let attempt = ExecutionId::new();
+        assert!(
+            store
+                .find_locale_build(project, attempt, &choices, &ready.basis)
+                .unwrap()
+                .is_none()
+        );
+        let input = store
+            .prepare_locale_build(project, attempt, &choices, &ready.basis)
+            .unwrap();
+        store.enqueue_execution(&input).unwrap();
+        let before = store.changes_since(Revision::new(0).unwrap());
+        translate(&mut store, project, units[0], "zh-CN", "新输入 {{name}}");
+        assert!(
+            store
+                .prepare_locale_build(project, ExecutionId::new(), &choices, &ready.basis)
+                .is_err()
+        );
+        let after_edit = store.changes_since(Revision::new(0).unwrap());
+        assert_ne!(before.sequence, after_edit.sequence);
+        let replay = store
+            .prepare_locale_build(project, attempt, &choices, &ready.basis)
+            .unwrap();
+        assert_eq!(replay.bytes(), input.bytes());
+        assert_eq!(replay.digest(), input.digest());
+        store.enqueue_execution(&replay).unwrap();
+        assert_eq!(
+            serde_json::to_value(store.changes_since(Revision::new(0).unwrap())).unwrap(),
+            serde_json::to_value(after_edit).unwrap()
+        );
+        assert_eq!(
+            store
+                .execution_attempt_ids(input.envelope().task_id)
+                .unwrap(),
+            vec![attempt]
+        );
+        let wrong = [crate::BuildLocaleChoice {
+            locale: "zh-CN".into(),
+            file_name: "i18n/other.json".into(),
+        }];
+        assert_eq!(
+            store
+                .find_locale_build(project, attempt, &wrong, &ready.basis)
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            store
+                .find_locale_build(project, attempt, &choices, &"a".repeat(64))
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch
+        );
+        assert_eq!(
+            store
+                .find_locale_build(ExecutionId::new(), attempt, &choices, &ready.basis)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        drop(store);
+        let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
+        let found = reopened
+            .find_locale_build(project, attempt, &choices, &ready.basis)
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.bytes(), input.bytes());
+        assert_eq!(found.digest(), input.digest());
+    }
+
+    #[test]
     fn approved_locale_build_preserves_history_across_schema_nine_upgrade_and_reopen() {
         use crate::{
             BuildLocaleChoice, ReleaseAdoptionHandler,

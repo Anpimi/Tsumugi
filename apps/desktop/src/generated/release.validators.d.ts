@@ -7,8 +7,10 @@ export declare function validateRequestPreview(value: unknown): value is Request
 export declare function validateRequestReconcile(value: unknown): value is Requests["reconcile"];
 export declare function validateRequestRelease(value: unknown): value is Requests["release"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
+export declare function validateResponseBuildAttempt(value: unknown): value is Responses["buildAttempt"];
 export declare function validateResponseDeliveries(value: unknown): value is Responses["deliveries"];
 export declare function validateResponseDelivery(value: unknown): value is Responses["delivery"];
+export declare function validateResponseDeliveryAction(value: unknown): value is Responses["deliveryAction"];
 export declare function validateResponseIdentity(value: unknown): value is Responses["identity"];
 export declare function validateResponsePreview(value: unknown): value is Responses["preview"];
 export declare function validateResponseReleases(value: unknown): value is Responses["releases"];

@@ -172,6 +172,93 @@
         ],
         "createdAt": "2026-10-04T00:00:01Z"
       }
-    ]
+    ],
+    "buildAttempt": {
+      "attemptId": "50000000-0000-4000-8000-000000000701",
+      "taskId": "10000000-0000-4000-8000-000000000007",
+      "operation": "locale-build",
+      "progress": {
+        "total": 1,
+        "queued": 0,
+        "running": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "cancelled": 0,
+        "unknown": 1,
+        "adopted": 0
+      },
+      "items": [
+        {
+          "status": {
+            "itemId": "10000000-0000-4000-8000-000000000004",
+            "execution": "unknown",
+            "validation": "absent",
+            "adoption": "unapplied",
+            "cancellationRequested": true,
+            "retrySafe": false,
+            "diagnostic": "result-missing"
+          },
+          "scope": {
+            "kind": "sample",
+            "id": "Sample A",
+            "locale": "zh-CN"
+          },
+          "resultId": null
+        }
+      ],
+      "recovery": {
+        "attemptId": "50000000-0000-4000-8000-000000000701",
+        "units": [
+          {
+            "unitId": "10000000-0000-4000-8000-000000000003",
+            "itemIds": [
+              "10000000-0000-4000-8000-000000000004"
+            ],
+            "scopes": [
+              {
+                "kind": "sample",
+                "id": "Sample A",
+                "locale": "zh-CN"
+              }
+            ],
+            "remainingItemIds": [
+              "10000000-0000-4000-8000-000000000004"
+            ],
+            "resultIds": [],
+            "actions": [
+              "query-outcome"
+            ],
+            "blockedReason": "outcome-unknown",
+            "receiptId": null
+          }
+        ]
+      },
+      "nextOffset": null
+    },
+    "deliveryAction": {
+      "deliveryId": "50000000-0000-4000-8000-000000000708",
+      "actionId": "50000000-0000-4000-8000-000000000703",
+      "releaseId": "50000000-0000-4000-8000-000000000702",
+      "directory": "C:\\isolated\\木桶 👩🏽‍💻 é",
+      "overwriteConflicts": true,
+      "state": "partial",
+      "files": [
+        {
+          "locale": "zh-CN",
+          "fileName": "i18n/zh.json",
+          "expectedSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "actualSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "state": "succeeded"
+        },
+        {
+          "locale": "fr-FR",
+          "fileName": "i18n/fr.json",
+          "expectedSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "actualSha256": null,
+          "state": "failed"
+        }
+      ],
+      "createdAt": "2026-10-04T00:00:01Z"
+    }
   }
 }

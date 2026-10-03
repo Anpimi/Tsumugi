@@ -1029,6 +1029,24 @@ impl ProjectStore {
     pub fn execution_input(&self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
         load_input(self.execution_connection()?, attempt)
     }
+    pub(crate) fn execution_input_if_present(
+        &self,
+        attempt: ExecutionId,
+    ) -> Result<Option<FixedInput>, ExecutionError> {
+        let connection = self.execution_connection()?;
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                [attempt.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        if exists {
+            load_input(connection, attempt).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
     pub(crate) fn execution_input_cached(
         &self,
         attempt: ExecutionId,

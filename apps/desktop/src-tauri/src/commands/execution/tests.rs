@@ -189,6 +189,35 @@ fn call_when_ready(
 }
 
 #[test]
+fn release_recovery_lookups_are_authorized_and_absence_is_a_read_only_result() {
+    let (_directory, _app, webview, context) = setup();
+    let before = call(&webview, "execution_status", context.clone()).unwrap();
+    let build = request(
+        &context,
+        json!({"attemptId":ExecutionId::new(),"choices":[{"locale":"zh-CN","fileName":"i18n/zh.json"}],"expectedEligibilityBasis":"a".repeat(64)}),
+    );
+    assert_eq!(
+        call(&webview, "read_locale_build_attempt", build.clone()).unwrap(),
+        Value::Null
+    );
+    let mut stale = build;
+    stale["sessionToken"] = json!("inactive-session");
+    assert_eq!(
+        call(&webview, "read_locale_build_attempt", stale).unwrap_err()["code"],
+        "session-invalid"
+    );
+    let missing_selection = request(
+        &context,
+        json!({"actionId":ExecutionId::new(),"selectionId":ExecutionId::new()}),
+    );
+    assert_eq!(
+        call(&webview, "read_delivery_action", missing_selection).unwrap_err()["code"],
+        "session-invalid"
+    );
+    assert_eq!(call(&webview, "execution_status", context).unwrap(), before);
+}
+
+#[test]
 fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
     let (temp, app, webview, context) = setup();
     let units = {
@@ -787,7 +816,10 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     );
     drop(held);
     let cancelled = tauri::async_runtime::block_on(check).unwrap();
-    assert_eq!(cancelled.outcome, tsumugi_core::ReviewCheckOutcome::Cancelled);
+    assert_eq!(
+        cancelled.outcome,
+        tsumugi_core::ReviewCheckOutcome::Cancelled
+    );
     assert!(
         cancelled
             .rules
@@ -817,7 +849,10 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     .unwrap();
     assert_eq!(history["total"], "2");
     assert_eq!(history["currentText"], "Accepted during QA");
-    assert_eq!(history["current"]["eventId"], json!(saved.selection.event_id));
+    assert_eq!(
+        history["current"]["eventId"],
+        json!(saved.selection.event_id)
+    );
     assert_eq!(
         call(
             &webview,

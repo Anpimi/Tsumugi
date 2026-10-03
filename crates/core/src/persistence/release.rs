@@ -696,6 +696,45 @@ impl ProjectStore {
             .collect()
     }
 
+    /// Resolve the original accepted input without recapturing current choices.
+    pub fn find_locale_build(
+        &self,
+        project_id: ExecutionId,
+        attempt_id: ExecutionId,
+        choices: &[BuildLocaleChoice],
+        expected_eligibility_basis: &str,
+    ) -> Result<Option<FixedInput>, ExecutionError> {
+        if self
+            .metadata()
+            .map_err(|_| failure(ErrorCode::CorruptLedger, "build-project"))?
+            .project_id()
+            .to_string()
+            != project_id.to_string()
+        {
+            return Err(failure(ErrorCode::Unauthorized, "build-project"));
+        }
+        let Some(input) = self.execution_input_if_present(attempt_id)? else {
+            return Ok(None);
+        };
+        let manifest = BuildManifest::from_input(&input)?;
+        if manifest.project_id != project_id || input.envelope().project_id != project_id {
+            return Err(failure(ErrorCode::Unauthorized, "build-project"));
+        }
+        if manifest.eligibility_basis != expected_eligibility_basis
+            || manifest.locales.len() != choices.len()
+            || manifest
+                .locales
+                .iter()
+                .zip(choices)
+                .any(|(saved, requested)| {
+                    saved.locale != requested.locale || saved.file_name != requested.file_name
+                })
+        {
+            return Err(failure(ErrorCode::ResultMismatch, "build-attempt-request"));
+        }
+        Ok(Some(input))
+    }
+
     pub fn prepare_locale_build(
         &self,
         project_id: ExecutionId,
@@ -703,6 +742,11 @@ impl ProjectStore {
         choices: &[BuildLocaleChoice],
         expected_eligibility_basis: &str,
     ) -> Result<FixedInput, ExecutionError> {
+        if let Some(input) =
+            self.find_locale_build(project_id, attempt_id, choices, expected_eligibility_basis)?
+        {
+            return Ok(input);
+        }
         if choices.is_empty() || choices.len() > 16 {
             return Err(failure(ErrorCode::InvalidInput, "build-locales"));
         }

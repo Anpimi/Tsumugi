@@ -2,7 +2,7 @@ import { checkedInvoke } from "./ipc";
 import type { SessionRequest, BuildRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest } from "./generated/release.requests";
 import * as validators from "./generated/release.validators";
 
-export type { BuildLocaleChoice } from "./generated/release.requests";
+export type { BuildLocaleChoice, BuildRequest, ExportRequest } from "./generated/release.requests";
 export type { ReleaseView, ReleasedArtifact, ReleaseException, ReleaseExceptionKind, BuildSourceFile as ReleaseSourceFile, DeliverySelection, PreviewFile, DeliveryPreview, DeliveryPreviewState, DeliveryFile, DeliveryFileState, DeliveryView, DeliveryState } from "./generated/release.responses";
 
 function requireConfirmation(condition: boolean) {
@@ -13,6 +13,16 @@ export const releaseCommands = {
   start: async (request: BuildRequest) => {
     const result = await checkedInvoke("start_locale_build", request, validators.validateResponseIdentity);
     requireConfirmation(result === request.attemptId);
+    return result;
+  },
+  buildAttempt: async (request: BuildRequest) => {
+    const result = await checkedInvoke("read_locale_build_attempt", request, validators.validateResponseBuildAttempt);
+    requireConfirmation(result === null || (result.attemptId === request.attemptId && result.operation === "locale-build"));
+    return result;
+  },
+  deliveryAction: async (request: ReconcileRequest) => {
+    const result = await checkedInvoke("read_delivery_action", request, validators.validateResponseDeliveryAction);
+    requireConfirmation(result === null || result.actionId === request.actionId);
     return result;
   },
   releases: (request: SessionRequest) => checkedInvoke("list_releases", request, validators.validateResponseReleases),

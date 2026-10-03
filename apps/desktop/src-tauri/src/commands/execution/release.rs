@@ -162,6 +162,81 @@ pub async fn list_releases(
 }
 
 #[tauri::command]
+pub async fn read_locale_build_attempt(
+    state: State<'_, AppState>,
+    request: BuildRequest,
+) -> Result<Option<AttemptDetail>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_locale_build_attempt",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                if store
+                    .find_locale_build(
+                        request.project_id,
+                        request.attempt_id,
+                        &request.choices,
+                        &request.expected_eligibility_basis,
+                    )
+                    .map_err(map_read)?
+                    .is_none()
+                {
+                    return Ok(None);
+                }
+                attempt_detail(host, store, request.attempt_id, 0, 100).map(Some)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn read_delivery_action(
+    state: State<'_, AppState>,
+    request: ReconcileRequest,
+) -> Result<Option<DeliveryView>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_delivery_action",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                let root = selected(host, request.selection_id)?
+                    .destination_root()
+                    .map_err(map_read)?;
+                let delivery = store
+                    .delivery_by_action(request.action_id)
+                    .map_err(map_read)?;
+                if delivery
+                    .as_ref()
+                    .is_some_and(|value| value.directory != root.to_string_lossy())
+                {
+                    return Err(CommandError::simple(
+                        CommandErrorCode::PermissionDenied,
+                        CommandStage::ExecutionRead,
+                    ));
+                }
+                Ok(delivery)
+            },
+        )
+        .await
+}
+
+#[tauri::command]
 pub async fn choose_delivery_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
@@ -812,6 +887,18 @@ mod contracts {
         round_trip!("requests", "export", ExportRequest);
         round_trip!("requests", "reconcile", ReconcileRequest);
         round_trip!("responses", "identity", ExecutionId);
+        round_trip!("responses", "buildAttempt", Option<AttemptDetail>);
+        round_trip!("responses", "deliveryAction", Option<DeliveryView>);
+        assert!(
+            serde_json::from_value::<Option<AttemptDetail>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            serde_json::from_value::<Option<DeliveryView>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
         round_trip!("responses", "releases", Vec<ReleaseView>);
         round_trip!("responses", "selection", Option<DeliverySelection>);
         round_trip!("responses", "preview", DeliveryPreview);

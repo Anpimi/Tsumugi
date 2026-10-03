@@ -32,7 +32,7 @@ macro_rules! handlers {
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
         review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,
-        release::start_locale_build,release::list_releases,release::choose_delivery_folder,
+        release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
         release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
