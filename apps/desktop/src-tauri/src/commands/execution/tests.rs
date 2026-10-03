@@ -1104,3 +1104,132 @@ fn invoke_unknown_query_and_active_session_lifecycle_are_guarded() {
     )
     .unwrap();
 }
+
+#[test]
+fn review_computation_allows_save_close_and_completion_after_waiter_loss() {
+    for scenario in ["save", "reopen", "drop"] {
+        let (temp, app, webview, context) = setup();
+        let state = app.state::<AppState>();
+        let project_id: ExecutionId = serde_json::from_value(context["projectId"].clone()).unwrap();
+        let session_token = context["sessionToken"].as_str().unwrap().to_owned();
+        let unit = state.sessions.with(move |sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        let bundle = tsumugi_core::content::SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"Hello"}"#,
+            "en-US",
+        ).unwrap();
+        let input = bundle.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while host.active(store).unwrap() {
+            host.tick(store).unwrap();
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let result = store.execution_current_result(
+            input.envelope().attempt_id, input.envelope().items[0].item_id,
+        ).unwrap().unwrap();
+        let preview = store.source_preview(input.envelope().attempt_id, result, 0, 1).unwrap();
+        let action = store.prepare_adoption_with_id(
+            ExecutionId::new(), input.envelope().attempt_id, input.envelope().units[0].unit_id,
+            vec![result], serde_json::to_value(preview.confirmation).unwrap(),
+        ).unwrap();
+        store.adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler).unwrap();
+        store.source_content(store.content_scope().unwrap().current_snapshot.unwrap(), 0, 1)
+            .unwrap().rows.remove(0)
+    });
+
+        let target = call(
+            &webview,
+            "read_review_target",
+            request(&context, json!({"unitId":unit.unit_id,"locale":"zh-CN"})),
+        )
+        .unwrap();
+        let action_id = ExecutionId::new();
+        let (reached, waiting) = std::sync::mpsc::channel();
+        let (release, resume) = std::sync::mpsc::channel();
+        *state.review_compute_probe.lock().unwrap() = Some(review::ComputeProbe {
+            action: action_id,
+            reached,
+            release: resume,
+        });
+        let mut pending = Box::pin(review::run_review_checks(
+            app.state::<AppState>(),
+            serde_json::from_value(request(
+                &context,
+                json!({"unitId":unit.unit_id,"locale":"zh-CN",
+                "expectedBasis":target["basis"],"actionId":action_id}),
+            ))
+            .unwrap(),
+        ));
+        let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(matches!(
+            std::future::Future::poll(pending.as_mut(), &mut poll_context),
+            std::task::Poll::Pending
+        ));
+        waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+        // These operations complete while computation is deliberately suspended.
+        let mut current_context = context.clone();
+        if scenario == "save" {
+            call(&webview, "save_translation_revision", request(&context, json!({
+                "actionId":ExecutionId::new(),"unitId":unit.unit_id,"locale":"zh-CN",
+                "sourceRevisionId":unit.source_revision_id,"expectedSelectionId":null,"text":"New human work"
+            }))).unwrap();
+        } else if scenario == "reopen" {
+            assert!(
+                tauri::async_runtime::block_on(crate::commands::close_project(
+                    app.state::<AppState>(),
+                    CloseProjectRequest {
+                        session_token: session_token.clone()
+                    }
+                ))
+                .unwrap()
+                .closed
+            );
+            let reopened = tauri::async_runtime::block_on(crate::commands::open_project(
+                app.state::<AppState>(),
+                crate::commands::OpenProjectRequest {
+                    locator: temp.path().join("project").to_string_lossy().into_owned(),
+                },
+            ))
+            .unwrap();
+            assert_ne!(session_token, reopened.session_token);
+            current_context = json!({"sessionToken":reopened.session_token,"projectId":project_id});
+        }
+        if scenario == "drop" {
+            drop(pending);
+            release.send(()).unwrap();
+        } else {
+            release.send(()).unwrap();
+            let error = tauri::async_runtime::block_on(pending).unwrap_err();
+            if scenario == "save" {
+                assert_eq!(error.field.as_deref(), Some("review-current"));
+            } else {
+                assert_eq!(error.code, CommandErrorCode::SessionInvalid);
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !state.review_check_cancellations.lock().unwrap().is_empty() {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let current = call(
+            &webview,
+            "read_review_target",
+            request(
+                &current_context,
+                json!({"unitId":unit.unit_id,"locale":"zh-CN"}),
+            ),
+        )
+        .unwrap();
+        if scenario == "drop" {
+            assert_eq!(current["currentCheck"]["actionId"], json!(action_id));
+        } else {
+            assert!(current["currentCheck"].is_null());
+        }
+        if scenario == "save" {
+            assert_eq!(current["translationText"], "New human work");
+        }
+    }
+}

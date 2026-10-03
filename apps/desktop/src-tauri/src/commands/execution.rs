@@ -348,6 +348,8 @@ mod arena;
 mod release;
 mod resource;
 mod review;
+#[cfg(test)]
+pub(super) use review::ComputeProbe;
 mod source;
 request!(SessionRequest {});
 request!(ListRequest {

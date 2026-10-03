@@ -250,6 +250,8 @@ pub struct AppState {
     io: dispatch::BlockingExecutor,
     dialogs: dispatch::BlockingExecutor,
     review_check_cancellations: ReviewCheckRegistry,
+    #[cfg(test)]
+    review_compute_probe: Mutex<Option<execution::ComputeProbe>>,
 }
 
 impl Default for AppState {
@@ -259,6 +261,8 @@ impl Default for AppState {
             io: dispatch::BlockingExecutor::new(4),
             dialogs: dispatch::BlockingExecutor::new(1),
             review_check_cancellations: Arc::default(),
+            #[cfg(test)]
+            review_compute_probe: Mutex::default(),
         }
     }
 }

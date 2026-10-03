@@ -314,6 +314,18 @@ pub async fn write_review_decision(
         .await
 }
 
+enum CheckCapture {
+    Recorded(CheckRun),
+    Prepared(tsumugi_core::PreparedReviewCheck),
+}
+
+#[cfg(test)]
+pub(crate) struct ComputeProbe {
+    pub action: ExecutionId,
+    pub reached: std::sync::mpsc::Sender<()>,
+    pub release: std::sync::mpsc::Receiver<()>,
+}
+
 struct ReviewCheckRegistration {
     registry: ReviewCheckRegistry,
     action: ExecutionId,
@@ -358,36 +370,107 @@ pub async fn run_review_checks(
         registry: running_checks,
         action: request.action_id,
     };
-    state
-        .sessions
-        .run(
-            "run_review_checks",
-            CommandStage::ExecutionAdopt,
-            move |sessions| {
-                let _registration = registration;
-                let active = authorized(
-                    sessions,
-                    &request.session_token,
-                    request.project_id,
-                    CommandStage::ExecutionAdopt,
-                )?;
-                let (host, store) = active.execution_parts()?;
-                host.allow_mutation()?;
-                #[cfg(feature = "execution-test-host")]
-                test_support::source_fixture_hook(store, "review-check").map_err(map_adopt)?;
-                store
+    let lease = state.sessions.lease(CommandStage::ExecutionAdopt)?;
+    let initial = request.clone();
+    let initial_cancellation = cancellation.clone();
+    let captured = lease.submit(
+        "run_review_checks.capture",
+        CommandStage::ExecutionAdopt,
+        move |sessions| {
+            let active = authorized(
+                sessions,
+                &initial.session_token,
+                initial.project_id,
+                CommandStage::ExecutionAdopt,
+            )?;
+            let (host, store) = active.execution_parts()?;
+            host.allow_mutation()?;
+            #[cfg(feature = "execution-test-host")]
+            test_support::source_fixture_hook(store, "review-check").map_err(map_adopt)?;
+            // Cancellation already requested at admission needs no computation.
+            // Record it in command order, preserving its existing receipt semantics.
+            if initial_cancellation.is_requested() {
+                return store
                     .run_review_checks_with_cancel(
-                        request.project_id,
-                        request.unit_id,
-                        &request.locale,
-                        &request.expected_basis,
-                        request.action_id,
-                        &cancellation,
+                        initial.project_id,
+                        initial.unit_id,
+                        &initial.locale,
+                        &initial.expected_basis,
+                        initial.action_id,
+                        &initial_cancellation,
                     )
-                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
-            },
-        )
-        .await
+                    .map(CheckCapture::Recorded)
+                    .map_err(|error| mapped(error, CommandStage::ExecutionAdopt));
+            }
+            store
+                .prepare_review_check(
+                    initial.project_id,
+                    initial.unit_id,
+                    &initial.locale,
+                    &initial.expected_basis,
+                    initial.action_id,
+                )
+                .map(CheckCapture::Prepared)
+                .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+        },
+    )?;
+    let computation = state.io.clone();
+    #[cfg(test)]
+    let probe = {
+        let mut pending = state.review_compute_probe.lock().unwrap();
+        if pending
+            .as_ref()
+            .is_some_and(|probe| probe.action == request.action_id)
+        {
+            pending.take()
+        } else {
+            None
+        }
+    };
+    // Once capture is accepted, completion and cancellation registration belong
+    // to this continuation, not to the lifetime of the invoking webview waiter.
+    tauri::async_runtime::spawn(async move {
+        let _registration = registration;
+        let prepared = match captured.await? {
+            CheckCapture::Recorded(run) => return Ok(run),
+            CheckCapture::Prepared(prepared) => prepared,
+        };
+        let compute_cancellation = cancellation.clone();
+        let computed = computation
+            .run(CommandStage::ExecutionAdopt, move || {
+                #[cfg(test)]
+                if let Some(probe) = probe {
+                    probe.reached.send(()).unwrap();
+                    probe
+                        .release
+                        .recv_timeout(std::time::Duration::from_secs(10))
+                        .unwrap();
+                }
+                Ok(prepared.compute(&compute_cancellation))
+            })
+            .await?;
+        lease
+            .run(
+                "run_review_checks.commit",
+                CommandStage::ExecutionAdopt,
+                move |sessions| {
+                    let active = authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionAdopt,
+                    )?;
+                    let (host, store) = active.execution_parts()?;
+                    host.allow_mutation()?;
+                    store
+                        .commit_review_check(computed, &cancellation)
+                        .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))
+                },
+            )
+            .await
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?
 }
 
 #[tauri::command]

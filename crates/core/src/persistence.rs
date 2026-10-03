@@ -38,11 +38,12 @@ pub use resources::{
     TmSuggestion,
 };
 pub use review::{
-    CheckFinding, CheckRuleResult, CheckRun, Eligibility, EligibilityLocale, EligibilityReason,
-    FallbackDecision, FallbackWrite, ReviewBasis, ReviewDecision, ReviewDecisionKind,
-    ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture,
-    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
-    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
+    CheckFinding, CheckRuleResult, CheckRun, ComputedReviewCheck, Eligibility, EligibilityLocale,
+    EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
+    ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor,
+    ReviewPage, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,
+    ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite,
+    WorkItem, WorkPage,
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,

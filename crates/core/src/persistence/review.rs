@@ -9,7 +9,9 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-const CHECK_VERSION: &str = "smapi-prebuild-2";
+use crate::review::CHECK_VERSION;
+mod checks;
+pub use checks::{ComputedReviewCheck, PreparedReviewCheck};
 const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
@@ -1234,332 +1236,11 @@ impl ProjectStore {
         action_id: ExecutionId,
         cancellation: &Cancellation,
     ) -> Result<CheckRun, ExecutionError> {
-        if self.is_reconciling() {
-            return Err(failure(ErrorCode::OutcomeUnknown, "review-session"));
-        }
-        let request_digest = digest(&(project_id, unit_id, locale, expected_basis, action_id))?;
-        let unknown = self.execution_unknown.clone();
-        let transaction = self
-            .connection_mut()
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sql)?;
-        if let Some((run, prior_digest)) = check_by_action(&transaction, project_id, action_id)? {
-            return if prior_digest == request_digest {
-                Ok(run)
-            } else {
-                Err(failure(ErrorCode::ResultMismatch, "review-check-action"))
-            };
-        }
-        let target = target_in(&transaction, project_id, unit_id, locale)?;
-        if target.basis != expected_basis {
-            return Err(failure(ErrorCode::DependencyConflict, "review-current"));
-        }
-        let rules = if cancellation.is_requested() {
-            interrupted_rules("cancelled", "Cancelled before completion")
-        } else {
-            match resources::resolve_terms_in(&transaction, project_id, unit_id, locale)
-                .and_then(|terms| check_rules(&target, &terms))
-            {
-                Ok(rules) => rules,
-                Err(error) => interrupted_rules("failed", &error.stage),
-            }
-        };
-        let rules = if cancellation.is_requested() {
-            interrupted_rules("cancelled", "Cancelled before completion")
-        } else {
-            rules
-        };
-        let run_id = ExecutionId::new();
-        let mut rules_json = serde_json::to_string(&rules)
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        if rules_json.len() > 65_536 {
-            rules_json = serde_json::to_string(&interrupted_rules("failed", "limit-exceeded"))
-                .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        }
-        let basis_json = serde_json::to_string(&target.basis_evidence)
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-basis"))?;
-        if cancellation.is_requested() {
-            rules_json = serde_json::to_string(&interrupted_rules(
-                "cancelled",
-                "Cancelled before completion",
-            ))
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        }
-        transaction.execute(
-            "INSERT INTO review_checks
-             (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![run_id.to_string(), action_id.to_string(), project_id.to_string(), unit_id.to_string(),
-                locale, expected_basis, basis_json, CHECK_VERSION, rules_json, request_digest],
-        ).map_err(sql)?;
-        transaction.commit().map_err(|_| {
-            unknown.store(true, std::sync::atomic::Ordering::Release);
-            failure(ErrorCode::OutcomeUnknown, "review-check-commit")
-        })?;
-        check_by_action(
-            self.connection()
-                .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?,
-            project_id,
-            action_id,
-        )?
-        .map(|item| item.0)
-        .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-receipt"))
+        let prepared =
+            self.prepare_review_check(project_id, unit_id, locale, expected_basis, action_id)?;
+        let computed = prepared.compute(cancellation);
+        self.commit_review_check(computed, cancellation)
     }
-}
-
-fn finding(
-    target: &ReviewTarget,
-    rule: &str,
-    code: &str,
-    detail: &str,
-    severity: &str,
-    waivable: bool,
-) -> Result<CheckFinding, ExecutionError> {
-    Ok(CheckFinding {
-        issue_id: digest(&(
-            CHECK_VERSION,
-            target.unit_id,
-            &target.locale,
-            rule,
-            code,
-            detail,
-        ))?,
-        rule: rule.to_owned(),
-        code: code.to_owned(),
-        detail: detail.to_owned(),
-        severity: severity.to_owned(),
-        waivable,
-    })
-}
-fn result(rule: &str, findings: Vec<CheckFinding>, reason: Option<&str>) -> CheckRuleResult {
-    CheckRuleResult {
-        rule: rule.to_owned(),
-        status: if reason.is_some() {
-            "not-applicable"
-        } else if findings.is_empty() {
-            "passed"
-        } else {
-            "findings"
-        }
-        .to_owned(),
-        reason: reason.map(str::to_owned),
-        findings,
-    }
-}
-
-fn interrupted_rules(status: &str, reason: &str) -> Vec<CheckRuleResult> {
-    [
-        "required-translation",
-        "placeholders",
-        "format",
-        "terminology",
-    ]
-    .into_iter()
-    .map(|rule| CheckRuleResult {
-        rule: rule.to_owned(),
-        status: status.to_owned(),
-        reason: Some(reason.to_owned()),
-        findings: Vec::new(),
-    })
-    .collect()
-}
-
-/// The first bundled format uses named `{{token}}` markers. A malformed marker
-/// is a format finding; a valid marker inventory is compared including counts.
-fn markers(value: &str) -> Result<BTreeMap<String, u32>, ()> {
-    let mut found = BTreeMap::new();
-    let mut rest = value;
-    while !rest.is_empty() {
-        let open = rest.find("{{");
-        let close = rest.find("}}");
-        if close.is_some_and(|position| open.is_none_or(|start| position < start)) {
-            return Err(());
-        }
-        let Some(start) = open else {
-            break;
-        };
-        rest = &rest[start + 2..];
-        let Some(end) = rest.find("}}") else {
-            return Err(());
-        };
-        if rest[..end].contains("{{") {
-            return Err(());
-        }
-        let name = &rest[..end];
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-        {
-            return Err(());
-        }
-        *found.entry(name.to_owned()).or_default() += 1;
-        rest = &rest[end + 2..];
-    }
-    Ok(found)
-}
-
-fn check_rules(
-    target: &ReviewTarget,
-    terms: &resources::TermResolution,
-) -> Result<Vec<CheckRuleResult>, ExecutionError> {
-    #[cfg(test)]
-    if CHECK_FAIL.with(|flag| flag.get()) {
-        return Err(failure(
-            ErrorCode::StorageFailed,
-            "review-check-injected-failure",
-        ));
-    }
-    #[cfg(test)]
-    CHECK_BARRIER.with(|barrier| {
-        if let Some((reached, release)) = barrier.borrow_mut().take() {
-            reached.send(()).unwrap();
-            release
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
-        }
-    });
-    let source_markers = markers(&target.source_text);
-    let mut format = Vec::new();
-    if source_markers.is_err() {
-        format.push(finding(
-            target,
-            "format",
-            "source-marker",
-            "Source marker syntax is unsupported",
-            "error",
-            false,
-        )?);
-    }
-    if target
-        .source_text
-        .chars()
-        .any(|ch| ch == '\0' || (ch.is_control() && ch != '\n' && ch != '\r' && ch != '\t'))
-    {
-        format.push(finding(
-            target,
-            "format",
-            "source-control-character",
-            "Source contains a control character",
-            "error",
-            false,
-        )?);
-    }
-    let Some(text) = target.translation_text.as_deref() else {
-        return Ok(vec![
-            result(
-                "required-translation",
-                vec![finding(
-                    target,
-                    "required-translation",
-                    "missing",
-                    "No selected translation",
-                    "error",
-                    false,
-                )?],
-                None,
-            ),
-            result("placeholders", Vec::new(), Some("No selected translation")),
-            result("format", format, None),
-            result("terminology", Vec::new(), Some("No selected translation")),
-        ]);
-    };
-    let mut required = Vec::new();
-    if text.is_empty() {
-        required.push(finding(
-            target,
-            "required-translation",
-            "empty",
-            "Selected translation is empty",
-            "error",
-            false,
-        )?);
-    }
-    let target_markers = markers(text);
-    if target_markers.is_err() {
-        format.push(finding(
-            target,
-            "format",
-            "translation-marker",
-            "Translation marker syntax is malformed",
-            "error",
-            false,
-        )?);
-    }
-    if text
-        .chars()
-        .any(|ch| ch == '\0' || (ch.is_control() && ch != '\n' && ch != '\r' && ch != '\t'))
-    {
-        format.push(finding(
-            target,
-            "format",
-            "control-character",
-            "Translation contains a control character",
-            "error",
-            false,
-        )?);
-    }
-    let mut placeholders = Vec::new();
-    if let (Ok(source), Ok(translation)) = (&source_markers, &target_markers) {
-        if source != translation {
-            placeholders.push(finding(
-                target,
-                "placeholders",
-                "marker-mismatch",
-                "Named marker names or counts differ from source",
-                "error",
-                false,
-            )?);
-        }
-    }
-    let mut terminology = Vec::new();
-    for entry in &terms.entries {
-        if !entry.conflicting.is_empty() {
-            terminology.push(finding(
-                target,
-                "terminology",
-                "conflict",
-                &entry.source,
-                "error",
-                false,
-            )?);
-        } else if let Some(term) = &entry.selected {
-            if term.protected
-                && (target.source_text.contains(&entry.source)
-                    || term
-                        .aliases
-                        .iter()
-                        .any(|alias| target.source_text.contains(alias)))
-                && !text.contains(&term.target)
-            {
-                terminology.push(finding(
-                    target,
-                    "terminology",
-                    "protected-form",
-                    &entry.source,
-                    "warning",
-                    true,
-                )?);
-            }
-        }
-    }
-    let placeholder_result = if source_markers.is_err() || target_markers.is_err() {
-        CheckRuleResult {
-            rule: "placeholders".into(),
-            status: "unavailable".into(),
-            reason: Some("Marker syntax is unsupported or malformed".into()),
-            findings: placeholders,
-        }
-    } else {
-        result("placeholders", placeholders, None)
-    };
-    Ok(vec![
-        result("required-translation", required, None),
-        placeholder_result,
-        result("format", format, None),
-        result("terminology", terminology, None),
-    ])
 }
 
 fn waiver_by_action(
@@ -2891,9 +2572,26 @@ mod tests {
                 serde_json::to_value(confirmation).unwrap(),
             )
             .unwrap();
+        let delayed_check = store
+            .prepare_review_check(
+                project,
+                units[0],
+                "zh-CN",
+                &newer.basis,
+                ExecutionId::new(),
+            )
+            .unwrap()
+            .compute(&Cancellation::default());
         store
             .adopt_execution(&action, &SourceAdoptionHandler)
             .unwrap();
+        assert_eq!(
+            store
+                .commit_review_check(delayed_check, &Cancellation::default())
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
+        );
         let changed = store.review_target(project, units[0], "zh-CN").unwrap();
         let same = store.review_target(project, units[1], "zh-CN").unwrap();
         assert_eq!(changed.selection_id, newer.selection_id);
@@ -3823,57 +3521,6 @@ mod tests {
         let passed = check(&mut store, project, unit, "zh-CN");
         assert_eq!(passed.outcome, "completed");
         assert!(passed.rules.iter().all(|rule| rule.status == "passed"));
-    }
-
-    #[test]
-    fn issue_identity_keeps_distinct_causes_with_the_same_display_text() {
-        let (_directory, store, project, units) = fixture();
-        let target = store.review_target(project, units[0], "zh-CN").unwrap();
-        let a = finding(
-            &target,
-            "format",
-            "unsupported",
-            "Same message",
-            "error",
-            false,
-        )
-        .unwrap();
-        let repeated = finding(
-            &target,
-            "format",
-            "unsupported",
-            "Same message",
-            "error",
-            false,
-        )
-        .unwrap();
-        let other_rule = finding(
-            &target,
-            "placeholders",
-            "unsupported",
-            "Same message",
-            "error",
-            false,
-        )
-        .unwrap();
-        let other_code =
-            finding(&target, "format", "invalid", "Same message", "error", false).unwrap();
-        assert_eq!(a.issue_id, repeated.issue_id);
-        assert_ne!(a.issue_id, other_rule.issue_id);
-        assert_ne!(a.issue_id, other_code.issue_id);
-        assert_ne!(
-            a.issue_id,
-            finding(
-                &store.review_target(project, units[0], "fr-FR").unwrap(),
-                "format",
-                "unsupported",
-                "Same message",
-                "error",
-                false,
-            )
-            .unwrap()
-            .issue_id
-        );
     }
 
     #[test]

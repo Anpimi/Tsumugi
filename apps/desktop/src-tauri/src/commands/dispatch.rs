@@ -222,6 +222,20 @@ impl SessionLease {
         stage: CommandStage,
         work: impl FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
     ) -> Result<T, CommandError> {
+        self.submit(operation, stage, work)?.await
+    }
+
+    /// Enqueue before handing ownership to an asynchronous continuation. This
+    /// preserves command order while the continuation survives a lost IPC waiter.
+    pub(super) fn submit<T: Send + 'static>(
+        &self,
+        operation: &'static str,
+        stage: CommandStage,
+        work: impl FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
+    ) -> Result<
+        impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static,
+        CommandError,
+    > {
         let (sender, mut receiver) = tauri::async_runtime::channel(1);
         self.enqueue(
             operation,
@@ -231,15 +245,18 @@ impl SessionLease {
                 let _ = sender.try_send(result);
             }),
         )?;
-        receiver
-            .recv()
-            .await
-            .ok_or_else(|| CommandError::unknown(stage))?
+        Ok(async move {
+            receiver
+                .recv()
+                .await
+                .ok_or_else(|| CommandError::unknown(stage))?
+        })
     }
 }
 
 /// File/capture work may run independently of the project owner. Admission is
 /// bounded before spawning, and the permit lives with the work, not its waiter.
+#[derive(Clone)]
 pub(super) struct BlockingExecutor(Capacity);
 
 impl BlockingExecutor {
