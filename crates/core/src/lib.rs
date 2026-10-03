@@ -29,8 +29,9 @@ pub use persistence::{
     SaveTranslationRevision, SelectTranslationRevision, TaskView, TermResolution,
     TermResolutionEntry, TermRevision, TmSuggestion, TranslationAdoptionConfirmation,
     TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
-    TranslationPreview, TranslationPreviewRow, TranslationRevision, TranslationSaveReceipt,
-    TranslationSelection, TranslationSelectionDecision, Waiver, WaiverWrite, WorkItem, WorkPage,
+    TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,
+    TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision, Waiver,
+    WaiverWrite, WorkItem, WorkPage,
 };
 
 #[cfg(test)]

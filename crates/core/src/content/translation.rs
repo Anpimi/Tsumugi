@@ -227,6 +227,7 @@ pub fn declared_locale(path: &str) -> Result<String, ExecutionError> {
     Ok(name.into())
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationEntry {
@@ -234,7 +235,9 @@ pub struct TranslationEntry {
     pub artifact_id: ExecutionId,
     pub native_key: String,
     pub text: String,
+    /// Half-open UTF-8 byte offsets in the captured file, including JSON quotes.
     pub key_byte_range: [u32; 2],
+    /// Half-open UTF-8 byte offsets before escape decoding or text normalization.
     pub value_byte_range: [u32; 2],
 }
 
@@ -444,6 +447,44 @@ mod tests {
         crate::ProjectMetadata::create("Translation fixture", "en", ["zh-CN"])
             .unwrap()
             .project_id()
+    }
+
+    #[test]
+    fn translation_unicode_fixture_preserves_original_utf8_ranges() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/source-unicode.contract.json"
+        ))
+        .unwrap();
+        let case = &fixture["cases"][0];
+        let raw = case["raw"].as_str().unwrap();
+        let bundle =
+            TranslationBundle::capture("i18n/zh.json", raw.as_bytes(), "zh-CN", snapshot())
+                .unwrap();
+        let entries = extract_translation(&bundle, &Cancellation::default()).unwrap();
+        let expected = case["rows"].as_array().unwrap();
+        assert_eq!(entries.len(), expected.len());
+        for (entry, row) in entries.iter().zip(expected) {
+            let oracle = &row["occurrence"];
+            assert_eq!(entry.ordinal as u64, oracle["ordinal"].as_u64().unwrap());
+            assert_eq!(entry.native_key, oracle["key"].as_str().unwrap());
+            assert_eq!(entry.text, oracle["text"].as_str().unwrap());
+            assert_eq!(
+                serde_json::to_value(entry.key_byte_range).unwrap(),
+                oracle["keyByteRange"]
+            );
+            assert_eq!(
+                serde_json::to_value(entry.value_byte_range).unwrap(),
+                oracle["valueByteRange"]
+            );
+            let [start, end] = entry.value_byte_range.map(|v| v as usize);
+            assert_eq!(
+                serde_json::from_slice::<String>(&raw.as_bytes()[start..end]).unwrap(),
+                entry.text
+            );
+            let decoded: TranslationEntry =
+                serde_json::from_value(serde_json::to_value(entry).unwrap()).unwrap();
+            assert_eq!(decoded, *entry);
+        }
     }
 
     #[test]

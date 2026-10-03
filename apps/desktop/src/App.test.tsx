@@ -107,21 +107,21 @@ describe("project lifecycle workbench", () => {
 
   it("guards area navigation and restores the saved editor after returning from Tasks", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
-    const target = { unitId: "unit", locale: "zh-CN", nativeKey: "first", sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
+    const target = { unitId: fixtureIdentity(501), locale: "zh-CN", nativeKey: "first", sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
     let text: string | null = null;
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
       if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(500) };
       if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(500), scope: { revision: "2", currentSnapshot: fixtureIdentity(500) }, namespace: "Example.Mod", rows: [], total: 1 });
-      if (command === "read_review_summary_page") return { rows: [{ ...target, sourcePreview: target.sourceText, translationPreview: text }], total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: "snapshot", readVersion: "view" };
+      if (command === "read_review_summary_page") return { rows: [{ ...target, sourcePreview: target.sourceText, translationPreview: text }], total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: fixtureIdentity(500), readVersion: "view" };
       if (command === "read_review_editor_snapshot") return {
         target: { ...target, translationText: text },
-        translations: { unitId: "unit", locale: "zh-CN", total: "0", rows: [], nextOrdinal: null,
-          currentText: text, current: text === null ? null : { eventId: "selection", revisionId: "revision" } },
-        terms: { unitId: "unit", locale: "zh-CN", sourceRevisionId: "source-revision", entries: [] },
+        translations: { unitId: fixtureIdentity(501), locale: "zh-CN", total: "0", rows: [], nextOrdinal: null,
+          currentText: text, current: text === null ? null : { eventId: fixtureIdentity(503), revisionId: fixtureIdentity(504), unitId: fixtureIdentity(501), locale: "zh-CN", actionId: fixtureIdentity(1), sequence: "1", previousEventId: null } },
+        terms: { unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502), entries: [] },
         context: null, readVersion: "view",
       };
       if (command === "read_review_target") return { ...target, translationText: text };
-      if (command === "read_translation_history") return { unitId: "unit", locale: "zh-CN", total: "0", rows: [], nextOrdinal: null, currentText: text, current: text === null ? null : { eventId: "selection", revisionId: "revision" } };
+      if (command === "read_translation_history") return { unitId: fixtureIdentity(501), locale: "zh-CN", total: "0", rows: [], nextOrdinal: null, currentText: text, current: text === null ? null : { eventId: fixtureIdentity(503), revisionId: fixtureIdentity(504), unitId: fixtureIdentity(501), locale: "zh-CN", actionId: fixtureIdentity(1), sequence: "1", previousEventId: null } };
       if (command === "resolve_terms") return { entries: [] };
       if (command === "read_context_revision") return null;
       if (command === "create_execution_identity") return fixtureIdentity(1);
@@ -129,10 +129,10 @@ describe("project lifecycle workbench", () => {
         text = String(args.request.text);
         const actionId = args.request.actionId, unitId = args.request.unitId, locale = args.request.locale;
         return { projectId: args.request.projectId, actionId,
-          basis: { sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", selectionId: "selection" },
-          selection: { eventId: "selection", revisionId: "revision", unitId, locale, actionId, sequence: "1", previousEventId: null },
-          revision: { revisionId: "revision", unitId, locale, actionId, ordinal: "1", text,
-            sourceSnapshotId: "snapshot", sourceRevisionId: "source-revision", originKind: "manual", contributors: [],
+          basis: { sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), selectionId: fixtureIdentity(503) },
+          selection: { eventId: fixtureIdentity(503), revisionId: fixtureIdentity(504), unitId, locale, actionId, sequence: "1", previousEventId: null },
+          revision: { revisionId: fixtureIdentity(504), unitId, locale, actionId, ordinal: "1", text,
+            sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), originKind: "manual", contributors: [],
             attemptId: null, resultId: null, itemId: null, artifactId: null, logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null } };
       }
       if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };

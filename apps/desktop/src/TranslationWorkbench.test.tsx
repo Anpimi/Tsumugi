@@ -13,9 +13,9 @@ import { sourcePageFixture } from "./testSupport/sourceFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
+const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: fixtureIdentity(900), displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const content = sourcePageFixture({ snapshotId: fixtureIdentity(200), attemptId: fixtureIdentity(201), resultId: fixtureIdentity(202), scope: { revision: "2", currentSnapshot: fixtureIdentity(200) }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en" }, namespace: "Example.Mod", coverage: [], total: 1, nextOrdinal: null, diagnostics: [], rows: [{ occurrenceId: fixtureIdentity(203), unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205), occurrence: { ordinal: 0, artifactId: fixtureIdentity(206), namespace: "Example.Mod", key: "first", text: "Original", keyByteRange: [1, 8], valueByteRange: [9, 19], identityBasis: "native-key" } }] });
-const preview: TranslationPreview = { attemptId: "attempt", bundleId: "bundle", fixedSourceSnapshotId: fixtureIdentity(200), currentSourceSnapshotId: fixtureIdentity(200), resultDigest: "all-results", fileDigest: "file-digest", logicalPath: "i18n/zh.json", declaredLocale: "zh", targetLocale: "zh-CN", basis: "basis", total: 1, unique: 1, unmatched: 0, ambiguous: 0, selectedConflicts: 0, sourceChanged: 0, applied: 0, nextOrdinal: null, rows: [{ entry: { ordinal: 0, artifactId: "file", nativeKey: "FIRST", text: "你好", keyByteRange: [1, 8], valueByteRange: [9, 19] }, itemId: "item", resultId: "result", resultDigest: "result-digest", unitId: fixtureIdentity(204), occurrenceId: fixtureIdentity(203), sourceRevisionId: fixtureIdentity(205), sourceText: "Original", currentSelection: null, currentText: null, status: "unique" }] };
+const preview: TranslationPreview = { attemptId: fixtureIdentity(210), bundleId: fixtureIdentity(211), fixedSourceSnapshotId: fixtureIdentity(200), currentSourceSnapshotId: fixtureIdentity(200), resultDigest: "all-results", fileDigest: "file-digest", logicalPath: "i18n/zh.json", declaredLocale: "zh", targetLocale: "zh-CN", basis: "basis", total: 1, unique: 1, unmatched: 0, ambiguous: 0, selectedConflicts: 0, sourceChanged: 0, applied: 0, nextOrdinal: null, rows: [{ entry: { ordinal: 0, artifactId: fixtureIdentity(212), nativeKey: "FIRST", text: "你好", keyByteRange: [1, 8], valueByteRange: [9, 19] }, itemId: fixtureIdentity(213), resultId: fixtureIdentity(214), resultDigest: "result-digest", unitId: fixtureIdentity(204), occurrenceId: fixtureIdentity(203), sourceRevisionId: fixtureIdentity(205), sourceText: "Original", currentSelection: null, currentText: null, status: "unique" }] };
 const emptyHistory: TranslationHistory = { unitId: fixtureIdentity(204), locale: "zh-CN", total: "0", current: null, currentText: null, rows: [], nextOrdinal: null };
 let history: TranslationHistory;
 let applied: boolean;
@@ -26,8 +26,8 @@ function saveReceipt(request: Record<string, unknown>) {
   const prior = history.current?.unitId === request.unitId ? history.current : null;
   const sequence = (BigInt(prior?.sequence ?? "0") + 1n).toString();
   const actionId = String(request.actionId), unitId = String(request.unitId), locale = String(request.locale);
-  const selection = { eventId: sequence === "1" ? "selected" : `selected-${sequence}`, unitId, locale, sequence,
-    revisionId: `manual-${sequence}`, actionId, previousEventId: typeof request.expectedSelectionId === "string" ? request.expectedSelectionId : null };
+  const selection = { eventId: fixtureIdentity(600 + Number(sequence)), unitId, locale, sequence,
+    revisionId: fixtureIdentity(700 + Number(sequence)), actionId, previousEventId: typeof request.expectedSelectionId === "string" ? request.expectedSelectionId : null };
   const revision = { revisionId: selection.revisionId, unitId, locale, ordinal: sequence, text: String(request.text),
     sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: String(request.sourceRevisionId), originKind: "manual" as const,
     actionId, contributors: [], attemptId: null, resultId: null, itemId: null, artifactId: null,
@@ -44,13 +44,13 @@ beforeEach(async () => {
     if (command === "read_review_summary_page") return { rows: content.rows.map(row => ({ unitId: row.unitId, locale: "zh-CN", nativeKey: row.occurrence.key, sourcePreview: row.occurrence.text, sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: row.sourceRevisionId, selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationPreview: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] })), total: 1, nextOrdinal: null, scopeId: "read-scope", sourceSnapshotId: fixtureIdentity(200), readVersion: "view" };
     if (command === "read_review_target") return { unitId: fixtureIdentity(204), locale: "zh-CN", nativeKey: "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] };
     if (command === "read_review_editor_snapshot") return {
-      target: { unitId: args.request.unitId, locale: "zh-CN", nativeKey: args.request.unitId === "second" ? "second" : "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] },
+      target: { unitId: args.request.unitId, locale: "zh-CN", nativeKey: args.request.unitId === fixtureIdentity(217) ? "second" : "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] },
       translations: history,
       terms: { unitId: args.request.unitId, locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: "term-revision", termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] },
       context: { revisionId: "context-revision", unitId: args.request.unitId, locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null },
       readVersion: "view",
     };
-    if (command === "read_review_neighbor") return { unitId: "second", afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) };
+    if (command === "read_review_neighbor") return { unitId: fixtureIdentity(217), afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) };
     if (command === "read_translation_history") return history;
     if (command === "resolve_terms") return { unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: "term-revision", termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
     if (command === "read_context_revision") return { revisionId: "context-revision", unitId: fixtureIdentity(204), locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
@@ -58,9 +58,9 @@ beforeEach(async () => {
     if (command === "list_translation_files") return ["zh.json"];
     if (command === "preflight_translation") return { fileName: "zh.json", fileDigest: "file-digest", declaredLocale: "zh", targetLocale: "zh-CN", count: 1, sourceSnapshotId: fixtureIdentity(200) };
     if (command === "create_execution_identity") return fixtureIdentity(++identity);
-    if (command === "start_translation_import") return "attempt";
-    if (command === "read_translation_preview") return applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: "old-selection", unitId: fixtureIdentity(204), locale: "zh-CN", sequence: "1", revisionId: "old-revision", actionId: "old-action", previousEventId: null } }] } : preview;
-    if (command === "prepare_translation_adoption") return {};
+    if (command === "start_translation_import") return fixtureIdentity(210);
+    if (command === "read_translation_preview") return applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: fixtureIdentity(221), unitId: fixtureIdentity(204), locale: "zh-CN", sequence: "1", revisionId: fixtureIdentity(222), actionId: fixtureIdentity(223), previousEventId: null } }] } : preview;
+    if (command === "prepare_translation_adoption") return { ...executionFixture.action, projectId: args.request.projectId, actionId: args.request.actionId, attemptId: args.request.attemptId, resultIds: [args.request.resultId], unitId: (args.request.confirmation as { targetUnitId: string }).targetUnitId };
     if (command === "adopt_execution") { applied = true; return { ...executionFixture.receipt, actionId: args.request.actionId, changes: [{ kind: "translation-revision", id: "revision", revision: "1" }] }; }
     if (command === "save_translation_revision") {
       const existing = savedActions.get(String(args.request.actionId));
@@ -158,9 +158,9 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
       const after = Number(args.request.afterOrdinal);
       return { rows: Array.from({ length: Math.min(50, 51 - after) }, (_, offset) => {
         const position = after + offset;
-        return { unitId: `unit-${position}`, locale: "zh-CN", nativeKey: `entry-${position + 1}`,
-          sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: `source-${position}`,
-          sourcePreview: "Source preview", translationPreview: saved.get(`unit-${position}`) ?? null,
+        return { unitId: fixtureIdentity(1000 + position), locale: "zh-CN", nativeKey: `entry-${position + 1}`,
+          sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(1100 + position),
+          sourcePreview: "Source preview", translationPreview: saved.get(fixtureIdentity(1000 + position)) ?? null,
           selectionId: null, revisionId: null, basis: "basis", currentDecision: null, currentCheck: null };
       }), total: 51, nextOrdinal: after + 50 < 51 ? after + 50 : null,
         scopeId: "fixed-scope", sourceSnapshotId: fixtureIdentity(200), readVersion: "view" };
@@ -168,10 +168,10 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
     if (command === "read_review_editor_snapshot") {
       const value = await original(command, args);
       const unitId = String(args.request.unitId);
-      const position = Number(unitId.split("-")[1]);
+      const position = Number(unitId.slice(-12)) - 1000;
       const text = saved.get(unitId) ?? null;
       return { ...value, target: { ...value.target, unitId, nativeKey: `entry-${position + 1}`,
-        sourceRevisionId: `source-${position}`, sourceText: "Complete source for editing", translationText: text },
+        sourceRevisionId: fixtureIdentity(1100 + position), sourceText: "Complete source for editing", translationText: text },
         translations: { ...emptyHistory, unitId, currentText: text } };
     }
     if (command === "save_translation_revision") {
@@ -179,8 +179,8 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
       return saveReceipt(args.request);
     }
     if (command === "read_review_neighbor") {
-      const next = Number(String(args.request.unitId).split("-")[1]) + Number(args.request.direction);
-      return { unitId: next >= 0 && next < 51 ? `unit-${next}` : null,
+      const next = Number(String(args.request.unitId).slice(-12)) - 1000 + Number(args.request.direction);
+      return { unitId: next >= 0 && next < 51 ? fixtureIdentity(1000 + next) : null,
         afterOrdinal: next >= 0 && next < 51 ? next : null, sourceSnapshotId: fixtureIdentity(200) };
     }
     return original(command, args);
@@ -196,7 +196,7 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
     await user.click(await screen.findByRole("button", { name: "Save and continue" }));
   }
   expect(await screen.findByRole("heading", { name: "entry-51" })).toBeInTheDocument();
-  expect(saved.get("unit-49")).toBe("Fiftieth saved");
+  expect(saved.get(fixtureIdentity(1049))).toBe("Fiftieth saved");
   expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("");
   expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveFocus();
   expect(screen.getByRole("button", { name: "entry-51" })).toHaveAttribute("aria-current", "true");
@@ -204,7 +204,7 @@ it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 
   await user.click(screen.getByRole("button", { name: "Save and next" }));
   expect(await screen.findByText("You have reached the last entry in this list.")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "entry-51" })).toBeInTheDocument();
-  expect(saved.get("unit-50")).toBe("Final saved");
+  expect(saved.get(fixtureIdentity(1050))).toBe("Final saved");
 });
 
 it("retains input entered while save-and-next waits for the neighboring entry", async () => {
@@ -221,7 +221,7 @@ it("retains input entered while save-and-next waits for the neighboring entry", 
   await user.click(screen.getByRole("button", { name: "Save and next" }));
   await waitFor(() => expect(finish).toBeDefined());
   await user.type(editor, "B");
-  await act(async () => finish({ unitId: "second", afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) }));
+  await act(async () => finish({ unitId: fixtureIdentity(217), afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
   expect(editor).toHaveValue("AB");
   expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
@@ -326,7 +326,7 @@ it("keeps text typed after an earlier save and checks the new selection before s
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(2));
   expect(invoke.mock.calls.at(-3)?.[1]).toBeDefined();
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
-  expect(saves[1][1].request).toMatchObject({ text: "AB", expectedSelectionId: "selected" });
+  expect(saves[1][1].request).toMatchObject({ text: "AB", expectedSelectionId: fixtureIdentity(601) });
 });
 
 it("shows current adopted terms and context beside the editable translation", async () => {
@@ -346,7 +346,7 @@ it("shows current adopted terms and context beside the editable translation", as
 it("queries the complete current scope and retains a filtered position on return", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_review_summary_page") return Promise.resolve({ rows: [{ unitId: "late-unit", locale: "zh-CN", nativeKey: args.request.query ? "later-needle" : "first", sourcePreview: "Source on page two", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: "later-source", selectionId: null, revisionId: null, translationText: null, basis: "later-basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] }], total: args.request.query ? 1 : 60, nextOrdinal: args.request.query ? null : 50, scopeId: "filtered-scope", sourceSnapshotId: fixtureIdentity(200), readVersion: "view" });
+    if (command === "read_review_summary_page") return Promise.resolve({ rows: [{ unitId: fixtureIdentity(218), locale: "zh-CN", nativeKey: args.request.query ? "later-needle" : "first", sourcePreview: "Source on page two", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(219), selectionId: null, revisionId: null, translationText: null, basis: "later-basis", termConflict: false, currentDecision: null, currentCheck: null, currentFallback: null, currentWaivers: [] }], total: args.request.query ? 1 : 60, nextOrdinal: args.request.query ? null : 50, scopeId: "filtered-scope", sourceSnapshotId: fixtureIdentity(200), readVersion: "view" });
     return original(command, args);
   });
   render(<TranslationWorkbench project={project} disabled={false} />);
@@ -410,7 +410,7 @@ it("keeps the current editor when a neighboring entry is requested with a dirty 
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, args: unknown) => {
     const value = await original(command, args);
-    if (command === "read_review_summary_page") return { ...value, rows: [value.rows[0], { ...value.rows[0], unitId: "second", nativeKey: "second", sourceRevisionId: "source-second" }], total: 2 };
+    if (command === "read_review_summary_page") return { ...value, rows: [value.rows[0], { ...value.rows[0], unitId: fixtureIdentity(217), nativeKey: "second", sourceRevisionId: fixtureIdentity(220) }], total: 2 };
     return value;
   });
   render(<TranslationWorkbench project={project} disabled={false} />);
@@ -474,14 +474,14 @@ it("requires a separate comparison and confirmation before replacing a selected 
   expect(invoke.mock.calls.some(([name]) => name === "prepare_translation_adoption")).toBe(false);
   await user.click(dialog.querySelector("button.primary-button")!);
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "adopt_execution")).toBe(true));
-  expect(invoke.mock.calls.find(([name]) => name === "prepare_translation_adoption")?.[1].request.confirmation).toMatchObject({ decision: "replace", expectedSelectionId: "old-selection" });
+  expect(invoke.mock.calls.find(([name]) => name === "prepare_translation_adoption")?.[1].request.confirmation).toMatchObject({ decision: "replace", expectedSelectionId: fixtureIdentity(221) });
 });
 
 it("reports a partial batch without treating an uncommitted conflict as applied", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_translation_preview" && !applied) return Promise.resolve({ ...preview, total: 2, unique: 2, rows: [preview.rows[0], { ...preview.rows[0], entry: { ...preview.rows[0].entry, ordinal: 1, nativeKey: "SECOND" }, itemId: "item-2", resultId: "result-2" }] });
-    if (command === "prepare_translation_adoption" && args.request.itemId === "item-2") return Promise.reject({ code: "dependency-conflict", outcome: "rejected", reason: "translation-selection" });
+    if (command === "read_translation_preview" && !applied) return Promise.resolve({ ...preview, total: 2, unique: 2, rows: [preview.rows[0], { ...preview.rows[0], entry: { ...preview.rows[0].entry, ordinal: 1, nativeKey: "SECOND" }, itemId: fixtureIdentity(215), resultId: fixtureIdentity(216) }] });
+    if (command === "prepare_translation_adoption" && args.request.itemId === fixtureIdentity(215)) return Promise.reject({ code: "dependency-conflict", outcome: "rejected", reason: "translation-selection" });
     return original(command, args);
   });
   render(<TranslationWorkbench project={project} disabled={false} />);

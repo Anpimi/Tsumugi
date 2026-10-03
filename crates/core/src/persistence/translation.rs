@@ -8,6 +8,7 @@ use crate::execution::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TranslationMatch {
@@ -19,6 +20,7 @@ pub enum TranslationMatch {
     Applied,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationPreviewRow {
@@ -35,6 +37,7 @@ pub struct TranslationPreviewRow {
     pub status: TranslationMatch,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationPreview {
@@ -59,6 +62,7 @@ pub struct TranslationPreview {
     pub rows: Vec<TranslationPreviewRow>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TranslationSelectionDecision {
@@ -67,6 +71,7 @@ pub enum TranslationSelectionDecision {
     Replace,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationAdoptionConfirmation {
@@ -79,6 +84,7 @@ pub struct TranslationAdoptionConfirmation {
     pub decision: TranslationSelectionDecision,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveTranslationRevision {
@@ -91,6 +97,7 @@ pub struct SaveTranslationRevision {
     pub text: String,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SelectTranslationRevision {
@@ -103,6 +110,7 @@ pub struct SelectTranslationRevision {
     pub revision_id: ExecutionId,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationSelection {
@@ -110,12 +118,23 @@ pub struct TranslationSelection {
     pub unit_id: ExecutionId,
     pub locale: String,
     #[serde(with = "crate::execution::revision_wire")]
+    #[cfg_attr(feature = "wire-schema", schemars(with = "Revision"))]
     pub sequence: u64,
     pub revision_id: ExecutionId,
     pub action_id: ExecutionId,
     pub previous_event_id: Option<ExecutionId>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TranslationOrigin {
+    Import,
+    Manual,
+    Ai,
+}
+
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationRevision {
@@ -123,11 +142,12 @@ pub struct TranslationRevision {
     pub unit_id: ExecutionId,
     pub locale: String,
     #[serde(with = "crate::execution::revision_wire")]
+    #[cfg_attr(feature = "wire-schema", schemars(with = "Revision"))]
     pub ordinal: u64,
     pub text: String,
     pub source_snapshot_id: ExecutionId,
     pub source_revision_id: ExecutionId,
-    pub origin_kind: String,
+    pub origin_kind: TranslationOrigin,
     pub action_id: ExecutionId,
     pub attempt_id: Option<ExecutionId>,
     pub result_id: Option<ExecutionId>,
@@ -140,20 +160,24 @@ pub struct TranslationRevision {
     pub contributors: Vec<ExecutionId>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationHistory {
     pub unit_id: ExecutionId,
     pub locale: String,
     #[serde(with = "crate::execution::revision_wire")]
+    #[cfg_attr(feature = "wire-schema", schemars(with = "Revision"))]
     pub total: u64,
     pub current: Option<TranslationSelection>,
     pub current_text: Option<String>,
     pub rows: Vec<TranslationRevision>,
     #[serde(with = "crate::execution::revision_wire::optional")]
+    #[cfg_attr(feature = "wire-schema", schemars(with = "Option<Revision>"))]
     pub next_ordinal: Option<u64>,
 }
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationEditBasis {
@@ -164,6 +188,7 @@ pub struct TranslationEditBasis {
 
 /// Immutable confirmation of one save, including the basis for the next edit.
 /// The selection sequence is scoped to this unit and locale.
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationSaveReceipt {
@@ -1494,7 +1519,7 @@ fn save_receipt_in(
     if revision.unit_id != selection.unit_id
         || revision.locale != selection.locale
         || revision.action_id != selection.action_id
-        || revision.origin_kind != "manual"
+        || revision.origin_kind != TranslationOrigin::Manual
     {
         return Err(error(ErrorCode::CorruptLedger, "translation-save-receipt"));
     }
@@ -1564,7 +1589,12 @@ impl RawRevision {
             text: self.text,
             source_snapshot_id: id(self.source_snapshot_id)?,
             source_revision_id: id(self.source_revision_id)?,
-            origin_kind: self.origin_kind,
+            origin_kind: match self.origin_kind.as_str() {
+                "import" => TranslationOrigin::Import,
+                "manual" => TranslationOrigin::Manual,
+                "ai" => TranslationOrigin::Ai,
+                _ => return Err(error(ErrorCode::CorruptLedger, "translation-origin")),
+            },
             action_id: id(self.action_id)?,
             attempt_id: optional_id(self.attempt_id)?,
             result_id: optional_id(self.result_id)?,
@@ -2138,7 +2168,7 @@ mod tests {
             .translation_history(project_id, changed.rows[1].unit_id.unwrap(), "zh-CN", 0, 10)
             .unwrap();
         assert_eq!(history.rows[0].text, "");
-        assert_eq!(history.rows[0].origin_kind, "import");
+        assert_eq!(history.rows[0].origin_kind, TranslationOrigin::Import);
         assert_eq!(history.rows[0].native_key.as_deref(), Some("second"));
         assert!(history.current.is_some());
         let changed = store

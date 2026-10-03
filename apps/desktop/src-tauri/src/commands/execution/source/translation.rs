@@ -4,43 +4,58 @@ use tsumugi_core::{
     TranslationHistory, TranslationPreview, TranslationSaveReceipt, TranslationSelection,
 };
 
-request!(TranslationFilesRequest {
-    selection_id: ExecutionId
-});
-request!(TranslationCaptureRequest {
-    selection_id: ExecutionId,
-    file_name: String,
-    target_locale: String,
-});
-request!(TranslationStartRequest {
-    selection_id: ExecutionId,
-    file_name: String,
-    target_locale: String,
-    language_confirmed: bool,
-    expected_file_digest: String,
-    expected_source_snapshot_id: ExecutionId,
-    attempt_id: ExecutionId,
-});
-request!(TranslationPreviewRequest {
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TranslationFilesRequest {
+        selection_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TranslationCaptureRequest {
+        selection_id: ExecutionId,
+        file_name: String,
+        target_locale: String,
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TranslationStartRequest {
+        selection_id: ExecutionId,
+        file_name: String,
+        target_locale: String,
+        language_confirmed: bool,
+        expected_file_digest: String,
+        expected_source_snapshot_id: ExecutionId,
+        attempt_id: ExecutionId,
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationPreviewRequest {
     attempt_id: ExecutionId,
     after: u32,
     limit: u32,
     basis: Option<String>,
 });
-request!(TranslationAdoptRequest {
-    attempt_id: ExecutionId,
-    item_id: ExecutionId,
-    result_id: ExecutionId,
-    action_id: ExecutionId,
-    confirmation: TranslationAdoptionConfirmation,
-});
-request!(TranslationHistoryRequest {
-    unit_id: ExecutionId,
-    locale: String,
-    after_ordinal: Revision,
-    limit: u32,
-});
-request!(TranslationSaveRequest {
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TranslationAdoptRequest {
+        attempt_id: ExecutionId,
+        item_id: ExecutionId,
+        result_id: ExecutionId,
+        action_id: ExecutionId,
+        confirmation: TranslationAdoptionConfirmation,
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TranslationHistoryRequest {
+        unit_id: ExecutionId,
+        locale: String,
+        after_ordinal: Revision,
+        limit: u32,
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationSaveRequest {
     action_id: ExecutionId,
     unit_id: ExecutionId,
     locale: String,
@@ -48,12 +63,15 @@ request!(TranslationSaveRequest {
     expected_selection_id: Option<ExecutionId>,
     text: String,
 });
-request!(TranslationActionRequest {
-    action_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: String,
-});
-request!(TranslationSelectRequest {
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TranslationActionRequest {
+        action_id: ExecutionId,
+        unit_id: ExecutionId,
+        locale: String,
+    }
+);
+request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TranslationSelectRequest {
     action_id: ExecutionId,
     unit_id: ExecutionId,
     locale: String,
@@ -62,6 +80,7 @@ request!(TranslationSelectRequest {
     revision_id: ExecutionId,
 });
 
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TranslationPreflight {
@@ -590,16 +609,79 @@ mod contracts {
             "../../../../../test/fixtures/translation-commands.json"
         ))
         .unwrap();
-        let start: TranslationStartRequest =
-            serde_json::from_value(fixture["start"].clone()).unwrap();
-        let save: TranslationSaveRequest = serde_json::from_value(fixture["save"].clone()).unwrap();
-        let receipt: TranslationSaveReceipt =
-            serde_json::from_value(fixture["receipt"].clone()).unwrap();
-        let history: TranslationHistoryRequest =
-            serde_json::from_value(fixture["history"].clone()).unwrap();
-        assert_eq!(serde_json::to_value(start).unwrap(), fixture["start"]);
-        assert_eq!(serde_json::to_value(save).unwrap(), fixture["save"]);
-        assert_eq!(serde_json::to_value(receipt).unwrap(), fixture["receipt"]);
-        assert_eq!(serde_json::to_value(history).unwrap(), fixture["history"]);
+        macro_rules! round_trip {
+            ($key:literal, $kind:ty) => {
+                let decoded: $kind = serde_json::from_value(fixture[$key].clone()).unwrap();
+                assert_eq!(serde_json::to_value(decoded).unwrap(), fixture[$key], $key);
+            };
+        }
+        round_trip!("filesRequest", TranslationFilesRequest);
+        round_trip!("capture", TranslationCaptureRequest);
+        round_trip!("start", TranslationStartRequest);
+        round_trip!("previewRequest", TranslationPreviewRequest);
+        round_trip!("adopt", TranslationAdoptRequest);
+        round_trip!("history", TranslationHistoryRequest);
+        round_trip!("save", TranslationSaveRequest);
+        round_trip!("actionRequest", TranslationActionRequest);
+        round_trip!("select", TranslationSelectRequest);
+        round_trip!("files", Vec<String>);
+        round_trip!("preflight", TranslationPreflight);
+        round_trip!("preview", TranslationPreview);
+        round_trip!("prepared", AdoptionAction);
+        round_trip!("historyResponse", TranslationHistory);
+        round_trip!("receipt", TranslationSaveReceipt);
+        round_trip!("selected", TranslationSelection);
+        assert!(
+            serde_json::from_value::<Option<TranslationSelection>>(serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            serde_json::to_value(
+                ExecutionId::parse(fixture["start"]["attemptId"].as_str().unwrap()).unwrap()
+            )
+            .unwrap(),
+            fixture["start"]["attemptId"]
+        );
+        for value in [
+            serde_json::json!(9007199254740992u64),
+            serde_json::json!("01"),
+            serde_json::json!("9223372036854775808"),
+            serde_json::json!("-1"),
+        ] {
+            let mut history = fixture["historyResponse"].clone();
+            history["nextOrdinal"] = value;
+            assert!(serde_json::from_value::<TranslationHistory>(history).is_err());
+        }
+        let mut omitted = fixture["save"].clone();
+        omitted
+            .as_object_mut()
+            .unwrap()
+            .remove("expectedSelectionId");
+        let decoded: TranslationSaveRequest = serde_json::from_value(omitted).unwrap();
+        assert_eq!(decoded.expected_selection_id, None);
+        for origin in ["import", "manual", "ai"] {
+            let decoded: tsumugi_core::TranslationOrigin =
+                serde_json::from_value(serde_json::json!(origin)).unwrap();
+            assert_eq!(
+                serde_json::to_value(decoded).unwrap(),
+                serde_json::json!(origin)
+            );
+        }
+        let mut preview = fixture["preview"].clone();
+        preview["rows"][0]["entry"]["valueByteRange"][1] = serde_json::json!(4294967296u64);
+        assert!(serde_json::from_value::<TranslationPreview>(preview).is_err());
+        let mut unknown = fixture["receipt"].clone();
+        unknown["revision"]["originKind"] = serde_json::json!("plugin");
+        assert!(serde_json::from_value::<TranslationSaveReceipt>(unknown).is_err());
+        let mut unknown = fixture["adopt"].clone();
+        unknown["confirmation"]["decision"] = serde_json::json!("overwrite");
+        assert!(serde_json::from_value::<TranslationAdoptRequest>(unknown).is_err());
+        let mut unknown = fixture["preview"].clone();
+        unknown["rows"][0]["status"] = serde_json::json!("ready");
+        assert!(serde_json::from_value::<TranslationPreview>(unknown).is_err());
+        let mut unknown = fixture["save"].clone();
+        unknown["extra"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<TranslationSaveRequest>(unknown).is_err());
     }
 }

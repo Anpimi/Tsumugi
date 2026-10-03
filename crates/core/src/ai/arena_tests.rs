@@ -627,7 +627,7 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_schema_ten_b
         .iter()
         .find(|r| r.revision_id == merged.revision_id)
         .unwrap();
-    assert_eq!(merged_row.origin_kind, "manual");
+    assert_eq!(merged_row.origin_kind, crate::TranslationOrigin::Manual);
     assert_eq!(merged_row.contributors, refs);
     assert_eq!(history.current, Some(merged.clone()));
     let mut stale = request.clone();

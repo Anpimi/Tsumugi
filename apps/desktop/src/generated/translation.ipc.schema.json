@@ -1,0 +1,1117 @@
+{
+  "requests": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "ExecutionId": {
+        "type": "string"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "TranslationActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "TranslationAdoptRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmation": {
+            "$ref": "#/definitions/TranslationAdoptionConfirmation"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "itemId",
+          "resultId",
+          "actionId",
+          "confirmation"
+        ],
+        "type": "object"
+      },
+      "TranslationAdoptionConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/definitions/TranslationSelectionDecision"
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurrenceId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetUnitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "resultDigest",
+          "sourceSnapshotId",
+          "occurrenceId",
+          "sourceRevisionId",
+          "targetUnitId",
+          "decision"
+        ],
+        "type": "object"
+      },
+      "TranslationCaptureRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "fileName": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "selectionId",
+          "fileName",
+          "targetLocale"
+        ],
+        "type": "object"
+      },
+      "TranslationFilesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "selectionId"
+        ],
+        "type": "object"
+      },
+      "TranslationHistoryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "afterOrdinal": {
+            "$ref": "#/definitions/Revision"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale",
+          "afterOrdinal",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "TranslationPreviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "TranslationSaveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "text"
+        ],
+        "type": "object"
+      },
+      "TranslationSelectRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "revisionId"
+        ],
+        "type": "object"
+      },
+      "TranslationSelectionDecision": {
+        "enum": [
+          "candidate-only",
+          "select-if-empty",
+          "replace"
+        ],
+        "type": "string"
+      },
+      "TranslationStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedFileDigest": {
+            "type": "string"
+          },
+          "expectedSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "languageConfirmed": {
+            "type": "boolean"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "selectionId",
+          "fileName",
+          "targetLocale",
+          "languageConfirmed",
+          "expectedFileDigest",
+          "expectedSourceSnapshotId",
+          "attemptId"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "action": {
+        "$ref": "#/definitions/TranslationActionRequest"
+      },
+      "adopt": {
+        "$ref": "#/definitions/TranslationAdoptRequest"
+      },
+      "capture": {
+        "$ref": "#/definitions/TranslationCaptureRequest"
+      },
+      "files": {
+        "$ref": "#/definitions/TranslationFilesRequest"
+      },
+      "history": {
+        "$ref": "#/definitions/TranslationHistoryRequest"
+      },
+      "preview": {
+        "$ref": "#/definitions/TranslationPreviewRequest"
+      },
+      "save": {
+        "$ref": "#/definitions/TranslationSaveRequest"
+      },
+      "select": {
+        "$ref": "#/definitions/TranslationSelectRequest"
+      },
+      "start": {
+        "$ref": "#/definitions/TranslationStartRequest"
+      }
+    },
+    "required": [
+      "files",
+      "capture",
+      "start",
+      "preview",
+      "adopt",
+      "history",
+      "save",
+      "action",
+      "select"
+    ],
+    "title": "Requests",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:translation:requests",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  },
+  "responses": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "definitions": {
+      "AdoptionAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "cancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "parameters": true,
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "projectId",
+          "attemptId",
+          "actionId",
+          "unitId",
+          "operation",
+          "resultIds",
+          "cancellationRevision",
+          "parameters"
+        ],
+        "type": "object"
+      },
+      "ExecutionId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "TranslationEditBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "selectionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "selectionId"
+        ],
+        "type": "object"
+      },
+      "TranslationEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "keyByteRange": {
+            "description": "Half-open UTF-8 byte offsets in the captured file, including JSON quotes.",
+            "items": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "nativeKey": {
+            "type": "string"
+          },
+          "ordinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          },
+          "valueByteRange": {
+            "description": "Half-open UTF-8 byte offsets before escape decoding or text normalization.",
+            "items": {
+              "format": "uint32",
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          }
+        },
+        "required": [
+          "ordinal",
+          "artifactId",
+          "nativeKey",
+          "text",
+          "keyByteRange",
+          "valueByteRange"
+        ],
+        "type": "object"
+      },
+      "TranslationHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TranslationSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "nextOrdinal": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TranslationRevision"
+            },
+            "type": "array"
+          },
+          "total": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "total",
+          "current",
+          "currentText",
+          "rows",
+          "nextOrdinal"
+        ],
+        "type": "object"
+      },
+      "TranslationMatch": {
+        "enum": [
+          "unique",
+          "unmatched",
+          "ambiguous",
+          "selected-conflict",
+          "source-changed",
+          "applied"
+        ],
+        "type": "string"
+      },
+      "TranslationOrigin": {
+        "enum": [
+          "import",
+          "manual",
+          "ai"
+        ],
+        "type": "string"
+      },
+      "TranslationPreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "declaredLocale": {
+            "type": "string"
+          },
+          "fileDigest": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "targetLocale": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fileName",
+          "fileDigest",
+          "declaredLocale",
+          "targetLocale",
+          "count",
+          "sourceSnapshotId"
+        ],
+        "type": "object"
+      },
+      "TranslationPreview": {
+        "additionalProperties": false,
+        "properties": {
+          "ambiguous": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "applied": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "bundleId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "currentSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "declaredLocale": {
+            "type": "string"
+          },
+          "fileDigest": {
+            "type": "string"
+          },
+          "fixedSourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "logicalPath": {
+            "type": "string"
+          },
+          "nextOrdinal": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/definitions/TranslationPreviewRow"
+            },
+            "type": "array"
+          },
+          "selectedConflicts": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sourceChanged": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "targetLocale": {
+            "type": "string"
+          },
+          "total": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unique": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unmatched": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attemptId",
+          "bundleId",
+          "fixedSourceSnapshotId",
+          "currentSourceSnapshotId",
+          "resultDigest",
+          "fileDigest",
+          "logicalPath",
+          "declaredLocale",
+          "targetLocale",
+          "basis",
+          "total",
+          "unique",
+          "unmatched",
+          "ambiguous",
+          "selectedConflicts",
+          "sourceChanged",
+          "applied",
+          "nextOrdinal",
+          "rows"
+        ],
+        "type": "object"
+      },
+      "TranslationPreviewRow": {
+        "additionalProperties": false,
+        "properties": {
+          "currentSelection": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TranslationSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entry": {
+            "$ref": "#/definitions/TranslationEntry"
+          },
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "occurrenceId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/definitions/TranslationMatch"
+          },
+          "unitId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "entry",
+          "itemId",
+          "resultId",
+          "resultDigest",
+          "unitId",
+          "occurrenceId",
+          "sourceRevisionId",
+          "sourceText",
+          "currentSelection",
+          "currentText",
+          "status"
+        ],
+        "type": "object"
+      },
+      "TranslationRevision": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "artifactId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contributors": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "declaredLocale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fileDigest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "itemId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "logicalPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nativeKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "$ref": "#/definitions/Revision"
+          },
+          "originKind": {
+            "$ref": "#/definitions/TranslationOrigin"
+          },
+          "resultId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "text": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "revisionId",
+          "unitId",
+          "locale",
+          "ordinal",
+          "text",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "originKind",
+          "actionId",
+          "attemptId",
+          "resultId",
+          "itemId",
+          "artifactId",
+          "logicalPath",
+          "declaredLocale",
+          "nativeKey",
+          "fileDigest",
+          "contributors"
+        ],
+        "type": "object"
+      },
+      "TranslationSaveReceipt": {
+        "additionalProperties": false,
+        "description": "Immutable confirmation of one save, including the basis for the next edit.\nThe selection sequence is scoped to this unit and locale.",
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "basis": {
+            "$ref": "#/definitions/TranslationEditBasis"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/TranslationRevision"
+          },
+          "selection": {
+            "$ref": "#/definitions/TranslationSelection"
+          }
+        },
+        "required": [
+          "projectId",
+          "actionId",
+          "basis",
+          "selection",
+          "revision"
+        ],
+        "type": "object"
+      },
+      "TranslationSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "eventId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "previousEventId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "eventId",
+          "unitId",
+          "locale",
+          "sequence",
+          "revisionId",
+          "actionId",
+          "previousEventId"
+        ],
+        "type": "object"
+      }
+    },
+    "properties": {
+      "action": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TranslationSelection"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "attempt": {
+        "$ref": "#/definitions/ExecutionId"
+      },
+      "files": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "history": {
+        "$ref": "#/definitions/TranslationHistory"
+      },
+      "preflight": {
+        "$ref": "#/definitions/TranslationPreflight"
+      },
+      "prepared": {
+        "$ref": "#/definitions/AdoptionAction"
+      },
+      "preview": {
+        "$ref": "#/definitions/TranslationPreview"
+      },
+      "saved": {
+        "$ref": "#/definitions/TranslationSaveReceipt"
+      },
+      "selected": {
+        "$ref": "#/definitions/TranslationSelection"
+      }
+    },
+    "required": [
+      "files",
+      "preflight",
+      "attempt",
+      "preview",
+      "prepared",
+      "history",
+      "action",
+      "saved",
+      "selected"
+    ],
+    "title": "Responses",
+    "type": "object",
+    "$id": "urn:tsumugi:ipc:translation:responses",
+    "$comment": "Generated by pnpm generate:contracts from Rust/Serde. Do not edit."
+  }
+}

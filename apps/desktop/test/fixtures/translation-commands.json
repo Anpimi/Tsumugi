@@ -65,5 +65,188 @@
     "locale": "zh-CN",
     "afterOrdinal": "9007199254740993",
     "limit": 100
+  },
+  "filesRequest": {
+    "sessionToken": "isolated-session",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "selectionId": "22222222-2222-4222-8222-222222222222"
+  },
+  "capture": {
+    "sessionToken": "isolated-session",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "selectionId": "22222222-2222-4222-8222-222222222222",
+    "fileName": "zh.json",
+    "targetLocale": "zh-CN"
+  },
+  "previewRequest": {
+    "sessionToken": "isolated-session",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "attemptId": "44444444-4444-4444-8444-444444444444",
+    "after": 0,
+    "limit": 100,
+    "basis": null
+  },
+  "adopt": {
+    "sessionToken": "isolated-session",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "attemptId": "44444444-4444-4444-8444-444444444444",
+    "itemId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "resultId": "99999999-9999-4999-8999-999999999999",
+    "actionId": "55555555-5555-4555-8555-555555555555",
+    "confirmation": {
+      "resultDigest": "result-digest",
+      "sourceSnapshotId": "33333333-3333-4333-8333-333333333333",
+      "occurrenceId": "22222222-2222-4222-8222-222222222222",
+      "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+      "targetUnitId": "66666666-6666-4666-8666-666666666666",
+      "expectedSelectionId": "88888888-8888-4888-8888-888888888888",
+      "decision": "replace"
+    }
+  },
+  "actionRequest": {
+    "sessionToken": "isolated-session",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "unitId": "66666666-6666-4666-8666-666666666666",
+    "locale": "zh-CN",
+    "actionId": "55555555-5555-4555-8555-555555555555"
+  },
+  "select": {
+    "sessionToken": "isolated-session",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "actionId": "55555555-5555-4555-8555-555555555555",
+    "unitId": "66666666-6666-4666-8666-666666666666",
+    "locale": "zh-CN",
+    "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+    "expectedSelectionId": "88888888-8888-4888-8888-888888888888",
+    "revisionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+  },
+  "files": [
+    "zh.json",
+    "zh-CN.json"
+  ],
+  "preflight": {
+    "fileName": "zh.json",
+    "fileDigest": "abcdef0123456789",
+    "declaredLocale": "zh",
+    "targetLocale": "zh-CN",
+    "count": 1,
+    "sourceSnapshotId": "33333333-3333-4333-8333-333333333333"
+  },
+  "preview": {
+    "attemptId": "44444444-4444-4444-8444-444444444444",
+    "bundleId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "fixedSourceSnapshotId": "33333333-3333-4333-8333-333333333333",
+    "currentSourceSnapshotId": "33333333-3333-4333-8333-333333333333",
+    "resultDigest": "all-results",
+    "fileDigest": "abcdef0123456789",
+    "logicalPath": "i18n/zh.json",
+    "declaredLocale": "zh",
+    "targetLocale": "zh-CN",
+    "basis": "preview-basis",
+    "total": 1,
+    "unique": 0,
+    "unmatched": 0,
+    "ambiguous": 0,
+    "selectedConflicts": 1,
+    "sourceChanged": 0,
+    "applied": 0,
+    "nextOrdinal": null,
+    "rows": [
+      {
+        "entry": {
+          "ordinal": 0,
+          "artifactId": "00000000-0000-4000-8000-000000000007",
+          "nativeKey": "hello",
+          "text": "中文 👩🏽‍💻 é",
+          "keyByteRange": [
+            15,
+            22
+          ],
+          "valueByteRange": [
+            24,
+            56
+          ]
+        },
+        "itemId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "resultId": "99999999-9999-4999-8999-999999999999",
+        "resultDigest": "result-digest",
+        "unitId": "66666666-6666-4666-8666-666666666666",
+        "occurrenceId": "22222222-2222-4222-8222-222222222222",
+        "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+        "sourceText": "Hello 世界",
+        "currentSelection": {
+          "eventId": "99999999-9999-4999-8999-999999999999",
+          "unitId": "66666666-6666-4666-8666-666666666666",
+          "locale": "zh-CN",
+          "sequence": "9223372036854775807",
+          "revisionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "actionId": "55555555-5555-4555-8555-555555555555",
+          "previousEventId": "88888888-8888-4888-8888-888888888888"
+        },
+        "currentText": "译文👩‍💻é",
+        "status": "selected-conflict"
+      }
+    ]
+  },
+  "historyResponse": {
+    "unitId": "66666666-6666-4666-8666-666666666666",
+    "locale": "zh-CN",
+    "total": "9007199254740993",
+    "current": {
+      "eventId": "99999999-9999-4999-8999-999999999999",
+      "unitId": "66666666-6666-4666-8666-666666666666",
+      "locale": "zh-CN",
+      "sequence": "9223372036854775807",
+      "revisionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "actionId": "55555555-5555-4555-8555-555555555555",
+      "previousEventId": "88888888-8888-4888-8888-888888888888"
+    },
+    "currentText": "译文👩‍💻é",
+    "rows": [
+      {
+        "revisionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "unitId": "66666666-6666-4666-8666-666666666666",
+        "locale": "zh-CN",
+        "ordinal": "9007199254740993",
+        "text": "译文👩‍💻é",
+        "sourceSnapshotId": "33333333-3333-4333-8333-333333333333",
+        "sourceRevisionId": "77777777-7777-4777-8777-777777777777",
+        "originKind": "manual",
+        "actionId": "55555555-5555-4555-8555-555555555555",
+        "attemptId": null,
+        "resultId": null,
+        "itemId": null,
+        "artifactId": null,
+        "logicalPath": null,
+        "declaredLocale": null,
+        "nativeKey": null,
+        "fileDigest": null,
+        "contributors": []
+      }
+    ],
+    "nextOrdinal": "9007199254740993"
+  },
+  "prepared": {
+    "projectId": "10000000-0000-4000-8000-000000000001",
+    "attemptId": "10000000-0000-4000-8000-000000000002",
+    "actionId": "10000000-0000-4000-8000-000000000005",
+    "unitId": "10000000-0000-4000-8000-000000000003",
+    "operation": "sample-update",
+    "resultIds": [
+      "10000000-0000-4000-8000-000000000006"
+    ],
+    "cancellationRevision": "9007199254740993",
+    "parameters": {
+      "text": "中文 👩🏽‍💻 é"
+    }
+  },
+  "selected": {
+    "eventId": "99999999-9999-4999-8999-999999999999",
+    "unitId": "66666666-6666-4666-8666-666666666666",
+    "locale": "zh-CN",
+    "sequence": "9223372036854775807",
+    "revisionId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "actionId": "55555555-5555-4555-8555-555555555555",
+    "previousEventId": "88888888-8888-4888-8888-888888888888"
   }
 }

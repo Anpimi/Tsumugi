@@ -91,6 +91,35 @@ struct SourceResponses {
     action: tsumugi_core::execution::AdoptionAction,
 }
 
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct TranslationRequests {
+    files: execution::source::translation::TranslationFilesRequest,
+    capture: execution::source::translation::TranslationCaptureRequest,
+    start: execution::source::translation::TranslationStartRequest,
+    preview: execution::source::translation::TranslationPreviewRequest,
+    adopt: execution::source::translation::TranslationAdoptRequest,
+    history: execution::source::translation::TranslationHistoryRequest,
+    save: execution::source::translation::TranslationSaveRequest,
+    action: execution::source::translation::TranslationActionRequest,
+    select: execution::source::translation::TranslationSelectRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct TranslationResponses {
+    files: Vec<String>,
+    preflight: execution::source::translation::TranslationPreflight,
+    attempt: tsumugi_core::execution::ExecutionId,
+    preview: tsumugi_core::TranslationPreview,
+    prepared: tsumugi_core::execution::AdoptionAction,
+    history: tsumugi_core::TranslationHistory,
+    action: Option<tsumugi_core::TranslationSelection>,
+    saved: tsumugi_core::TranslationSaveReceipt,
+    selected: tsumugi_core::TranslationSelection,
+}
+
 fn bound_u32(schema: &mut Schema) {
     // Schemars marks Rust's integer format but does not emit its upper bound.
     // Apply the primitive bound to scalar and tuple items without copying DTOs.
@@ -139,13 +168,12 @@ pub(super) fn optional_text(
 pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(
         path,
-        serde_json::to_string_pretty(
-            &serde_json::json!({
-                "project": schemas::<Requests, Responses>(),
-                "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
-                "source": schemas::<SourceRequests, SourceResponses>()
-            }),
-        )? + "\n",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "project": schemas::<Requests, Responses>(),
+            "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
+            "source": schemas::<SourceRequests, SourceResponses>(),
+            "translation": schemas::<TranslationRequests, TranslationResponses>()
+        }))? + "\n",
     )?;
     Ok(())
 }

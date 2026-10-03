@@ -363,7 +363,7 @@ fn direct_ai_wire_partial_budget_candidates_and_reopen() {
         .unwrap();
     assert_eq!(history.total, 1);
     assert!(history.current.is_none());
-    assert_eq!(history.rows[0].origin_kind, "ai");
+    assert_eq!(history.rows[0].origin_kind, crate::TranslationOrigin::Ai);
     assert!(
         runtime
             .resume(&mut store, view.attempt_id, &[success.item_id])
