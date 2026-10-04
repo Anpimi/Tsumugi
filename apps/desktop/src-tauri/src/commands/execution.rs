@@ -988,7 +988,9 @@ pub async fn adopt_execution(
                     .map_err(map_adopt)?;
                 #[cfg(feature = "execution-test-host")]
                 if action.operation == tsumugi_core::content::OPERATION {
-                    test_support::source_fixture_hook(store, "adopt-after").map_err(map_adopt)?;
+                    // The receipt is durable: a post-commit fault cannot reject the write.
+                    test_support::source_fixture_hook(store, "adopt-after")
+                        .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?;
                 }
                 Ok(receipt)
             },
