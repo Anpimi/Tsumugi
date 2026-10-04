@@ -38,6 +38,7 @@ impl Runner for Controlled {
         };
         let result = FixedResult::capture(
             ResultEnvelope {
+                plugin: None,
                 project_id: request.input.envelope().project_id,
                 attempt_id: request.input.envelope().attempt_id,
                 item_id: request.item_id,
@@ -485,6 +486,7 @@ fn historical_duplicate_does_not_replace_a_correction_or_block_worker_shutdown()
         ) -> Result<(), ExecutionError> {
             let first = FixedResult::capture(
                 ResultEnvelope {
+                    plugin: None,
                     project_id: request.input.envelope().project_id,
                     attempt_id: request.input.envelope().attempt_id,
                     item_id: request.item_id,

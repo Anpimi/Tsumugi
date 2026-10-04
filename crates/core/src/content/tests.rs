@@ -31,7 +31,9 @@ fn generate(store: &mut ProjectStore, bundle: SourceBundle) -> (FixedInput, Fixe
         .unwrap();
     let mut runtime = ExecutionRuntime::new(store).unwrap();
     runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
-    runtime.register_read_only(Arc::new(WebvttSourceRunner)).unwrap();
+    runtime
+        .register_read_only(Arc::new(WebvttSourceRunner))
+        .unwrap();
     runtime.submit(store, &input).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -153,7 +155,8 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
     ] {
         for key in oracle[keys].as_array().unwrap() {
             assert!(comparison.rows.iter().any(|row| {
-                (row.kind.as_str() == kind || (kind == "unchanged" && row.kind == SourceChangeKind::Moved))
+                (row.kind.as_str() == kind
+                    || (kind == "unchanged" && row.kind == SourceChangeKind::Moved))
                     && row
                         .new
                         .as_ref()
@@ -168,7 +171,8 @@ fn upstream_comparison_and_adoption_preserve_history_and_selected_lineage() {
         comparison
             .rows
             .iter()
-            .any(|row| row.kind == SourceChangeKind::Moved && row.new.as_ref().unwrap().key == "moved")
+            .any(|row| row.kind == SourceChangeKind::Moved
+                && row.new.as_ref().unwrap().key == "moved")
     );
     assert_eq!(comparison.ambiguous, 3);
     for (key, candidates) in [
@@ -1041,6 +1045,7 @@ fn malformed_output_cannot_become_valid_or_adopted() {
     output.occurrences.remove(1);
     let result = FixedResult::capture(
         ResultEnvelope {
+            plugin: None,
             project_id: input.envelope().project_id,
             attempt_id: input.envelope().attempt_id,
             item_id: request.item_id,

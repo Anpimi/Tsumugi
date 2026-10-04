@@ -38,9 +38,9 @@ renames and global resource-clock increments do not invalidate a plan whose
 actual scoped evidence is unchanged. A successful comparison is evidence
 validation, not execution or mutation authorization.
 
-Schema 15 stores plan authority, control generations, action receipts, execution
+Schema 16 stores plan authority, control generations, action receipts, execution
 associations, checked selection receipts and unit protection beside the existing
-execution ledger. This initial development build opens current schema 15 only. Unsupported development
+execution ledger. This initial development build opens current schema 16 only. Unsupported development
 projects are preserved and refused; recreate projects and reimport source files.
 
 `authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit

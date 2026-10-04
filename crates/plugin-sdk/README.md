@@ -44,3 +44,9 @@ The [local process protocol](docs/process.md) adds SDK-owned handshake, invocati
 cancel/close and heartbeat frames. The [experimental process Host](../plugin-host/README.md)
 binds those frames to captured packages and actual child pipes; the SDK remains
 data-only and has no runtime or Core dependency.
+
+`bind_capability` captures an exact validated declaration and its owner with an
+independently supplied package digest. `ProviderSelectionBinding` identifies that
+fixed choice without an instance or activation generation; `ProviderBinding`
+adds those fields for an actual channel. Neither data value grants execution or
+adoption authority, and a digest does not authenticate a package publisher.

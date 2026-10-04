@@ -517,6 +517,7 @@ mod tests {
         let payload = crate::ai::item_payload(&fixed, item).unwrap();
         let result = crate::execution::FixedResult::capture(
             crate::execution::ResultEnvelope {
+                plugin: None,
                 project_id: plan.project_id,
                 attempt_id: fixed.envelope().attempt_id,
                 item_id: item,

@@ -454,6 +454,7 @@ pub(super) fn send_outcome(
     };
     results.send(FixedResult::capture(
         ResultEnvelope {
+            plugin: None,
             project_id: request.input.envelope().project_id,
             attempt_id: request.input.envelope().attempt_id,
             item_id: request.item_id,

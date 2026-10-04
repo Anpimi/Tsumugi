@@ -8,6 +8,7 @@ authors.workspace = true
 description = "Experimental bounded process channels for Tsumugi plugin contracts"
 
 [dependencies]
+tsumugi-core = { path = "../core", optional = true }
 tsumugi-plugin-sdk = { path = "../plugin-sdk", version = "=0.1.0-alpha.1" }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"
@@ -26,3 +27,7 @@ required-features = ["conformance-worker"]
 [features]
 conformance-worker = []
 javascript-conformance = []
+core-adapter = ["dep:tsumugi-core"]
+
+[dev-dependencies]
+tsumugi-core = { path = "../core", features = ["execution-test-host"] }

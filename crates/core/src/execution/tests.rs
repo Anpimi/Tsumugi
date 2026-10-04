@@ -71,6 +71,7 @@ fn input() -> FixedInput {
 }
 fn result(input: &FixedInput, item: ExecutionId, token: ExecutionId) -> ResultEnvelope {
     ResultEnvelope {
+        plugin: None,
         project_id: input.envelope().project_id,
         attempt_id: input.envelope().attempt_id,
         item_id: item,
@@ -310,7 +311,8 @@ impl Runner for ControlledRunner {
 fn controlled_runner_can_return_late_without_adopting_or_accessing_storage() {
     let fixed = input();
     let request = DispatchRequest {
-            provider: None,
+        provider: None,
+        plugin_permit: None,
         item_id: fixed.envelope().items[0].item_id,
         input: fixed.clone(),
         dispatch_token: ExecutionId::new(),

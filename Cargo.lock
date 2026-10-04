@@ -4270,6 +4270,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tsumugi-plugin-sdk",
  "uuid",
 ]
 
@@ -4299,6 +4300,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tsumugi-core",
  "tsumugi-plugin-sdk",
  "uuid",
 ]

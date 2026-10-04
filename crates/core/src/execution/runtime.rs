@@ -3,24 +3,55 @@ use crate::{AttemptView, ProjectStore};
 use std::{
     collections::BTreeMap,
     sync::{
-        Arc,
+        Arc, OnceLock,
         mpsc::{Receiver, TryRecvError},
     },
     thread::JoinHandle,
     time::{Duration, Instant},
 };
 
+type RunnerKey = (String, String, Option<String>);
+fn input_key(input: &FixedInput) -> Result<RunnerKey, ExecutionError> {
+    let e = input.envelope();
+    Ok((
+        e.capability_id.clone(),
+        e.capability_version.clone(),
+        e.plugin
+            .as_ref()
+            .map(|p| super::plugin::provider_key(&p.capability.provider))
+            .transpose()?,
+    ))
+}
 const CONCURRENCY: usize = 2;
 // Preserve one maximum legal fixed-input batch while bounding concurrent tasks.
 const MAX_QUEUED_ITEMS: usize = MAX_ITEMS;
 const MAX_QUEUED_ATTEMPTS: usize = 128;
+
+// Persist bounded owner-controlled categories, never arbitrary producer text.
+fn runner_failure(error: &ExecutionError) -> &'static str {
+    match error.stage.as_str() {
+        "plugin-crashed" => "plugin-crashed",
+        "plugin-timeout" => "plugin-timeout",
+        "plugin-cleanup" => "plugin-cleanup",
+        _ => match error.code {
+            ErrorCode::Cancelled => "runner-cancelled",
+            ErrorCode::Unauthorized => "runner-authority",
+            ErrorCode::ResultMismatch
+            | ErrorCode::OutputInvalid
+            | ErrorCode::LimitExceeded
+            | ErrorCode::InvalidInput => "runner-protocol",
+            _ => "runner-failed",
+        },
+    }
+}
 
 fn persist_result(store: &mut ProjectStore, result: &FixedResult) -> Result<(), ExecutionError> {
     store.save_execution_result(result)?;
     let envelope = result.envelope();
     // Historical same-identity delivery is an allowed no-op. Only the current
     // result can advance validation; never replace a newer corrected result.
-    if envelope.outcome == ExecutionState::Succeeded
+    if envelope.plugin.is_none()
+        && envelope.outcome == ExecutionState::Succeeded
         && store.execution_current_result(envelope.attempt_id, envelope.item_id)?
             == Some(envelope.result_id)
     {
@@ -35,6 +66,7 @@ struct Worker {
     cancellation: Cancellation,
     receiver: Receiver<FixedResult>,
     thread: JoinHandle<Result<(), ExecutionError>>,
+    completion: Arc<OnceLock<Option<&'static str>>>,
     started: Instant,
     cancellation_started: Option<Instant>,
     pending_result: Option<FixedResult>,
@@ -46,8 +78,10 @@ struct Worker {
 pub struct ExecutionRuntime {
     generation: ExecutionId,
     initial_sequence: Revision,
-    runners: BTreeMap<(String, String), Arc<dyn Runner>>,
-    policies: BTreeMap<(String, String), RecoveryPolicy>,
+    runners: BTreeMap<RunnerKey, Arc<dyn Runner>>,
+    validators: BTreeMap<String, Arc<dyn ResultValidator>>,
+    plugin_epoch: Arc<plugin_authority::PluginEpoch>,
+    policies: BTreeMap<RunnerKey, RecoveryPolicy>,
     scheduling_cursor: Option<ExecutionId>,
     workers: Vec<Worker>,
     retired: Vec<(ExecutionId, JoinHandle<Result<(), ExecutionError>>)>,
@@ -55,8 +89,12 @@ pub struct ExecutionRuntime {
 }
 impl ExecutionRuntime {
     pub fn new(store: &ProjectStore) -> Result<Self, ExecutionError> {
+        let generation = ExecutionId::new();
+        let plugin_epoch = store.begin_plugin_epoch(generation)?;
         Ok(Self {
-            generation: ExecutionId::new(),
+            generation,
+            plugin_epoch,
+            validators: BTreeMap::new(),
             initial_sequence: store.execution_sequence()?,
             runners: BTreeMap::new(),
             policies: BTreeMap::new(),
@@ -67,7 +105,7 @@ impl ExecutionRuntime {
         })
     }
     pub fn generation(&self) -> ExecutionId {
-        self.generation
+        self.plugin_epoch.generation()
     }
     pub fn register(&mut self, runner: Arc<dyn Runner>) -> Result<(), ExecutionError> {
         self.register_with_policy(runner, RecoveryPolicy::ExternalUnknown)
@@ -85,6 +123,10 @@ impl ExecutionRuntime {
         let key = (
             runner.capability_id().to_owned(),
             runner.capability_version().to_owned(),
+            runner
+                .plugin_provider()
+                .map(super::plugin::provider_key)
+                .transpose()?,
         );
         label(&key.0)?;
         label(&key.1)?;
@@ -97,6 +139,47 @@ impl ExecutionRuntime {
         self.policies.insert(key.clone(), policy);
         self.runners.insert(key, runner);
         Ok(())
+    }
+    pub fn register_validator(
+        &mut self,
+        validator: Arc<dyn ResultValidator>,
+    ) -> Result<(), ExecutionError> {
+        label(validator.operation())?;
+        if self.validators.contains_key(validator.operation()) {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "validator-registration",
+            ));
+        }
+        self.validators
+            .insert(validator.operation().into(), validator);
+        Ok(())
+    }
+    pub fn authorize_plugin(
+        &self,
+        store: &mut ProjectStore,
+        grant_id: ExecutionId,
+        input: &FixedInput,
+        expires_at_ms: u64,
+        consent: PluginConsent,
+    ) -> Result<(), ExecutionError> {
+        if !self.accepting
+            || !self.plugin_epoch.is_active()
+            || !self.runners.contains_key(&input_key(input)?)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        store.authorize_plugin_input(self.generation, grant_id, input, expires_at_ms, consent)
+    }
+    pub fn revoke_plugin(
+        &self,
+        store: &mut ProjectStore,
+        grant_id: ExecutionId,
+    ) -> Result<(), ExecutionError> {
+        store.revoke_plugin_grant(self.generation, grant_id)
     }
     pub fn submit(
         &mut self,
@@ -123,10 +206,14 @@ impl ExecutionRuntime {
         if !self.accepting {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
-        if !self.runners.contains_key(&(
-            input.envelope().capability_id.clone(),
-            input.envelope().capability_version.clone(),
-        )) {
+        if input.envelope().plugin.is_some() && (!self.plugin_epoch.is_active() || parent.is_some())
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        if !self.runners.contains_key(&input_key(input)?) {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "capability"));
         }
         if store
@@ -145,10 +232,7 @@ impl ExecutionRuntime {
                 "execution-queue",
             ));
         }
-        let policy = self.policies[&(
-            input.envelope().capability_id.clone(),
-            input.envelope().capability_version.clone(),
-        )];
+        let policy = self.policies[&input_key(input)?];
         store.enqueue_execution_with_policy(input, policy, parent)
     }
     pub fn is_active(&self, attempt: ExecutionId) -> bool {
@@ -239,7 +323,10 @@ impl ExecutionRuntime {
             let worker = &mut self.workers[index];
             let attempt = worker.request.input.envelope().attempt_id;
             let item = worker.request.item_id;
-            if let Err(error) = store.check_work_plan_input(&worker.request.input) {
+            if let Err(error) = store
+                .check_work_plan_input(&worker.request.input)
+                .and_then(|_| store.check_plugin_input(&worker.request.input))
+            {
                 if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
                     worker.cancellation.request();
                     worker.cancellation_started.get_or_insert(now);
@@ -300,6 +387,8 @@ impl ExecutionRuntime {
                                     | ErrorCode::OutputInvalid
                                     | ErrorCode::LimitExceeded
                                     | ErrorCode::InvalidInput
+                                    | ErrorCode::Unauthorized
+                                    | ErrorCode::Cancelled
                             ) =>
                         {
                             worker.stop_reason = Some("result-protocol");
@@ -336,7 +425,12 @@ impl ExecutionRuntime {
             }
             if finished_before_drain && drained {
                 // Keep the worker until its final durable transition succeeds.
-                store.note_execution_unknown(attempt, item, "result-missing")?;
+                let reason = match worker.completion.get() {
+                    Some(Some(reason)) => *reason,
+                    Some(None) => "result-missing",
+                    None => "runner-panicked",
+                };
+                store.note_execution_unknown(attempt, item, reason)?;
                 let worker = self.workers.remove(index);
                 let _ = worker.thread.join();
                 continue;
@@ -362,14 +456,10 @@ impl ExecutionRuntime {
                 continue;
             }
             let input = store.execution_input_cached(attempt)?;
-            let Some(runner) = self
-                .runners
-                .get(&(
-                    input.envelope().capability_id.clone(),
-                    input.envelope().capability_version.clone(),
-                ))
-                .cloned()
-            else {
+            if input.envelope().plugin.is_some() && !self.plugin_epoch.is_active() {
+                continue;
+            }
+            let Some(runner) = self.runners.get(&input_key(&input)?).cloned() else {
                 continue;
             };
             if self
@@ -386,7 +476,11 @@ impl ExecutionRuntime {
             };
             let mut request = match store.dispatch_execution_item(attempt, item) {
                 Ok(request) => request,
-                Err(error) if error.code == ErrorCode::Cancelled => continue,
+                Err(error)
+                    if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) =>
+                {
+                    continue;
+                }
                 Err(error) => return Err(error),
             };
             let (budget, budget_events) = crate::ai::provider::budget_channel();
@@ -396,9 +490,23 @@ impl ExecutionRuntime {
             let signal = cancellation.clone();
             let task = request.clone();
             let (sender, receiver) = result_channel();
+            let sender = if input.envelope().plugin.is_some() {
+                match self.validators.get(&input.envelope().operation) {
+                    Some(validator) => sender.with_validator(input.clone(), validator.clone()),
+                    None => sender,
+                }
+            } else {
+                sender
+            };
+            let completion = Arc::new(OnceLock::new());
+            let completed = completion.clone();
             let thread = std::thread::Builder::new()
                 .name("execution-worker".into())
-                .spawn(move || runner.run(task, signal, sender));
+                .spawn(move || {
+                    let outcome = runner.run(task, signal, sender);
+                    let _ = completed.set(outcome.as_ref().err().map(runner_failure));
+                    outcome
+                });
             match thread {
                 Ok(thread) => self.workers.push(Worker {
                     request,
@@ -406,6 +514,7 @@ impl ExecutionRuntime {
                     cancellation,
                     receiver,
                     thread,
+                    completion,
                     started: now,
                     cancellation_started: None,
                     pending_result: None,
@@ -464,10 +573,13 @@ impl ExecutionRuntime {
             ));
         }
         let request = store.execution_dispatch(attempt, item)?;
-        let Some(runner) = self.runners.get(&(
-            request.input.envelope().capability_id.clone(),
-            request.input.envelope().capability_version.clone(),
-        )) else {
+        if request.input.envelope().plugin.is_some() && !self.plugin_epoch.is_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        let Some(runner) = self.runners.get(&input_key(&request.input)?) else {
             return Ok(None);
         };
         Ok(Some(OutcomeQuery {
@@ -477,6 +589,8 @@ impl ExecutionRuntime {
         }))
     }
     pub fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
+        store.check_plugin_epoch_owner(&self.plugin_epoch)?;
+        self.plugin_epoch.revoke();
         self.accepting = false;
         // Revoking the generation covers idle grants as well as queued/running
         // automation. Pausing never resets or refunds its original budget.
@@ -530,7 +644,9 @@ impl ExecutionRuntime {
         if !self.workers.is_empty() {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
-        self.generation = ExecutionId::new();
+        let generation = ExecutionId::new();
+        self.plugin_epoch = store.rotate_plugin_epoch(&self.plugin_epoch, generation)?;
+        self.generation = generation;
         // The stop request is complete. New work still requires an explicit
         // operation; a failed project switch may leave this session open.
         self.accepting = true;
@@ -539,6 +655,7 @@ impl ExecutionRuntime {
 }
 impl Drop for ExecutionRuntime {
     fn drop(&mut self) {
+        self.plugin_epoch.revoke();
         for worker in &self.workers {
             worker.cancellation.request();
         }

@@ -1,6 +1,9 @@
 //! Bounded, experimental process channels. The SDK owns wire definitions; this
 //! crate owns captured package bytes and the actual child/pipe identity. It has
-//! no Core, database, model client, domain implementation or adoption authority.
+//! no domain implementation or adoption authority. The optional Core adapter
+//! implements the trusted Runner port without giving a child a store.
+#[cfg(feature = "core-adapter")]
+pub mod core;
 mod package;
 mod session;
 pub use package::{PackageFile, PackageImage};

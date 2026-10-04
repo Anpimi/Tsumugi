@@ -20,9 +20,15 @@ impl Cancellation {
 #[derive(Clone, Debug)]
 pub struct DispatchRequest {
     pub(crate) provider: Option<crate::ai::provider::BudgetPort>,
+    pub(crate) plugin_permit: Option<PluginPermit>,
     pub input: FixedInput,
     pub item_id: ExecutionId,
     pub dispatch_token: ExecutionId,
+}
+impl DispatchRequest {
+    pub fn plugin_permit(&self) -> Option<&PluginPermit> {
+        self.plugin_permit.as_ref()
+    }
 }
 
 /// Chosen by the trusted host, never by a producer's manifest or result.
@@ -51,6 +57,9 @@ pub enum QueryOutcome {
 pub trait Runner: Send + Sync + 'static {
     fn capability_id(&self) -> &str;
     fn capability_version(&self) -> &str;
+    fn plugin_provider(&self) -> Option<&tsumugi_plugin_sdk::ProviderSelectionBinding> {
+        None
+    }
     fn concurrency_limit(&self, _input: &FixedInput) -> usize {
         1
     }
@@ -66,17 +75,46 @@ pub trait Runner: Send + Sync + 'static {
 }
 
 #[derive(Clone)]
-pub struct ResultSender(SyncSender<FixedResult>);
+pub struct ResultSender {
+    sender: SyncSender<FixedResult>,
+    validator: Option<(FixedInput, Arc<dyn ResultValidator>)>,
+}
 impl ResultSender {
-    pub fn send(&self, result: FixedResult) -> Result<(), ExecutionError> {
-        self.0
+    pub(crate) fn with_validator(
+        mut self,
+        input: FixedInput,
+        validator: Arc<dyn ResultValidator>,
+    ) -> Self {
+        self.validator = Some((input, validator));
+        self
+    }
+    pub fn send(&self, mut result: FixedResult) -> Result<(), ExecutionError> {
+        if result.envelope().outcome == ExecutionState::Succeeded {
+            if let Some((input, validator)) = &self.validator {
+                let checked =
+                    FixedResult::receive(result.bytes(), input, result.envelope().dispatch_token)?;
+                let prepared = ResultValidationCapture {
+                    input: input.clone(),
+                    result: checked,
+                }
+                .prepare(validator.as_ref())?;
+                result.semantic_validation = Some(prepared.proof);
+            }
+        }
+        self.sender
             .send(result)
             .map_err(|_| ExecutionError::new(ErrorCode::Cancelled, "result-channel"))
     }
 }
 pub fn result_channel() -> (ResultSender, Receiver<FixedResult>) {
     let (sender, receiver) = sync_channel(8);
-    (ResultSender(sender), receiver)
+    (
+        ResultSender {
+            sender,
+            validator: None,
+        },
+        receiver,
+    )
 }
 
 /// A trusted Core operation can query and update domain tables in the owning

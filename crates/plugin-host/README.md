@@ -1,8 +1,10 @@
 # Experimental process Host
 
 `tsumugi-plugin-host` launches captured plugin artifacts through the standalone
-SDK process protocol. It has no Core, database, domain runner or model dependency
-and is not yet connected to the desktop's production extension catalog.
+SDK process protocol. Its default feature set depends on the SDK without Core;
+the optional `core-adapter` feature implements Core's trusted execution port.
+It has no domain runner or model dependency and is not yet connected to the
+desktop's production extension catalog.
 
 The implemented profile is one serialized capability on a project-scoped native
 worker or JavaScript component. The Unix launcher creates an owned process group;
@@ -67,7 +69,53 @@ a final cleanup safeguard and does not produce an acceptance receipt.
 Process groups provide lifecycle control, not a security sandbox. A trusted native
 program can access the user's files/network and can escape its group. CPU/RSS
 confinement, escaped descendants, signed source verification, host service grants,
-artifact output opening and Core adoption are not provided by this profile.
+artifact output opening and adoption authority are not provided by this profile.
+
+## Core execution adapter
+
+With `core-adapter`, `RunnerProxy` captures a package contribution and the trusted
+installer's runtime environment digest. Core's fixed input retains this complete
+selection; registration order does not choose between providers. The adapter
+checks that selection again before staging and sends only the selected item's
+captured data through the SDK channel. Installer authentication and environment
+pinning remain the installer's responsibility.
+
+The trusted application must register the proxy, capture its `execution_binding`,
+then explicitly authorize the input through `ExecutionRuntime::authorize_plugin`
+with a stable grant ID, expiry and unsandboxed-execution consent. That per-attempt
+grant is stored in the existing project ledger; its live permit can be revoked,
+expires, and ends with its runtime generation or project session. Reopening reads
+history without reactivating old grants. This first adapter refuses automation
+leases and delegated child execution.
+
+The adapter closes the actual child before returning a result. Core retains the
+raw SDK payload, independently supplied channel, grant ID and checked JSON proposal.
+A successful proposal requires a trusted `ResultValidator`, registered for its
+operation, to become valid. The validator runs on captured values outside the
+project thread and transaction. Missing validators leave proposals pending;
+`capture_result_validation` / `prepare` / `commit_result_validation` supports later
+explicit checking. Producer bytes cannot carry the private validation proof.
+Checked results still require a separate explicit adoption action and trusted
+handler; the existing transaction rechecks current scope, result, cancellation
+and plugin authority. Existing committed receipts remain idempotently readable.
+
+The actual process budget is bounded by both fixed Core limits and transport
+limits. Failed and unknown SDK outcomes preserve their raw error evidence without
+claiming replay safety. A new process cannot authenticate an earlier instance's
+outcome, so this adapter's outcome query remains unavailable. A failed launch does
+not expose a Core-visible cleanup receipt; no result is accepted from that path.
+
+Build the JavaScript Host as described in its README, then run the synthetic
+Core integration with explicit absolute runtime paths:
+
+```sh
+TSUMUGI_TEST_NODE=/absolute/path/to/node \
+TSUMUGI_TEST_JS_HOST_BOOTSTRAP=/absolute/path/to/built/dist/main.js \
+cargo test -p tsumugi-plugin-host --features core-adapter,javascript-conformance --test core --locked
+```
+
+These tests use an isolated project and independent proposal expectations. They
+do not prove a production plugin catalog, domain migration or desktop workflow.
 
 ## Real-process conformance
 

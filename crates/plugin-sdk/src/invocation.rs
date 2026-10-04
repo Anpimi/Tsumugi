@@ -1,5 +1,6 @@
 use crate::{
-    validation::{digest, name, opaque_id, reference, version},
+    binding::validate_provider_selection,
+    validation::{digest, opaque_id, reference},
     *,
 };
 use serde::{Deserialize, Serialize};
@@ -23,13 +24,24 @@ pub struct ProviderBinding {
     pub activation_generation: u32,
 }
 impl ProviderBinding {
+    /// The fixed package/contribution choice, without a runtime instance or
+    /// activation generation. Equality of this projection proves no authority.
+    pub fn selection(&self) -> ProviderSelectionBinding {
+        ProviderSelectionBinding {
+            plugin: self.plugin.clone(),
+            component_id: self.component_id.clone(),
+            contribution_id: self.contribution_id.clone(),
+            package_digest: self.package_digest.clone(),
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<(), ContractError> {
-        name(&self.plugin.publisher, "binding.publisher")?;
-        name(&self.plugin.id, "binding.pluginId")?;
-        version(&self.plugin.version)?;
-        name(&self.component_id, "binding.componentId")?;
-        name(&self.contribution_id, "binding.contributionId")?;
-        digest(&self.package_digest, "binding.packageDigest")?;
+        validate_provider_selection(
+            &self.plugin,
+            &self.component_id,
+            &self.contribution_id,
+            &self.package_digest,
+        )?;
         opaque_id(&self.instance_id, "binding.instanceId")?;
         if self.activation_generation == 0 {
             return Err(ContractError::at(

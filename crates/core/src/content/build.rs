@@ -447,6 +447,7 @@ fn run_build(
         value(&output)
     });
     let mut envelope = ResultEnvelope {
+        plugin: None,
         project_id: input.envelope().project_id,
         attempt_id: input.envelope().attempt_id,
         item_id: request.item_id,

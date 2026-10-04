@@ -11,9 +11,10 @@ path = "src/lib.rs"
 
 [features]
 execution-test-host = []
-wire-schema = ["dep:schemars"]
+wire-schema = ["dep:schemars", "tsumugi-plugin-sdk/schema"]
 
 [dependencies]
+tsumugi-plugin-sdk = { path = "../plugin-sdk", version = "=0.1.0-alpha.1" }
 httpdate = "=1.0.3"
 jsonc-parser = "=0.33.2"
 language-tags = "=0.3.2"

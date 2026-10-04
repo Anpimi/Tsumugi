@@ -256,6 +256,7 @@ fn run_source(
         .and_then(|b| super::extract(&b, &cancellation))
         .and_then(|o| value(&o));
     let mut envelope = ResultEnvelope {
+        plugin: None,
         project_id: input.envelope().project_id,
         attempt_id: input.envelope().attempt_id,
         item_id: request.item_id,

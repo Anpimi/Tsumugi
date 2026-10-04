@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
+import sdkResult from "../../../crates/plugin-sdk/tests/fixtures/invocation.result.json";
 import { executionCommands, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
 import * as validators from "./generated/execution.validators";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -10,6 +11,17 @@ const list: ListRequest = fixture.list;
 const prepare: PrepareRequest = fixture.prepare;
 const receipt: Receipt = fixture.receipt;
 beforeEach(() => invoke.mockReset());
+it("retains SDK channel and raw result evidence through the generated output contract", async () => {
+  const result = sdkResult.body.data;
+  const output = { ...fixture.output, outcome: "succeeded", output: JSON.parse(result.outcome.output.utf8), diagnostic: null,
+    plugin: { authorizationId: fixture.prepare.actionId, channel: result.provider, result } };
+  expect(validators.validateResponseOutput(output)).toBe(true);
+  invoke.mockResolvedValueOnce(output);
+  expect(await executionCommands.output(fixture.outputRequest)).toEqual(output);
+  expect(output.plugin.result.outcome.output.utf8).toBe('{"text":"世界 😀"}');
+  expect(validators.validateResponseOutput({ ...output, plugin: { ...output.plugin, authority: true } })).toBe(false);
+  expect(validators.validateResponseOutput({ ...output, plugin: { ...output.plugin, authorizationId: "not-a-core-id" } })).toBe(false);
+});
 it("preserves Rust field names, exact revisions and explicit command scopes", async () => {
   invoke.mockResolvedValueOnce(fixture.status);
   expect(await executionCommands.status(session)).toEqual(fixture.status);

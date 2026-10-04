@@ -20,7 +20,11 @@ application component. Its conformance-worker binary is test tooling, not a
 separate published plugin. The private JavaScript Host workspace has no separate
 release version; it is an internal runtime for the same application release unit.
 Its generated wire profile records the independently versioned SDK. The process
-protocol is SDK-owned and independently versioned; adding the unintegrated Host does not distribute a new desktop build.
+protocol is SDK-owned and independently versioned; adding the experimental Host does not by itself distribute a desktop build.
+Its optional Core execution adapter changes stored result evidence and adds plugin
+grants in schema 16. This remains the same unreleased `0.2.0-alpha.1` batch;
+earlier development databases are refused rather than migrated. It does not
+establish a stable public Core API or distribute a production plugin catalog.
 
 ## Choosing the next version
 

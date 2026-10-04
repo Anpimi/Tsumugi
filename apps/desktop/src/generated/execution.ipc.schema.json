@@ -992,6 +992,31 @@
           }
         ]
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "Diagnostic": {
         "additionalProperties": false,
         "properties": {
@@ -1005,6 +1030,27 @@
         "required": [
           "code",
           "retrySafe"
+        ],
+        "type": "object"
+      },
+      "EncodedPayload": {
+        "additionalProperties": false,
+        "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
+        "properties": {
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "utf8": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "utf8",
+          "sha256"
         ],
         "type": "object"
       },
@@ -1022,6 +1068,148 @@
           "unknown"
         ],
         "type": "string"
+      },
+      "InvocationContext": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "type": "string"
+          },
+          "configurationDigest": {
+            "type": "string"
+          },
+          "dispatchId": {
+            "type": "string"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "scopeDigest": {
+            "type": "string"
+          },
+          "scopeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "projectId",
+          "operationId",
+          "attemptId",
+          "itemId",
+          "dispatchId",
+          "scopeId",
+          "inputDigest",
+          "scopeDigest",
+          "environmentDigest",
+          "configurationDigest"
+        ],
+        "type": "object"
+      },
+      "InvocationOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "succeeded",
+                "type": "string"
+              },
+              "output": {
+                "$ref": "#/definitions/EncodedPayload"
+              }
+            },
+            "required": [
+              "kind",
+              "output"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/EncodedPayload"
+              },
+              "kind": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/EncodedPayload"
+              },
+              "kind": {
+                "const": "unknown",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "InvocationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "context": {
+            "$ref": "#/definitions/InvocationContext"
+          },
+          "outcome": {
+            "$ref": "#/definitions/InvocationOutcome"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderBinding"
+          },
+          "resultId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "context",
+          "provider",
+          "capability",
+          "profile",
+          "resultId",
+          "outcome"
+        ],
+        "type": "object"
       },
       "ItemStatus": {
         "additionalProperties": false,
@@ -1089,6 +1277,48 @@
         ],
         "type": "object"
       },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginResultEvidence": {
+        "additionalProperties": false,
+        "description": "The complete received SDK result retains exact payload bytes and identity.\n`channel` is supplied independently by the trusted Host, not read from output.",
+        "properties": {
+          "authorizationId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "channel": {
+            "$ref": "#/definitions/ProviderBinding"
+          },
+          "result": {
+            "$ref": "#/definitions/InvocationResult"
+          }
+        },
+        "required": [
+          "authorizationId",
+          "channel",
+          "result"
+        ],
+        "type": "object"
+      },
       "Progress": {
         "additionalProperties": false,
         "properties": {
@@ -1150,6 +1380,41 @@
           "cancelled",
           "unknown",
           "adopted"
+        ],
+        "type": "object"
+      },
+      "ProviderBinding": {
+        "additionalProperties": false,
+        "description": "A claimed wire binding. Only the trusted host can compare it to the actual\nverified package and channel; constructing this value proves no authority.",
+        "properties": {
+          "activationGeneration": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "instanceId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest",
+          "instanceId",
+          "activationGeneration"
         ],
         "type": "object"
       },
@@ -1305,6 +1570,16 @@
             "$ref": "#/definitions/ExecutionState"
           },
           "output": true,
+          "plugin": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginResultEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "projectId": {
             "$ref": "#/definitions/ExecutionId"
           },

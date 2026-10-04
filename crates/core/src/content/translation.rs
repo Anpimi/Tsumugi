@@ -400,6 +400,7 @@ impl Runner for TranslationRunner {
             })
             .and_then(|output| value(&output));
         let mut envelope = ResultEnvelope {
+            plugin: None,
             project_id: input.envelope().project_id,
             attempt_id: input.envelope().attempt_id,
             item_id: request.item_id,
@@ -521,7 +522,8 @@ mod tests {
         TranslationRunner
             .run(
                 DispatchRequest {
-            provider: None,
+                    provider: None,
+                    plugin_permit: None,
                     input: input.clone(),
                     item_id: item.item_id,
                     dispatch_token: token,

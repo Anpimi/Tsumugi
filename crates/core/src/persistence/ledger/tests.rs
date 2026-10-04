@@ -75,6 +75,7 @@ fn produce(store: &mut ProjectStore, input: &FixedInput, item: ExecutionId) -> F
         .unwrap();
     FixedResult::capture(
         ResultEnvelope {
+            plugin: None,
             project_id: input.envelope().project_id,
             attempt_id: input.envelope().attempt_id,
             item_id: item,
@@ -795,7 +796,10 @@ fn storage_failure_does_not_leave_a_partial_attempt_and_readability_is_preserved
     );
     let duplicate = input.retry(&[selected]).unwrap();
     assert_eq!(
-        store.enqueue_read_only_execution(&duplicate).unwrap_err().code,
+        store
+            .enqueue_read_only_execution(&duplicate)
+            .unwrap_err()
+            .code,
         ErrorCode::Unauthorized
     );
 }
@@ -947,6 +951,7 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
         .unwrap();
     let failure = FixedResult::capture(
         ResultEnvelope {
+            plugin: None,
             project_id: input.envelope().project_id,
             attempt_id: input.envelope().attempt_id,
             item_id: failed,

@@ -22,6 +22,7 @@ pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;
 pub(crate) mod ledger;
+mod plugin_execution;
 mod release;
 mod resources;
 mod review;
@@ -62,7 +63,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 15;
+pub(crate) const SCHEMA_VERSION: i64 = 16;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -245,6 +246,7 @@ pub struct ProjectStore {
     lock: Option<File>,
     pending: Option<PendingChange>,
     execution_unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    plugin_authority: std::sync::Arc<crate::execution::plugin_authority::PluginAuthority>,
     review_scopes: review::ReadScopes,
     changes: std::sync::Arc<changes::ChangeClock>,
     #[cfg(test)]
@@ -288,6 +290,7 @@ impl ProjectStore {
             lock: Some(lock),
             pending: None,
             execution_unknown: Default::default(),
+            plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
             #[cfg(test)]
@@ -341,6 +344,7 @@ impl ProjectStore {
             lock: Some(lock),
             pending: None,
             execution_unknown: Default::default(),
+            plugin_authority: Default::default(),
             review_scopes: Default::default(),
             changes: Default::default(),
             #[cfg(test)]
@@ -430,6 +434,7 @@ impl ProjectStore {
 
     /// Release the database connection and ownership marker lock.
     pub fn close(mut self) -> Result<(), PersistenceError> {
+        self.plugin_authority.revoke_all();
         if self.is_reconciling() {
             return Err(PersistenceError::OutcomeUnknown {
                 stage: PersistenceStage::Close,
@@ -555,6 +560,7 @@ impl ProjectStore {
 
 impl Drop for ProjectStore {
     fn drop(&mut self) {
+        self.plugin_authority.revoke_all();
         self.connection.take();
         self.lock.take();
     }
@@ -584,6 +590,8 @@ fn initialize_schema(
         .execute(CREATE_METADATA_TABLE, [])
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     insert_metadata(&transaction, metadata)?;
+    plugin_execution::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     ledger::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     content::initialize(&transaction)
@@ -866,6 +874,11 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
     expected_tables.extend(arena::table_names());
     expected_tables.extend(ledger::provider::table_names());
     expected_tables.extend(application::table_names());
+    expected_tables.extend(
+        plugin_execution::TABLES
+            .iter()
+            .map(|(name, _)| name.to_string()),
+    );
     expected_tables.sort();
     if table_names != expected_tables {
         return Err(PersistenceError::CorruptProject {
@@ -916,6 +929,9 @@ fn validate_schema_shape(connection: &Connection) -> Result<(), PersistenceError
         stage: PersistenceStage::Open,
     })?;
     arena::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+        stage: PersistenceStage::Open,
+    })?;
+    plugin_execution::validate(connection).map_err(|_| PersistenceError::CorruptProject {
         stage: PersistenceStage::Open,
     })?;
     application::validate(connection).map_err(|_| PersistenceError::CorruptProject {

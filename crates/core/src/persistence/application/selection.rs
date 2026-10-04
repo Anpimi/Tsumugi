@@ -619,6 +619,7 @@ mod tests {
             .unwrap();
         let result = FixedResult::capture(
             ResultEnvelope {
+                plugin: None,
                 project_id: input.envelope().project_id,
                 attempt_id: input.envelope().attempt_id,
                 item_id: item,

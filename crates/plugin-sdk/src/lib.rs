@@ -4,6 +4,7 @@
 //! permission. Runtime identity, activation, authorization, execution and
 //! persistence belong to the host; this crate has no Core or database dependency.
 
+mod binding;
 mod checks;
 mod content;
 mod declaration;
@@ -13,6 +14,7 @@ mod resolution;
 mod text;
 mod validation;
 
+pub use binding::{CapabilityBinding, ProviderSelectionBinding, bind_capability};
 pub use checks::*;
 pub use content::*;
 pub use declaration::*;

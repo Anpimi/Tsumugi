@@ -5,10 +5,13 @@
 
 mod adoption;
 pub(crate) mod codec;
+mod plugin;
+pub(crate) mod plugin_authority;
 mod runner;
 mod runtime;
 #[cfg(feature = "execution-test-host")]
 pub mod test_support;
+mod validation;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,8 +20,11 @@ use uuid::Uuid;
 
 use crate::{Locale, ProjectId};
 pub use adoption::{AdoptionCapture, PreparedAdoption};
+pub use plugin::*;
+pub use plugin_authority::{PluginConsent, PluginPermit};
 pub use runner::*;
 pub use runtime::{ExecutionRuntime, OutcomeQuery};
+pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
 
 pub const MAX_ITEMS: usize = 2000;
 pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
@@ -361,6 +367,8 @@ pub struct InputEnvelope {
     pub previous_attempt_id: Option<ExecutionId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation: Option<crate::application::AutomationLease>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<PluginExecutionBinding>,
     pub operation: String,
     pub capability_id: String,
     pub capability_version: String,
@@ -398,6 +406,7 @@ impl InputEnvelope {
             attempt_id: ExecutionId::new(),
             previous_attempt_id: None,
             automation: None,
+            plugin: None,
             operation: operation.into(),
             capability_id: capability_id.into(),
             capability_version: capability_version.into(),
@@ -433,6 +442,15 @@ impl InputEnvelope {
         label(&self.operation)?;
         label(&self.capability_id)?;
         label(&self.capability_version)?;
+        if let Some(binding) = &self.plugin {
+            binding.validate()?;
+            if self.capability_id != binding.capability.declaration.contract.id
+                || self.capability_version != binding.capability_version()
+                || self.automation.is_some()
+            {
+                return Err(ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"));
+            }
+        }
         self.limits.validate(
             if matches!(
                 self.operation.as_str(),
@@ -779,6 +797,8 @@ pub struct ResultEnvelope {
     pub dispatch_token: ExecutionId,
     pub capability_id: String,
     pub capability_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<PluginResultEvidence>,
     pub outcome: ExecutionState,
     pub output: Option<Value>,
     pub diagnostic: Option<Diagnostic>,
@@ -802,6 +822,16 @@ impl ResultEnvelope {
             );
         }
         input.item(self.item_id)?;
+        match (&expected.plugin, &self.plugin) {
+            (Some(_), Some(evidence)) => evidence.validate(self, input, dispatch_token)?,
+            (None, None) => {}
+            _ => {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "plugin-evidence",
+                ));
+            }
+        }
         if !matches!(
             self.outcome,
             ExecutionState::Succeeded | ExecutionState::Failed | ExecutionState::Unknown
@@ -834,6 +864,7 @@ pub struct FixedResult {
     envelope: Arc<ResultEnvelope>,
     bytes: Arc<[u8]>,
     digest: String,
+    pub(crate) semantic_validation: Option<validation::ValidationProof>,
 }
 impl FixedResult {
     pub fn capture(
@@ -856,6 +887,7 @@ impl FixedResult {
             envelope: Arc::new(envelope),
             bytes: Arc::from(bytes),
             digest: codec::digest(bytes),
+            semantic_validation: None,
         })
     }
     pub fn restore(

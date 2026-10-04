@@ -787,8 +787,14 @@ impl ProjectStore {
                 |r| r.get(0),
             )
             .map_err(sql_error)?;
+        let plugin_permit = if input.envelope().plugin.is_some() {
+            Some(self.plugin_permit(&input)?)
+        } else {
+            None
+        };
         Ok(DispatchRequest {
             provider: None,
+            plugin_permit,
             input,
             item_id: item,
             dispatch_token: parse_id(
@@ -875,7 +881,12 @@ impl ProjectStore {
         if envelope.project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::Unauthorized, "project"));
         }
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
+        if input.envelope().plugin.is_some() && parent.is_some() {
+            return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
+        }
+        super::plugin_execution::check_input_in(&tx, input, &authority)?;
         super::application::check_enqueue(&tx, input, parent)?;
         let existing: Option<String> = tx
             .query_row(
@@ -1110,8 +1121,20 @@ impl ProjectStore {
         attempt: ExecutionId,
         item: ExecutionId,
     ) -> Result<DispatchRequest, ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
+        let plugin_permit = match super::plugin_execution::check_input_in(&tx, &input, &authority) {
+            Ok(permit) => permit,
+            Err(failure)
+                if matches!(failure.code, ErrorCode::Unauthorized | ErrorCode::Cancelled) =>
+            {
+                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='plugin-authority' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+                return Err(failure);
+            }
+            Err(failure) => return Err(failure),
+        };
         if let Err(error) = super::application::check_input(&tx, &input) {
             if error.code == ErrorCode::Cancelled {
                 tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
@@ -1159,6 +1182,7 @@ impl ProjectStore {
         crash_hook("after-dispatch-intent");
         Ok(DispatchRequest {
             provider: None,
+            plugin_permit,
             input,
             item_id: item,
             dispatch_token: token,
@@ -1166,6 +1190,7 @@ impl ProjectStore {
     }
 
     pub fn save_execution_result(&mut self, result: &FixedResult) -> Result<bool, ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let envelope = result.envelope();
         let input = load_input_cached(&tx, envelope.attempt_id)?;
@@ -1188,6 +1213,12 @@ impl ProjectStore {
             } else {
                 Err(error(ErrorCode::ResultMismatch, "result-identity"))
             };
+        }
+        let permit = super::plugin_execution::check_input_in(&tx, &input, &authority)?;
+        if let Some(evidence) = &envelope.plugin {
+            if permit.as_ref().map(PluginPermit::grant_id) != Some(evidence.authorization_id) {
+                return Err(error(ErrorCode::Unauthorized, "plugin-result-grant"));
+            }
         }
         if let Some(current) = &current {
             if envelope.supersedes.map(|id| id.to_string()).as_ref() != Some(current)
@@ -1219,6 +1250,20 @@ impl ProjectStore {
         {
             return Err(error(ErrorCode::LimitExceeded, "attempt-output"));
         }
+        let validation = if envelope.output.is_some() {
+            match result.semantic_validation.as_ref() {
+                Some(proof) if proof.matches(&input, &checked) => {
+                    if proof.valid {
+                        "valid"
+                    } else {
+                        "invalid"
+                    }
+                }
+                _ => "pending",
+            }
+        } else {
+            "absent"
+        };
         tx.execute(
             "INSERT INTO execution_results VALUES (?1,?2,?3,?4,?5,?6)",
             params![
@@ -1232,7 +1277,7 @@ impl ProjectStore {
         )
         .map_err(sql_error)?;
         tx.execute("UPDATE execution_items SET execution=?3,validation=?4,current_result_id=?5,retry_safe=?6,diagnostic=?7,adoption='unapplied' WHERE attempt_id=?1 AND item_id=?2",
-            params![envelope.attempt_id.to_string(),envelope.item_id.to_string(),encode_enum(envelope.outcome)?,if envelope.output.is_some(){"pending"}else{"absent"},envelope.result_id.to_string(),envelope.diagnostic.as_ref().is_some_and(|d|d.retry_safe),envelope.diagnostic.as_ref().map(|d|d.code.clone())]).map_err(sql_error)?;
+            params![envelope.attempt_id.to_string(),envelope.item_id.to_string(),encode_enum(envelope.outcome)?,validation,envelope.result_id.to_string(),envelope.diagnostic.as_ref().is_some_and(|d|d.retry_safe),envelope.diagnostic.as_ref().map(|d|d.code.clone())]).map_err(sql_error)?;
         commit(tx)?;
         #[cfg(test)]
         crash_hook("after-output");
@@ -1245,6 +1290,9 @@ impl ProjectStore {
     ) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
+        if input.envelope().plugin.is_some() {
+            return Err(error(ErrorCode::Unauthorized, "plugin-semantic-validation"));
+        }
         let output = load_result(&tx, &input, result)?;
         if output.envelope().outcome != ExecutionState::Succeeded {
             return Err(error(ErrorCode::OutputInvalid, "validation"));
@@ -1272,6 +1320,40 @@ impl ProjectStore {
         crash_hook("after-validation");
         Ok(())
     }
+    pub fn capture_result_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<ResultValidationCapture, ExecutionError> {
+        let input = self.execution_input(attempt)?;
+        self.check_plugin_input(&input)?;
+        let result = self.execution_result(attempt, result)?;
+        Ok(ResultValidationCapture { input, result })
+    }
+    pub fn commit_result_validation(
+        &mut self,
+        prepared: PreparedResultValidation,
+    ) -> Result<(), ExecutionError> {
+        let authority = self.plugin_authority.clone();
+        let tx = self.execution_write()?;
+        let expected = &prepared.capture.result;
+        let input = load_input_cached(&tx, expected.envelope().attempt_id)?;
+        let output = load_result(&tx, &input, expected.envelope().result_id)?;
+        super::plugin_execution::check_input_in(&tx, &input, &authority)?;
+        if !prepared.proof.matches(&input, &output)
+            || input.digest() != prepared.capture.input.digest()
+        {
+            return Err(error(ErrorCode::ResultMismatch, "validation-preparation"));
+        }
+        let changed = tx.execute("UPDATE execution_items SET validation=?4 WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3 AND execution='succeeded' AND adoption<>'committed'", params![input.envelope().attempt_id.to_string(), output.envelope().item_id.to_string(), output.envelope().result_id.to_string(), if prepared.proof.valid { "valid" } else { "invalid" }]).map_err(sql_error)?;
+        if changed != 1 {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "validation-current-result",
+            ));
+        }
+        commit(tx)
+    }
     pub fn execution_result(
         &self,
         attempt: ExecutionId,
@@ -1291,6 +1373,7 @@ impl ProjectStore {
         task: ExecutionId,
         request: ExecutionId,
     ) -> Result<Revision, ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let mut tx = self.execution_write()?;
         let existing: Option<(String, i64)> = tx
             .query_row(
@@ -1311,6 +1394,7 @@ impl ProjectStore {
             tx.observer.add_scope(super::ChangeScope::Project);
         }
         let revision = cancel_revision(&tx, task)?.next()?;
+        authority.revoke_task(task)?;
         tx.execute(
             "INSERT INTO execution_cancellations VALUES (?1,?2,?3)",
             params![request.to_string(), task.to_string(), revision.get() as i64],
@@ -1325,6 +1409,7 @@ impl ProjectStore {
                 .map_err(sql_error)?
         };
         for child in descendants {
+            authority.revoke_task(parse_id(child.clone())?)?;
             let child_revision = cancel_revision(&tx, parse_id(child.clone())?)?.next()?;
             tx.execute(
                 "INSERT INTO execution_cancellations VALUES (?1,?2,?3)",
@@ -1438,7 +1523,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::DependencyConflict, "adoption-transaction"));
         }
         let transaction = connection.unchecked_transaction().map_err(sql_error)?;
-        let capture = capture_adoption_in(&transaction, action)?;
+        let capture = capture_adoption_in(&transaction, action, &self.plugin_authority)?;
         transaction.commit().map_err(sql_error)?;
         Ok(capture)
     }
@@ -1456,9 +1541,10 @@ impl ProjectStore {
         &mut self,
         prepared: PreparedAdoption,
     ) -> Result<AdoptionReceipt, ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let mut tx = self.execution_write()?;
         let action = &prepared.capture.action;
-        let current = capture_adoption_in(&tx, action)?;
+        let current = capture_adoption_in(&tx, action, &authority)?;
         if let Some(receipt) = current.receipt {
             return Ok(receipt);
         }
@@ -1521,6 +1607,7 @@ impl ProjectStore {
 fn capture_adoption_in(
     connection: &Connection,
     action: &AdoptionAction,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
 ) -> Result<AdoptionCapture, ExecutionError> {
     let input = load_input(connection, action.attempt_id)?;
     let digest = action.request_digest(&input)?;
@@ -1549,12 +1636,20 @@ fn capture_adoption_in(
         };
     }
     super::application::check_input(connection, &input)?;
+    let permit = super::plugin_execution::check_input_in(connection, &input, authority)?;
     let results = action
         .result_ids
         .iter()
         .map(|id| load_result(connection, &input, *id))
         .collect::<Result<Vec<_>, _>>()?;
     action.validate(&input, &results)?;
+    if results.iter().any(|result| {
+        result.envelope().plugin.as_ref().is_some_and(|origin| {
+            permit.as_ref().map(PluginPermit::grant_id) != Some(origin.authorization_id)
+        })
+    }) {
+        return Err(error(ErrorCode::Unauthorized, "plugin-adoption-grant"));
+    }
     if cancel_revision(connection, input.envelope().task_id)? != action.cancellation_revision {
         return Err(error(ErrorCode::Cancelled, "adoption"));
     }
