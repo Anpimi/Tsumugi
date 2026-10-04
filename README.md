@@ -119,6 +119,8 @@ The first desktop scaffold targets Windows x64 and uses Rust 1.98+, React 19, Ty
 
 Project lifecycle, command error, change notification, execution, source content, translation, resource, review, release, AI and Arena DTOs use the Rust/Serde definitions as their wire source. After changing these definitions, run `pnpm --dir apps/desktop generate:contracts`; `pnpm --dir apps/desktop check:contracts` verifies that the checked-in schemas, TypeScript types and precompiled validators are current. Generation is partitioned by domain; add `--domain=project`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai` or `--domain=arena` for a focused update or check. The optional `wire-schema` Cargo feature is used for generation; the application does not compile schemas dynamically. AI display counters use exact decimal strings; their persisted execution inputs and results retain their original representation.
 
+Command failures retain their original structured evidence. When a saved basis has changed, expandable diagnostics show the submitted and rejecting values; recovery guidance explains the next read or decision without automatically retrying a write. Diagnostic references correlate command-boundary logs containing only operation labels, error classifications and the reference, without request bodies or project paths. Unknown results keep the original action for reconciliation.
+
 From the repository root:
 
 ```text

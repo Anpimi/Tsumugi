@@ -334,7 +334,8 @@ fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
     mapped.recovery_required = code == CommandErrorCode::OutcomeUnknown;
     mapped.reason = Some(error.stage);
     mapped.item_ids = error.item_ids;
-    mapped
+    mapped.conflict = error.conflict;
+    mapped.report("execution", ExecutionId::new())
 }
 fn map_read(error: ExecutionError) -> CommandError {
     map_execution(error, CommandStage::ExecutionRead)
@@ -363,38 +364,59 @@ pub(super) mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] SessionRequest {});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] ListRequest {
-    after: Revision,
-    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] TaskRequest {
-    task_id: ExecutionId,
-    after: Revision,
-    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AttemptRequest {
-    attempt_id: ExecutionId,
-    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
-    offset: u32,
-    #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
-    limit: u32
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] OutputRequest {
-    attempt_id: ExecutionId,
-    result_id: ExecutionId
-});
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] CancelRequest {
-    task_id: ExecutionId,
-    request_id: ExecutionId
-});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SessionRequest {}
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ListRequest {
+        after: Revision,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TaskRequest {
+        task_id: ExecutionId,
+        after: Revision,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    AttemptRequest {
+        attempt_id: ExecutionId,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        offset: u32,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    OutputRequest {
+        attempt_id: ExecutionId,
+        result_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    CancelRequest {
+        task_id: ExecutionId,
+        request_id: ExecutionId
+    }
+);
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] RecoveryRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action:RecoveryAction, item_ids:Vec<ExecutionId> });
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] PrepareRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action_id:ExecutionId, result_ids:Vec<ExecutionId> });
-request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AdoptRequest {
-    action_id: ExecutionId
-});
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    AdoptRequest {
+        action_id: ExecutionId
+    }
+);
 
 #[cfg(feature = "execution-test-host")]
 request!(FixtureRequest {

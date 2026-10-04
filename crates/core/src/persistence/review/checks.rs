@@ -112,7 +112,11 @@ impl ProjectStore {
             }
             let target = target_in(connection, project_id, unit_id, locale)?;
             if target.basis != expected_basis {
-                return Err(failure(ErrorCode::DependencyConflict, "review-current"));
+                return Err(failure(ErrorCode::DependencyConflict, "review-current")
+                    .with_conflict(ConflictEvidence::ReviewBasis {
+                        expected: expected_basis.to_owned(),
+                        current: target.basis,
+                    }));
             }
             let terms = resources::resolve_terms_in(connection, project_id, unit_id, locale)?;
             Ok(PreparedReviewCheck {
@@ -180,15 +184,26 @@ impl ProjectStore {
             &capture.target.locale,
         )?;
         if target.basis != capture.target.basis {
-            return Err(failure(ErrorCode::DependencyConflict, "review-current"));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-current").with_conflict(
+                    ConflictEvidence::ReviewBasis {
+                        expected: capture.target.basis.clone(),
+                        current: target.basis,
+                    },
+                ),
+            );
         }
         if target.current_check.as_ref().map(|run| run.run_id)
             != capture.target.current_check.as_ref().map(|run| run.run_id)
         {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "review-check-current",
-            ));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-check-current").with_conflict(
+                    ConflictEvidence::ReviewCheck {
+                        expected: capture.target.current_check.as_ref().map(|run| run.run_id),
+                        current: target.current_check.as_ref().map(|run| run.run_id),
+                    },
+                ),
+            );
         }
         let mut rules = computed.rules;
         if cancellation.is_requested() {

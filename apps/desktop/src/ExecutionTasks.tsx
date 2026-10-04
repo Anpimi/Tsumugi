@@ -1,4 +1,5 @@
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useTranslation } from "react-i18next";
@@ -31,7 +32,8 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
   const [attemptCursor, setAttemptCursor] = useState("0");
   const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failureValue, setFailure] = useState<CommandFailure | null>(null);
+  const failure = typeof failureValue === "string" ? failureValue : failureValue?.code ?? null;
   const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [output, setOutput] = useState<ResultEnvelope | null>(null);
@@ -48,8 +50,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   function showError(error: unknown) {
-    const code = (error as Partial<CommandError> | null)?.code;
-    setFailure(code ?? "storage-failed");
+    setFailure(commandFailure(error,"storage-failed"));
   }
   const reads = useSessionReads();
   const projection = useSessionQuery<{ runtime: RuntimeStatus; tasks: Task[]; attempts: AttemptSummary[]; detail: AttemptDetail | null }>({
@@ -117,7 +118,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
     });
   }
   const errorKey = failure === "dependency-conflict" ? "conflict" : failure === "outcome-unknown" ? "unknown" : failure === "session-invalid" ? "session" : failure === "cancelled" ? "cancelled" : failure === "output-invalid" ? "invalid" : failure === "busy" ? "busy" : "failed";
-  const feedback = <>{failure ? <p role="alert">{t(`execution.errors.${errorKey}`)}</p> : null}{message ? <p role="status">{t(`execution.${message}`)}</p> : null}
+  const feedback = <>{failure ? <div role="alert"><p>{t(`execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={failureValue} /></div> : null}{message ? <p role="status">{t(`execution.${message}`)}</p> : null}
     {pendingAction ? <div className="execution-actions"><button className="secondary-button" disabled={busy} onClick={() => void checkReceipt()}>{t("execution.checkReceipt")}</button>
       {receiptChecked ? <button className="secondary-button" disabled={busy} onClick={() => void perform(async () => { await commands.prepare(pendingAction); const result = await commands.adopt({ ...context, actionId: pendingAction.actionId }); if (mounted.current) { setReceipt(result); setPendingAction(null); setConfirmation(null); setMessage("done"); } })}>{t("execution.retryAdoption")}</button> : null}
       <button className="text-button" disabled={busy} onClick={() => { setPendingAction(null); setConfirmation(null); }}>{t("execution.keepOutput")}</button></div> : null}</>;

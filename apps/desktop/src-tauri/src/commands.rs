@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 mod changes;
-mod dispatch;
-mod execution;
 #[cfg(feature = "wire-schema")]
 pub(crate) mod contracts;
+mod dispatch;
+mod execution;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -67,6 +67,16 @@ pub enum CommandOutcome {
     Unknown,
 }
 
+/// A read or user decision to make before another mutation; never replay authority.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryGuidance {
+    ReconcileOriginal,
+    ReviewCurrent,
+    ChooseDestination,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
@@ -75,19 +85,34 @@ pub struct CommandError {
     pub stage: CommandStage,
     pub outcome: CommandOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::optional_text"))]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "contracts::optional_text")
+    )]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::optional_text"))]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "contracts::optional_text")
+    )]
     pub field: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::optional_metadata_revision"))]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "contracts::optional_metadata_revision")
+    )]
     pub current_revision: Option<String>,
     pub recovery_required: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub item_ids: Vec<tsumugi_core::execution::ExecutionId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recovery_actions: Vec<tsumugi_core::execution::RecoveryAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<tsumugi_core::execution::ConflictEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_id: Option<tsumugi_core::execution::ExecutionId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_guidance: Option<RecoveryGuidance>,
 }
 
 impl CommandError {
@@ -103,9 +128,19 @@ impl CommandError {
             reason: None,
             field: None,
             current_revision: None,
-            recovery_required: false,
+            recovery_required: code == CommandErrorCode::OutcomeUnknown,
             item_ids: Vec::new(),
             recovery_actions: Vec::new(),
+            conflict: None,
+            diagnostic_id: None,
+            recovery_guidance: match code {
+                CommandErrorCode::OutcomeUnknown => Some(RecoveryGuidance::ReconcileOriginal),
+                CommandErrorCode::DependencyConflict | CommandErrorCode::StaleRevision => {
+                    Some(RecoveryGuidance::ReviewCurrent)
+                }
+                CommandErrorCode::DestinationConflict => Some(RecoveryGuidance::ChooseDestination),
+                _ => None,
+            },
         }
     }
 
@@ -120,6 +155,9 @@ impl CommandError {
             recovery_required: false,
             item_ids: Vec::new(),
             recovery_actions: Vec::new(),
+            conflict: None,
+            diagnostic_id: None,
+            recovery_guidance: None,
         }
     }
 
@@ -134,6 +172,9 @@ impl CommandError {
             recovery_required: false,
             item_ids: Vec::new(),
             recovery_actions: Vec::new(),
+            conflict: None,
+            diagnostic_id: None,
+            recovery_guidance: Some(RecoveryGuidance::ReviewCurrent),
         }
     }
 
@@ -148,7 +189,33 @@ impl CommandError {
             recovery_required: true,
             item_ids: Vec::new(),
             recovery_actions: Vec::new(),
+            conflict: None,
+            diagnostic_id: None,
+            recovery_guidance: Some(RecoveryGuidance::ReconcileOriginal),
         }
+    }
+
+    fn report(
+        mut self,
+        operation: &'static str,
+        diagnostic_id: tsumugi_core::execution::ExecutionId,
+    ) -> Self {
+        let diagnostic_id = self.diagnostic_id.unwrap_or(diagnostic_id);
+        self.diagnostic_id = Some(diagnostic_id);
+        // No request bodies, paths, session/project IDs or raw OS/SQL text.
+        eprintln!("{}", self.diagnostic_line(operation, diagnostic_id));
+        self
+    }
+
+    fn diagnostic_line(
+        &self,
+        operation: &'static str,
+        diagnostic_id: tsumugi_core::execution::ExecutionId,
+    ) -> String {
+        format!(
+            "desktop operation={} diagnostic={} code={:?} stage={:?} outcome={:?}",
+            operation, diagnostic_id, self.code, self.stage, self.outcome
+        )
     }
 }
 
@@ -230,7 +297,10 @@ pub struct ProjectMetadataView {
     pub display_name: String,
     pub source_locale: String,
     pub target_locales: Vec<String>,
-    #[cfg_attr(feature = "wire-schema", schemars(schema_with = "contracts::metadata_revision"))]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(schema_with = "contracts::metadata_revision")
+    )]
     pub metadata_revision: String,
 }
 

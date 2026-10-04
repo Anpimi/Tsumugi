@@ -1,10 +1,11 @@
 import { reviewReasonKey } from "./reviewLabels";
+import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { executionCommands, executionContext } from "./executionCommands";
-import { hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
+import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import { reviewCommands as commands, type Eligibility, type EligibilityReason, type FallbackWrite,
   type ReviewHistoryPage, type ReviewTarget, type ReviewSummary, type ReviewSummaryPage, type ReviewWrite, type WaiverWrite, type WorkPage } from "./reviewCommands";
@@ -16,10 +17,7 @@ type Notice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "chec
 const MAX_BATCH = 100;
 export interface ReviewHandle { allowLeave: () => Promise<boolean>; showWork: () => void }
 
-function errorReason(error: unknown): string {
-  const value = error as Partial<CommandError> | null;
-  return value?.reason ?? value?.field ?? value?.code ?? "failed";
-}
+const errorReason = commandFailure;
 function isUncertain(error: unknown) {
   return hasUnknownOutcome(error);
 }
@@ -51,7 +49,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [chosen, setChosen] = useState<Record<string, ReviewSummary>>({});
   const [pending, setPending] = useState<Pending | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
-  const [reason, setReason] = useState("");
+  const [reasonValue, setReason] = useState<CommandFailure>("");
+  const reason = failureReason(reasonValue) ?? "";
   const [busy, setBusy] = useState(false);
   const [leavePrompt, setLeavePrompt] = useState(false);
   const [batchPrompt, setBatchPrompt] = useState(false);
@@ -342,6 +341,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
             </button>)}
           </div>
           {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
+          {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
           {pending ? <button className="secondary-button" disabled={busy} onClick={() => void execute(pending)}>{t("review.retry")}</button> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchRunning ? <button className="secondary-button" onClick={() => { cancelBatch.current = true; }}>{t("review.batchCancel")}</button> : null}

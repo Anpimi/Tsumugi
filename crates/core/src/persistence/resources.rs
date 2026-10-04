@@ -1,7 +1,9 @@
 //! Project-local resource facts. SQLite remains the only authority for adoption.
 
 use super::{ProjectStore, translation::TranslationOrigin};
-use crate::execution::{ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec};
+use crate::execution::{
+    ConflictEvidence, ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec,
+};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1478,11 +1480,25 @@ impl ProjectStore {
         check_project(&tx, request.project_id, &request.locale)?;
         let (source_revision_id, _, _, _) = source_fact(&tx, request.project_id, request.unit_id)?;
         if source_revision_id != request.source_revision_id {
-            return Err(failure(ErrorCode::DependencyConflict, "context-source"));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "context-source").with_conflict(
+                    ConflictEvidence::SourceRevision {
+                        expected: request.source_revision_id,
+                        current: source_revision_id,
+                    },
+                ),
+            );
         }
         let current = current_context(&tx, request.project_id, request.unit_id, &request.locale)?;
         if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-            return Err(failure(ErrorCode::DependencyConflict, "context-current"));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "context-current").with_conflict(
+                    ConflictEvidence::ContextRevision {
+                        expected: request.expected_revision_id,
+                        current: current.as_ref().map(|value| value.revision_id),
+                    },
+                ),
+            );
         }
         let revision_id = ExecutionId::new();
         tx.execute(
@@ -2019,7 +2035,14 @@ impl ProjectStore {
             return Err(failure(ErrorCode::DependencyConflict, "resource-locale"));
         }
         if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-current"));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "resource-current").with_conflict(
+                    ConflictEvidence::TermRevision {
+                        expected: request.expected_revision_id,
+                        current: current.as_ref().map(|value| value.revision_id),
+                    },
+                ),
+            );
         }
         let revision = insert_term(
             &tx,
@@ -2119,7 +2142,14 @@ impl ProjectStore {
         let term_id = external_term_id(&file.resource_id, &request.entry_id);
         let current = current_term(&tx, request.project_id, &term_id)?;
         if current.as_ref().map(|value| value.revision_id) != request.expected_revision_id {
-            return Err(failure(ErrorCode::DependencyConflict, "resource-current"));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "resource-current").with_conflict(
+                    ConflictEvidence::TermRevision {
+                        expected: request.expected_revision_id,
+                        current: current.as_ref().map(|value| value.revision_id),
+                    },
+                ),
+            );
         }
         let incoming = file
             .entries
@@ -2876,6 +2906,86 @@ mod tests {
                 .context_revision(project_id, barrel, "zh-CN")
                 .unwrap(),
             Some(saved)
+        );
+    }
+
+    #[test]
+    fn conflict_evidence_reports_saved_context_and_term_revisions_without_writes() {
+        let (_temp, mut store, project_id) = fixture_project();
+        let unit_id = unit(&store, project_id, "data.item.barrel.name");
+        let (source_revision_id, _, _, _) =
+            source_fact(store.connection().unwrap(), project_id, unit_id).unwrap();
+        let request = SaveContext {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id,
+            locale: "zh-CN".into(),
+            source_revision_id,
+            expected_revision_id: None,
+            text: "Context".into(),
+            reason: "Reviewed".into(),
+        };
+        let saved = store.save_context(&request).unwrap();
+        let stale = SaveContext {
+            action_id: ExecutionId::new(),
+            ..request.clone()
+        };
+        let before = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let failure = store.save_context(&stale).unwrap_err();
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::ContextRevision {
+                expected: None,
+                current: Some(saved.revision_id)
+            })
+        );
+        assert_eq!(
+            store
+                .context_revision(project_id, unit_id, "zh-CN")
+                .unwrap()
+                .unwrap(),
+            saved
+        );
+        let term = SaveTerm {
+            project_id,
+            action_id: ExecutionId::new(),
+            term_id: None,
+            locale: "zh-CN".into(),
+            source: "Barrel".into(),
+            aliases: vec![],
+            target: "桶".into(),
+            protected: true,
+            scope_unit_id: None,
+            expected_revision_id: None,
+            reason: "Reviewed".into(),
+        };
+        assert_eq!(store.changes_since(before).sequence, before);
+        let saved_term = store.save_term(&term).unwrap();
+        let stale_term = SaveTerm {
+            action_id: ExecutionId::new(),
+            term_id: Some(saved_term.term_id.clone()),
+            ..term
+        };
+        let before = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let failure = store.save_term(&stale_term).unwrap_err();
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::TermRevision {
+                expected: None,
+                current: Some(saved_term.revision_id)
+            })
+        );
+        assert_eq!(store.changes_since(before).sequence, before);
+        assert_eq!(
+            store
+                .term_history(project_id, &saved_term.term_id, 0, 10)
+                .unwrap()
+                .len(),
+            1
         );
     }
 

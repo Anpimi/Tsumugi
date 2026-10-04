@@ -10,6 +10,7 @@ import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import errorFixture from "../test/fixtures/commandErrors.contract.json";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -77,6 +78,33 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("keeps the rejecting basis beside newer input without replaying the save", async () => {
+  const original = invoke.getMockImplementation()!;
+  let rejectSave!: (error: unknown) => void;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision") return new Promise((_, reject) => { rejectSave = reject; });
+    return original(command, args);
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "Submitted draft");
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(rejectSave).toBeDefined());
+  await user.type(editor, " plus newer input");
+  await act(async () => rejectSave({ ...errorFixture.errors[1], reason: "translation-selection" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(i18n.t("commandError.recovery.review-current"));
+  expect(editor).toHaveValue("Submitted draft plus newer input");
+  await user.click(screen.getByText(i18n.t("execution.diagnostic")));
+  expect(screen.getByText(errorFixture.errors[1].diagnosticId)).toBeVisible();
+  expect(screen.getByText(errorFixture.errors[1].conflict!.current!)).toBeVisible();
+  expect(screen.getByText(i18n.t("commandError.none"))).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+});
 
 it("keeps a confirmed save and allows leaving when the list refresh fails", async () => {
   const ref = createRef<TranslationHandle>();

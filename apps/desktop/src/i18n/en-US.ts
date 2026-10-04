@@ -1,4 +1,22 @@
 export const enUS = {
+commandError: {
+  diagnosticId: "Diagnostic reference:", classification: "{{code}} · {{stage}} · {{outcome}}",
+  currentRevision: "Current project revision: {{revision}}", expected: "Submitted basis:", current: "Basis at rejection:", none: "None",
+  taskRecovery: "Review these actions in Tasks against the current task state before continuing.",
+  recovery: {
+    "reconcile-original": "Check the saved result of the original action before retrying. Keep its original request and your newer input.",
+    "review-current": "Keep your input and review the current basis before deciding whether to submit a new action.",
+    "choose-destination": "Check the destination again or choose another location before continuing.",
+  },
+  conflict: {
+    "source-revision": "The source revision changed.", "translation-selection": "The selected translation changed.",
+    "review-basis": "The review basis changed.", "review-decision": "The review decision changed.", "review-check": "The check evidence changed.",
+    "review-waiver": "The exception decision changed.", "source-fallback": "The source fallback decision changed.",
+    "build-eligibility": "The build-readiness basis changed.", "comparison-basis": "The comparison basis changed.",
+    "term-revision": "The glossary entry changed.", "context-revision": "The saved context changed.",
+    "source-snapshot": "The source snapshot changed.", "content-revision": "The source content changed.",
+  },
+},
 workbench: {
   overview: "Project overview", backOverview: "Back to overview", nextStep: "Next step",
   importTitle: "Bring in your source", importHelp: "Import a supported source to start translating. Your originals stay unchanged.",

@@ -7,6 +7,45 @@ use tauri::{
 };
 
 #[test]
+fn command_error_wire_fixture_preserves_conflicts_guidance_and_diagnostics() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../test/fixtures/commandErrors.contract.json"
+    ))
+    .unwrap();
+    for value in fixture["errors"].as_array().unwrap() {
+        let error: CommandError = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&error).unwrap(), *value);
+        assert_eq!(error.field, None);
+        if let Some(conflict) = error.conflict.clone() {
+            let mapped = map_execution(
+                ExecutionError::new(ErrorCode::DependencyConflict, "controlled-boundary")
+                    .with_conflict(conflict.clone()),
+                error.stage,
+            );
+            assert_eq!(mapped.conflict, Some(conflict));
+            assert_eq!(
+                mapped.recovery_guidance,
+                Some(RecoveryGuidance::ReviewCurrent)
+            );
+            assert_eq!(mapped.outcome, CommandOutcome::Rejected);
+            assert!(mapped.diagnostic_id.is_some());
+        }
+    }
+    let diagnostic_id = ExecutionId::new();
+    let mut error = CommandError::unknown(CommandStage::ExecutionAdopt);
+    error.reason = Some("private request text, file path, secret credential".into());
+    error.field = Some("sensitive input".into());
+    let line = error.diagnostic_line("controlled-boundary", diagnostic_id);
+    assert!(line.contains(&diagnostic_id.to_string()));
+    assert!(line.contains("operation=controlled-boundary"));
+    assert!(!line.contains("private") && !line.contains("secret") && !line.contains("sensitive"));
+    let reported = error
+        .report("controlled-boundary", diagnostic_id)
+        .report("finish-boundary", ExecutionId::new());
+    assert_eq!(reported.diagnostic_id, Some(diagnostic_id));
+}
+
+#[test]
 fn execution_wire_fixture_matches_rust_types() {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../test/fixtures/executionCommands.contract.json"

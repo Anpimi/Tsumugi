@@ -1,9 +1,10 @@
 import { hasUnknownOutcome } from "./projectCommands";
+import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
-import type { CommandError, ProjectView } from "./projectCommands";
+import type { ProjectView } from "./projectCommands";
 import { executionCommands, executionContext } from "./executionCommands";
 import { sourceCommands, type ContentPage, type ContentRow } from "./sourceCommands";
 import {
@@ -20,10 +21,7 @@ const blankTerm = (): TermDraft => ({ source: "", aliases: [], target: "", prote
 const termDraftFor = (term: TermDraft | null): TermDraft => term
   ? { source: term.source, aliases: term.aliases, target: term.target, protected: term.protected, scopeUnitId: term.scopeUnitId ?? null, reason: term.reason }
   : blankTerm();
-const stageOf = (error: unknown): string => {
-  const value = error as Partial<CommandError> | null;
-  return value?.reason ?? value?.field ?? value?.code ?? "failed";
-};
+const stageOf = commandFailure;
 const unknownOutcome = hasUnknownOutcome;
 
 export interface ResourceHandle { allowLeave: () => Promise<boolean> }
@@ -64,7 +62,8 @@ export function ResourceWorkbench({
   const [impact, setImpact] = useState<ImpactPage | null>(null);
   const [impactOffset, setImpactOffset] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failureValue, setFailure] = useState<CommandFailure | null>(null);
+  const failure = failureReason(failureValue);
   const [message, setMessage] = useState<string | null>(null);
   const [leavePrompt, setLeavePrompt] = useState(false);
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
@@ -299,7 +298,7 @@ export function ResourceWorkbench({
   return <>
     <WorkbenchPanel open={open} title={t("resource.title")} description={t("resource.description")} className="source-dialog" onBack={requestClose} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
-          {failure ? <p role="alert">{t("resource.error", { reason: t(`resource.errors.${failure}`, { defaultValue: failure }) })}</p> : null}
+          {failure ? <div role="alert"><p>{t("resource.error", { reason: t(`resource.errors.${failure}`, { defaultValue: failure }) })}</p><CommandFailureDetails failure={failureValue} /></div> : null}
           {message ? <p role="status">{message}</p> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           <label>{t("resource.targetLocale")}<select value={locale} disabled={busy} onChange={event => switchLocale(event.target.value)}>{project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}</select></label>

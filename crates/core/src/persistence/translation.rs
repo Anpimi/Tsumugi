@@ -2,8 +2,8 @@
 
 use super::ProjectStore;
 use crate::execution::{
-    AdoptionAction, AdoptionHandler, ChangeReference, ErrorCode, ExecutionError, ExecutionId,
-    FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
+    AdoptionAction, AdoptionHandler, ChangeReference, ConflictEvidence, ErrorCode, ExecutionError,
+    ExecutionId, FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -669,10 +669,14 @@ fn check_expected(
     expected: Option<ExecutionId>,
 ) -> Result<u64, ExecutionError> {
     if current.as_ref().map(|selection| selection.event_id) != expected {
-        return Err(error(
-            ErrorCode::DependencyConflict,
-            "translation-selection",
-        ));
+        return Err(
+            error(ErrorCode::DependencyConflict, "translation-selection").with_conflict(
+                ConflictEvidence::TranslationSelection {
+                    expected,
+                    current: current.as_ref().map(|selection| selection.event_id),
+                },
+            ),
+        );
     }
     current.as_ref().map_or(Ok(1), |selection| {
         selection
@@ -1361,7 +1365,14 @@ impl ProjectStore {
         let (snapshot, current_source) =
             source_basis(&transaction, request.project_id, request.unit_id)?;
         if current_source != request.source_revision_id {
-            return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+            return Err(
+                error(ErrorCode::DependencyConflict, "translation-source").with_conflict(
+                    ConflictEvidence::SourceRevision {
+                        expected: request.source_revision_id,
+                        current: current_source,
+                    },
+                ),
+            );
         }
         let current = current_selection(&transaction, request.unit_id, &request.locale)?;
         let next_sequence = check_expected(&current, request.expected_selection_id)?;
@@ -1471,7 +1482,14 @@ impl ProjectStore {
         check_target(&transaction, request.project_id, &request.locale)?;
         let (_, current_source) = source_basis(&transaction, request.project_id, request.unit_id)?;
         if current_source != request.source_revision_id {
-            return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+            return Err(
+                error(ErrorCode::DependencyConflict, "translation-source").with_conflict(
+                    ConflictEvidence::SourceRevision {
+                        expected: request.source_revision_id,
+                        current: current_source,
+                    },
+                ),
+            );
         }
         let target: Option<String> = transaction
             .query_row(
@@ -1733,6 +1751,93 @@ mod tests {
             invalid["sequence"] = value;
             assert!(serde_json::from_value::<TranslationSelection>(invalid).is_err());
         }
+    }
+
+    #[test]
+    fn conflict_evidence_keeps_the_rejected_selection_and_source_basis() {
+        let (_temp, mut store, rows) = project_with_source();
+        let project_id =
+            ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let first = SaveTranslationRevision {
+            project_id,
+            action_id: ExecutionId::new(),
+            unit_id: rows[0].unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: rows[0].source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "Saved".into(),
+        };
+        let saved = store.save_translation_edit(&first).unwrap();
+        let stale = SaveTranslationRevision {
+            action_id: ExecutionId::new(),
+            ..first.clone()
+        };
+        let failure = store.save_translation_edit(&stale).unwrap_err();
+        assert_eq!(failure.code, ErrorCode::DependencyConflict);
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::TranslationSelection {
+                expected: None,
+                current: Some(saved.selection.event_id)
+            })
+        );
+        let wrong_source = SaveTranslationRevision {
+            action_id: ExecutionId::new(),
+            source_revision_id: ExecutionId::new(),
+            ..first.clone()
+        };
+        let failure = store.save_translation_edit(&wrong_source).unwrap_err();
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::SourceRevision {
+                expected: wrong_source.source_revision_id,
+                current: first.source_revision_id
+            })
+        );
+        assert!(
+            store
+                .translation_selection_by_action(
+                    project_id,
+                    first.unit_id,
+                    &first.locale,
+                    stale.action_id
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .translation_selection_by_action(
+                    project_id,
+                    first.unit_id,
+                    &first.locale,
+                    wrong_source.action_id
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .translation_history(project_id, first.unit_id, &first.locale, 0, 10)
+                .unwrap()
+                .total,
+            1
+        );
+        let second = SaveTranslationRevision {
+            action_id: ExecutionId::new(),
+            expected_selection_id: Some(saved.selection.event_id),
+            text: "Newer".into(),
+            ..first
+        };
+        store.save_translation_edit(&second).unwrap();
+        // The rejected evidence describes the rejection, not a later reload.
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::SourceRevision {
+                expected: wrong_source.source_revision_id,
+                current: second.source_revision_id
+            })
+        );
     }
 
     #[test]

@@ -190,7 +190,14 @@ pub(super) fn check_merge(
     checked_ids(&merge.contributors)?;
     let target = super::review::target_in(c, request.project_id, request.unit_id, &request.locale)?;
     if target.basis != merge.expected_basis {
-        return Err(error(ErrorCode::DependencyConflict, "arena-basis"));
+        return Err(
+            error(ErrorCode::DependencyConflict, "arena-basis").with_conflict(
+                ConflictEvidence::ComparisonBasis {
+                    expected: merge.expected_basis.clone(),
+                    current: target.basis,
+                },
+            ),
+        );
     }
     for parent in &merge.contributors {
         let valid:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM translation_revisions WHERE revision_id=?1 AND project_id=?2 AND unit_id=?3 AND locale=?4 AND source_revision_id=?5)",params![parent.to_string(),request.project_id.to_string(),request.unit_id.to_string(),request.locale,request.source_revision_id.to_string()],|r|r.get(0)).map_err(sql)?;

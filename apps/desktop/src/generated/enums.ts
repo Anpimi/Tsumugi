@@ -7,3 +7,4 @@ export const MetadataChangeOutcomeValues = ["changed","unchanged"] as const;
 export const NotificationKindValues = ["change","progress","resync"] as const;
 export const ReconciliationStateValues = ["settled","committed","previous"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
+export const RecoveryGuidanceValues = ["reconcile-original","review-current","choose-destination"] as const;

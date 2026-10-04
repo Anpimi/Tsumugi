@@ -150,6 +150,8 @@ Workers / Data Extensions / External Tools
 
 首个桌面脚手架面向 Windows x64，使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
 
+命令失败会保留原始结构化证据。已保存依据发生变化时，可展开诊断查看提交值与拒绝时的值；恢复提示说明下一步读取或决策，不会自动重试写入。诊断编号关联命令边界日志，日志只包含操作标签、错误分类与编号，不包含请求正文或工程路径。结果未知时继续保留原行动以供核对。
+
 在仓库根目录执行：
 
 ```text

@@ -50,6 +50,67 @@ pub struct ExecutionError {
     pub code: ErrorCode,
     pub stage: String,
     pub item_ids: Vec<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<ConflictEvidence>,
+}
+
+/// Values compared at the rejecting boundary, without user text or credentials.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ConflictEvidence {
+    SourceRevision {
+        expected: ExecutionId,
+        current: ExecutionId,
+    },
+    TranslationSelection {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    ReviewBasis {
+        expected: String,
+        current: String,
+    },
+    ReviewDecision {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    ReviewCheck {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    ReviewWaiver {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    SourceFallback {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    BuildEligibility {
+        expected: String,
+        current: String,
+    },
+    ComparisonBasis {
+        expected: String,
+        current: String,
+    },
+    TermRevision {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    ContextRevision {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    SourceSnapshot {
+        expected: Option<ExecutionId>,
+        current: Option<ExecutionId>,
+    },
+    ContentRevision {
+        expected: Revision,
+        current: Revision,
+    },
 }
 
 impl ExecutionError {
@@ -58,10 +119,15 @@ impl ExecutionError {
             code,
             stage: stage.into(),
             item_ids: Vec::new(),
+            conflict: None,
         }
     }
     pub fn for_item(mut self, id: ExecutionId) -> Self {
         self.item_ids.push(id);
+        self
+    }
+    pub fn with_conflict(mut self, conflict: ConflictEvidence) -> Self {
+        self.conflict = Some(conflict);
         self
     }
 }

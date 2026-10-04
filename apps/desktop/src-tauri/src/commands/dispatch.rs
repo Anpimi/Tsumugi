@@ -36,7 +36,10 @@ impl Capacity {
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 (used < self.limit).then_some(used + 1)
             })
-            .map_err(|_| CommandError::simple(CommandErrorCode::Busy, stage))?;
+            .map_err(|_| {
+                CommandError::simple(CommandErrorCode::Busy, stage)
+                    .report("admission", tsumugi_core::execution::ExecutionId::new())
+            })?;
         Ok(Permit(Arc::clone(&self.used)))
     }
 }
@@ -152,7 +155,10 @@ impl SessionExecutor {
         stage: CommandStage,
         work: impl FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
     ) -> Result<T, CommandError> {
-        self.lease(stage)?.run(operation, stage, work).await
+        self.lease(stage)
+            .map_err(|error| error.report(operation, tsumugi_core::execution::ExecutionId::new()))?
+            .run(operation, stage, work)
+            .await
     }
 
     #[cfg(any(test, feature = "execution-test-host"))]
@@ -254,19 +260,21 @@ impl SessionLease {
         CommandError,
     > {
         let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        let diagnostic_id = tsumugi_core::execution::ExecutionId::new();
         self.enqueue(
             operation,
             stage,
             Box::new(move |sessions| {
-                let result = work(sessions);
+                let result = work(sessions).map_err(|error| error.report(operation, diagnostic_id));
                 let _ = sender.try_send(result);
             }),
-        )?;
+        )
+        .map_err(|error| error.report(operation, diagnostic_id))?;
         Ok(async move {
             receiver
                 .recv()
                 .await
-                .ok_or_else(|| CommandError::unknown(stage))?
+                .ok_or_else(|| CommandError::unknown(stage).report(operation, diagnostic_id))?
         })
     }
 }
@@ -286,13 +294,17 @@ impl BlockingExecutor {
         stage: CommandStage,
         work: impl FnOnce() -> Result<T, CommandError> + Send + 'static,
     ) -> Result<T, CommandError> {
-        let permit = self.0.acquire(stage)?;
+        let diagnostic_id = tsumugi_core::execution::ExecutionId::new();
+        let permit = self
+            .0
+            .acquire(stage)
+            .map_err(|error| error.report("blocking-work", diagnostic_id))?;
         tauri::async_runtime::spawn_blocking(move || {
             let _permit = permit;
-            work()
+            work().map_err(|error| error.report("blocking-work", diagnostic_id))
         })
         .await
-        .map_err(|_| CommandError::unknown(stage))?
+        .map_err(|_| CommandError::unknown(stage).report("blocking-work", diagnostic_id))?
     }
 }
 
@@ -313,6 +325,47 @@ mod tests {
             future.poll(&mut Context::from_waker(Waker::noop())),
             Poll::Pending
         ));
+    }
+
+    #[test]
+    fn command_error_dispatch_retains_evidence_and_marks_an_owner_panic_unknown() {
+        let executor = SessionExecutor::default();
+        let current = tsumugi_core::execution::ExecutionId::new();
+        let conflict = tsumugi_core::execution::ConflictEvidence::TranslationSelection {
+            expected: None,
+            current: Some(current),
+        };
+        let expected = conflict.clone();
+        let error = tauri::async_runtime::block_on(executor.run::<()>(
+            "controlled-save",
+            CommandStage::ExecutionAdopt,
+            move |_| {
+                let mut error = CommandError::simple(
+                    CommandErrorCode::DependencyConflict,
+                    CommandStage::ExecutionAdopt,
+                );
+                error.conflict = Some(conflict);
+                Err(error)
+            },
+        ))
+        .unwrap_err();
+        assert_eq!(error.conflict, Some(expected));
+        assert_eq!(error.outcome, super::super::CommandOutcome::Rejected);
+        assert!(error.diagnostic_id.is_some());
+        let prior = error.diagnostic_id;
+        let error = tauri::async_runtime::block_on(executor.run::<()>(
+            "controlled-panic",
+            CommandStage::ExecutionAdopt,
+            |_| panic!("controlled owner failure"),
+        ))
+        .unwrap_err();
+        assert_eq!(error.outcome, super::super::CommandOutcome::Unknown);
+        assert!(error.recovery_required);
+        assert_eq!(
+            error.recovery_guidance,
+            Some(super::super::RecoveryGuidance::ReconcileOriginal)
+        );
+        assert!(error.diagnostic_id.is_some() && error.diagnostic_id != prior);
     }
 
     #[test]

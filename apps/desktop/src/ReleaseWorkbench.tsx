@@ -1,4 +1,5 @@
 import { reviewReasonKey } from "./reviewLabels";
+import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
@@ -38,7 +39,8 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
   const [deliveries, setDeliveries] = useState<DeliveryView[]>([]);
   const [attempt, setAttempt] = useState<string | null>(null);
   const [result, setResult] = useState<DeliveryView | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorValue, setError] = useState<CommandFailure | null>(null);
+  const error = typeof errorValue === "string" ? errorValue : errorValue?.code ?? null;
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingRelease | null>(null);
   const pendingRef = useRef(pending);
@@ -57,7 +59,7 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
     const ticket = ++generation.current;
     void Promise.all([releaseCommands.releases(session), sourceCommands.integration(session)]).then(([rows, integration]) => {
       if (mounted.current && ticket === generation.current) { setReleases(rows); setDomain(integration.id); if (integration.id === "webvtt") setNames(previous => Object.fromEntries(Object.entries(previous).map(([locale, name]) => [locale, name === suggestedFile(locale) ? `${locale}.vtt` : name]))); }
-    }).catch(failure => { if (mounted.current && ticket === generation.current) setError(errorCode(failure)); });
+    }).catch(failure => { if (mounted.current && ticket === generation.current) setError(commandFailure(failure, errorCode(failure))); });
     return () => { generation.current++; };
   }, [open, project.sessionToken]);
   const vtt = domain === "webvtt";
@@ -67,7 +69,10 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
     if (mutating.current) return;
     mutating.current = true; const ticket = ++generation.current; setBusy(true); setError(null);
     try { await work(ticket); }
-    catch (failure) { if (mounted.current && ticket === generation.current) setError(pendingRef.current && hasUnknownOutcome(failure) ? "outcome-unknown" : errorCode(failure)); }
+    catch (failure) { if (mounted.current && ticket === generation.current) {
+      const notice = commandFailure(failure, errorCode(failure));
+      setError(pendingRef.current && hasUnknownOutcome(failure) && typeof notice === "string" ? "outcome-unknown" : notice);
+    } }
     finally { mutating.current = false; if (mounted.current && ticket === generation.current) setBusy(false); }
   }
   function current(ticket: number) { return mounted.current && ticket === generation.current; }
@@ -198,6 +203,7 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
       <div className="execution-content" aria-busy={busy}>
         {error || historyError ? <div className="release-alert" role="alert" ref={errorRegion} tabIndex={-1}>
           {error ? <p>{t("release.error", { reason: t(errorReasons[error as keyof typeof errorReasons] ?? "release.errorUnknown") })}</p> : null}
+          <CommandFailureDetails failure={errorValue} />
           {historyError ? <><p>{t("release.historyFailed")}</p>{chosen ? <button disabled={locked} onClick={() => void run(ticket => refreshDeliveries(chosen.releaseId, ticket))}>{t("release.refreshDeliveries")}</button> : null}</> : null}
         </div> : null}
         {pending?.kind === "build" ? <section role="status"><p>{t(buildMissing ? "release.buildMissing" : "release.buildUnknown")}</p>

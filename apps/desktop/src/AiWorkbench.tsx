@@ -1,24 +1,26 @@
 import { useSessionQuery } from "./SessionReadProvider";
+import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import {enUS} from "./i18n/en-US";
 import {useEffect,useImperativeHandle,useRef,useState,type Ref} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {useTranslation} from "react-i18next";
-import type {CommandError,ProjectView} from "./projectCommands";
+import type {ProjectView} from "./projectCommands";
 import {executionCommands as execution,executionContext,type PrepareRequest} from "./executionCommands";
 import {sourceCommands,type ContentPage} from "./sourceCommands";
 import {aiCommands,aiTarget,defaultAiConfig,type AiConfig,type AiPrepared,type AiStart,type AiView} from "./aiCommands";
 import type {EditorTarget} from "./TranslationWorkbench";
 export interface AiHandle {allowLeave:()=>Promise<boolean>;showAttempt:(id:string)=>void}
-const stage=(e:unknown)=>{const value=e as Partial<CommandError>|null;return value?.reason??value?.field??value?.code??"outcome-unknown";};
+const stage=(e:unknown)=>commandFailure(e,"outcome-unknown");
 export function AiWorkbench({project,disabled,ref,onOpenTranslation}:{project:ProjectView;disabled:boolean;ref?:Ref<AiHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean}) {
   const {t}=useTranslation();const context=executionContext(project);
   const [connectionOpen,setConnectionOpen]=useState(true);
   const [presetName,setPresetName]=useState("custom");const [open,setOpen]=useWorkbenchView("ai"),[config,setConfig]=useState<AiConfig>(()=>({...defaultAiConfig}));
   const [locale,setLocale]=useState(project.metadata.targetLocales[0]??""),[page,setPage]=useState<ContentPage|null>(null),[selected,setSelected]=useState<string[]>([]);
   const [prepared,setPrepared]=useState<AiPrepared|null>(null),[consent,setConsent]=useState(false),[attempt,setAttempt]=useState<string|null>(null);
-  const [busy,setBusy]=useState(false),[failure,setFailure]=useState<string|null>(null),[dirty,setDirty]=useState(false),[leaving,setLeaving]=useState(false);
+  const [busy,setBusy]=useState(false),[failureValue,setFailure]=useState<CommandFailure|null>(null),[dirty,setDirty]=useState(false),[leaving,setLeaving]=useState(false);
+  const failure=failureReason(failureValue);
   const [pendingStart,setPendingStart]=useState<AiStart|null>(null),[pendingAdopt,setPendingAdopt]=useState<PrepareRequest|null>(null),[receiptMissing,setReceiptMissing]=useState(false);
   const alive=useRef(true),generation=useRef(0),inFlight=useRef(false),leaveResolve=useRef<((v:boolean)=>void)|null>(null),errorRef=useRef<HTMLDivElement>(null);
   const viewRead = useSessionQuery<AiView | null>({
@@ -47,7 +49,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation}:{project:Pr
     await perform(async current=>{const scope=await sourceCommands.scope(context);if(!scope.currentSnapshot){if(current())setPage(null);return;}const result=await sourceCommands.content({...context,snapshotId:scope.currentSnapshot,after,limit:50});if(current())setPage(result);});
   }
   useEffect(()=>{if(open&&!page)void loadPage();},[open]);
-  useEffect(()=>{if(viewRead.error)setFailure(stage(viewRead.error));else if(viewRead.isSuccess)setFailure(previous=>previous==="busy"?null:previous);},[viewRead.error,viewRead.isSuccess]);
+  useEffect(()=>{if(viewRead.error)setFailure(stage(viewRead.error));else if(viewRead.isSuccess)setFailure(previous=>failureReason(previous)==="busy"?null:previous);},[viewRead.error,viewRead.isSuccess]);
   function change<K extends keyof AiConfig>(key:K,value:AiConfig[K]){setFailure(null);setConfig(c=>({...c,[key]:value}));setPrepared(null);setConsent(false);setDirty(true);}
   function preset(value:string){setFailure(null);setPresetName(value);setConfig(c=>({...c,endpoint:value==="openai"?"https://api.openai.com/v1/chat/completions":value==="local"?"http://127.0.0.1:11434/v1/chat/completions":"",credentialEnv:value==="local"?"":"OPENAI_API_KEY",tokenField:value==="openai"?"max_completion_tokens":"max_tokens"}));setPrepared(null);setConsent(false);setDirty(true);}
   async function start(request:AiStart,current:()=>boolean){setPendingStart(request);try{const id=await aiCommands.start(request);if(current()){setAttempt(id);setPendingStart(null);setPrepared(null);setConsent(false);setView(null);setDirty(false);}}catch(e){if(current()&&!hasUnknownOutcome(e))setPendingStart(null);throw e;}}
@@ -56,7 +58,7 @@ export function AiWorkbench({project,disabled,ref,onOpenTranslation}:{project:Pr
   const fieldFailure=(key:string)=>failure===`ai-${key==="credentialEnv"?"credential":key}`;
   const fieldError=(key:string)=>fieldFailure(key)?<span id={`ai-error-${key}`} className="field-error">{t(`ai.errors.${failure}`,{defaultValue:t("ai.errors.failed")})}</span>:null;
   return <><WorkbenchPanel open={open} title={t("ai.title")} description={t("ai.description")} className="ai-dialog" onBack={()=>void allowLeave().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled || busy || !!pendingStart || !!pendingAdopt}>
-    {failure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`ai.errors.${failure}`,{defaultValue:t("ai.errors.failed")})}</p><button className="secondary-button" onClick={()=>void loadPage()} disabled={busy}>{t("ai.refresh")}</button></div>:null}
+    {failure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`ai.errors.${failure}`,{defaultValue:t("ai.errors.failed")})}</p><CommandFailureDetails failure={failureValue} /><button className="secondary-button" onClick={()=>void loadPage()} disabled={busy}>{t("ai.refresh")}</button></div>:null}
     <fieldset disabled={locked}><legend>{t("ai.scope",{count:selected.length})}</legend><details open={connectionOpen} onToggle={event=>setConnectionOpen(event.currentTarget.open)}><summary>{t("ai.connection")}</summary><label className="field">{t("ai.preset")}<select value={presetName} onChange={e=>preset(e.target.value)}><option value="custom">{t("ai.custom")}</option><option value="openai">OpenAI</option><option value="local">{t("ai.local")}</option></select></label>
     {([['endpoint','url'],['model','text'],['credentialEnv','text']] as const).map(([key,type])=><label className="field" key={key}>{t(`ai.${key}`)}<input type={type} value={config[key]} aria-label={t(`ai.${key}`)} aria-invalid={fieldFailure(key)||undefined} aria-describedby={fieldFailure(key)?`ai-error-${key}`:undefined} onChange={e=>change(key,e.target.value)}/>{fieldError(key)}</label>)}<p>{t("ai.credentialHelp")}</p>
     <label className="field">{t("ai.tokenField")}<select value={config.tokenField} onChange={e=>change("tokenField",e.target.value)}><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select></label>

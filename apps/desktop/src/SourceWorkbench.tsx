@@ -1,4 +1,5 @@
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -38,7 +39,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const [historicalMatches, setHistoricalMatches] = useState<ContentPage | null>(null);
   const [estimate, setEstimate] = useState<SourceImpactSummary[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failureValue, setFailure] = useState<CommandFailure | null>(null);
+  const failure = failureReason(failureValue);
   const [confirmed, setConfirmed] = useState(false);
   const [pendingStart, setPendingStart] = useState<StartRequest | null>(null);
   const [pendingApply, setPendingApply] = useState<SourceAdoptRequest | null>(null);
@@ -67,8 +69,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     allowLeave() { if (pendingApply || pendingStart) { setOpen(true); return Promise.resolve(false); } if (!selection && Object.keys(lineage).length === 0 && !busy) return Promise.resolve(true); setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
   }));
   function showError(error: unknown) {
-    const value = error as Partial<CommandError> | null;
-    setFailure(value?.reason ?? value?.field ?? value?.code ?? "failed");
+    setFailure(commandFailure(error));
   }
   async function perform(work: (current: () => boolean) => Promise<void>) {
     if (mutation.current) return;
@@ -157,7 +158,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     <WorkbenchPanel open={open} title={t("source.title")} description={t("source.description")} className="source-dialog" onBack={() => void requestBack()} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
           {integration ? <><p>{t("source.profile", { version: integration.version, name: integration.id === "webvtt" ? "WebVTT" : "Stardew SMAPI", profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
-          {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details></div> : null}
+          {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {warnings.includes("source-template") ? <p role="status">{t("source.templateWarning")}</p> : null}
           {!page && !comparison && !attempt ? <section aria-label={t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}>

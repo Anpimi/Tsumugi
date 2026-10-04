@@ -985,18 +985,34 @@ impl ProjectStore {
             filtered_total: 0,
             unchanged: rows
                 .iter()
-                .filter(|row| row.kind == SourceChangeKind::Unchanged || row.kind == SourceChangeKind::Moved)
+                .filter(|row| {
+                    row.kind == SourceChangeKind::Unchanged || row.kind == SourceChangeKind::Moved
+                })
                 .count() as u32,
-            moved: rows.iter().filter(|row| row.kind == SourceChangeKind::Moved).count() as u32,
-            changed: rows.iter().filter(|row| row.kind == SourceChangeKind::Changed).count() as u32,
+            moved: rows
+                .iter()
+                .filter(|row| row.kind == SourceChangeKind::Moved)
+                .count() as u32,
+            changed: rows
+                .iter()
+                .filter(|row| row.kind == SourceChangeKind::Changed)
+                .count() as u32,
             added: rows
                 .iter()
                 .filter(|row| {
-                    row.kind == SourceChangeKind::Added || row.kind == SourceChangeKind::RenameCandidate || row.kind == SourceChangeKind::Ambiguous
+                    row.kind == SourceChangeKind::Added
+                        || row.kind == SourceChangeKind::RenameCandidate
+                        || row.kind == SourceChangeKind::Ambiguous
                 })
                 .count() as u32,
-            ambiguous: rows.iter().filter(|row| row.kind == SourceChangeKind::Ambiguous).count() as u32,
-            removed: rows.iter().filter(|row| row.kind == SourceChangeKind::Removed).count() as u32,
+            ambiguous: rows
+                .iter()
+                .filter(|row| row.kind == SourceChangeKind::Ambiguous)
+                .count() as u32,
+            removed: rows
+                .iter()
+                .filter(|row| row.kind == SourceChangeKind::Removed)
+                .count() as u32,
             next_ordinal: None,
             rows: Vec::new(),
         };
@@ -1068,10 +1084,28 @@ fn apply_update(
     bundle: &SourceBundle,
     action_id: ExecutionId,
 ) -> Result<Vec<ChangeReference>, ExecutionError> {
-    if confirmation.expected_current_snapshot != Some(previous)
-        || confirmation.expected_content_revision.get() != current_revision as u64
-    {
-        return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
+    if confirmation.expected_current_snapshot != Some(previous) {
+        return Err(
+            failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+                ConflictEvidence::SourceSnapshot {
+                    expected: confirmation.expected_current_snapshot,
+                    current: Some(previous),
+                },
+            ),
+        );
+    }
+    if confirmation.expected_content_revision.get() != current_revision as u64 {
+        return Err(
+            failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+                ConflictEvidence::ContentRevision {
+                    expected: confirmation.expected_content_revision,
+                    current: Revision::new(
+                        u64::try_from(current_revision)
+                            .map_err(|_| failure(ErrorCode::CorruptLedger, "content-scope"))?,
+                    )?,
+                },
+            ),
+        );
     }
     let (old_namespace, old_set): (String, String) = tx.query_row(
         "SELECT o.namespace,s.set_id FROM source_occurrences o JOIN source_snapshots s ON s.snapshot_id=o.snapshot_id WHERE o.snapshot_id=?1 ORDER BY o.ordinal LIMIT 1",
@@ -1395,7 +1429,16 @@ impl AdoptionHandler for SourceAdoptionHandler {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
             if revision as u64 != confirmation.expected_content_revision.get() {
-                return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
+                return Err(
+                    failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+                        ConflictEvidence::ContentRevision {
+                            expected: confirmation.expected_content_revision,
+                            current: Revision::new(u64::try_from(revision).map_err(|_| {
+                                failure(ErrorCode::CorruptLedger, "content-scope")
+                            })?)?,
+                        },
+                    ),
+                );
             }
             let (project, language): (String, String) = tx.query_row(
                 "SELECT project_id,source_locale FROM project_metadata WHERE row_id=1",
@@ -1444,8 +1487,17 @@ impl AdoptionHandler for SourceAdoptionHandler {
                     action.action_id,
                 );
             }
-            if confirmation.expected_current_snapshot.is_some() || !confirmation.lineage.is_empty()
-            {
+            if confirmation.expected_current_snapshot.is_some() {
+                return Err(
+                    failure(ErrorCode::DependencyConflict, "stale-preview").with_conflict(
+                        ConflictEvidence::SourceSnapshot {
+                            expected: confirmation.expected_current_snapshot,
+                            current: None,
+                        },
+                    ),
+                );
+            }
+            if !confirmation.lineage.is_empty() {
                 return Err(failure(ErrorCode::DependencyConflict, "stale-preview"));
             }
             let snapshots: i64 =

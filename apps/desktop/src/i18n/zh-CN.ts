@@ -1,6 +1,24 @@
 import type { UiMessages } from "./types";
 
 export const zhCN = {
+commandError: {
+  diagnosticId: "诊断关联编号：", classification: "{{code}} · {{stage}} · {{outcome}}",
+  currentRevision: "当前工程修订：{{revision}}", expected: "提交时的依据：", current: "拒绝时的依据：", none: "无",
+  taskRecovery: "请在任务中按当前任务状态核对这些恢复操作，再决定如何继续。",
+  recovery: {
+    "reconcile-original": "重试前先核对原行动的保存结果，保留原请求和较新的输入。",
+    "review-current": "保留输入，查看当前依据后，再决定是否提交新的行动。",
+    "choose-destination": "继续前重新检查目标位置，或选择其他位置。",
+  },
+  conflict: {
+    "source-revision": "源修订已变化。", "translation-selection": "已选译文已变化。",
+    "review-basis": "审阅依据已变化。", "review-decision": "审阅决定已变化。", "review-check": "检查证据已变化。",
+    "review-waiver": "豁免决定已变化。", "source-fallback": "原文回退决定已变化。",
+    "build-eligibility": "构建资格依据已变化。", "comparison-basis": "比较依据已变化。",
+    "term-revision": "术语条目已变化。", "context-revision": "已保存的上下文已变化。",
+    "source-snapshot": "源快照已变化。", "content-revision": "源内容已变化。",
+  },
+},
 workbench: {
   overview: "项目概览", backOverview: "返回概览", nextStep: "下一步",
   importTitle: "导入需要翻译的原文", importHelp: "导入支持的源内容后开始翻译，原始文件保持不变。",

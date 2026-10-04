@@ -44,6 +44,7 @@ const error: CommandError = {
   code: contract.error.code as CommandError["code"],
   stage: contract.error.stage as CommandError["stage"],
   outcome: contract.error.outcome as CommandError["outcome"],
+  recoveryGuidance: contract.error.recoveryGuidance as CommandError["recoveryGuidance"],
 };
 
 describe("project command wire contract", () => {
@@ -64,6 +65,7 @@ describe("project command wire contract", () => {
       code: "outcome-unknown", outcome: "unknown",
       stage: "rename",
       recoveryRequired: true,
+      recoveryGuidance: "reconcile-original",
     });
   });
 

@@ -1,4 +1,5 @@
 import { useSessionQuery } from "./SessionReadProvider";
+import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
@@ -91,7 +92,8 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const [pendingSave, setPendingSave] = useState<TranslationSaveRequest | null>(null);
   const [newerDraftSaved, setNewerDraftSaved] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failureValue, setFailure] = useState<CommandFailure | null>(null);
+  const failure = failureReason(failureValue);
   const [leaveIntent, setLeaveIntent] = useState<LeaveIntent | null>(null);
   const leaveResolver = useRef<((value: boolean) => void) | null>(null);
   const mounted = useRef(false);
@@ -129,7 +131,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           listBasis.current = scope.currentSnapshot;
           if (page?.namespace === "webvtt:source") setTab("edit");
         }
-      } catch (error) { if (mounted.current && sourceLoad.current === ticket) setFailure(errorStage(error)); }
+      } catch (error) { if (mounted.current && sourceLoad.current === ticket) setFailure(commandFailure(error)); }
     })();
     return () => { sourceLoad.current++; };
   }, [open, targetLocale, project.sessionToken]);
@@ -204,7 +206,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     const ticket = ++generation.current;
     const current = () => mounted.current && generation.current === ticket;
     setBusy(true); setFailure(null);
-    try { await work(current); } catch (error) { if (current()) setFailure(errorStage(error)); }
+    try { await work(current); } catch (error) { if (current()) setFailure(commandFailure(error)); }
     finally { running.current = false; if (mounted.current) setBusy(false); }
   }
   function changeTarget(locale: string) {
@@ -235,7 +237,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       catch (error) { if (errorStage(error) === "translation-incomplete") return null; throw error; }
     } });
   useEffect(() => { if (importRead.data) { setTargetLocale(importRead.data.targetLocale); setPreview(importRead.data); setFailure(null); } }, [importRead.data]);
-  useEffect(() => { if (importRead.error) setFailure(errorStage(importRead.error)); }, [importRead.error]);
+  useEffect(() => { if (importRead.error) setFailure(commandFailure(importRead.error)); }, [importRead.error]);
   async function loadPreview(after: number, basis: string | null, current: () => boolean) {
     if (!attempt) return;
     const next = await commands.preview({ ...context, attemptId: attempt, after, limit: 50, basis });
@@ -438,7 +440,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   return <>
     <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
-          {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details></div> : null}
+          {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {sourceMissing ? <p role="status">{t("translation.noSource")}</p> : null}
           {!project.metadata.targetLocales.length ? <p role="status">{t("translation.noTargets")}</p> : null}

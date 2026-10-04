@@ -1,4 +1,5 @@
 import { SessionReadProvider, SessionReadStatus } from "./SessionReadProvider";
+import { CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
 import { sourceCommands } from "./sourceCommands";
 import { useEffect, useRef, useState } from "react";
@@ -124,6 +125,7 @@ interface Feedback {
   code?: CommandErrorCode;
   field?: string;
   action?: "refresh" | "retry-reconciliation";
+  commandError?: CommandError;
 }
 
 interface SaveResult {
@@ -269,6 +271,7 @@ function feedbackFromFailure(failure: CommandError): Feedback {
     messageValues: failure.code === "stale-revision" ? { revision: failure.currentRevision ?? "?" } : undefined,
     code: failure.code,
     field: failure.field,
+    commandError: failure,
     action: failure.code === "outcome-unknown" ? "retry-reconciliation" : undefined,
   };
 }
@@ -1117,6 +1120,7 @@ function App() {
         <strong>{feedback.tone === "success" ? "✓" : feedback.tone === "warning" ? "!" : "·"}</strong>
         <span>{renderFeedbackMessage(t, feedback)}</span>
       </div>
+      <CommandFailureDetails failure={feedback.commandError ?? null} />
       <div className="feedback-actions">
         {feedback.action === "refresh" ? (
           <button className="text-button" type="button" onClick={handleRefresh} disabled={busy}>
@@ -1618,6 +1622,7 @@ function App() {
               {!createDraftDirty && feedback && (feedback.tone === "error" || feedback.tone === "warning") ? (
                 <div className={`dialog-feedback feedback-${feedback.tone}`} role={feedback.tone === "error" ? "alert" : "status"}>
                   <span>{renderFeedbackMessage(t, feedback)}</span>
+                  <CommandFailureDetails failure={feedback.commandError ?? null} />
                   {feedback.action === "refresh" ? <button className="text-button" type="button" onClick={handleRefresh} disabled={busy}>{t("action.refresh")}</button> : null}
                   {feedback.action === "retry-reconciliation" ? <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "idle" && operation !== "reconciling"}>{t("action.retry")}</button> : null}
                 </div>

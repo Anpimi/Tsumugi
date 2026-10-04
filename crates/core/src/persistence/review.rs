@@ -3,7 +3,7 @@
 
 use super::{ProjectStore, resources};
 use crate::execution::{
-    Cancellation, ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec,
+    Cancellation, ConflictEvidence, ErrorCode, ExecutionError, ExecutionId, MAX_INPUT_BYTES, codec,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
@@ -1190,7 +1190,14 @@ impl ProjectStore {
             &request.locale,
         )?;
         if target.basis != request.expected_basis {
-            return Err(failure(ErrorCode::DependencyConflict, "review-current"));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-current").with_conflict(
+                    ConflictEvidence::ReviewBasis {
+                        expected: request.expected_basis.clone(),
+                        current: target.basis,
+                    },
+                ),
+            );
         }
         if target
             .current_decision
@@ -1198,10 +1205,17 @@ impl ProjectStore {
             .map(|item| item.decision_id)
             != request.expected_decision_id
         {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "review-decision-current",
-            ));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-decision-current").with_conflict(
+                    ConflictEvidence::ReviewDecision {
+                        expected: request.expected_decision_id,
+                        current: target
+                            .current_decision
+                            .as_ref()
+                            .map(|item| item.decision_id),
+                    },
+                ),
+            );
         }
         let (Some(selection_id), Some(revision_id)) = (target.selection_id, target.revision_id)
         else {
@@ -1402,17 +1416,28 @@ impl ProjectStore {
             &request.locale,
         )?;
         if target.basis != request.expected_basis {
-            return Err(failure(ErrorCode::DependencyConflict, "review-current"));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-current").with_conflict(
+                    ConflictEvidence::ReviewBasis {
+                        expected: request.expected_basis.clone(),
+                        current: target.basis,
+                    },
+                ),
+            );
         }
         let active = target
             .current_waivers
             .iter()
             .find(|item| item.issue_id == request.issue_id);
         if active.map(|item| item.waiver_id) != request.expected_waiver_id {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "review-waiver-current",
-            ));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-waiver-current").with_conflict(
+                    ConflictEvidence::ReviewWaiver {
+                        expected: request.expected_waiver_id,
+                        current: active.map(|item| item.waiver_id),
+                    },
+                ),
+            );
         }
         if request.grant {
             if active.is_some() {
@@ -1499,7 +1524,17 @@ impl ProjectStore {
             request.unit_id,
             &request.locale,
         )?;
-        if target.basis != request.expected_basis || target.selection_id.is_some() {
+        if target.basis != request.expected_basis {
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-current").with_conflict(
+                    ConflictEvidence::ReviewBasis {
+                        expected: request.expected_basis.clone(),
+                        current: target.basis,
+                    },
+                ),
+            );
+        }
+        if target.selection_id.is_some() {
             return Err(failure(ErrorCode::DependencyConflict, "review-current"));
         }
         if target
@@ -1507,8 +1542,20 @@ impl ProjectStore {
             .as_ref()
             .map(|item| item.fallback_id)
             != request.expected_fallback_id
-            || request.allow == target.current_fallback.is_some()
         {
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-fallback-current").with_conflict(
+                    ConflictEvidence::SourceFallback {
+                        expected: request.expected_fallback_id,
+                        current: target
+                            .current_fallback
+                            .as_ref()
+                            .map(|item| item.fallback_id),
+                    },
+                ),
+            );
+        }
+        if request.allow == target.current_fallback.is_some() {
             return Err(failure(
                 ErrorCode::DependencyConflict,
                 "review-fallback-current",
@@ -1824,10 +1871,14 @@ impl ProjectStore {
     ) -> Result<Eligibility, ExecutionError> {
         let current = self.review_eligibility(project_id, locales)?;
         if current.basis != expected_basis {
-            return Err(failure(
-                ErrorCode::DependencyConflict,
-                "review-eligibility-stale",
-            ));
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-eligibility-stale").with_conflict(
+                    ConflictEvidence::BuildEligibility {
+                        expected: expected_basis.to_owned(),
+                        current: current.basis,
+                    },
+                ),
+            );
         }
         Ok(current)
     }
@@ -4392,6 +4443,128 @@ mod tests {
         );
         drop(reopened);
         assert!(ProjectStore::open(&moved).is_err());
+    }
+
+    #[test]
+    fn conflict_evidence_keeps_review_and_build_bases_at_rejection() {
+        let (_directory, mut store, project, units) = fixture();
+        let old = store.review_target(project, units[0], "zh-CN").unwrap();
+        let eligibility = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        translate(&mut store, project, units[0], "zh-CN", "你好 {{name}}");
+        let current = store.review_target(project, units[0], "zh-CN").unwrap();
+        assert_ne!(current.basis, old.basis);
+        let before = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let failure = store
+            .write_review(&ReviewWrite {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: units[0],
+                locale: "zh-CN".into(),
+                expected_basis: old.basis.clone(),
+                expected_decision_id: None,
+                actor: "Reviewer".into(),
+                kind: ReviewDecisionKind::Approve,
+                reason: "Reviewed".into(),
+            })
+            .unwrap_err();
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::ReviewBasis {
+                expected: old.basis.clone(),
+                current: current.basis.clone()
+            })
+        );
+        let check_failure = store
+            .prepare_review_check(project, units[0], "zh-CN", &old.basis, ExecutionId::new())
+            .err()
+            .unwrap();
+        assert_eq!(check_failure.conflict, failure.conflict);
+        let current_eligibility = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        let failure = store
+            .review_eligibility_if_basis(project, &["zh-CN".into()], &eligibility.basis)
+            .unwrap_err();
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::BuildEligibility {
+                expected: eligibility.basis,
+                current: current_eligibility.basis
+            })
+        );
+        assert_eq!(store.changes_since(before).sequence, before);
+        assert!(
+            store
+                .review_target(project, units[0], "zh-CN")
+                .unwrap()
+                .current_decision
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn conflict_evidence_distinguishes_changed_fallback_from_repeated_policy() {
+        let (_directory, mut store, project, units) = fixture();
+        let target = store.review_target(project, units[0], "zh-CN").unwrap();
+        let mut request = FallbackWrite {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: units[0],
+            locale: "zh-CN".into(),
+            expected_basis: target.basis,
+            allow: true,
+            expected_fallback_id: None,
+            actor: "Reviewer".into(),
+            reason: "Intentional source text".into(),
+        };
+        let saved = store.allow_source_fallback(&request).unwrap();
+        request.action_id = ExecutionId::new();
+        request.expected_basis = store
+            .review_target(project, units[0], "zh-CN")
+            .unwrap()
+            .basis;
+        let before = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let failure = store.allow_source_fallback(&request).unwrap_err();
+        assert_eq!(
+            failure.conflict,
+            Some(ConflictEvidence::SourceFallback {
+                expected: None,
+                current: Some(saved.fallback_id),
+            })
+        );
+        request.expected_fallback_id = Some(saved.fallback_id);
+        let failure = store.allow_source_fallback(&request).unwrap_err();
+        assert_eq!(failure.code, ErrorCode::DependencyConflict);
+        assert_eq!(failure.stage, "review-fallback-current");
+        assert!(failure.conflict.is_none());
+        assert_eq!(store.changes_since(before).sequence, before);
+        assert_eq!(
+            store
+                .review_target(project, units[0], "zh-CN")
+                .unwrap()
+                .current_fallback
+                .unwrap()
+                .fallback_id,
+            saved.fallback_id
+        );
+        translate(&mut store, project, units[1], "zh-CN", "你好 {{name}}");
+        let target = store.review_target(project, units[1], "zh-CN").unwrap();
+        request.unit_id = units[1];
+        request.expected_basis = target.basis;
+        request.expected_fallback_id = None;
+        let before = store
+            .changes_since(crate::execution::Revision::new(0).unwrap())
+            .sequence;
+        let failure = store.allow_source_fallback(&request).unwrap_err();
+        assert_eq!(failure.stage, "review-current");
+        assert!(failure.conflict.is_none());
+        assert_eq!(store.changes_since(before).sequence, before);
     }
 
     #[test]

@@ -1,11 +1,12 @@
 import { useSessionQuery } from "./SessionReadProvider";
+import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import {useEffect,useImperativeHandle,useRef,useState,type Ref} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {useTranslation} from "react-i18next";
 import {enUS} from "./i18n/en-US";
-import type {CommandError,ProjectView} from "./projectCommands";
+import type {ProjectView} from "./projectCommands";
 import {executionCommands as execution,executionContext,type PrepareRequest,type CancelRequest} from "./executionCommands";
 import {sourceCommands,type ContentPage} from "./sourceCommands";
 import {aiTarget,defaultAiConfig,type AiConfig,type AiStart} from "./aiCommands";
@@ -15,7 +16,7 @@ import type {AiHandle} from "./AiWorkbench";
 import type {EditorTarget} from "./TranslationWorkbench";
 
 type Pending={kind:"start";request:AiStart}|{kind:"adopt";request:PrepareRequest}|{kind:"compare";request:CompareRequest}|{kind:"merge";request:MergeRequest}|{kind:"select";request:TranslationSelectRequest}|{kind:"cancel";request:CancelRequest;attemptId:string}|{kind:"reveal";request:{sessionToken:string;projectId:string;comparisonId:string;actionId:string}};
-const stage=(e:unknown)=>{const v=e as Partial<CommandError>|null;return v?.code==="outcome-unknown"?"outcome-unknown":v?.reason??v?.field??v?.code??"outcome-unknown";};
+const stage=(e:unknown)=>commandFailure(e,"outcome-unknown");
 const unknown=hasUnknownOutcome;
 const letter=(i:number)=>String.fromCharCode(65+i);
 
@@ -27,7 +28,7 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project
  const [history,setHistory]=useState<TranslationHistory|null>(null),[references,setReferences]=useState<string[]>([]),[comparison,setComparison]=useState<ComparisonView|null>(null),[savedComparisons,setSavedComparisons]=useState<ComparisonSummary[]>([]);
  const [comparisonBlind,setComparisonBlind]=useState(false);
  const [draft,setDraft]=useState<{basis:ComparisonView;text:string}|null>(null),draftRef=useRef(draft);draftRef.current=draft;
- const [dirty,setDirty]=useState(false),[busy,setBusy]=useState(false),[failure,setFailure]=useState<string|null>(null),[pollFailure,setPollFailure]=useState<string|null>(null),[notice,setNotice]=useState<string|null>(null),[pending,setPending]=useState<Pending|null>(null),[retryReady,setRetryReady]=useState(false),[leaving,setLeaving]=useState(false);
+ const [dirty,setDirty]=useState(false),[busy,setBusy]=useState(false),[failureValue,setFailure]=useState<CommandFailure|null>(null),[pollFailureValue,setPollFailure]=useState<CommandFailure|null>(null),[notice,setNotice]=useState<string|null>(null),[pending,setPending]=useState<Pending|null>(null),[retryReady,setRetryReady]=useState(false),[leaving,setLeaving]=useState(false);
  const alive=useRef(true),generation=useRef(0),flight=useRef(false),leaveResolve=useRef<((v:boolean)=>void)|null>(null),errorRef=useRef<HTMLDivElement>(null);
  const viewRead = useSessionQuery<ArenaView | null>({
    key: ["arena", attempt], scopes: ["execution", "source", "translation", "resources", "arena"], enabled: open && !!attempt && !busy,
@@ -36,7 +37,8 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project
  const view = viewRead.data ?? null, setView = viewRead.setData;
  const active=!!attempt&&(!view||view.detail.progress.queued>0||view.detail.progress.running>0),locked=busy||!!pending||active;
  useEffect(()=>{alive.current=true;return()=>{alive.current=false;generation.current++;leaveResolve.current?.(false);};},[]);
- const displayedFailure=failure??pollFailure;
+ const displayedFailureValue=failureValue??pollFailureValue;
+ const displayedFailure=failureReason(displayedFailureValue);
  useEffect(()=>{if(displayedFailure)errorRef.current?.focus();},[displayedFailure]);
  async function perform(work:(current:()=>boolean)=>Promise<void>) {if(flight.current)return;flight.current=true;setBusy(true);setFailure(null);setPollFailure(null);const ticket=++generation.current,current=()=>alive.current&&generation.current===ticket;try{await work(current);}catch(e){if(current())setFailure(stage(e));}finally{flight.current=false;if(alive.current)setBusy(false);}}
  function allowLeave():Promise<boolean>{if(flight.current||pending){setOpen(true);setFailure("outcome-unknown");return Promise.resolve(false);}if(!dirty&&!draft)return Promise.resolve(true);setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});}
@@ -81,7 +83,7 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project
  function editor(target:EditorTarget,targetLocale:string){void allowLeave().then(ok=>{if(ok&&onOpenTranslation(target,targetLocale))setOpen(false);});}
  const fields=[['endpoint','url'],['model','text'],['credentialEnv','text']] as const,numeric=[['maxOutputTokens',1,16384],['maxRetries',0,2],['timeoutSeconds',1,120]] as const;
  return <><WorkbenchPanel open={open} title={t("arena.title")} description={t("arena.description")} className="arena-dialog" onBack={()=>void allowLeave().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled || busy || !!pending}>
- {displayedFailure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`arena.errors.${displayedFailure}`,{defaultValue:t(`ai.errors.${displayedFailure}`,{defaultValue:t("arena.errors.failed")})})}</p><button disabled={busy||!!pending} onClick={()=>void refreshPage()}>{t("ai.refresh")}</button></div>:null}
+ {displayedFailure?<div role="alert" tabIndex={-1} ref={errorRef}><p>{t(`arena.errors.${displayedFailure}`,{defaultValue:t(`ai.errors.${displayedFailure}`,{defaultValue:t("arena.errors.failed")})})}</p><CommandFailureDetails failure={displayedFailureValue} /><button disabled={busy||!!pending} onClick={()=>void refreshPage()}>{t("ai.refresh")}</button></div>:null}
  {notice?<p role="status">{t(`arena.${notice}`,{defaultValue:t("arena.reconciled")})}</p>:null}
  <details open={!attempt}><summary>{t("arena.generation")}</summary><fieldset disabled={locked}><legend>{t("arena.schemes")}</legend>
  {config.variants.map((v,slot)=><details key={slot} open={slot<2}><summary>{t("arena.scheme",{defaultValue:enUS.arena.scheme,number:slot+1})}</summary>{fields.map(([key,type])=><label className="field" key={key}>{t(`ai.${key}`)}<input type={type} value={v[key]} aria-label={t("arena.schemeField",{defaultValue:enUS.arena.schemeField,number:slot+1,field:t(`ai.${key}`)})} onChange={e=>variant(slot,key,e.target.value)}/></label>)}<p>{t("ai.credentialHelp")}</p><label className="field">{t("ai.tokenField")}<select value={v.tokenField} onChange={e=>variant(slot,"tokenField",e.target.value)}><option>max_tokens</option><option>max_completion_tokens</option></select></label>{numeric.map(([key,min,max])=><label className="field" key={key}>{t(`ai.${key}`)}<input type="number" min={min} max={max} value={Number.isFinite(v[key])?v[key]:""} onChange={e=>variant(slot,key,e.target.valueAsNumber)}/></label>)}<label><input type="checkbox" checked={v.shareTerms} onChange={e=>variant(slot,"shareTerms",e.target.checked)}/>{t("ai.shareTerms")}</label><label><input type="checkbox" checked={v.shareContext} onChange={e=>variant(slot,"shareContext",e.target.checked)}/>{t("ai.shareContext")}</label></details>)}

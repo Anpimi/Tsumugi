@@ -62,6 +62,7 @@
     "code": "outcome-unknown",
     "outcome": "unknown",
     "stage": "rename",
-    "recoveryRequired": true
+    "recoveryRequired": true,
+    "recoveryGuidance": "reconcile-original"
   }
 }
