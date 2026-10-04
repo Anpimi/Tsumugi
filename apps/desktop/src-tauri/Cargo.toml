@@ -30,3 +30,6 @@ rusqlite = "=0.40.2"
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "=0.2.189"

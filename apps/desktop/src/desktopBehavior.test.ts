@@ -15,6 +15,7 @@ it.each([
   ["r", { ctrlKey: true }], ["R", { ctrlKey: true, shiftKey: true }],
   ["F5", {}], ["F5", { ctrlKey: true }], ["p", { ctrlKey: true }],
   ["u", { ctrlKey: true }], ["s", { ctrlKey: true }],
+  ["r", { metaKey: true }], ["p", { metaKey: true }], ["s", { metaKey: true }],
   ["ArrowLeft", { altKey: true }], ["ArrowRight", { altKey: true }],
   ["BrowserBack", {}], ["BrowserForward", {}],
 ] as const)("prevents the browser default for %s without clearing an editor draft", (key, modifiers) => {
@@ -25,12 +26,12 @@ it.each([
   expect(editor.value).toBe("Uncommitted translation");
 });
 
-it("still delivers Ctrl+S to the editor's save handler", () => {
+it.each([{ ctrlKey: true }, { metaKey: true }])("delivers platform Save to the editor handler", modifiers => {
   const editor = document.createElement("textarea");
   document.body.append(editor);
   const save = vi.fn();
   editor.addEventListener("keydown", save);
-  expect(shortcut("s", { ctrlKey: true }, editor).defaultPrevented).toBe(true);
+  expect(shortcut("s", modifiers, editor).defaultPrevented).toBe(true);
   expect(save).toHaveBeenCalledOnce();
 });
 

@@ -74,7 +74,7 @@ fn call(
             cmd: command.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "http://tauri.localhost".parse().unwrap(),
+            url: crate::ipc_test_url().parse().unwrap(),
             body: InvokeBody::Json(json!({"request":body})),
             headers: Default::default(),
             invoke_key: tauri::test::INVOKE_KEY.into(),
@@ -83,7 +83,7 @@ fn call(
     .map(|r| r.deserialize::<Value>().unwrap())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn wait_for_execution_idle(
     webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     context: &Value,
@@ -103,7 +103,7 @@ fn wait_for_execution_idle(
 }
 
 #[test]
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn production_source_ipc_captures_previews_commits_and_reopens() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("mod");
@@ -131,6 +131,11 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
             .unwrap();
     let project = call(&view,"create_project",json!({"destination":temp.path().join("project"),"displayName":"Import fixture","sourceLocale":"en","targetLocales":["zh-CN"]})).unwrap();
     let context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
+    for command in ["read_source_integration", "read_webvtt_integration"] {
+        let descriptor = call(&view, command, context.clone()).unwrap();
+        assert_eq!(descriptor["available"], true, "{command}");
+        assert!(descriptor["reason"].is_null());
+    }
     let mut wrong = context.clone();
     wrong["projectId"] = json!(ExecutionId::new());
     assert!(call(&view, "read_content_scope", wrong).is_err());
@@ -373,7 +378,7 @@ fn production_source_ipc_captures_previews_commits_and_reopens() {
 }
 
 #[test]
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn translation_ipc_imports_candidates_edits_and_reopens() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("mod");

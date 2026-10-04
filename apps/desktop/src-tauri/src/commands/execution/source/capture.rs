@@ -1,6 +1,8 @@
 //! Authorized, bounded reads. No input path from an IPC payload reaches this module.
+#[cfg(windows)]
+use std::fs::OpenOptions;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -14,7 +16,7 @@ fn error(code: ErrorCode, reason: &str) -> ExecutionError {
     ExecutionError::new(code, reason)
 }
 fn io(error: std::io::Error) -> ExecutionError {
-    if error.raw_os_error() == Some(32) {
+    if cfg!(windows) && error.raw_os_error() == Some(32) {
         self::error(ErrorCode::Busy, "input-busy")
     } else if error.kind() == std::io::ErrorKind::NotFound {
         self::error(ErrorCode::InvalidInput, "missing-companion")
@@ -105,7 +107,11 @@ mod platform {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "macos")]
+#[path = "capture/macos.rs"]
+pub(crate) mod platform;
+
+#[cfg(any(windows, target_os = "macos"))]
 pub struct Selection {
     webvtt: bool,
     root: PathBuf,
@@ -113,7 +119,7 @@ pub struct Selection {
     identity: platform::Identity,
     _ancestors: Vec<File>,
 }
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 impl Selection {
     pub fn authorize(path: PathBuf) -> Result<Self, ExecutionError> {
         if !path.is_absolute()
@@ -123,6 +129,8 @@ impl Selection {
         {
             return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
         }
+        #[cfg(target_os = "macos")]
+        let path = platform::system_path(&path);
         let mut ancestors = Vec::new();
         for ancestor in path.ancestors().skip(1) {
             ancestors.push(platform::open(ancestor, true)?);
@@ -153,6 +161,23 @@ impl Selection {
     pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         self.verify()?;
         Ok(&self.root)
+    }
+    #[cfg(target_os = "macos")]
+    pub(crate) fn ensure_i18n_directory(&self) -> Result<(), ExecutionError> {
+        use std::os::fd::AsRawFd;
+        self.verify()?;
+        let name = c"i18n";
+        // The only created child is the declared output directory of this selection.
+        if unsafe { libc::mkdirat(self.root_file.as_raw_fd(), name.as_ptr(), 0o700) } == -1
+            && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(io(std::io::Error::last_os_error()));
+        }
+        let child = platform::open_child(&self.root_file, std::ffi::OsStr::new("i18n"), true)?;
+        if platform::final_path(&child)? != self.root.join("i18n") {
+            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+        }
+        self.verify()
     }
     pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
         self.verify()?;
@@ -211,6 +236,8 @@ impl Selection {
         if platform::final_path(&file)? != path {
             return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
         }
+        #[cfg(target_os = "macos")]
+        let stamp = platform::stamp(&file)?;
         opened();
         let bytes = read(&mut file, MAX_SOURCE_BYTES, &check)?;
         if bytes != read(&mut file, MAX_SOURCE_BYTES, &check)?
@@ -218,12 +245,15 @@ impl Selection {
         {
             return Err(error(ErrorCode::DependencyConflict, "source-changed"));
         }
+        #[cfg(target_os = "macos")]
+        platform::verify_file(&file, &path, stamp)?;
         self.verify()?;
         TranslationBundle::capture(&logical_path, &bytes, target_locale, source_snapshot_id)
     }
     fn verify(&self) -> Result<(), ExecutionError> {
         if platform::identity(&self.root_file)? != self.identity
             || platform::final_path(&self.root_file)? != self.root
+            || platform::identity(&platform::open(&self.root, true)?)? != self.identity
         {
             return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
         }
@@ -259,12 +289,16 @@ impl Selection {
                     Ok(())
                 }
             };
+            #[cfg(target_os = "macos")]
+            let stamp = platform::stamp(&file)?;
             opened();
             check()?;
             let bytes = read(&mut file, MAX_SOURCE_BYTES, &check)?;
             if bytes != read(&mut file, MAX_SOURCE_BYTES, &check)? {
                 return Err(error(ErrorCode::DependencyConflict, "source-changed"));
             }
+            #[cfg(target_os = "macos")]
+            platform::verify_file(&file, &path, stamp)?;
             self.verify()?;
             return SourceBundle::capture_webvtt(&bytes, language);
         }
@@ -300,7 +334,10 @@ impl Selection {
         {
             return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
         }
-        // Both files are locked against ordinary writes/rename before either is read.
+        // Windows holds share-denying handles; macOS validates identity and change
+        // stamps around both reads because POSIX locks do not exclude other writers.
+        #[cfg(target_os = "macos")]
+        let stamps = (platform::stamp(&manifest)?, platform::stamp(&source)?);
         opened();
         check()?;
         let manifest_bytes = read(&mut manifest, MAX_MANIFEST_BYTES, &check)?;
@@ -312,6 +349,11 @@ impl Selection {
             || source_bytes != read(&mut source, MAX_SOURCE_BYTES, &check)?
         {
             return Err(error(ErrorCode::DependencyConflict, "source-changed"));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            platform::verify_file(&manifest, &self.root.join("manifest.json"), stamps.0)?;
+            platform::verify_file(&source, &i18n_path.join("default.json"), stamps.1)?;
         }
         self.verify()?;
         SourceBundle::capture(&manifest_bytes, &source_bytes, language)
@@ -366,7 +408,7 @@ fn read(
     Ok(bytes)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError> {
     if !path.is_absolute()
         || path.extension().is_none_or(|extension| extension != "json")
@@ -376,6 +418,10 @@ pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError>
     {
         return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
     }
+    #[cfg(target_os = "macos")]
+    let normalized = platform::system_path(path);
+    #[cfg(target_os = "macos")]
+    let path = normalized.as_path();
     let mut ancestors = Vec::new();
     for ancestor in path.ancestors().skip(1) {
         ancestors.push(platform::open(ancestor, true)?);
@@ -387,22 +433,26 @@ pub(crate) fn read_resource_file(path: &Path) -> Result<Vec<u8>, ExecutionError>
     if platform::final_path(&file)?.parent() != Some(platform::final_path(parent)?.as_path()) {
         return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
     }
+    #[cfg(target_os = "macos")]
+    let stamp = platform::stamp(&file)?;
     let bytes = read(&mut file, 128 * 1024, &|| Ok(()))?;
+    #[cfg(target_os = "macos")]
+    platform::verify_file(&file, path, stamp)?;
     if file.metadata().map_err(io)?.len() != bytes.len() as u64 {
         return Err(error(ErrorCode::DependencyConflict, "input-changed"));
     }
     Ok(bytes)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) fn read_resource_file(_: &Path) -> Result<Vec<u8>, ExecutionError> {
     Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
 }
 
 // Other platforms are not silently given weaker capture guarantees.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub struct Selection;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 impl Selection {
     pub fn authorize(_: PathBuf) -> Result<Self, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
@@ -718,5 +768,97 @@ mod tests {
             output.occurrences.len(),
             tsumugi_core::content::MAX_OCCURRENCES
         );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    fn fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("i18n")).unwrap();
+        fs::write(root.path().join("manifest.json"), b"{}").unwrap();
+        fs::write(root.path().join("i18n/default.json"), br#"{"a":"one"}"#).unwrap();
+        fs::write(root.path().join("i18n/zh.json"), "{\"a\":\"你好 👩🏽‍💻 é\"}").unwrap();
+        root
+    }
+    #[test]
+    fn macos_capture_preserves_bytes_and_rejects_changed_identity_and_content() {
+        let root = fixture();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        assert_eq!(selected.translation_files().unwrap(), vec!["zh.json"]);
+        let bundle = selected
+            .capture_translation(
+                "zh.json",
+                "zh-CN",
+                ExecutionId::new(),
+                &Cancellation::default(),
+            )
+            .unwrap();
+        assert_eq!(bundle.file.utf8, "{\"a\":\"你好 👩🏽‍💻 é\"}");
+        let source = root.path().join("i18n/default.json");
+        let changed = selected.capture_inner("en", &Cancellation::default(), || {
+            fs::write(&source, br#"{"a":"two"}"#).unwrap();
+        });
+        assert_eq!(changed.unwrap_err().code, ErrorCode::DependencyConflict);
+        let replaced = selected.capture_inner("en", &Cancellation::default(), || {
+            fs::rename(&source, root.path().join("old.json")).unwrap();
+            fs::write(&source, br#"{"a":"two"}"#).unwrap();
+        });
+        assert!(replaced.is_err());
+        let cancel = Cancellation::default();
+        cancel.request();
+        assert_eq!(
+            selected.capture("en", &cancel).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+    }
+    #[test]
+    fn macos_capture_rejects_links_traversal_root_replacement_and_oversized_resources() {
+        let root = fixture();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::rename(root.path().join("i18n"), outside.path().join("i18n")).unwrap();
+        symlink(outside.path().join("i18n"), root.path().join("i18n")).unwrap();
+        assert!(selected.capture("en", &Cancellation::default()).is_err());
+        assert!(Selection::authorize(root.path().join("../elsewhere")).is_err());
+        symlink(root.path(), outside.path().join("linked")).unwrap();
+        assert!(Selection::authorize(outside.path().join("linked")).is_err());
+        let terms = root.path().join("terms.json");
+        fs::write(&terms, b"{}").unwrap();
+        assert_eq!(read_resource_file(&terms).unwrap(), b"{}");
+        fs::write(&terms, vec![b' '; 128 * 1024 + 1]).unwrap();
+        assert_eq!(
+            read_resource_file(&terms).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        fs::remove_file(&terms).unwrap();
+        symlink(outside.path().join("i18n/zh.json"), &terms).unwrap();
+        assert!(read_resource_file(&terms).is_err());
+        let moved = outside.path().join("moved");
+        fs::rename(root.path(), &moved).unwrap();
+        fs::create_dir(root.path()).unwrap();
+        assert!(selected.destination_root().is_err());
+    }
+    #[test]
+    fn macos_webvtt_capture_keeps_bytes_and_rejects_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(content::webvtt::PATH);
+        let bytes = include_bytes!("../../../../../../../crates/core/tests/fixtures/webvtt/s1.vtt");
+        fs::write(&path, bytes).unwrap();
+        let selected = Selection::authorize_webvtt(root.path().into()).unwrap();
+        assert_eq!(
+            selected
+                .capture("en", &Cancellation::default())
+                .unwrap()
+                .files[0]
+                .utf8
+                .as_bytes(),
+            bytes
+        );
+        fs::rename(&path, root.path().join("other.vtt")).unwrap();
+        symlink(root.path().join("other.vtt"), &path).unwrap();
+        assert!(selected.capture("en", &Cancellation::default()).is_err());
     }
 }

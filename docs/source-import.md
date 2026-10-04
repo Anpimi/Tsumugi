@@ -1,6 +1,6 @@
 # Source import
 
-On Windows, open a new project and choose **Source content → Choose Mod folder**. The bundled `stardew-smapi` integration, version `0.1.0`, reads exactly `manifest.json` and `i18n/default.json`. It does not load Mod code, contact a service, or modify the Mod.
+On Windows or macOS, open a new project and choose **Source content → Choose Mod folder**. The bundled `stardew-smapi` integration, version `0.1.0`, reads exactly `manifest.json` and `i18n/default.json`. It does not load Mod code, contact a service, or modify the Mod.
 
 Confirm that the original strings use the project's source language. `default.json` does not imply English. **Check source files** is read-only. **Import for preview** captures the files again and saves a task with immutable originals. Review the files, string count, native keys, source locations and any warnings. Applying requires confirmation of the entire captured set, including pages not displayed.
 
@@ -21,7 +21,7 @@ Search and paging change only the displayed comparison. The confirmation always 
 
 Limits are cumulative: 16 KiB manifest, 128 KiB combined input, at most 256 direct entries in each inspected directory, 2,000 strings, 1,024-byte native keys, 256-byte namespace and 16 KiB per string. The encoded input also must fit 1 MiB and the complete encoded result 2 MiB; these limits may be reached before the string-count limit. Oversized input fails as a whole. Preview pages contain at most 100 rows and 256 KiB without truncating text.
 
-Files are read through authorized native directory handles. Ordinary writes, renames and deletion are denied while both input files are captured. Reparse points and duplicate physical inputs are rejected. This is not a sandbox against privileged software. The trusted in-process extractor receives only captured bytes, not project write access.
+Files are read through authorized native directory handles. Windows denies ordinary writes, renames and deletion while both input files are captured. macOS opens each path component relative to a directory descriptor without following symlinks, then checks file identities, timestamps, directory entries and repeated bytes before accepting the capture. Detected concurrent changes reject the capture; POSIX advisory locks are not treated as write exclusion. The system `/var` and `/tmp` aliases are mapped to their `/private` locations. Reparse points, user-controlled symlinks and duplicate physical inputs are rejected. This is not a sandbox against privileged software. The trusted in-process extractor receives only captured bytes, not project write access.
 
 ## Saved tasks and recovery
 

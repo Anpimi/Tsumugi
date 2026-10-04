@@ -185,7 +185,7 @@ fn call(
             cmd: command.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "http://tauri.localhost".parse().unwrap(),
+            url: crate::ipc_test_url().parse().unwrap(),
             body: InvokeBody::Json(json!({"request":request})),
             headers: Default::default(),
             invoke_key: tauri::test::INVOKE_KEY.into(),

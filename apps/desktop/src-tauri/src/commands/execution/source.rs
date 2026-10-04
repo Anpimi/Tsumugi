@@ -479,10 +479,10 @@ pub async fn read_source_integration(
                         .plugin_id
                         == content::webvtt::PLUGIN
                     {
-                        return Ok(content::webvtt_descriptor(cfg!(windows)));
+                        return Ok(content::webvtt_descriptor(cfg!(any(windows, target_os = "macos"))));
                     }
                 }
-                Ok(content::integration_descriptor(cfg!(windows)))
+                Ok(content::integration_descriptor(cfg!(any(windows, target_os = "macos"))))
             },
         )
         .await
@@ -504,7 +504,7 @@ pub async fn read_webvtt_integration(
                     request.project_id,
                     CommandStage::ExecutionRead,
                 )?;
-                Ok(content::webvtt_descriptor(cfg!(windows)))
+                Ok(content::webvtt_descriptor(cfg!(any(windows, target_os = "macos"))))
             },
         )
         .await

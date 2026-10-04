@@ -148,13 +148,22 @@ Workers / Data Extensions / External Tools
 
 ## 开发环境
 
-首个桌面脚手架面向 Windows x64，使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
+桌面支持 Windows x64 和 macOS（Apple Silicon 与 Intel 构建目标），使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
 
 命令失败会保留原始结构化证据。已保存依据发生变化时，可展开诊断查看提交值与拒绝时的值；恢复提示说明下一步读取或决策，不会自动重试写入。诊断编号关联命令边界日志，日志只包含操作标签、错误分类与编号，不包含请求正文或工程路径。结果未知时继续保留原行动以供核对。
 
 源内容与译文捕获范围使用原始捕获文件中左闭右开的 UTF-8 字节位置，位于转义解码和换行规范化之前，不是 JavaScript 字符串索引。共用的 `crates/core/tests/fixtures/source-unicode.contract.json` 覆盖 BOM、CRLF、中文、emoji、组合字符和 JSON 转义，并用 UTF-16 位置作为 Rust 与 TypeScript 的测试对照。
 
 在仓库根目录执行：
+
+macOS 构建需要 Xcode Command Line Tools，使用系统 WKWebView；平台依赖见 [Tauri 指引](https://v2.tauri.app/start/prerequisites/)。macOS 应用包最低系统版本为 11，默认构建当前架构：
+
+```text
+pnpm --dir apps/desktop tauri build
+open target/release/bundle/macos/Tsumugi.app
+```
+
+Apple Silicon 已通过原生构建和本地项目流程验收。在 Apple Silicon 上构建 Intel 版本时，先安装 Rust 的 `x86_64-apple-darwin` target，再加 `--target x86_64-apple-darwin`；Intel 构建和 macOS 11 运行尚未验证。开发使用 `pnpm --dir apps/desktop tauri dev`；签名、公证与发布另行进行。macOS 使用 Command+S 保存和 Command+C 复制。
 
 ```text
 pnpm install

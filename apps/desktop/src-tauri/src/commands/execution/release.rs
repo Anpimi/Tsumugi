@@ -1,7 +1,9 @@
 //! Native, session-scoped local export of an immutable verified release.
 use super::*;
+#[cfg(not(target_os = "macos"))]
+use std::fs::OpenOptions;
 use std::{
-    fs::{self, OpenOptions},
+    fs::{self, File},
     io::{Read, Write},
     path::Path,
 };
@@ -361,7 +363,23 @@ fn regular_file(path: &Path) -> Result<bool, CommandError> {
         )),
     }
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn regular_file(path: &Path) -> Result<bool, CommandError> {
+    match source::capture::platform::open(path, false) {
+        Ok(_) => Ok(true),
+        Err(_)
+            if fs::symlink_metadata(path)
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(false)
+        }
+        Err(_) => Err(CommandError::simple(
+            CommandErrorCode::PermissionDenied,
+            CommandStage::ExecutionRead,
+        )),
+    }
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn regular_file(_: &Path) -> Result<bool, CommandError> {
     Err(CommandError::simple(
         CommandErrorCode::PermissionDenied,
@@ -372,15 +390,30 @@ fn current_digest(path: &Path) -> Result<Option<String>, CommandError> {
     if !regular_file(path)? {
         return Ok(None);
     }
-    let file = OpenOptions::new().read(true).open(path).map_err(|_| {
+    #[cfg(target_os = "macos")]
+    let opened = source::capture::platform::open(path, false)
+        .map_err(|_| std::io::Error::other("unauthorized-selection"));
+    #[cfg(not(target_os = "macos"))]
+    let opened = OpenOptions::new().read(true).open(path);
+    let mut file = opened.map_err(|_| {
         CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::ExecutionRead)
     })?;
+    #[cfg(target_os = "macos")]
+    let stamp = source::capture::platform::stamp(&file).map_err(map_read)?;
     let mut bytes = Vec::new();
-    file.take(1024 * 1024 + 1)
+    (&mut file)
+        .take(1024 * 1024 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| {
             CommandError::simple(CommandErrorCode::StorageFailed, CommandStage::ExecutionRead)
         })?;
+    #[cfg(target_os = "macos")]
+    source::capture::platform::verify_file(
+        &file,
+        &source::capture::platform::system_path(path),
+        stamp,
+    )
+    .map_err(map_read)?;
     if bytes.len() > 1024 * 1024 {
         return Err(CommandError::simple(
             CommandErrorCode::LimitExceeded,
@@ -498,9 +531,70 @@ fn replace_file(source: &Path, target: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn replace_file(_: &Path, _: &Path) -> std::io::Result<()> {
     Err(std::io::Error::other("unsupported-platform"))
+}
+
+#[cfg(target_os = "macos")]
+fn commit_macos(
+    directory: &File,
+    source: &Path,
+    target: &Path,
+    overwrite: bool,
+) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    let name = |path: &Path| {
+        source::capture::platform::name(path.file_name().unwrap())
+            .map_err(|_| std::io::Error::other("invalid-name"))
+    };
+    let from = name(source)?;
+    let to = name(target)?;
+    // Both names belong to the same verified directory. EXCL prevents overwriting
+    // a file created after an absent-target preview.
+    if unsafe {
+        libc::renameatx_np(
+            directory.as_raw_fd(),
+            from.as_ptr(),
+            directory.as_raw_fd(),
+            to.as_ptr(),
+            if overwrite { 0 } else { libc::RENAME_EXCL },
+        )
+    } == -1
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    directory.sync_all()
+}
+
+#[cfg(target_os = "macos")]
+fn create_macos_output(directory: &File, name: &std::ffi::OsStr) -> std::io::Result<File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let name =
+        source::capture::platform::name(name).map_err(|_| std::io::Error::other("invalid-name"))?;
+    // Fresh owner-only output in the held destination directory.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    if fd == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+#[cfg(target_os = "macos")]
+fn remove_macos_output(directory: &File, name: &std::ffi::OsStr) {
+    use std::os::fd::AsRawFd;
+    if let Ok(name) = source::capture::platform::name(name) {
+        // Only the fresh task-owned temporary name in this held directory.
+        unsafe {
+            libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0);
+        }
+    }
 }
 
 fn export_one(
@@ -519,6 +613,8 @@ fn export_one_with_digest(
     overwrite: bool,
     digest: impl Fn(&Path) -> Result<Option<String>, CommandError>,
 ) -> Result<DeliveryFile, CommandError> {
+    #[cfg(target_os = "macos")]
+    let directory = source::capture::platform::open(i18n, true).map_err(map_adopt)?;
     let name = delivery_name(&file.file_name)?;
     let target = i18n.join(name);
     let current = digest(&target)?;
@@ -544,22 +640,28 @@ fn export_one_with_digest(
         ));
     }
     let temporary = i18n.join(format!(".tsumugi-{}.tmp", ExecutionId::new()));
-    let mut output = OpenOptions::new()
+    #[cfg(target_os = "macos")]
+    let opened = create_macos_output(&directory, temporary.file_name().unwrap());
+    #[cfg(not(target_os = "macos"))]
+    let opened = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&temporary)
-        .map_err(|_| {
-            CommandError::simple(
-                CommandErrorCode::StorageFailed,
-                CommandStage::ExecutionAdopt,
-            )
-        })?;
+        .open(&temporary);
+    let mut output = opened.map_err(|_| {
+        CommandError::simple(
+            CommandErrorCode::StorageFailed,
+            CommandStage::ExecutionAdopt,
+        )
+    })?;
     let write = output.write_all(bytes).and_then(|_| output.sync_all());
     drop(output);
     let temporary_digest = digest(&temporary);
     if write.is_err()
         || !matches!(temporary_digest, Ok(Some(ref value)) if value == &file.expected_sha256)
     {
+        #[cfg(target_os = "macos")]
+        remove_macos_output(&directory, temporary.file_name().unwrap());
+        #[cfg(not(target_os = "macos"))]
         let _ = fs::remove_file(&temporary);
         return Err(CommandError::simple(
             CommandErrorCode::StorageFailed,
@@ -568,6 +670,9 @@ fn export_one_with_digest(
     }
     let fresh = digest(&target);
     if !matches!(&fresh, Ok(value) if value == &current) {
+        #[cfg(target_os = "macos")]
+        remove_macos_output(&directory, temporary.file_name().unwrap());
+        #[cfg(not(target_os = "macos"))]
         let _ = fs::remove_file(&temporary);
         return Err(match fresh {
             Ok(_) => CommandError::simple(
@@ -577,15 +682,42 @@ fn export_one_with_digest(
             Err(error) => error,
         });
     }
+    #[cfg(target_os = "macos")]
+    let commit = if source::capture::platform::final_path(&directory)
+        .ok()
+        .as_deref()
+        == Some(source::capture::platform::system_path(i18n).as_path())
+    {
+        commit_macos(&directory, &temporary, &target, current.is_some())
+    } else {
+        Err(std::io::Error::other("destination-changed"))
+    };
+    #[cfg(not(target_os = "macos"))]
     let commit = if current.is_some() {
         replace_file(&temporary, &target)
     } else {
         fs::rename(&temporary, &target)
     };
     if commit.is_err() {
+        #[cfg(target_os = "macos")]
+        remove_macos_output(&directory, temporary.file_name().unwrap());
+        #[cfg(not(target_os = "macos"))]
         let _ = fs::remove_file(&temporary);
     }
     let observed = digest(&target);
+    #[cfg(target_os = "macos")]
+    let observed = if source::capture::platform::final_path(&directory)
+        .ok()
+        .as_deref()
+        == Some(source::capture::platform::system_path(i18n).as_path())
+    {
+        observed
+    } else {
+        Err(CommandError::simple(
+            CommandErrorCode::OutcomeUnknown,
+            CommandStage::ExecutionAdopt,
+        ))
+    };
     let state = match &observed {
         Ok(Some(value)) if value == &file.expected_sha256 => DeliveryFileState::Succeeded,
         Ok(_) if commit.is_err() => DeliveryFileState::Failed,
@@ -716,6 +848,11 @@ pub async fn export_release(
                 } else {
                     root.clone()
                 };
+                #[cfg(target_os = "macos")]
+                if i18n != root {
+                    selection.ensure_i18n_directory().map_err(map_adopt)?;
+                }
+                #[cfg(not(target_os = "macos"))]
                 if !i18n.exists() {
                     fs::create_dir(&i18n).map_err(|_| {
                         CommandError::simple(
@@ -930,7 +1067,7 @@ mod contracts {
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     use super::*;
     #[test]
@@ -1084,5 +1221,44 @@ mod tests {
         let missing = observe_delivery_files(&i18n, vec![result]).unwrap();
         assert_eq!(missing[0].state, DeliveryFileState::Failed);
         assert!(missing[0].actual_sha256.is_none());
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_export_preserves_late_files_and_rejects_linked_targets() {
+        use std::{cell::Cell, os::unix::fs::symlink};
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"verified";
+        let file = PreviewFile {
+            locale: "zh-CN".into(),
+            file_name: "zh-CN.vtt".into(),
+            expected_sha256: artifact_digest(bytes),
+            current_sha256: None,
+            state: DeliveryPreviewState::Absent,
+        };
+        let target = root.path().join("zh-CN.vtt");
+        let calls = Cell::new(0);
+        let result = export_one_with_digest(root.path(), &file, bytes, false, |path| {
+            let result = current_digest(path);
+            if path == target {
+                calls.set(calls.get() + 1);
+                if calls.get() == 2 {
+                    fs::write(&target, b"external update").unwrap();
+                }
+            }
+            result
+        })
+        .unwrap();
+        assert_eq!(result.state, DeliveryFileState::Failed);
+        assert_eq!(fs::read(&target).unwrap(), b"external update");
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("protected"), b"protected").unwrap();
+        fs::remove_file(&target).unwrap();
+        symlink(outside.path().join("protected"), &target).unwrap();
+        assert!(export_one(root.path(), &file, bytes, true).is_err());
+        assert_eq!(
+            fs::read(outside.path().join("protected")).unwrap(),
+            b"protected"
+        );
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
     }
 }

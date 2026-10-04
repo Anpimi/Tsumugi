@@ -115,7 +115,7 @@ Long-running or domain-specific operations can run outside the Core through boun
 
 ## Development
 
-The first desktop scaffold targets Windows x64 and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime.
+The desktop supports Windows x64 and macOS (Apple Silicon and Intel build targets), and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime. The macOS build requires Xcode Command Line Tools and uses the system WKWebView. Install the platform prerequisites from the [Tauri guide](https://v2.tauri.app/start/prerequisites/). macOS application bundles target macOS 11 or later; each architecture must be built with its corresponding Rust target.
 
 Project lifecycle, command error, change notification, execution, source content, translation, resource, review, release, AI and Arena DTOs use the Rust/Serde definitions as their wire source. After changing these definitions, run `pnpm --dir apps/desktop generate:contracts`; `pnpm --dir apps/desktop check:contracts` verifies that the checked-in schemas, TypeScript types and precompiled validators are current. Generation is partitioned by domain; add `--domain=project`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai` or `--domain=arena` for a focused update or check. The optional `wire-schema` Cargo feature is used for generation; the application does not compile schemas dynamically. AI display counters use exact decimal strings; their persisted execution inputs and results retain their original representation.
 
@@ -138,9 +138,18 @@ For a standalone Windows executable without an installer, run:
 pnpm --dir apps/desktop tauri build --no-bundle
 ```
 
+For a macOS application bundle, run on a Mac:
+
+```text
+pnpm --dir apps/desktop tauri build
+open target/release/bundle/macos/Tsumugi.app
+```
+
+The platform configuration bundles the current architecture as a `.app`. Apple Silicon has been verified with a native build and local project workflow. To build Intel on Apple Silicon, install the Rust `x86_64-apple-darwin` target and pass `--target x86_64-apple-darwin`; the Intel build and macOS 11 runtime have not yet been verified. Code signing, notarization, and distributing a release are separate operations. Development builds can run with `pnpm --dir apps/desktop tauri dev`.
+
 Launch `target/release/tsumugi-desktop.exe` directly. This build embeds the frontend and does not need a development server or console window. The Microsoft Edge WebView2 Runtime is still required. `tauri dev` and debug builds retain the development console.
 
-The desktop workbench suppresses page reload, browser navigation, printing, page-source and page-save shortcuts so they cannot bypass the editing workflow. Ctrl+S still belongs to the active editor. Text fields retain their native editing menus; other text can be selected and copied with Ctrl+C. The navigation and toolbar stay in place while the workspace scrolls.
+The desktop workbench suppresses page reload, browser navigation, printing, page-source and page-save shortcuts so they cannot bypass the editing workflow. Ctrl+S (Command+S on macOS) still belongs to the active editor. Text fields retain their native editing menus; other text can be selected and copied with Ctrl+C or Command+C. The navigation and toolbar stay in place while the workspace scrolls.
 
 The desktop shell supports creating, opening, renaming, closing, and reconciling local projects, adding target locales, importing source content, managing translation revisions, working with project terminology and context, reviewing current translations, and building verified SMAPI language files for local export. These operations use Tauri commands.
 

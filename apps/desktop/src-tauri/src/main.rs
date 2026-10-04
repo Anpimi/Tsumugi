@@ -16,6 +16,16 @@ fn main() {
 }
 
 #[cfg(test)]
+fn ipc_test_url() -> &'static str {
+    // Match the native custom-protocol origin so Tauri's ACL remains active.
+    if cfg!(windows) {
+        "http://tauri.localhost"
+    } else {
+        "tauri://localhost"
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
@@ -36,7 +46,7 @@ mod tests {
             cmd: command.to_owned(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: "http://tauri.localhost".parse().unwrap(),
+            url: crate::ipc_test_url().parse().unwrap(),
             body: InvokeBody::Json(body),
             headers: Default::default(),
             invoke_key: tauri::test::INVOKE_KEY.to_owned(),

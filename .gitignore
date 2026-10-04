@@ -12,3 +12,6 @@ apps/desktop/src-tauri/gen/
 # Local tooling noise
 *.log
 .DS_Store
+
+# Local Git worktrees
+/.worktrees/
