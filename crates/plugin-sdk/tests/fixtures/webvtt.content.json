@@ -42,6 +42,17 @@
                   "id": "example.webvtt.identity",
                   "schemaVersion": 1,
                   "behaviorVersion": 1
+                },
+                "display": {
+                  "value": "cue-1",
+                  "source": {
+                    "artifactId": "source-artifact",
+                    "range": {
+                      "encoding": "utf8-byte",
+                      "start": 10,
+                      "end": 15
+                    }
+                  }
                 }
               }
             }

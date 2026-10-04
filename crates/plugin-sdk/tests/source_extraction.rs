@@ -30,7 +30,14 @@ fn public_contracts_have_one_exact_schema_and_behavior_identity() {
         ),
     ] {
         assert_eq!(reference.id, id);
-        assert_eq!(reference.schema_version, 1);
+        assert_eq!(
+            reference.schema_version,
+            if id == CONTENT_EXCHANGE_SCHEMA_ID {
+                2
+            } else {
+                1
+            }
+        );
         assert_eq!(reference.behavior_version, 1);
     }
     assert_ne!(source_extraction_input_contract(), input().profile);
@@ -134,6 +141,15 @@ fn extraction_rejects_other_valid_material_and_recomputed_digests() {
             5 => {
                 exchange.artifacts[0].id = "another-artifact".into();
                 exchange.units[0].occurrences[0].source.artifact_id = "another-artifact".into();
+                exchange.units[0].occurrences[0]
+                    .native_identity
+                    .as_mut()
+                    .unwrap()
+                    .display
+                    .source
+                    .as_mut()
+                    .unwrap()
+                    .artifact_id = "another-artifact".into();
             }
             6 => {
                 exchange.artifacts[0].utf8.push('\n');
@@ -244,6 +260,132 @@ fn public_errors_are_finite_strict_and_byte_bounded() {
     );
 }
 
+fn semantic_input() -> SourceExtractionCheckInput {
+    let document = parse_exchange(include_bytes!("fixtures/checks.set.json")).unwrap();
+    let ExchangeBody::CheckSet(set) = &document.document().body else {
+        panic!()
+    };
+    let mut requirement = set
+        .requirements
+        .iter()
+        .find(|r| matches!(r.key.implementation, CheckImplementation::Plugin { .. }))
+        .unwrap()
+        .clone();
+    requirement.targets = vec!["source-set".into()];
+    SourceExtractionCheckInput {
+        source: input(),
+        proposal: content(CONTENT),
+        requirements: vec![requirement],
+    }
+}
+
+#[test]
+fn semantic_request_keeps_fixed_selection_and_requires_complete_nonwaivable_scope() {
+    let captured = semantic_input();
+    assert_eq!(
+        parse_source_extraction_check_input(&serde_json::to_vec(&captured).unwrap()).unwrap(),
+        captured
+    );
+    for case in 0..8 {
+        let mut request = captured.clone();
+        match case {
+            0 => request.requirements.clear(),
+            1 => request.requirements.push(request.requirements[0].clone()),
+            2 => request.requirements[0].mandatory = false,
+            3 => request.requirements[0].waivable = true,
+            4 => request.requirements[0].targets = vec!["other-set".into()],
+            5 => {
+                request.requirements[0].not_applicable = Some(NotApplicableBasis {
+                    code: "skip".into(),
+                    basis_digest: "a".repeat(64),
+                })
+            }
+            6 => {
+                request.requirements[0].key.implementation = CheckImplementation::Core {
+                    validator: source_extraction_input_contract(),
+                }
+            }
+            _ => request.proposal.source_language = "zh-CN".into(),
+        }
+        assert!(request.validate().is_err(), "case {case}");
+    }
+    let mut value = serde_json::to_value(&captured).unwrap();
+    value["requirements"][0]["key"]["implementation"]["provider"]["activeInstance"] =
+        json!("untrusted-channel");
+    assert!(parse_source_extraction_check_input(&serde_json::to_vec(&value).unwrap()).is_err());
+    // Coverage does not turn a completed check with a blocker into approval.
+    let r = &captured.requirements[0];
+    let results = vec![CheckResult {
+        key: r.key.clone(),
+        input_digest: r.input_digest.clone(),
+        scope_digest: r.scope_digest.clone(),
+        covered_targets: r.targets.clone(),
+        outcome: CheckOutcome::Completed {
+            findings: vec![CheckFinding {
+                code: "source-mismatch".into(),
+                target: "source-set".into(),
+                severity: FindingSeverity::Error,
+            }],
+        },
+    }];
+    assert_eq!(
+        parse_check_results(&serde_json::to_vec(&results).unwrap()).unwrap(),
+        results
+    );
+}
+
+#[test]
+fn display_evidence_is_required_and_all_ranges_reference_captured_unicode_boundaries() {
+    let c = content(CONTENT);
+    let raw = serde_json::to_vec(&c).unwrap();
+    assert_eq!(parse_content_exchange(&raw).unwrap(), c);
+    for case in 0..6 {
+        let mut value = serde_json::to_value(&c).unwrap();
+        let identity = &mut value["units"][0]["occurrences"][0]["nativeIdentity"];
+        match case {
+            0 => {
+                identity.as_object_mut().unwrap().remove("display");
+            }
+            1 => {
+                identity["display"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("source");
+            }
+            2 => identity["display"]["value"] = json!(""),
+            3 => identity["display"]["source"]["artifactId"] = json!("uncaptured"),
+            4 => identity["display"]["source"]["range"]["start"] = json!(49), // middle of Chinese UTF-8
+            _ => identity["value"] = json!("contains\0nul"),
+        }
+        assert!(
+            parse_content_exchange(&serde_json::to_vec(&value).unwrap()).is_err(),
+            "case {case}"
+        );
+    }
+    let duplicate = String::from_utf8(raw).unwrap().replacen(
+        "\"sourceSetId\":\"source-set\"",
+        "\"sourceSetId\":\"source-set\",\"sourceSetId\":\"other\"",
+        1,
+    );
+    assert!(parse_content_exchange(duplicate.as_bytes()).is_err());
+}
+
+#[test]
+fn revision_policy_is_unique_versioned_capture_and_does_not_interpret_payloads() {
+    let c = content(CONTENT);
+    let mut policy = SourceRevisionPolicy {
+        profile: c.profile.clone(),
+        revision_basis: vec![c.domain_blocks[0].schema.clone()],
+    };
+    policy.validate().unwrap();
+    policy.revision_basis.push(policy.revision_basis[0].clone());
+    assert!(policy.validate().is_err());
+    policy.revision_basis.clear();
+    policy.validate().unwrap(); // profiles whose text alone defines the revision
+    policy.profile.schema_version = 0;
+    assert!(policy.validate().is_err());
+}
+
 #[cfg(feature = "schema")]
 #[test]
 fn generated_type_catalog_includes_content_source_and_text_contracts() {
@@ -259,6 +401,12 @@ fn generated_type_catalog_includes_content_source_and_text_contracts() {
         "ContentOccurrence",
         "SourceReference",
         "NativeIdentityEvidence",
+        "NativeIdentityDisplay",
+        "SourceRevisionPolicy",
+        "SourceExtractionCheckInput",
+        "CheckRequirement",
+        "CheckResult",
+        "ProviderSelectionBinding",
         "ProtectedFragment",
         "ContentRelation",
         "DomainBlock",

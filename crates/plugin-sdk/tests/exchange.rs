@@ -49,7 +49,7 @@ fn requirement(plugin: bool) -> CheckRequirement {
             }),
             implementation: if plugin {
                 CheckImplementation::Plugin {
-                    provider: request().provider,
+                    provider: request().provider.selection(),
                 }
             } else {
                 CheckImplementation::Core {

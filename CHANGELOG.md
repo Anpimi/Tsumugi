@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental source checks capture required rules and the selected package before execution, using the existing check-result coverage contract. Content schema 2 retains original identity display evidence separately from canonical matching; a captured revision policy selects opaque domain evidence. Earlier experimental shapes are refused without conversion, within the same undistributed SDK alpha batch.
+
 - Public source-extraction SDK inputs bind the selected profile and original captured artifacts to generic content proposals. Generated JavaScript content types share the Rust definitions; structural association does not replace domain validation or project adoption. Public package inspection fingerprints a prebuilt candidate through the Host's bounded capture owner without running code or granting installation, publisher or execution approval.
 
 - Experimental standalone plugin declaration SDK and schema/validation harness, with explicit contribution owners, exact schema/profile behavior identities, requested permissions and deterministic provider choice. Three-layer content exchange retains raw UTF-8 material and opaque domain data, distinguishes byte/UTF-16/grapheme ranges, correlates results with captured requests and independent channel bindings, and preserves mandatory check coverage. Captured runtime descriptions identify exact tool and Host artifacts with an SDK-owned environment digest; the initial Node profile requires an independently verified distribution using platform system libraries. These data checks do not capture or load a runtime, activate plugins, grant authority or establish accepted project writes.

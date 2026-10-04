@@ -26,16 +26,36 @@ pub struct SourceReference {
     pub range: TextRange,
 }
 
+/// Domain-confirmed spelling for presentation, separate from canonical
+/// matching. A source reference is optional when the identity is derived.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct NativeIdentityDisplay {
+    pub value: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(required, schema_with = "identity_display_source_schema")
+    )]
+    pub source: Option<SourceReference>,
+}
+
+#[cfg(feature = "schema")]
+fn identity_display_source_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<Option<SourceReference>>()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NativeIdentityEvidence {
     pub namespace: String,
     /// The domain's canonical matching value, not necessarily its original
-    /// literal spelling. Literal identity and semantic revision evidence belong
-    /// in versioned domain blocks; Core does not normalize this value again.
+    /// literal spelling. Core does not normalize this value again.
     pub value: String,
     pub policy: ContractRef,
+    pub display: NativeIdentityDisplay,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,26 +198,17 @@ impl ContentExchange {
                     ));
                 }
                 count(occurrences.len(), "content.occurrences")?;
-                let artifact = self
-                    .artifacts
-                    .iter()
-                    .find(|a| a.id == occurrence.source.artifact_id)
-                    .ok_or_else(|| {
-                        ContractError::at(
-                            ContractErrorCode::InvalidDeclaration,
-                            "content.source.artifactId",
-                        )
-                    })?;
-                convert_text_range(
-                    &artifact.utf8,
-                    occurrence.source.range,
-                    TextEncoding::Utf8Byte,
-                )?;
+                validate_source_reference(&self.artifacts, &occurrence.source)?;
                 if let Some(identity) = &occurrence.native_identity {
                     if identity.namespace.is_empty()
                         || identity.namespace.len() > 256
+                        || identity.namespace.contains('\0')
                         || identity.value.is_empty()
                         || identity.value.len() > 1024
+                        || identity.value.contains('\0')
+                        || identity.display.value.is_empty()
+                        || identity.display.value.len() > 1024
+                        || identity.display.value.contains('\0')
                     {
                         return Err(ContractError::at(
                             ContractErrorCode::InvalidDeclaration,
@@ -205,6 +216,9 @@ impl ContentExchange {
                         ));
                     }
                     reference(&identity.policy, "content.nativeIdentity.policy")?;
+                    if let Some(source) = &identity.display.source {
+                        validate_source_reference(&self.artifacts, source)?;
+                    }
                 }
             }
             for fragment in &unit.protected_fragments {
@@ -282,6 +296,23 @@ impl ContentExchange {
         }
         Ok(())
     }
+}
+
+fn validate_source_reference(
+    artifacts: &[CapturedTextArtifact],
+    source: &SourceReference,
+) -> Result<(), ContractError> {
+    let artifact = artifacts
+        .iter()
+        .find(|artifact| artifact.id == source.artifact_id)
+        .ok_or_else(|| {
+            ContractError::at(
+                ContractErrorCode::InvalidDeclaration,
+                "content.source.artifactId",
+            )
+        })?;
+    convert_text_range(&artifact.utf8, source.range, TextEncoding::Utf8Byte)?;
+    Ok(())
 }
 
 /// One source-material validator shared by captured input and extracted content.

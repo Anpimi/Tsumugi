@@ -62,6 +62,15 @@ the application and SDK version sources therefore remain unchanged.
 
 ## Choosing the next version
 
+The source-check SDK additions remain in the same undistributed SDK alpha.1
+batch. Content output schema 2 requires original identity display evidence;
+plugin check keys now capture package selection separately from active channel
+identity. These experimental wire shapes are deliberately incompatible with
+earlier development snapshots; there is no automatic conversion. The source,
+error and new check payload schemas and process frames retain their independent
+identities. SDK metadata therefore remains `0.1.0-alpha.1`; actual producer
+commits and artifact digests distinguish internal consumer snapshots.
+
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
 
 | Situation | Version choice |

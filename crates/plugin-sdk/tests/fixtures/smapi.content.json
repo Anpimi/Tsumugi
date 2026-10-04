@@ -49,6 +49,10 @@
                   "id": "example.smapi.identity",
                   "schemaVersion": 1,
                   "behaviorVersion": 1
+                },
+                "display": {
+                  "value": "hello",
+                  "source": null
                 }
               }
             }
@@ -77,6 +81,10 @@
                   "id": "example.smapi.identity",
                   "schemaVersion": 1,
                   "behaviorVersion": 1
+                },
+                "display": {
+                  "value": "escaped",
+                  "source": null
                 }
               }
             }

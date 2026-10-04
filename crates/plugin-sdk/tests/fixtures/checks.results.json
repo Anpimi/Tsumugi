@@ -47,9 +47,7 @@
               },
               "componentId": "domain-worker",
               "contributionId": "extract-source",
-              "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-              "instanceId": "instance-a",
-              "activationGeneration": 1
+              "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             }
           }
         },

@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Array_of_CheckResult",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/CheckResult"
+  },
+  "$defs": {
+    "CheckFinding": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/FindingSeverity"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "target",
+        "severity"
+      ]
+    },
+    "CheckImplementation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "core"
+            },
+            "validator": {
+              "$ref": "#/$defs/ContractRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "validator"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plugin"
+            },
+            "provider": {
+              "$ref": "#/$defs/ProviderSelectionBinding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "provider"
+          ]
+        }
+      ]
+    },
+    "CheckKey": {
+      "type": "object",
+      "properties": {
+        "implementation": {
+          "$ref": "#/$defs/CheckImplementation"
+        },
+        "rule": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "implementation"
+      ]
+    },
+    "CheckOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "findings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CheckFinding"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "findings"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "basis": {
+              "$ref": "#/$defs/NotApplicableBasis"
+            },
+            "kind": {
+              "type": "string",
+              "const": "not-applicable"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "basis"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "CheckResult": {
+      "type": "object",
+      "properties": {
+        "coveredTargets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputDigest": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/CheckKey"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CheckOutcome"
+        },
+        "scopeDigest": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "inputDigest",
+        "scopeDigest",
+        "coveredTargets",
+        "outcome"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "FindingSeverity": {
+      "type": "string",
+      "enum": [
+        "warning",
+        "error"
+      ]
+    },
+    "NotApplicableBasis": {
+      "description": "A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.",
+      "type": "object",
+      "properties": {
+        "basisDigest": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "basisDigest"
+      ]
+    },
+    "PluginIdentity": {
+      "description": "Claimed package identity; a host must authenticate the actual package source.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "publisher",
+        "id",
+        "version"
+      ]
+    },
+    "ProviderSelectionBinding": {
+      "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+      "type": "object",
+      "properties": {
+        "componentId": {
+          "type": "string"
+        },
+        "contributionId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "contributionId",
+        "packageDigest"
+      ]
+    }
+  }
+}

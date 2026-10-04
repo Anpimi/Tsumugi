@@ -93,7 +93,7 @@
               "const": "plugin"
             },
             "provider": {
-              "$ref": "#/$defs/ProviderBinding"
+              "$ref": "#/$defs/ProviderSelectionBinding"
             }
           },
           "additionalProperties": false,
@@ -843,9 +843,36 @@
         "outcome"
       ]
     },
+    "NativeIdentityDisplay": {
+      "description": "Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "source"
+      ]
+    },
     "NativeIdentityEvidence": {
       "type": "object",
       "properties": {
+        "display": {
+          "$ref": "#/$defs/NativeIdentityDisplay"
+        },
         "namespace": {
           "type": "string"
         },
@@ -853,7 +880,7 @@
           "$ref": "#/$defs/ContractRef"
         },
         "value": {
-          "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Literal identity and semantic revision evidence belong\nin versioned domain blocks; Core does not normalize this value again.",
+          "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.",
           "type": "string"
         }
       },
@@ -861,7 +888,8 @@
       "required": [
         "namespace",
         "value",
-        "policy"
+        "policy",
+        "display"
       ]
     },
     "NotApplicableBasis": {
@@ -952,6 +980,31 @@
         "packageDigest",
         "instanceId",
         "activationGeneration"
+      ]
+    },
+    "ProviderSelectionBinding": {
+      "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+      "type": "object",
+      "properties": {
+        "componentId": {
+          "type": "string"
+        },
+        "contributionId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "contributionId",
+        "packageDigest"
       ]
     },
     "RequiredCheckSet": {

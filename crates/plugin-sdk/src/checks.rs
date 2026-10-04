@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum CheckImplementation {
     Core { validator: ContractRef },
-    Plugin { provider: ProviderBinding },
+    Plugin { provider: ProviderSelectionBinding },
 }
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -71,7 +71,7 @@ fn targets(values: &[String]) -> Result<(), ContractError> {
     Ok(())
 }
 impl CheckRequirement {
-    fn validate(&self) -> Result<(), ContractError> {
+    pub(crate) fn validate(&self) -> Result<(), ContractError> {
         self.key.validate()?;
         digest(&self.input_digest, "checks.inputDigest")?;
         digest(&self.scope_digest, "checks.scopeDigest")?;

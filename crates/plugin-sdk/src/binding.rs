@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// A fixed package/contribution choice, independent of any active instance.
 /// Its digest is supplied by the trusted package owner; this value neither
 /// authenticates those bytes nor grants permission to load or call them.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ProviderSelectionBinding {

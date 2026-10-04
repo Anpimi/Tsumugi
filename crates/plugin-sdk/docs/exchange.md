@@ -32,8 +32,9 @@ The host's existing locale owner validates supported canonical language values;
 the SDK only bounds their wire labels.
 
 Native identity `value` is the domain-provided canonical matching value, not
-necessarily the original literal. Literal identity and semantic revision basis
-remain in versioned domain blocks. Core must not normalize that value again or
+necessarily the original literal. Required display evidence retains original
+spelling with a captured reference or explicit null. Semantic revision basis
+uses versioned domain blocks selected by a separately captured policy. Core must not normalize that value again or
 accept operation-local extraction revision references as authoritative project
 revisions. The [source extraction contract](source-extraction.md) fixes raw
 material separately from a proposed `ContentExchange`.

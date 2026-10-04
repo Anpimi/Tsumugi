@@ -7,6 +7,7 @@ import { isAbsolute, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import validateSourceInput from '../javascript/validate-source-extraction-input.mjs';
+import validateSourceCheck from '../javascript/validate-source-extraction-check-input.mjs';
 
 // A caller supplies the already-built SDK harness. This test never installs or
 // builds dependencies and operates only on public fixtures and its own tempdir.
@@ -77,9 +78,38 @@ test('committed source schemas stay current with the Rust schema owner', () => {
   for (const [command, file] of [
     ['check-source-extraction-input-schema', 'source-extraction-input.schema.json'],
     ['check-source-extraction-error-schema', 'source-extraction-error.schema.json'],
+    ['check-source-extraction-check-input-schema', 'source-extraction-check-input.schema.json'],
+    ['check-check-results-schema', 'check-results.schema.json'],
     ['check-content-types-schema', 'content-types.schema.json'],
   ]) {
     const path = fileURLToPath(new URL(`../schemas/${file}`, import.meta.url));
     invoke(command, path);
+  }
+});
+
+test('source check schema retains selected identity and the Rust receiver fixes mandatory scope', () => {
+  const source = readJSON(fixture('source-extraction.input.json'));
+  const proposal = readJSON(fixture('webvtt.content.json')).body.data;
+  const requirement = readJSON(fixture('checks.set.json')).body.data.requirements.find(r => r.key.implementation.kind === 'plugin');
+  requirement.targets = [source.sourceSetId];
+  const input = { source, proposal, requirements: [requirement] };
+  assert.equal(validateSourceCheck(input), true);
+  const temporary = mkdtempSync(join(tmpdir(), 'tsumugi-source-check-contract-'));
+  try {
+    const capture = join(temporary, 'input.json');
+    writeFileSync(capture, JSON.stringify(input));
+    assert.deepEqual(JSON.parse(invoke('validate-source-extraction-check-input', capture)), input);
+    delete proposal.units[0].occurrences[0].nativeIdentity.display.source;
+    assert.equal(validateSourceCheck(input), false);
+    proposal.units[0].occurrences[0].nativeIdentity.display.source = null;
+    requirement.waivable = true;
+    assert.equal(validateSourceCheck(input), true); // policy semantics belong to Rust
+    writeFileSync(capture, JSON.stringify(input));
+    assert.throws(() => invoke('validate-source-extraction-check-input', capture));
+    requirement.waivable = false;
+    requirement.key.implementation.provider.activeInstance = 'claim';
+    assert.equal(validateSourceCheck(input), false);
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
   }
 });

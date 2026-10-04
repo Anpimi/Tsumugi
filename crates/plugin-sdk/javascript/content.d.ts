@@ -27,6 +27,46 @@ export type ContentTarget =
  */
 export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 /**
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "CheckImplementation".
+ */
+export type CheckImplementation =
+  | {
+      kind: "core";
+      validator: ContractRef;
+    }
+  | {
+      kind: "plugin";
+      provider: ProviderSelectionBinding;
+    };
+/**
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "CheckOutcome".
+ */
+export type CheckOutcome =
+  | {
+      findings: CheckFinding[];
+      kind: "completed";
+    }
+  | {
+      basis: NotApplicableBasis;
+      kind: "not-applicable";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "unavailable";
+    };
+/**
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "FindingSeverity".
+ */
+export type FindingSeverity = "warning" | "error";
+/**
  * Finite public failure classifications; details never determine permissions.
  *
  * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
@@ -36,9 +76,25 @@ export type SourceExtractionErrorCode =
   "invalid-input" | "unsupported-profile" | "invalid-source" | "unsupported-structure" | "limit-exceeded" | "cancelled";
 
 export interface SourceExtractionTypes {
+  check_input: SourceExtractionCheckInput;
+  check_results: CheckResult[];
   content: ContentExchange;
   error: SourceExtractionError;
   input: SourceExtractionInput;
+  revision_policy: SourceRevisionPolicy;
+}
+/**
+ * A domain checker receives captured source and the complete proposal, with
+ * requirements fixed independently by its caller. Receiving these values does
+ * not authenticate the selected provider or authorize adoption.
+ *
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "SourceExtractionCheckInput".
+ */
+export interface SourceExtractionCheckInput {
+  proposal: ContentExchange;
+  requirements: CheckRequirement[];
+  source: SourceExtractionInput;
 }
 /**
  * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
@@ -139,13 +195,24 @@ export interface ContentOccurrence {
  * via the `definition` "NativeIdentityEvidence".
  */
 export interface NativeIdentityEvidence {
+  display: NativeIdentityDisplay;
   namespace: string;
   policy: ContractRef;
   /**
    * The domain's canonical matching value, not necessarily its original
-   * literal spelling. Literal identity and semantic revision evidence belong
-   * in versioned domain blocks; Core does not normalize this value again.
+   * literal spelling. Core does not normalize this value again.
    */
+  value: string;
+}
+/**
+ * Domain-confirmed spelling for presentation, separate from canonical
+ * matching. A source reference is optional when the identity is derived.
+ *
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "NativeIdentityDisplay".
+ */
+export interface NativeIdentityDisplay {
+  source: SourceReference | null;
   value: string;
 }
 /**
@@ -184,17 +251,61 @@ export interface TextRange1 {
   start: number;
 }
 /**
- * A bounded public diagnostic. Producers must use public descriptions and
- * captured artifact IDs, never local paths, raw source text or secrets. Data
- * validation cannot establish that arbitrary diagnostic text is safe to share.
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "CheckRequirement".
+ */
+export interface CheckRequirement {
+  inputDigest: string;
+  key: CheckKey;
+  mandatory: boolean;
+  notApplicable?: NotApplicableBasis | null;
+  scopeDigest: string;
+  targets: string[];
+  waivable: boolean;
+}
+/**
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "CheckKey".
+ */
+export interface CheckKey {
+  implementation: CheckImplementation;
+  rule: ContractRef;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
  *
  * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
- * via the `definition` "SourceExtractionError".
+ * via the `definition` "ProviderSelectionBinding".
  */
-export interface SourceExtractionError {
-  artifactId?: string | null;
-  code: SourceExtractionErrorCode;
-  detail: string;
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ *
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "PluginIdentity".
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * A trusted capture of an allowed reason and its exact scope basis, not a
+ * plugin's claim that it is safe to skip a required check.
+ *
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "NotApplicableBasis".
+ */
+export interface NotApplicableBasis {
+  basisDigest: string;
+  code: string;
 }
 /**
  * Raw captured UTF-8 material supplied for one selected extraction profile.
@@ -209,4 +320,48 @@ export interface SourceExtractionInput {
   profile: ContractRef;
   sourceLanguage: string;
   sourceSetId: string;
+}
+/**
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "CheckResult".
+ */
+export interface CheckResult {
+  coveredTargets: string[];
+  inputDigest: string;
+  key: CheckKey;
+  outcome: CheckOutcome;
+  scopeDigest: string;
+}
+/**
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "CheckFinding".
+ */
+export interface CheckFinding {
+  code: string;
+  severity: FindingSeverity;
+  target: string;
+}
+/**
+ * A bounded public diagnostic. Producers must use public descriptions and
+ * captured artifact IDs, never local paths, raw source text or secrets. Data
+ * validation cannot establish that arbitrary diagnostic text is safe to share.
+ *
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "SourceExtractionError".
+ */
+export interface SourceExtractionError {
+  artifactId?: string | null;
+  code: SourceExtractionErrorCode;
+  detail: string;
+}
+/**
+ * Captured by the trusted policy owner before a proposal is received. Only
+ * these exact block schemas contribute opaque bytes to source revisions.
+ *
+ * This interface was referenced by `SourceExtractionTypes`'s JSON-Schema
+ * via the `definition` "SourceRevisionPolicy".
+ */
+export interface SourceRevisionPolicy {
+  profile: ContractRef;
+  revisionBasis: ContractRef[];
 }
