@@ -338,12 +338,23 @@ pub async fn read_ai_translation(
                     })
                     .collect::<Result<Vec<_>, ExecutionError>>()
                     .map_err(map_ai)?;
+                // Continued attempts share the original plan's charged budget;
+                // a child-only summary would hide prior requests and unknowns.
+                let budget_owner = match input.envelope().automation {
+                    Some(lease) => {
+                        store
+                            .work_plan(lease.plan_id)
+                            .map_err(map_read)?
+                            .execution_input()
+                            .map_err(map_read)?
+                            .task_id
+                    }
+                    None => input.envelope().task_id,
+                };
                 Ok(AiView {
                     plan_id: input.envelope().automation.map(|lease| lease.plan_id),
                     plan_generation: input.envelope().automation.map(|lease| lease.generation),
-                    budget: store
-                        .provider_budget(input.envelope().task_id)
-                        .map_err(map_read)?,
+                    budget: store.provider_budget(budget_owner).map_err(map_read)?,
                     config: settings.config,
                     recipe: settings.recipe,
                     detail,

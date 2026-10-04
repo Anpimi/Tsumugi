@@ -62,6 +62,8 @@ basis. The plan's own checked selections count as progress; a later manual or
 other-plan selection changes the basis and requires a new plan. After initial
 enqueue its returned work is a child of the original task:
 submit it with the returned `parent_task` so all ancestor budgets remain charged.
+The desktop workbench displays the original plan budget across these attempts,
+including earlier request usage and unresolved reservations.
 Control never refunds requests, resets unknown exposure or rolls back committed
 facts. An old action returns its original receipt; use `work_plan_status` for the
 current state. Cancelling an automated root task also stops its plan in the same

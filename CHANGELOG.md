@@ -49,6 +49,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Continued AI work plans display the original shared budget, including prior requests and unresolved exposure, rather than only the new child attempt.
+
 - Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
 
 - IPC validation keeps both primitive integer bounds and narrower declared field constraints.

@@ -1648,7 +1648,7 @@ pub(super) fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), Execut
     })
 }
 #[cfg(test)]
-fn crash_hook(point: &str) {
+pub(in crate::persistence) fn crash_hook(point: &str) {
     if std::env::var("TSUMUGI_EXECUTION_CRASH").as_deref() == Ok(point) {
         if let Ok(path) = std::env::var("TSUMUGI_EXECUTION_HOOK") {
             std::fs::write(path, point).unwrap();

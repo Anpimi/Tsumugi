@@ -49,6 +49,8 @@
 
 ### Fixed
 
+- AI 工作计划继续执行后展示原共享预算，包含此前请求及未解决占用，而不只统计新的子尝试。
+
 - 不受支持的 SQLite 存储设置现在明确拒绝，不再报告为项目损坏；原项目及其设置保留。穷尽匹配错误的 Core Rust 调用方须处理 `UnsupportedStorage`；桌面协议通过 `unsupported-schema` 与 `reason: "storage-mode"` 表示该分类。
 
 - IPC 校验同时保留整数原始类型边界与更窄的字段约束。

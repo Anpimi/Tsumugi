@@ -458,7 +458,11 @@ impl ProjectStore {
             return Err(error(ErrorCode::Cancelled, "work-selection-checks"));
         }
         tx.observer.add_scope(crate::ChangeScope::Project);
+        #[cfg(test)]
+        ledger::crash_hook("work-selection-before-commit");
         ledger::commit(tx)?;
+        #[cfg(test)]
+        ledger::crash_hook("work-selection-after-commit");
         Ok(receipt)
     }
 }
@@ -707,6 +711,151 @@ mod tests {
         store
             .commit_automatic_selection(computed, &cancellation)
             .unwrap()
+    }
+
+    #[test]
+    fn selection_crash_child() {
+        let Ok(directory) = std::env::var("TSUMUGI_SELECTION_PROJECT") else {
+            return;
+        };
+        let mut store = ProjectStore::open(directory).unwrap();
+        let request: AutomaticSelectionRequest = serde_json::from_slice(
+            &fs::read(std::env::var("TSUMUGI_SELECTION_REQUEST").unwrap()).unwrap(),
+        )
+        .unwrap();
+        apply(&mut store, &request);
+        panic!("owned helper did not reach the requested crash boundary");
+    }
+
+    #[test]
+    fn subprocess_selection_commit_is_atomic_and_lost_ack_is_readable_after_pause() {
+        for point in [
+            "work-selection-before-commit",
+            "work-selection-after-commit",
+        ] {
+            let (directory, mut store, project, units) = fixture();
+            let (plan, input) = grant(&mut store, &[units[0]], SelectionPolicy::MissingOnly);
+            let revision = candidate(&mut store, &input, units[0], "你好 {{name}}");
+            let action = request(&input, units[0], revision);
+            let path = store.directory().to_path_buf();
+            let request_path = directory.path().join("selection-request.json");
+            fs::write(&request_path, serde_json::to_vec(&action).unwrap()).unwrap();
+            store.close().unwrap();
+            let hook = directory.path().join("selection-hook");
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "persistence::application::selection::tests::selection_crash_child",
+                    "--nocapture",
+                ])
+                .env("TSUMUGI_SELECTION_PROJECT", &path)
+                .env("TSUMUGI_SELECTION_REQUEST", &request_path)
+                .env("TSUMUGI_EXECUTION_CRASH", point)
+                .env("TSUMUGI_EXECUTION_HOOK", &hook)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("owned selection helper timed out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert!(!status.success());
+            assert_eq!(fs::read_to_string(&hook).unwrap(), point);
+            let mut store = ProjectStore::open(&path).unwrap();
+            let committed = point == "work-selection-after-commit";
+            let count = i64::from(committed);
+            for table in [
+                "translation_selections",
+                "review_checks",
+                "application_selection_actions",
+            ] {
+                let actual: i64 = store
+                    .connection()
+                    .unwrap()
+                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                        row.get(0)
+                    })
+                    .unwrap();
+                assert_eq!(actual, count, "{point}: {table}");
+            }
+            let item = input.envelope().items[0].item_id;
+            assert_eq!(
+                store
+                    .saved_ai_candidate(input.envelope().attempt_id, item)
+                    .unwrap(),
+                Some(revision)
+            );
+            let target = store.review_target(project, units[0], "zh-CN").unwrap();
+            assert_eq!(target.revision_id, committed.then_some(revision));
+            assert_eq!(target.current_check.is_some(), committed);
+            assert!(target.current_decision.is_none());
+            store
+                .control_work_plan(&ControlWorkPlan {
+                    action_id: ExecutionId::new(),
+                    plan_id: plan.plan_id,
+                    expected_generation: action.lease.generation,
+                    command: WorkPlanCommand::Pause,
+                    confirmed: false,
+                    expires_at: None,
+                })
+                .unwrap();
+            let before = fs::read(path.join("project.sqlite3")).unwrap();
+            let receipt = store
+                .automatic_selection_for_candidate(action.lease, revision)
+                .unwrap();
+            assert_eq!(receipt.is_some(), committed);
+            assert_eq!(
+                store.automatic_selection_receipt(action.action_id).unwrap(),
+                receipt
+            );
+            let cancellation = Cancellation::default();
+            if let Some(receipt) = receipt {
+                assert_eq!(receipt.request, action);
+                assert_eq!(receipt.selection.as_ref().unwrap().revision_id, revision);
+                assert_eq!(
+                    target.current_check.unwrap().run_id,
+                    receipt.check_run_id.unwrap()
+                );
+                let computed = store
+                    .prepare_automatic_selection(&action)
+                    .unwrap()
+                    .compute(&cancellation)
+                    .unwrap();
+                assert_eq!(
+                    store
+                        .commit_automatic_selection(computed, &cancellation)
+                        .unwrap(),
+                    receipt
+                );
+                let mut fresh = action.clone();
+                fresh.action_id = ExecutionId::new();
+                assert_eq!(
+                    store.prepare_automatic_selection(&fresh).unwrap_err().code,
+                    ErrorCode::Cancelled
+                );
+            } else {
+                assert_eq!(
+                    store.prepare_automatic_selection(&action).unwrap_err().code,
+                    ErrorCode::Cancelled
+                );
+            }
+            assert_eq!(
+                store.work_plan_status(plan.plan_id).unwrap().state,
+                WorkPlanState::Paused
+            );
+            assert_eq!(fs::read(path.join("project.sqlite3")).unwrap(), before);
+            store.close().unwrap();
+            ProjectStore::open(path).unwrap().close().unwrap();
+        }
     }
 
     #[test]

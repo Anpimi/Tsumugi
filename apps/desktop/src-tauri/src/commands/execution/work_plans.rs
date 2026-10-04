@@ -749,6 +749,12 @@ mod tests {
         text: &'static str,
         gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
     ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_sequence(vec![text], gate)
+    }
+    fn local_provider_sequence(
+        texts: Vec<&'static str>,
+        mut gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+    ) -> (AiConfig, JoinHandle<Value>) {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -759,69 +765,73 @@ mod tests {
             ),
             model: "synthetic-work-effects".into(),
             credential_env: String::new(),
-            max_requests: 1,
+            max_requests: texts.len().try_into().unwrap(),
             timeout_seconds: 2,
             ..AiConfig::default()
         };
         let thread = std::thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(5);
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok((stream, _)) => break stream,
-                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        assert!(Instant::now() < deadline, "provider was never dispatched");
-                        std::thread::sleep(Duration::from_millis(5));
+            let mut last = Value::Null;
+            for text in texts {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "provider was never dispatched");
+                            std::thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("{error}"),
                     }
-                    Err(error) => panic!("{error}"),
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut buffer = [0; 4096];
+                let end = loop {
+                    let size = stream.read(&mut buffer).unwrap();
+                    assert!(size > 0);
+                    bytes.extend_from_slice(&buffer[..size]);
+                    if let Some(index) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
+                        break index + 4;
+                    }
+                };
+                let headers = std::str::from_utf8(&bytes[..end]).unwrap();
+                assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
+                assert!(!headers.to_lowercase().contains("authorization:"));
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        line.to_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|value| value.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                while bytes.len() < end + length {
+                    let size = stream.read(&mut buffer).unwrap();
+                    assert!(size > 0);
+                    bytes.extend_from_slice(&buffer[..size]);
                 }
-            };
-            stream.set_nonblocking(false).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(2)))
-                .unwrap();
-            let mut bytes = Vec::new();
-            let mut buffer = [0; 4096];
-            let end = loop {
-                let size = stream.read(&mut buffer).unwrap();
-                assert!(size > 0);
-                bytes.extend_from_slice(&buffer[..size]);
-                if let Some(index) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
-                    break index + 4;
+                let request: Value = serde_json::from_slice(&bytes[end..end + length]).unwrap();
+                let item: Value =
+                    serde_json::from_str(request["messages"][1]["content"].as_str().unwrap())
+                        .unwrap();
+                if let Some((started, release)) = gate.take() {
+                    started.send(()).unwrap();
+                    release.recv_timeout(Duration::from_secs(3)).unwrap();
                 }
-            };
-            let headers = std::str::from_utf8(&bytes[..end]).unwrap();
-            assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
-            assert!(!headers.to_lowercase().contains("authorization:"));
-            let length: usize = headers
-                .lines()
-                .find_map(|line| {
-                    line.to_lowercase()
-                        .strip_prefix("content-length:")
-                        .map(|value| value.trim().parse().unwrap())
-                })
-                .unwrap();
-            while bytes.len() < end + length {
-                let size = stream.read(&mut buffer).unwrap();
-                assert!(size > 0);
-                bytes.extend_from_slice(&buffer[..size]);
+                let output = json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text});
+                let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                );
+                last = item;
             }
-            let request: Value = serde_json::from_slice(&bytes[end..end + length]).unwrap();
-            let item: Value =
-                serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
-            if let Some((started, release)) = gate {
-                started.send(()).unwrap();
-                release.recv_timeout(Duration::from_secs(3)).unwrap();
-            }
-            let output =
-                json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text});
-            let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
-            let _ = write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
-                response.len(),
-                response
-            );
-            item
+            last
         });
         (config, thread)
     }
@@ -941,6 +951,146 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fixture.bytes(), before);
+    }
+
+    #[test]
+    fn checked_worker_explicit_continue_after_reopen_preserves_budget_and_own_selection() {
+        let mut fixture = Fixture::create();
+        let (config, provider) = local_provider_sequence(vec!["第一稿", "第二稿"], None);
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
+        );
+        let first = fixture.wait_effect(&plan);
+        assert_eq!(
+            first["rows"][0]["automation"]["phase"], "selected",
+            "{first}"
+        );
+        assert_eq!(first["budget"]["dispatched"], 1);
+        let original = first["rows"][0]["automation"].clone();
+        fixture.reopen();
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        assert_eq!(status["state"], "paused");
+        let continue_request = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),
+            "expectedGeneration":status["lease"]["generation"],"command":"continue",
+            "confirmed":true,"expiresAt":expiry()});
+        let resumed = fixture
+            .call("control_work_plan", continue_request.clone())
+            .unwrap();
+        assert_eq!(resumed["state"], "active");
+        assert_eq!(resumed["lease"]["generation"], "3");
+        assert_ne!(resumed["attemptId"], plan["attemptId"]);
+        assert!(resumed["parentTask"].is_string());
+        assert_eq!(
+            fixture.call("control_work_plan", continue_request).unwrap(),
+            resumed
+        );
+        let start = json!({"planId":plan["planId"],"actionId":resumed["actionId"],"expectedGeneration":resumed["lease"]["generation"]});
+        assert_eq!(
+            fixture.call("start_work_plan", start.clone()).unwrap(),
+            resumed["attemptId"]
+        );
+        assert_eq!(
+            fixture.call("start_work_plan", start).unwrap(),
+            resumed["attemptId"]
+        );
+        let second = fixture.wait_effect(&resumed);
+        let row = &second["rows"][0];
+        assert_eq!(row["automation"]["phase"], "selected", "{second}");
+        assert_eq!(row["output"]["text"], "第二稿");
+        assert_ne!(row["savedRevisionId"], first["rows"][0]["savedRevisionId"]);
+        assert_eq!(
+            row["automation"]["receipt"]["selection"]["previousEventId"],
+            original["receipt"]["selection"]["eventId"]
+        );
+        assert_eq!(
+            row["automation"]["receipt"]["request"]["lease"]["generation"],
+            "3"
+        );
+        assert_eq!(second["budget"]["dispatched"], 2);
+        assert_eq!(second["budget"]["limit"], 2);
+        assert_eq!(second["budget"]["promptTokens"], "2");
+        assert_eq!(second["budget"]["completionTokens"], "2");
+        let historical = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":plan["attemptId"]}),
+            )
+            .unwrap();
+        assert_eq!(historical["rows"][0]["automation"], original);
+        assert_eq!(historical["budget"], second["budget"]);
+        let unit = fixture.unit;
+        let expected_revision = row["savedRevisionId"].as_str().unwrap().to_owned();
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let store = &sessions.active.as_ref().unwrap().store;
+                let history = store
+                    .translation_history(
+                        ExecutionId::parse(&store.metadata().unwrap().project_id().to_string())
+                            .unwrap(),
+                        unit,
+                        "zh-CN",
+                        0,
+                        100,
+                    )
+                    .unwrap();
+                assert_eq!(history.rows.len(), 2);
+                assert_eq!(
+                    history.current.unwrap().revision_id.to_string(),
+                    expected_revision
+                );
+                let target = store
+                    .review_target(
+                        ExecutionId::parse(&store.metadata().unwrap().project_id().to_string())
+                            .unwrap(),
+                        unit,
+                        "zh-CN",
+                    )
+                    .unwrap();
+                assert!(target.current_check.is_some());
+                assert!(target.current_decision.is_none());
+            });
+        provider.join().unwrap();
+        // The original budget is exhausted. A fresh explicit continuation does
+        // not acquire another reservation, even after the provider has exited.
+        let paused = fixture
+            .call(
+                "control_work_plan",
+                json!({"planId":plan["planId"],
+            "actionId":ExecutionId::new(),"expectedGeneration":"3","command":"pause",
+            "confirmed":false,"expiresAt":null}),
+            )
+            .unwrap();
+        let third = fixture
+            .call(
+                "control_work_plan",
+                json!({"planId":plan["planId"],
+            "actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],
+            "command":"continue","confirmed":true,"expiresAt":expiry()}),
+            )
+            .unwrap();
+        fixture
+            .call(
+                "start_work_plan",
+                json!({"planId":plan["planId"],
+            "actionId":third["actionId"],"expectedGeneration":third["lease"]["generation"]}),
+            )
+            .unwrap();
+        let exhausted = fixture.wait_effect(&third);
+        assert_eq!(exhausted["budget"]["dispatched"], 2);
+        assert_eq!(exhausted["budget"], second["budget"]);
+        assert!(exhausted["rows"][0]["output"].is_null());
+        assert!(exhausted["rows"][0]["savedRevisionId"].is_null());
+        assert!(exhausted["rows"][0]["automation"]["receipt"].is_null());
+        assert_eq!(
+            exhausted["detail"]["items"][0]["status"]["diagnostic"],
+            "ai-budget"
+        );
     }
 
     #[test]
