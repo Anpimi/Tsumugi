@@ -23,7 +23,7 @@ fn contract(id: &str) -> sdk::ContractRef {
         behavior_version: 1,
     }
 }
-fn image(mode: &str, observer: Option<&Path>) -> PackageImage {
+fn package(mode: &str, observer: Option<&Path>) -> (Vec<u8>, BTreeMap<String, PackageFile>) {
     let manifest = sdk::PluginManifest {
         protocol_version: sdk::MANIFEST_PROTOCOL,
         plugin: sdk::PluginIdentity {
@@ -91,6 +91,10 @@ fn image(mode: &str, observer: Option<&Path>) -> PackageImage {
             },
         );
     }
+    (bytes, files)
+}
+fn image(mode: &str, observer: Option<&Path>) -> PackageImage {
+    let (bytes, files) = package(mode, observer);
     let expected = PackageImage::digest(&bytes, &files).unwrap();
     PackageImage::capture(bytes, files, &expected).unwrap()
 }
@@ -235,6 +239,150 @@ fn action(store: &mut ProjectStore, input: &FixedInput) -> AdoptionAction {
 }
 
 #[test]
+fn approved_directory_catalog_selection_runs_the_captured_package_through_core() {
+    use std::os::unix::fs::PermissionsExt;
+    use tsumugi_plugin_host::catalog::*;
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("approved-package");
+    std::fs::create_dir(&root).unwrap();
+    let (manifest, files) = package("normal", None);
+    let expected_digest = PackageImage::digest(&manifest, &files).unwrap();
+    std::fs::write(root.join("manifest.json"), &manifest).unwrap();
+    for (name, file) in &files {
+        let path = root.join(name);
+        std::fs::write(&path, &file.bytes).unwrap();
+        std::fs::set_permissions(
+            &path,
+            std::fs::Permissions::from_mode(if file.executable { 0o700 } else { 0o600 }),
+        )
+        .unwrap();
+    }
+    let expected_plugin = sdk::parse_manifest(&manifest)
+        .unwrap()
+        .manifest()
+        .plugin
+        .clone();
+    let origin = PackageOrigin {
+        source_id: "explicit-offline-test".into(),
+        publisher_id: "reviewed-example-source".into(),
+    };
+    let captured = PackageImage::capture_directory(&root, &expected_digest, || true).unwrap();
+    let mut catalog = PackageCatalog::new();
+    catalog
+        .register(
+            captured,
+            PackageApproval {
+                plugin: expected_plugin.clone(),
+                package_digest: expected_digest.clone(),
+                origin: origin.clone(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        catalog
+            .resolve(
+                &contract("example.proposal"),
+                None,
+                sdk::ProviderSelection::Single,
+                &[]
+            )
+            .unwrap_err(),
+        CatalogError::DisabledPackage
+    );
+    catalog.set_enabled(&expected_plugin, true).unwrap();
+    let resolved = catalog
+        .resolve(
+            &contract("example.proposal"),
+            None,
+            sdk::ProviderSelection::Single,
+            &[sdk::ProviderKey {
+                plugin: expected_plugin,
+                contribution_id: "proposal.call".into(),
+            }],
+        )
+        .unwrap()
+        .remove(0);
+    assert_eq!(resolved.package().origin(), &origin);
+    // A later source edit is not the code in this immutable resolution. If a
+    // launcher reopened the original directory, this would produce invalid data.
+    std::fs::write(root.join("behavior.txt"), b"invalid").unwrap();
+    assert!(matches!(
+        PackageImage::capture_directory(&root, &expected_digest, || true),
+        Err(HostError::PackageMismatch)
+    ));
+    let proxy = Arc::new(
+        RunnerProxy::new(
+            resolved.package().image().clone(),
+            resolved.binding().provider.contribution_id.clone(),
+            sdk::payload_digest("verified runtime"),
+            RuntimeLauncher::JavaScript {
+                approved_node: std::env::var_os("TSUMUGI_TEST_NODE")
+                    .expect("actual Node required")
+                    .into(),
+                approved_bootstrap: std::env::var_os("TSUMUGI_TEST_JS_HOST_BOOTSTRAP")
+                    .expect("actual Host required")
+                    .into(),
+            },
+            temporary.path(),
+            HostLimits::default(),
+        )
+        .unwrap(),
+    );
+    let mut store = store(temporary.path());
+    let input = input(&mut store, &proxy);
+    assert_eq!(
+        input.envelope().plugin.as_ref().unwrap().capability,
+        *resolved.binding()
+    );
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy).unwrap();
+    runtime.register_validator(validator(false)).unwrap();
+    // Enablement and source approval cannot replace the current Core permit.
+    assert_eq!(
+        runtime.submit(&mut store, &input).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+    authorize(&runtime, &mut store, &input);
+    runtime.submit(&mut store, &input).unwrap();
+    finish(&mut runtime, &mut store, &input);
+    let state = store
+        .execution_attempt(input.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!(state.items[0].validation, ValidationState::Valid);
+    assert_eq!(state.items[0].adoption, AdoptionState::Unapplied);
+    let action = action(&mut store, &input);
+    let result = store
+        .execution_result(action.attempt_id, action.result_ids[0])
+        .unwrap();
+    assert_eq!(
+        result
+            .envelope()
+            .plugin
+            .as_ref()
+            .unwrap()
+            .channel
+            .package_digest,
+        expected_digest
+    );
+    assert_eq!(
+        result.envelope().output,
+        Some(json!({"text":"Updated sample", "itemIndex":0}))
+    );
+    drop(runtime);
+    assert_eq!(
+        std::fs::read_dir(temporary.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("plugin-instance-"))
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn actual_process_selection_provenance_validation_and_explicit_adoption() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store(dir.path());
@@ -352,9 +500,10 @@ fn missing_validator_stays_pending_and_checked_preparation_cannot_outlive_grant(
         .capture_result_validation(action.attempt_id, action.result_ids[0])
         .unwrap();
     let selected_validator = validator(false);
-    let prepared = std::thread::spawn(move || capture.prepare(selected_validator.as_ref()).unwrap())
-        .join()
-        .unwrap();
+    let prepared =
+        std::thread::spawn(move || capture.prepare(selected_validator.as_ref()).unwrap())
+            .join()
+            .unwrap();
     store.commit_result_validation(prepared).unwrap();
     let prepared = store
         .capture_execution_adoption(&action)

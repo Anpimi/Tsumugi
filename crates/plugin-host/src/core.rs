@@ -304,6 +304,8 @@ fn current_error(
         HostError::PackageLimit => (ErrorCode::LimitExceeded, "plugin-package-limit"),
         HostError::PackagePath => (ErrorCode::InvalidInput, "plugin-package-path"),
         HostError::PackageMismatch => (ErrorCode::ResultMismatch, "plugin-package-binding"),
+        HostError::PackageChanged => (ErrorCode::DependencyConflict, "plugin-package-changed"),
+        HostError::CaptureFailed => (ErrorCode::StorageFailed, "plugin-package-capture"),
         HostError::MissingArtifact => (ErrorCode::DependencyConflict, "plugin-artifact"),
         HostError::StageFailed => (ErrorCode::StorageFailed, "plugin-stage"),
         HostError::ExecutionNotAuthorized | HostError::AuthorityRevoked => {

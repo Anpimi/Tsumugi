@@ -7,6 +7,26 @@ use tsumugi_plugin_sdk::*;
 const MAX_FILES: usize = 256;
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 
+mod directory;
+
+fn portable_path(path: &str) -> HostResult<()> {
+    validate_package_path(path).map_err(|_| HostError::PackagePath)?;
+    // Avoid aliases and reserved device names across supported filesystems.
+    if !path.is_ascii()
+        || path.split('/').any(|part| {
+            let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
+            part.ends_with(['.', ' '])
+                || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                || (stem.len() == 4
+                    && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                    && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+        })
+    {
+        return Err(HostError::PackagePath);
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct PackageFile {
     pub bytes: Vec<u8>,
@@ -37,12 +57,7 @@ impl PackageImage {
         hash.update((manifest.len() as u64).to_be_bytes());
         hash.update(manifest);
         for (path, file) in files {
-            validate_package_path(path).map_err(|_| HostError::PackagePath)?;
-            // A deliberately narrow portable materialization profile. Avoid
-            // case/Unicode filename aliases on the initial macOS filesystem.
-            if !path.is_ascii() || path.split('/').any(|p| p.ends_with(['.', ' '])) {
-                return Err(HostError::PackagePath);
-            }
+            portable_path(path)?;
             let folded = path.to_ascii_lowercase();
             if folded == "manifest.json"
                 || folded.starts_with("manifest.json/")

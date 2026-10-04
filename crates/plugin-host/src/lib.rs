@@ -2,6 +2,7 @@
 //! crate owns captured package bytes and the actual child/pipe identity. It has
 //! no domain implementation or adoption authority. The optional Core adapter
 //! implements the trusted Runner port without giving a child a store.
+pub mod catalog;
 #[cfg(feature = "core-adapter")]
 pub mod core;
 mod package;
@@ -15,6 +16,8 @@ pub enum HostError {
     PackageLimit,
     PackagePath,
     PackageMismatch,
+    PackageChanged,
+    CaptureFailed,
     MissingArtifact,
     StageFailed,
     ExecutionNotAuthorized,

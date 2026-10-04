@@ -25,6 +25,11 @@ Its optional Core execution adapter changes stored result evidence and adds plug
 grants in schema 16. This remains the same unreleased `0.2.0-alpha.1` batch;
 earlier development databases are refused rather than migrated. It does not
 establish a stable public Core API or distribute a production plugin catalog.
+The Host's directory capture and in-memory package catalog stay in this same
+unreleased batch. They add source approval and fixed declaration selection without
+changing the SDK wire profile or project schema. They do not yet provide persistent
+installation, authenticated network updates or desktop package controls. Exhaustive
+matches on the experimental Host error enum must handle its added capture errors.
 
 ## Choosing the next version
 

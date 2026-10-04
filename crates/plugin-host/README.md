@@ -20,12 +20,59 @@ Runtime installation/pinning and desktop distribution remain separate work.
 The trusted installer supplies immutable manifest/file bytes and an independently
 expected package digest to `PackageImage::capture`. The digest covers ordered,
 length-delimited paths/content and executable flags. Computing it does not
-authenticate a publisher or authorize execution. Package capture does not follow
+authenticate a publisher or authorize execution. Byte capture does not follow
 source filesystem paths or unpack arbitrary archives. The initial materialization
 profile rejects traversal, case aliases, non-ASCII paths and file/directory
-collisions, then writes a private instance directory under the host-owned staging
-parent. An installer must still validate archive/source provenance and actual
-filesystem capture before calling this API.
+collisions and reserved device names, then writes a private instance directory
+under the host-owned staging parent.
+
+`PackageImage::capture_directory` adds bounded capture of a selected prebuilt
+local directory on macOS and Linux. Call it on a blocking IO worker with an
+independently expected digest and a live read guard from the trusted application.
+It opens every path component relative to a held directory descriptor with
+`O_NOFOLLOW`, rejects links, hard-linked regular files and special files, and
+requires two complete scans to agree on identities, metadata and file contents.
+The snapshot keeps binary bytes and executable flags. The policy bounds captured
+files to 256, total manifest/file bytes to 64 MiB, directories to 256, package
+depth to 16 and observed processing time to ten seconds. The read guard is checked
+between reads; synchronous filesystem calls themselves cannot be preempted.
+macOS maps only the system `/var` and `/tmp` aliases to `/private`; arbitrary
+symlinks remain rejected. Other platforms refuse this capture API. Tests have run
+on macOS; the Linux implementation has not been exercised here.
+
+Captured bytes remain fixed after source edits. Capturing does not execute the
+entrypoint, unpack an archive, fetch metadata or prove publisher identity. The
+caller still owns source approval, and an installer must validate archive/source
+provenance before producing captured bytes. Network signature/update verification,
+persistent installation and desktop package controls remain separate work.
+
+## Package catalog and fixed selection
+
+`catalog::PackageCatalog` records at most 128 captured package versions. Its
+`PackageApproval` comes from independently verified metadata or explicit local
+source approval, with expected plugin identity, digest and non-secret source and
+publisher identifiers. Registration compares those values to the actual image;
+the API does not verify signatures or TUF metadata. Same-name packages cannot
+silently move source or publisher, and an existing exact identity cannot be
+replaced with different bytes. Versions from the same origin can coexist.
+
+Registration starts disabled. Explicit enablement makes declarations eligible
+for new selection without loading code or granting project access. Resolution
+reuses the SDK's exact contract/profile and provider-choice rules. Multiple
+compatible providers or versions require an explicit choice for a single
+operation; collection retains independent identities in canonical order.
+`ResolvedCapability` holds the actual package image, approved origin and complete
+capability binding. `lookup` checks an existing fixed binding without substituting
+a newer version or another contribution. Disabling stops new catalog resolution;
+already captured selections remain unchanged. The lifecycle owner must separately
+stop dispatch and revoke Core permits when required. This catalog is in memory
+and is not a second project store or a production installation/update service.
+
+Run the admission and selection tests without a worker runtime:
+
+```sh
+cargo test -p tsumugi-plugin-host --test directory --test catalog --locked
+```
 
 Materialization runs on a blocking IO worker and retains ownership of its temporary
 directory if the awaiting task is cancelled. Authority is rechecked immediately
