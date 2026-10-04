@@ -1917,6 +1917,150 @@ fn generic_source_adoption_maps_shared_units_and_preserves_fixed_revision_eviden
 }
 
 #[test]
+fn plugin_source_adoption_rechecks_checker_authority_before_capture_and_commit() {
+    for after_prepare in [false, true] {
+        for cancel in [false, true] {
+            let temp = tempfile::tempdir().unwrap();
+            let mut store = create(&temp.path().join("project"));
+            let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+            for checker in [false, true] {
+                runtime
+                    .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                        checker,
+                    ))))
+                    .unwrap();
+            }
+            let input = generic_source_input(&store, 1, 1, "CaseKey", false);
+            let result = run_generic_source(&mut runtime, &mut store, &input);
+            let capture = store
+                .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)
+                .unwrap();
+            let check_input = capture.check_input().clone();
+            let checked = run_generic_source(&mut runtime, &mut store, &check_input);
+            let grant = checked.envelope().plugin.as_ref().unwrap().authorization_id;
+            store
+                .commit_source_validation(capture.prepare(checked).unwrap())
+                .unwrap();
+            let action = prepare(&mut store, &input, &result);
+            let prepared = after_prepare.then(|| {
+                store
+                    .capture_execution_adoption(&action)
+                    .unwrap()
+                    .prepare(&SourceAdoptionHandler)
+                    .unwrap()
+            });
+            if cancel {
+                store
+                    .cancel_execution(check_input.envelope().task_id, ExecutionId::new())
+                    .unwrap();
+            } else {
+                runtime.revoke_plugin(&mut store, grant).unwrap();
+            }
+            let error = if let Some(prepared) = prepared {
+                store
+                    .commit_execution_adoption(prepared)
+                    .err()
+                    .expect("checker authority loss must reject a prepared adoption")
+            } else {
+                store
+                    .capture_execution_adoption(&action)
+                    .err()
+                    .expect("checker authority loss must reject adoption capture")
+            };
+            assert_eq!(
+                error.code,
+                if cancel {
+                    ErrorCode::Cancelled
+                } else {
+                    ErrorCode::Unauthorized
+                },
+                "after_prepare={after_prepare}, cancel={cancel}"
+            );
+            assert!(store.content_scope().unwrap().current_snapshot.is_none());
+            assert!(store.adoption_receipt(action.action_id).unwrap().is_none());
+            assert_eq!(
+                store
+                    .execution_attempt(input.envelope().attempt_id, false)
+                    .unwrap()
+                    .items[0]
+                    .validation,
+                ValidationState::Valid,
+                "revocation does not erase the saved semantic evidence"
+            );
+            assert!(
+                store
+                    .source_preview(
+                        input.envelope().attempt_id,
+                        result.envelope().result_id,
+                        0,
+                        50,
+                    )
+                    .is_ok(),
+                "reading a saved proposal does not require current execution authority"
+            );
+        }
+    }
+}
+
+#[test]
+fn adopted_plugin_source_remains_readable_after_checker_revocation_and_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+    for checker in [false, true] {
+        runtime
+            .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                checker,
+            ))))
+            .unwrap();
+    }
+    let input = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let result = run_generic_source(&mut runtime, &mut store, &input);
+    let capture = store
+        .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let check_input = capture.check_input().clone();
+    let checked = run_generic_source(&mut runtime, &mut store, &check_input);
+    let checker_grant = checked.envelope().plugin.as_ref().unwrap().authorization_id;
+    store
+        .commit_source_validation(capture.prepare(checked).unwrap())
+        .unwrap();
+    let action = prepare(&mut store, &input, &result);
+    let receipt = store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let content = store.source_content(snapshot, 0, 50).unwrap();
+    runtime.revoke_plugin(&mut store, checker_grant).unwrap();
+    assert_eq!(store.source_content(snapshot, 0, 50).unwrap(), content);
+    assert_eq!(
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap(),
+        receipt,
+        "replaying a committed receipt does not perform a new adoption"
+    );
+    drop(runtime);
+    drop(store);
+    let mut store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.source_content(snapshot, 0, 50).unwrap(), content);
+    assert_eq!(
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        store
+            .execution_result(input.envelope().attempt_id, result.envelope().result_id)
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+}
+
+#[test]
 fn adopted_plugin_source_requires_its_saved_semantic_proof_for_reads_and_reopening() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");

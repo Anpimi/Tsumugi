@@ -280,6 +280,14 @@ Checked results still require a separate explicit adoption action and trusted
 handler; the existing transaction rechecks current scope, result, cancellation
 and plugin authority. Existing committed receipts remain idempotently readable.
 
+Plugin source extraction instead requires `capture_source_validation`, a separately
+authorized execution of its fixed checker input, and `commit_source_validation`;
+a generic result validator cannot replace those mandatory checks. New source
+adoption rechecks the selected checker's exact live grant both before preparation
+and inside the final transaction. Revoking or cancelling that checker blocks
+adoption even after its semantic proof was saved. Previously adopted content and
+committed receipt replay remain available without restoring execution authority.
+
 The adapter clamps the fixed complete-result allowance to the Host's frame
 ceiling, while raw payload limits remain attached to the captured declaration.
 Core's ledger envelope has its own budget for original SDK bytes and the checked

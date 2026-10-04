@@ -110,11 +110,19 @@ fn validate(
     input: &FixedInput,
     source: &FixedResult,
 ) -> PreparedSourceValidation {
+    validate_with_grant(runtime, store, input, source).0
+}
+fn validate_with_grant(
+    runtime: &mut ExecutionRuntime,
+    store: &mut ProjectStore,
+    input: &FixedInput,
+    source: &FixedResult,
+) -> (PreparedSourceValidation, ExecutionId) {
     let capture = store
         .capture_source_validation(input.envelope().attempt_id, source.envelope().result_id)
         .unwrap();
     let check_input = capture.check_input().clone();
-    authorize(runtime, store, &check_input);
+    let grant = authorize(runtime, store, &check_input);
     let result = execute(runtime, store, &check_input);
     let evidence = result.envelope().plugin.as_ref().unwrap();
     assert_eq!(
@@ -135,7 +143,7 @@ fn validate(
     assert!(
         matches!(&checks[0].outcome,sdk::CheckOutcome::Completed {findings} if findings.is_empty())
     );
-    capture.prepare(result).unwrap()
+    (capture.prepare(result).unwrap(), grant)
 }
 fn adopt(
     store: &mut ProjectStore,
@@ -341,6 +349,49 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
     );
     assert_eq!(store.content_scope().unwrap().current_snapshot, Some(third));
 
+    for after_prepare in [false, true] {
+        let input = fixed(&store, &producer, &checker, &timing);
+        authorize(&runtime, &mut store, &input);
+        let source = execute(&mut runtime, &mut store, &input);
+        let (checked, checker_grant) =
+            validate_with_grant(&mut runtime, &mut store, &input, &source);
+        store.commit_source_validation(checked).unwrap();
+        let confirmation = store
+            .source_comparison(
+                input.envelope().attempt_id,
+                source.envelope().result_id,
+                0,
+                100,
+            )
+            .unwrap()
+            .confirmation;
+        let action = store
+            .prepare_adoption(
+                input.envelope().attempt_id,
+                input.envelope().units[0].unit_id,
+                vec![source.envelope().result_id],
+                serde_json::to_value(confirmation).unwrap(),
+            )
+            .unwrap();
+        let prepared = after_prepare.then(|| {
+            store
+                .capture_execution_adoption(&action)
+                .unwrap()
+                .prepare(&SourceAdoptionHandler)
+                .unwrap()
+        });
+        runtime.revoke_plugin(&mut store, checker_grant).unwrap();
+        let error = if let Some(prepared) = prepared {
+            store.commit_execution_adoption(prepared).err().unwrap()
+        } else {
+            store.capture_execution_adoption(&action).err().unwrap()
+        };
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert_eq!(store.content_scope().unwrap().current_snapshot, Some(third));
+        assert!(store.adoption_receipt(action.action_id).unwrap().is_none());
+        assert_eq!(store.source_content(third, 0, 100).unwrap(), page3);
+    }
+
     // The largest declared source/cue scope crosses the old frame and ledger
     // budgets. Exercise its original bytes and complete proof on real workers.
     let cues: String = (0..2000)
@@ -373,7 +424,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
         )
         .unwrap();
     assert!(large_capture.check_input().bytes().len() > sdk::MAX_EXCHANGE_BYTES);
-    let prepared = validate(
+    let (prepared, checker_grant) = validate_with_grant(
         &mut large_runtime,
         &mut large_store,
         &large_input,
@@ -381,6 +432,9 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
     );
     large_store.commit_source_validation(prepared).unwrap();
     let large_snapshot = adopt(&mut large_store, &large_input, &large_result, false);
+    large_runtime
+        .revoke_plugin(&mut large_store, checker_grant)
+        .unwrap();
     let last_page = large_store
         .source_content(large_snapshot, 1900, 100)
         .unwrap();

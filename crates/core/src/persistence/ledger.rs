@@ -512,7 +512,7 @@ pub(super) fn validate_source_link(
     input: &FixedInput,
     result: &FixedResult,
     expected_valid: bool,
-) -> Result<(), ExecutionError> {
+) -> Result<PreparedSourceValidation, ExecutionError> {
     let (checker_id, saved_valid): (String, bool) = connection
         .query_row(
             "SELECT checker_result_id,valid FROM source_validation_links WHERE source_result_id=?1",
@@ -540,7 +540,7 @@ pub(super) fn validate_source_link(
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "source-validation-proof"));
     }
-    Ok(())
+    Ok(prepared)
 }
 
 impl ProjectStore {
@@ -1821,6 +1821,28 @@ fn capture_adoption_in(
             || item.adoption == AdoptionState::Committed
         {
             return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
+        }
+        if input.envelope().plugin.is_some()
+            && input.envelope().operation == crate::content::OPERATION
+        {
+            // Saved semantic evidence remains readable after revocation. A new
+            // adoption additionally needs the exact checker's current grant,
+            // both when capturing and when committing the prepared mutation.
+            let checked = validate_source_link(connection, &input, result, true)?;
+            let permit = super::plugin_execution::check_input_in(
+                connection,
+                &checked.capture.check_input,
+                authority,
+            )?;
+            let origin = checked.check_result.envelope().plugin.as_ref();
+            if permit.as_ref().map(PluginPermit::grant_id)
+                != origin.map(|evidence| evidence.authorization_id)
+            {
+                return Err(error(
+                    ErrorCode::Unauthorized,
+                    "source-check-adoption-grant",
+                ));
+            }
         }
         let scope = &input.item(item.item_id)?.scope;
         if let Some(locale) = &scope.locale {

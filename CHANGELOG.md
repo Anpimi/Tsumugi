@@ -57,6 +57,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Experimental plugin source adoption now rechecks the selected checker's current authorization before preparation and at commit. Revocation or cancellation after a successful semantic check blocks new adoption while preserving previously adopted content, saved evidence and committed receipts.
+
 - Saved source warnings remain available after preview, adoption and reopening; successful task outputs no longer display failure retry guidance. Adopted plugin snapshots refuse missing mandatory check evidence even when stored validation flags are downgraded. Invocation result budgets count original JSON frame bytes, including whitespace and escaping.
 
 - Continued AI work plans display the original shared budget, including prior requests and unresolved exposure, rather than only the new child attempt.
