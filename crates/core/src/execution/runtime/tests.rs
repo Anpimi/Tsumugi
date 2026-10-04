@@ -86,7 +86,7 @@ fn setup() -> (
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
     let (tx, rx) = mpsc::channel();
     runtime
-        .register(Arc::new(Controlled { calls: tx }))
+        .register_read_only(Arc::new(Controlled { calls: tx }))
         .unwrap();
     (temp, store, runtime, rx)
 }
@@ -207,7 +207,7 @@ fn runtime_restart_does_not_automatically_replay_queued_or_unknown_work() {
     let (tx, rx) = mpsc::channel();
     let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
     runtime
-        .register(Arc::new(Controlled { calls: tx }))
+        .register_read_only(Arc::new(Controlled { calls: tx }))
         .unwrap();
     runtime.tick(&mut reopened).unwrap();
     assert!(!runtime.has_active_work(&reopened).unwrap());
@@ -512,7 +512,7 @@ fn historical_duplicate_does_not_replace_a_correction_or_block_worker_shutdown()
         }
     }
     let (_temp, mut store, mut runtime, _calls) = setup();
-    runtime.register(Arc::new(Correcting)).unwrap();
+    runtime.register_read_only(Arc::new(Correcting)).unwrap();
     let mut draft = input(&store).envelope().clone();
     draft.capability_id = "correcting".into();
     let fixed = FixedInput::capture(draft).unwrap();
@@ -541,4 +541,98 @@ fn historical_duplicate_does_not_replace_a_correction_or_block_worker_shutdown()
     }
     runtime.begin_quiesce(&mut store).unwrap();
     runtime.finish_quiesce(&mut store).unwrap();
+}
+
+#[test]
+fn runtime_fair_queue_rotates_tasks_and_rejects_excess_before_enqueue() {
+    let (_temp, mut store, mut runtime, calls) = setup();
+    let first = input(&store);
+    let second = input(&store);
+    let third = input(&store);
+    for input in [&first, &second, &third] {
+        runtime.submit(&mut store, input).unwrap();
+    }
+    runtime.tick(&mut store).unwrap();
+    let a = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    let b = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    let active = std::collections::BTreeSet::from([
+        a.request.input.envelope().task_id,
+        b.request.input.envelope().task_id,
+    ]);
+    assert_eq!(
+        active,
+        std::collections::BTreeSet::from([first.envelope().task_id, second.envelope().task_id])
+    );
+    a.release.send(ExecutionState::Succeeded).unwrap();
+    b.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(a.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    assert!(b.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    let mut next = None;
+    pump_until(&mut runtime, &mut store, |_, _| {
+        next = calls.try_recv().ok();
+        next.is_some()
+    });
+    let next = next.unwrap();
+    assert_eq!(
+        next.request.input.envelope().task_id,
+        third.envelope().task_id
+    );
+    drop(next);
+    runtime.begin_quiesce(&mut store).unwrap();
+    let mut fresh = ExecutionRuntime::new(&store).unwrap();
+    fresh
+        .register_read_only(Arc::new(Controlled {
+            calls: mpsc::channel().0,
+        }))
+        .unwrap();
+    for _ in 0..128 {
+        let queued = input(&store);
+        fresh.submit(&mut store, &queued).unwrap();
+    }
+    let rejected = input(&store);
+    assert_eq!(
+        fresh.submit(&mut store, &rejected).unwrap_err().stage,
+        "execution-queue"
+    );
+    assert!(
+        store
+            .execution_input(rejected.envelope().attempt_id)
+            .is_err()
+    );
+}
+
+#[test]
+fn runtime_effect_policy_is_host_owned_and_not_operation_name_based() {
+    let (_temp, mut store, _, _) = setup();
+    let mut envelope = input(&store).envelope().clone();
+    envelope.operation = "external-fixture".into();
+    let input = FixedInput::capture(envelope).unwrap();
+    let mut external = ExecutionRuntime::new(&store).unwrap();
+    external
+        .register(Arc::new(Controlled {
+            calls: mpsc::channel().0,
+        }))
+        .unwrap();
+    external.submit(&mut store, &input).unwrap();
+    assert!(
+        store
+            .execution_recovery(input.envelope().attempt_id, false)
+            .unwrap()
+            .units
+            .iter()
+            .all(|u| !u.actions.contains(&RecoveryAction::ResumeUndispatched))
+    );
+    assert!(
+        external
+            .resume(
+                &mut store,
+                input.envelope().attempt_id,
+                &[input.envelope().items[0].item_id]
+            )
+            .is_err()
+    );
+    assert_eq!(
+        store.enqueue_read_only_execution(&input).unwrap_err().code,
+        ErrorCode::ResultMismatch
+    );
 }

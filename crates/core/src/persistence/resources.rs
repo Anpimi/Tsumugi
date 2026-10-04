@@ -2529,7 +2529,7 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register(Arc::new(SourceRunner)).unwrap();
+        runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         let result_id = loop {

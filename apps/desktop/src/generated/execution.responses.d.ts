@@ -25,7 +25,80 @@ export type CommandErrorCode =
   | "output-invalid"
   | "dependency-conflict"
   | "cancelled";
+/**
+ * Values compared at the rejecting boundary, without user text or credentials.
+ */
+export type ConflictEvidence =
+  | {
+      current: ExecutionId;
+      expected: ExecutionId;
+      kind: "source-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "translation-selection";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "review-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-decision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-check";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "review-waiver";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-fallback";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "build-eligibility";
+    }
+  | {
+      current: string;
+      expected: string;
+      kind: "comparison-basis";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "term-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "context-revision";
+    }
+  | {
+      current: ExecutionId | null;
+      expected: ExecutionId | null;
+      kind: "source-snapshot";
+    }
+  | {
+      current: Revision;
+      expected: Revision;
+      kind: "content-revision";
+    };
 export type CommandOutcome = "rejected" | "unknown";
+/**
+ * A read or user decision to make before another mutation; never replay authority.
+ */
+export type RecoveryGuidance = "reconcile-original" | "review-current" | "choose-destination";
 export type CommandStage =
   | "create"
   | "open"
@@ -161,12 +234,15 @@ export interface RuntimeStatus {
 }
 export interface CommandError {
   code: CommandErrorCode;
+  conflict?: ConflictEvidence | null;
   currentRevision?: string;
+  diagnosticId?: ExecutionId | null;
   field?: string;
   itemIds?: ExecutionId[];
   outcome: CommandOutcome;
   reason?: string;
   recoveryActions?: RecoveryAction[];
+  recoveryGuidance?: RecoveryGuidance | null;
   recoveryRequired: boolean;
   stage: CommandStage;
 }

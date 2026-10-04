@@ -65,10 +65,20 @@ export interface SharedTerm {
   target: string;
 }
 export interface AiView {
+  budget: ProviderBudget | null;
   config: AiConfig;
   detail: AttemptDetail;
   recipe: string;
   rows: AiRow[];
+}
+export interface ProviderBudget {
+  completionTokens: string;
+  dispatched: number;
+  legacyHeld: number;
+  limit: number;
+  promptTokens: string;
+  unresolved: number;
+  usageUnknown: number;
 }
 export interface AttemptDetail {
   attemptId: ExecutionId;

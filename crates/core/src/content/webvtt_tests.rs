@@ -236,7 +236,7 @@ fn caption_project_maintains_timing_basis_reviews_releases_and_receipts_on_reope
     let manifest = BuildManifest::from_input(&build).unwrap();
     assert_eq!(manifest.plugin_id, webvtt::PLUGIN);
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register(Arc::new(WebvttBuildRunner)).unwrap();
+    runtime.register_read_only(Arc::new(WebvttBuildRunner)).unwrap();
     runtime.submit(&mut store, &build).unwrap();
     let mut forged = manifest.clone();
     forged.locales[0].source_template = Some(S1.replace("color: lime", "color: red"));

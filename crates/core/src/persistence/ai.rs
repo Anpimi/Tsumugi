@@ -129,7 +129,7 @@ impl AiPreview {
         .map_err(|_| error(ErrorCode::InvalidInput, "ai-input"))?;
         // Allow bounded retries inside the producer without the generic runtime
         // expiring a healthy retry before its configured request timeout.
-        e.limits.timeout_ms = ((self.config.timeout_seconds * 1000 + 1000)
+        e.limits.timeout_ms = ((self.config.timeout_seconds * 1000 + 6000)
             * (self.config.max_retries + 1))
             .min(600_000);
         FixedInput::capture(e)

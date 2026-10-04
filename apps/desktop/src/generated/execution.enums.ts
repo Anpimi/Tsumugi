@@ -5,4 +5,5 @@ export const CommandOutcomeValues = ["rejected","unknown"] as const;
 export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
 export const ExecutionStateValues = ["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
+export const RecoveryGuidanceValues = ["reconcile-original","review-current","choose-destination"] as const;
 export const ValidationStateValues = ["absent","pending","valid","invalid"] as const;

@@ -11,6 +11,9 @@ use std::{
 };
 
 const CONCURRENCY: usize = 2;
+// Preserve one maximum legal fixed-input batch while bounding concurrent tasks.
+const MAX_QUEUED_ITEMS: usize = MAX_ITEMS;
+const MAX_QUEUED_ATTEMPTS: usize = 128;
 
 fn persist_result(store: &mut ProjectStore, result: &FixedResult) -> Result<(), ExecutionError> {
     store.save_execution_result(result)?;
@@ -28,6 +31,7 @@ fn persist_result(store: &mut ProjectStore, result: &FixedResult) -> Result<(), 
 
 struct Worker {
     request: DispatchRequest,
+    budget_events: Receiver<crate::ai::provider::BudgetEvent>,
     cancellation: Cancellation,
     receiver: Receiver<FixedResult>,
     thread: JoinHandle<Result<(), ExecutionError>>,
@@ -43,6 +47,8 @@ pub struct ExecutionRuntime {
     generation: ExecutionId,
     initial_sequence: Revision,
     runners: BTreeMap<(String, String), Arc<dyn Runner>>,
+    policies: BTreeMap<(String, String), RecoveryPolicy>,
+    scheduling_cursor: Option<ExecutionId>,
     workers: Vec<Worker>,
     retired: Vec<(ExecutionId, JoinHandle<Result<(), ExecutionError>>)>,
     accepting: bool,
@@ -53,6 +59,8 @@ impl ExecutionRuntime {
             generation: ExecutionId::new(),
             initial_sequence: store.execution_sequence()?,
             runners: BTreeMap::new(),
+            policies: BTreeMap::new(),
+            scheduling_cursor: None,
             workers: Vec::new(),
             retired: Vec::new(),
             accepting: true,
@@ -62,6 +70,18 @@ impl ExecutionRuntime {
         self.generation
     }
     pub fn register(&mut self, runner: Arc<dyn Runner>) -> Result<(), ExecutionError> {
+        self.register_with_policy(runner, RecoveryPolicy::ExternalUnknown)
+    }
+    /// Register a Core producer whose host-reviewed execution has no external effects.
+    pub fn register_read_only(&mut self, runner: Arc<dyn Runner>) -> Result<(), ExecutionError> {
+        self.register_with_policy(runner, RecoveryPolicy::ReadOnly)
+    }
+    /// Host-verified effect policy. Producers cannot set it through fixed input or results.
+    pub fn register_with_policy(
+        &mut self,
+        runner: Arc<dyn Runner>,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
         let key = (
             runner.capability_id().to_owned(),
             runner.capability_version().to_owned(),
@@ -74,6 +94,7 @@ impl ExecutionRuntime {
                 "runner-registration",
             ));
         }
+        self.policies.insert(key.clone(), policy);
         self.runners.insert(key, runner);
         Ok(())
     }
@@ -81,6 +102,23 @@ impl ExecutionRuntime {
         &mut self,
         store: &mut ProjectStore,
         input: &FixedInput,
+    ) -> Result<(), ExecutionError> {
+        self.submit_with_parent(store, input, None)
+    }
+    /// Child requests inherit parent scope, cancellation and every ancestor budget.
+    pub fn submit_child(
+        &mut self,
+        store: &mut ProjectStore,
+        input: &FixedInput,
+        parent: ExecutionId,
+    ) -> Result<(), ExecutionError> {
+        self.submit_with_parent(store, input, Some(parent))
+    }
+    fn submit_with_parent(
+        &mut self,
+        store: &mut ProjectStore,
+        input: &FixedInput,
+        parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
         if !self.accepting {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
@@ -91,7 +129,27 @@ impl ExecutionRuntime {
         )) {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "capability"));
         }
-        store.enqueue_execution(input)
+        if store
+            .execution_input_if_present(input.envelope().attempt_id)?
+            .is_none()
+            && (store.queued_execution_item_count(self.initial_sequence)?
+                + input.envelope().items.len()
+                > MAX_QUEUED_ITEMS
+                || store
+                    .queued_execution_attempts(self.initial_sequence)?
+                    .len()
+                    >= MAX_QUEUED_ATTEMPTS)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "execution-queue",
+            ));
+        }
+        let policy = self.policies[&(
+            input.envelope().capability_id.clone(),
+            input.envelope().capability_version.clone(),
+        )];
+        store.enqueue_execution_with_policy(input, policy, parent)
     }
     pub fn is_active(&self, attempt: ExecutionId) -> bool {
         self.workers
@@ -110,13 +168,10 @@ impl ExecutionRuntime {
             return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
         }
         let input = store.execution_retry_input(attempt, items)?;
-        if matches!(
-            input.envelope().operation.as_str(),
-            crate::ai::OPERATION | crate::ai::arena::OPERATION
-        ) {
+        if !store.execution_recovery_policy(attempt)?.allows_replay() {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
-                "ai-new-consent",
+                "external-new-consent",
             ));
         }
         self.submit(store, &input)?;
@@ -184,6 +239,28 @@ impl ExecutionRuntime {
             let worker = &mut self.workers[index];
             let attempt = worker.request.input.envelope().attempt_id;
             let item = worker.request.item_id;
+            // Persist dispatch reservations before acknowledging the worker. A lost
+            // acknowledgement leaves an unknown reservation, never free budget.
+            for _ in 0..2 {
+                let event = match worker.budget_events.try_recv() {
+                    Ok(event) => event,
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                };
+                match event {
+                    crate::ai::provider::BudgetEvent::Reserve { id, limit, reply } => {
+                        let outcome = if self.accepting && !worker.cancellation.is_requested() {
+                            store.reserve_provider_request(&worker.request, id, limit)
+                        } else {
+                            Err(ExecutionError::new(ErrorCode::Cancelled, "ai-cancelled"))
+                        };
+                        let _ = reply.send(outcome);
+                    }
+                    crate::ai::provider::BudgetEvent::Settle { id, usage, reply } => {
+                        let outcome = store.settle_provider_request(&worker.request, id, usage);
+                        let _ = reply.send(outcome);
+                    }
+                }
+            }
             let finished_before_drain = worker.thread.is_finished();
             let mut drained = false;
             // A producer may refill the channel; do not let it monopolize the session.
@@ -261,7 +338,14 @@ impl ExecutionRuntime {
         if !self.accepting {
             return Ok(());
         }
-        for attempt in store.queued_execution_attempts(self.initial_sequence)? {
+        let mut queued = store.queued_execution_attempts(self.initial_sequence)?;
+        if let Some(cursor) = self.scheduling_cursor {
+            if let Some(index) = queued.iter().position(|id| *id == cursor) {
+                let len = queued.len();
+                queued.rotate_left((index + 1) % len);
+            }
+        }
+        for attempt in queued {
             // Retired uncooperative producers still consume a concurrency slot.
             if self.workers.len() + self.retired.len() >= CONCURRENCY {
                 break;
@@ -292,7 +376,10 @@ impl ExecutionRuntime {
             let Some(item) = store.next_queued_execution_item(attempt)? else {
                 continue;
             };
-            let request = store.dispatch_execution_item(attempt, item)?;
+            let mut request = store.dispatch_execution_item(attempt, item)?;
+            let (budget, budget_events) = crate::ai::provider::budget_channel();
+            request.provider = Some(budget);
+            self.scheduling_cursor = Some(attempt);
             let cancellation = Cancellation::default();
             let signal = cancellation.clone();
             let task = request.clone();
@@ -303,6 +390,7 @@ impl ExecutionRuntime {
             match thread {
                 Ok(thread) => self.workers.push(Worker {
                     request,
+                    budget_events,
                     cancellation,
                     receiver,
                     thread,
@@ -330,12 +418,11 @@ impl ExecutionRuntime {
     ) -> Result<Revision, ExecutionError> {
         let revision = store.cancel_execution(task, request)?;
         for worker in &mut self.workers {
-            if worker.request.input.envelope().task_id == task
-                && store
-                    .execution_attempt(worker.request.input.envelope().attempt_id, true)?
-                    .items
-                    .iter()
-                    .any(|item| item.cancellation_requested)
+            if store
+                .execution_attempt(worker.request.input.envelope().attempt_id, true)?
+                .items
+                .iter()
+                .any(|item| item.cancellation_requested)
             {
                 worker.cancellation.request();
                 worker.cancellation_started.get_or_insert_with(Instant::now);

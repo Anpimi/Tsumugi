@@ -1128,6 +1128,59 @@
         ],
         "type": "object"
       },
+      "ProviderBudget": {
+        "additionalProperties": false,
+        "properties": {
+          "completionTokens": {
+            "pattern": "^(0|[1-9][0-9]{0,21})$",
+            "type": "string"
+          },
+          "dispatched": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "legacyHeld": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "promptTokens": {
+            "pattern": "^(0|[1-9][0-9]{0,21})$",
+            "type": "string"
+          },
+          "unresolved": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usageUnknown": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "limit",
+          "dispatched",
+          "legacyHeld",
+          "unresolved",
+          "usageUnknown",
+          "promptTokens",
+          "completionTokens"
+        ],
+        "type": "object"
+      },
       "RecoveryAction": {
         "enum": [
           "resume-undispatched",
@@ -1396,6 +1449,16 @@
           "blind": {
             "type": "boolean"
           },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ProviderBudget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "detail": {
             "$ref": "#/definitions/AttemptDetail"
           },
@@ -1435,6 +1498,7 @@
           }
         },
         "required": [
+          "budget",
           "detail",
           "rows",
           "variants",

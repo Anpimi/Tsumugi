@@ -310,6 +310,7 @@ impl Runner for ControlledRunner {
 fn controlled_runner_can_return_late_without_adopting_or_accessing_storage() {
     let fixed = input();
     let request = DispatchRequest {
+            provider: None,
         item_id: fixed.envelope().items[0].item_id,
         input: fixed.clone(),
         dispatch_token: ExecutionId::new(),

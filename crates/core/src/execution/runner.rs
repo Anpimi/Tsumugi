@@ -19,9 +19,24 @@ impl Cancellation {
 
 #[derive(Clone, Debug)]
 pub struct DispatchRequest {
+    pub(crate) provider: Option<crate::ai::provider::BudgetPort>,
     pub input: FixedInput,
     pub item_id: ExecutionId,
     pub dispatch_token: ExecutionId,
+}
+
+/// Chosen by the trusted host, never by a producer's manifest or result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryPolicy {
+    ReadOnly,
+    IdempotentLocalWrite,
+    ExternalUnknown,
+}
+impl RecoveryPolicy {
+    pub fn allows_replay(self) -> bool {
+        self != Self::ExternalUnknown
+    }
 }
 
 #[derive(Clone)]

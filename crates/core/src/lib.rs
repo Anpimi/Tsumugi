@@ -21,7 +21,7 @@ pub use persistence::{
     EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite, GlossaryCapture,
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, PersistenceError,
     PersistenceErrorCode, PersistenceStage, PreparedReviewCheck, ProjectStore, Reconciliation,
-    RecoveryPlan, RecoveryUnit, ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind,
+    ProviderBudget, RecoveryPlan, RecoveryUnit, ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind,
     ReleaseView, ReleasedArtifact, ResourceChangeKind, ResourceDecision, ResourceDecisionKind,
     ResourceDecisionResult, ResourceImpactConfidence, ResourceImpactKind, ResourceImpactStatus,
     ResourcePreview, ResourcePreviewRow, ReviewBasis, ReviewCheckOutcome, ReviewDecision,

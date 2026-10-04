@@ -84,3 +84,12 @@ it("binds mutation acknowledgements and keeps an unrelated action unknown", asyn
   invoke.mockRejectedValueOnce(rejected);
   await expect(arenaCommands.merge(fixture.requests.merge)).rejects.toBe(rejected);
 });
+
+
+it("validates durable budget counters and exact aggregate usage", () => {
+  const budget = {limit:300,dispatched:2,legacyHeld:0,unresolved:1,usageUnknown:1,promptTokens:"5534023222112865484500",completionTokens:"0"};
+  expect(validators.validateResponseView({...fixture.responses.view,budget})).toBe(true);
+  for (const value of [1, "01", "-1", "1e2", "10000000000000000000000"]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,promptTokens:value}})).toBe(false);
+  for (const value of [-1, 0.5, 301]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,dispatched:value}})).toBe(false);
+  expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,extra:true}})).toBe(false);
+});

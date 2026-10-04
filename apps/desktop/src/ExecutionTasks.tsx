@@ -124,7 +124,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
       <button className="text-button" disabled={busy} onClick={() => { setPendingAction(null); setConfirmation(null); }}>{t("execution.keepOutput")}</button></div> : null}</>;
   const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel") : t(`execution.actions.${action}`);
   const confirmationCount = confirmation?.itemId ? 1 : confirmation?.unit?.itemIds.length ?? 0;
-  const blockedKey = (reason: string) => reason === "outcome-unknown" ? "unknown" : reason === "scope-removed" ? "scopeRemoved" : reason === "output-invalid" ? "invalid" : reason === "retry-not-safe" ? "retryUnsafe" : "blocked";
+  const blockedKey = (reason: string) => reason === "external-new-consent" ? "externalConsent" : reason === "outcome-unknown" ? "unknown" : reason === "scope-removed" ? "scopeRemoved" : reason === "output-invalid" ? "invalid" : reason === "retry-not-safe" ? "retryUnsafe" : "blocked";
   return <div className="execution-content" aria-busy={busy || loading}>
     {!confirmation ? feedback : null}
     <div className="execution-actions">

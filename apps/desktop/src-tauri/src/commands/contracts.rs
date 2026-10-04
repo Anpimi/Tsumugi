@@ -269,11 +269,35 @@ fn bound_integer(schema: &mut Schema) {
         _ => None,
     };
     if let Some(maximum) = maximum {
+        let maximum = schema
+            .get("maximum")
+            .and_then(serde_json::Value::as_f64)
+            .map_or(f64::from(maximum), |declared| {
+                declared.min(f64::from(maximum))
+            });
+        let minimum = schema
+            .get("minimum")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0)
+            .max(0.0);
+        schema.insert("minimum".into(), minimum.into());
         schema.insert("maximum".into(), maximum.into());
     }
     if schema.get("format").and_then(serde_json::Value::as_str) == Some("int32") {
-        schema.insert("minimum".into(), i32::MIN.into());
-        schema.insert("maximum".into(), i32::MAX.into());
+        let minimum = schema
+            .get("minimum")
+            .and_then(serde_json::Value::as_f64)
+            .map_or(f64::from(i32::MIN), |declared| {
+                declared.max(f64::from(i32::MIN))
+            });
+        let maximum = schema
+            .get("maximum")
+            .and_then(serde_json::Value::as_f64)
+            .map_or(f64::from(i32::MAX), |declared| {
+                declared.min(f64::from(i32::MAX))
+            });
+        schema.insert("minimum".into(), minimum.into());
+        schema.insert("maximum".into(), maximum.into());
     }
 }
 
@@ -330,4 +354,46 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         }))? + "\n",
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn schema_bounds_intersect_declared_constraints_with_primitive_limits() {
+        #[derive(JsonSchema)]
+        #[allow(dead_code)]
+        struct Bounds {
+            #[schemars(range(min = 10, max = 20))]
+            narrow: u32,
+            #[schemars(range(min=-100,max=500))]
+            widened: u8,
+            #[schemars(range(min=-10,max=10))]
+            signed: i32,
+            unsigned_primitive: u32,
+            signed_primitive: i32,
+        }
+        let schema = schemas::<Bounds, Bounds>();
+        for group in ["requests", "responses"] {
+            for (field, minimum, maximum) in [
+                ("narrow", 10.0, 20.0),
+                ("widened", 0.0, 255.0),
+                ("signed", -10.0, 10.0),
+                ("unsigned_primitive", 0.0, 4294967295.0),
+                ("signed_primitive", -2147483648.0, 2147483647.0),
+            ] {
+                let property = &schema[group]["properties"][field];
+                assert_eq!(
+                    property["minimum"].as_f64(),
+                    Some(minimum),
+                    "{group}.{field}"
+                );
+                assert_eq!(
+                    property["maximum"].as_f64(),
+                    Some(maximum),
+                    "{group}.{field}"
+                );
+            }
+        }
+    }
 }

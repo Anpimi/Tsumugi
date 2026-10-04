@@ -521,6 +521,7 @@ mod tests {
         TranslationRunner
             .run(
                 DispatchRequest {
+            provider: None,
                     input: input.clone(),
                     item_id: item.item_id,
                     dispatch_token: token,

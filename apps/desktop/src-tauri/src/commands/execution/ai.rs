@@ -40,6 +40,7 @@ pub struct AiRow {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiView {
+    budget: Option<tsumugi_core::ProviderBudget>,
     config: AiConfig,
     recipe: String,
     detail: AttemptDetail,
@@ -258,6 +259,7 @@ pub async fn read_ai_translation(
                     .collect::<Result<Vec<_>, ExecutionError>>()
                     .map_err(map_ai)?;
                 Ok(AiView {
+                    budget: store.provider_budget(input.envelope().task_id).map_err(map_read)?,
                     config: settings.config,
                     recipe: settings.recipe,
                     detail,

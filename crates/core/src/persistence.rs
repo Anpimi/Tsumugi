@@ -18,7 +18,7 @@ mod changes;
 pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;
-mod ledger;
+pub(crate) mod ledger;
 mod release;
 mod resources;
 mod review;
@@ -27,7 +27,7 @@ pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
 pub use arena::{
     ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
-pub use ledger::{AttemptView, RecoveryPlan, RecoveryUnit, TaskView};
+pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskView};
 pub use release::{
     BuildLocaleChoice, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView,
     ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind, ReleaseView, ReleasedArtifact,
@@ -58,10 +58,11 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 #[cfg(test)]
 pub(crate) fn restore_legacy_translation_fixture(connection: &Connection) -> rusqlite::Result<()> {
     arena::drop_for_legacy_fixture(connection)?;
+    ledger::provider::drop_for_legacy_fixture(connection)?;
     translation::legacy_fixture(connection)
 }
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
@@ -591,6 +592,8 @@ fn initialize_schema(
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     release::initialize(&transaction)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    ledger::provider::initialize(&transaction)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     arena::initialize(&transaction).map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     transaction
         .commit()
@@ -799,6 +802,7 @@ fn validate_existing_connection(
     }
     match user_version {
         SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true, true, true),
+        11 => validate_schema_shape(connection, false, true, true, true, true, true),
         10 => validate_schema_shape(connection, false, true, true, true, true, true),
         9 => {
             validate_schema_shape(connection, false, true, true, true, true, true)?;
@@ -892,11 +896,18 @@ fn validate_existing_connection(
             .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
         validate_schema_shape(connection, false, true, true, true, true, true)?;
     }
-    if user_version < SCHEMA_VERSION {
+    if user_version < 11 {
         if user_version == 10 {
             backup_before_migration(connection, directory, 10)?;
         }
         arena::migrate(connection).map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+        validate_schema_shape(connection, false, true, true, true, true, true)?;
+    }
+    if user_version < 12 {
+        if user_version == 11 {
+            backup_before_migration(connection, directory, 11)?;
+        }
+        ledger::provider::migrate(connection).map_err(|e| map_sqlite(e, PersistenceStage::Open))?;
         validate_schema_shape(connection, false, true, true, true, true, true)?;
     }
     Ok(())
@@ -978,6 +989,10 @@ fn validate_schema_shape(
         expected_tables.extend(arena::table_names());
         expected_tables.sort();
     }
+    if version >= 12 {
+        expected_tables.extend(ledger::provider::table_names());
+        expected_tables.sort();
+    }
     if table_names != expected_tables {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
@@ -1004,6 +1019,11 @@ fn validate_schema_shape(
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         });
+    }
+    if version >= 12 {
+        ledger::provider::validate(connection).map_err(|_| PersistenceError::CorruptProject {
+            stage: PersistenceStage::Open,
+        })?;
     }
     let ledger_validation = if legacy_result_limit {
         ledger::validate_v3(connection)
@@ -1174,6 +1194,7 @@ mod tests {
             .unwrap();
         review::drop_for_legacy_fixture(&transaction).unwrap();
         arena::drop_for_legacy_fixture(&transaction).unwrap();
+        ledger::provider::drop_for_legacy_fixture(&transaction).unwrap();
         release::drop_for_legacy_fixture(&transaction).unwrap();
         resources::drop_for_legacy_fixture(&transaction).unwrap();
         transaction
@@ -1391,6 +1412,7 @@ mod tests {
         let connection = Connection::open(&database).unwrap();
         review::drop_for_legacy_fixture(&connection).unwrap();
         arena::drop_for_legacy_fixture(&connection).unwrap();
+        ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
         release::drop_for_legacy_fixture(&connection).unwrap();
         resources::drop_for_legacy_fixture(&connection).unwrap();
         connection
@@ -1470,6 +1492,7 @@ mod tests {
         let database = path.join(DATABASE_FILENAME);
         let connection = Connection::open(&database).unwrap();
         arena::drop_for_legacy_fixture(&connection).unwrap();
+        ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
         release::drop_for_legacy_fixture(&connection).unwrap();
         connection
             .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
@@ -1540,6 +1563,7 @@ mod tests {
             let database = path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             arena::drop_for_legacy_fixture(&connection).unwrap();
+            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
             connection
                 .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
@@ -1614,6 +1638,7 @@ mod tests {
             let connection = Connection::open(&database).unwrap();
             review::drop_for_legacy_fixture(&connection).unwrap();
             arena::drop_for_legacy_fixture(&connection).unwrap();
+            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection
@@ -1731,6 +1756,7 @@ mod tests {
             let database = path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             arena::drop_for_legacy_fixture(&connection).unwrap();
+            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
             connection.pragma_update(None, "user_version", 10).unwrap();
             drop(connection);
             run_migration_crash_child(&path, point, &parent.path().join("migration-hook"));
@@ -1784,7 +1810,7 @@ mod tests {
             let database = path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             if future {
-                connection.pragma_update(None, "user_version", 12).unwrap();
+                connection.pragma_update(None, "user_version", 13).unwrap();
             } else {
                 connection
                     .execute_batch(
@@ -1807,7 +1833,7 @@ mod tests {
                 connection
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                if future { 12 } else { 11 }
+                if future { 13 } else { 12 }
             );
             assert_eq!(
                 connection
@@ -1854,6 +1880,7 @@ mod tests {
             let connection = Connection::open(&database).unwrap();
             review::drop_for_legacy_fixture(&connection).unwrap();
             arena::drop_for_legacy_fixture(&connection).unwrap();
+            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
             release::drop_for_legacy_fixture(&connection).unwrap();
             resources::drop_for_legacy_fixture(&connection).unwrap();
             connection

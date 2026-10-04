@@ -400,6 +400,8 @@ fn ai_preview_start_and_saved_read_enforce_scope_consent_and_identity() {
         request(&context, json!({"attemptId":prepared["attemptId"]})),
     )
     .unwrap();
+    assert_eq!(saved["budget"]["limit"], 20);
+    assert_eq!(saved["budget"]["dispatched"], 0);
     assert_eq!(saved["detail"]["progress"]["failed"], 1);
     assert_eq!(
         saved["detail"]["items"][0]["status"]["diagnostic"],

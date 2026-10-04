@@ -134,29 +134,30 @@ impl ExecutionHost {
             arena: arena::ArenaSession::default(),
         };
         host.runtime
-            .register(Arc::new(tsumugi_core::content::SourceRunner))
+            .register_read_only(Arc::new(tsumugi_core::content::SourceRunner))
             .map_err(map_read)?;
         host.runtime
-            .register(Arc::new(tsumugi_core::content::TranslationRunner))
+            .register_read_only(Arc::new(tsumugi_core::content::TranslationRunner))
             .map_err(map_read)?;
         host.runtime
-            .register(Arc::new(tsumugi_core::content::BuildRunner))
+            .register_read_only(Arc::new(tsumugi_core::content::BuildRunner))
             .map_err(map_read)?;
         host.runtime
-            .register(Arc::new(tsumugi_core::content::WebvttSourceRunner))
+            .register_read_only(Arc::new(tsumugi_core::content::WebvttSourceRunner))
             .map_err(map_read)?;
         host.runtime
-            .register(Arc::new(tsumugi_core::content::WebvttBuildRunner))
+            .register_read_only(Arc::new(tsumugi_core::content::WebvttBuildRunner))
             .map_err(map_read)?;
+        let provider_service = Arc::new(tsumugi_core::ai::provider::ProviderService::default());
         host.runtime
-            .register(Arc::new(tsumugi_core::ai::AiRunner::default()))
+            .register_with_policy(Arc::new(tsumugi_core::ai::AiRunner::with_service(provider_service.clone())), tsumugi_core::execution::RecoveryPolicy::ExternalUnknown)
             .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::ai::OPERATION.into(),
             Arc::new(tsumugi_core::AiAdoptionHandler),
         );
         host.runtime
-            .register(Arc::new(tsumugi_core::ai::arena::ArenaRunner::default()))
+            .register_with_policy(Arc::new(tsumugi_core::ai::arena::ArenaRunner::with_service(provider_service)), tsumugi_core::execution::RecoveryPolicy::ExternalUnknown)
             .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::ai::arena::OPERATION.into(),
@@ -177,7 +178,7 @@ impl ExecutionHost {
         #[cfg(feature = "execution-test-host")]
         {
             host.runtime
-                .register(Arc::new(test_support::ControlledRunner))
+                .register_read_only(Arc::new(test_support::ControlledRunner))
                 .map_err(map_read)?;
             host.handlers.insert(
                 "sample-update".into(),

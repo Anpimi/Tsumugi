@@ -62,6 +62,7 @@ pub struct Row {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct View {
+    budget: Option<tsumugi_core::ProviderBudget>,
     detail: AttemptDetail,
     rows: Vec<Row>,
     variants: Option<Vec<tsumugi_core::ai::AiConfig>>,
@@ -324,6 +325,7 @@ pub async fn read_arena_translation(
                     None
                 };
                 Ok(View {
+                    budget: store.provider_budget(input.envelope().task_id).map_err(map_read)?,
                     detail,
                     rows,
                     variants,

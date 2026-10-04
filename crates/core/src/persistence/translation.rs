@@ -1679,7 +1679,7 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register(Arc::new(SourceRunner)).unwrap();
+        runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let result_id = loop {
@@ -2123,7 +2123,7 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register(Arc::new(TranslationRunner)).unwrap();
+        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -2378,7 +2378,7 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register(Arc::new(TranslationRunner)).unwrap();
+        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
@@ -2487,7 +2487,7 @@ mod tests {
             .unwrap();
             let input = bundle.fixed_input(project_id).unwrap();
             let mut runtime = ExecutionRuntime::new(&store).unwrap();
-            runtime.register(Arc::new(TranslationRunner)).unwrap();
+            runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
             runtime.submit(&mut store, &input).unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {

@@ -123,6 +123,7 @@ export interface TranslationSelection {
 }
 export interface View {
   blind: boolean;
+  budget: ProviderBudget | null;
   detail: AttemptDetail;
   differentInputs: boolean;
   parentAttemptId: ExecutionId | null;
@@ -130,6 +131,15 @@ export interface View {
   revealed: boolean;
   rows: Row[];
   variants: AiConfig[] | null;
+}
+export interface ProviderBudget {
+  completionTokens: string;
+  dispatched: number;
+  legacyHeld: number;
+  limit: number;
+  promptTokens: string;
+  unresolved: number;
+  usageUnknown: number;
 }
 export interface AttemptDetail {
   attemptId: ExecutionId;

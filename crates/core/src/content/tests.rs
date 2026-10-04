@@ -30,8 +30,8 @@ fn generate(store: &mut ProjectStore, bundle: SourceBundle) -> (FixedInput, Fixe
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(store).unwrap();
-    runtime.register(Arc::new(SourceRunner)).unwrap();
-    runtime.register(Arc::new(WebvttSourceRunner)).unwrap();
+    runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
+    runtime.register_read_only(Arc::new(WebvttSourceRunner)).unwrap();
     runtime.submit(store, &input).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -1176,7 +1176,7 @@ fn malformed_output_cannot_become_valid_or_adopted() {
     let input = small(r#"{"a":"same","b":"same"}"#)
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let request = store
         .dispatch_execution_item(
             input.envelope().attempt_id,

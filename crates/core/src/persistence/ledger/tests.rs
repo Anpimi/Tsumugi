@@ -182,7 +182,7 @@ fn adoption_preparation_releases_sqlite_and_commit_rechecks_changed_dependencies
     let mut store = store(&path);
     install_targets(&store);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let item = &input.envelope().items[0];
     let result = produce(&mut store, &input, item.item_id);
     store.save_execution_result(&result).unwrap();
@@ -218,7 +218,7 @@ fn prepared_adoption_rechecks_cancellation_and_returns_competing_receipt_without
     let mut store = store(&parent.path().join("project"));
     install_targets(&store);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     store
@@ -274,8 +274,8 @@ fn durable_inputs_results_and_reads_preserve_metadata_and_do_not_regenerate() {
     let mut store = store(&path);
     let metadata = store.metadata().unwrap();
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     assert!(store.save_execution_result(&result).unwrap());
     assert!(!store.save_execution_result(&result).unwrap());
@@ -338,12 +338,12 @@ fn wrong_project_duplicate_evidence_and_cancelled_dispatch_are_rejected() {
     alien.project_id = ExecutionId::new();
     assert_eq!(
         store
-            .enqueue_execution(&FixedInput::capture(alien).unwrap())
+            .enqueue_read_only_execution(&FixedInput::capture(alien).unwrap())
             .unwrap_err()
             .code,
         ErrorCode::Unauthorized
     );
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     let mut changed = result.envelope().clone();
@@ -398,7 +398,7 @@ fn receipt_and_target_change_are_atomic_and_duplicates_return_original_receipt()
     let mut store = store(&path);
     install_targets(&store);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     store
@@ -454,7 +454,7 @@ fn consistency_units_rollback_all_changes_but_unrelated_edits_do_not_conflict() 
     let mut store = store(&parent.path().join("project"));
     install_targets(&store);
     let input = fixture_input(&store, true);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let mut results = Vec::new();
     for item in &input.envelope().items {
         let result = produce(&mut store, &input, item.item_id);
@@ -509,7 +509,7 @@ fn cancellation_wins_before_commit_and_explicit_new_action_can_use_preserved_res
     let mut store = store(&parent.path().join("project"));
     install_targets(&store);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     store
@@ -536,7 +536,7 @@ fn removed_scope_or_target_cannot_be_resurrected_and_unknown_work_is_not_retried
     let mut store = store(&parent.path().join("project"));
     install_targets(&store);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     store
@@ -568,7 +568,7 @@ fn removed_scope_or_target_cannot_be_resurrected_and_unknown_work_is_not_retried
         .unwrap();
     let retry = input.retry(&[pending]).unwrap();
     assert_eq!(
-        store.enqueue_execution(&retry).unwrap_err().code,
+        store.enqueue_read_only_execution(&retry).unwrap_err().code,
         ErrorCode::Unauthorized
     );
 }
@@ -579,7 +579,7 @@ fn versions_and_corrupt_inputs_are_rejected_without_rebuilding_and_bad_output_is
     let path = parent.path().join("project");
     let mut store = store(&path);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     store.close().unwrap();
@@ -640,7 +640,7 @@ fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
     let path = parent.path().join("project");
     let mut store = store(&path);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let item = input.envelope().items[0].item_id;
     let result = produce(&mut store, &input, item);
     let result_bytes = result.bytes().to_vec();
@@ -659,7 +659,7 @@ fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
-    runtime.register(Arc::new(SourceRunner)).unwrap();
+    runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
     runtime.submit(&mut store, &source_input).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -713,6 +713,7 @@ fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
         .pragma_update(None, "defer_foreign_keys", true)
         .unwrap();
     crate::persistence::arena::drop_for_legacy_fixture(&transaction).unwrap();
+    crate::persistence::ledger::provider::drop_for_legacy_fixture(&transaction).unwrap();
     crate::persistence::release::drop_for_legacy_fixture(&transaction).unwrap();
     crate::persistence::review::drop_for_legacy_fixture(&transaction).unwrap();
     crate::persistence::resources::drop_for_legacy_fixture(&transaction).unwrap();
@@ -809,7 +810,7 @@ fn storage_failure_does_not_leave_a_partial_attempt_and_readability_is_preserved
         .pragma_update(None, "query_only", true)
         .unwrap();
     assert_eq!(
-        store.enqueue_execution(&input).unwrap_err().code,
+        store.enqueue_read_only_execution(&input).unwrap_err().code,
         ErrorCode::StorageFailed
     );
     assert!(
@@ -823,10 +824,10 @@ fn storage_failure_does_not_leave_a_partial_attempt_and_readability_is_preserved
         .unwrap()
         .pragma_update(None, "query_only", false)
         .unwrap();
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let selected = input.envelope().items[0].item_id;
     let retry = input.retry(&[selected]).unwrap();
-    store.enqueue_execution(&retry).unwrap();
+    store.enqueue_read_only_execution(&retry).unwrap();
     assert!(
         store
             .dispatch_execution_item(input.envelope().attempt_id, selected)
@@ -834,7 +835,7 @@ fn storage_failure_does_not_leave_a_partial_attempt_and_readability_is_preserved
     );
     let duplicate = input.retry(&[selected]).unwrap();
     assert_eq!(
-        store.enqueue_execution(&duplicate).unwrap_err().code,
+        store.enqueue_read_only_execution(&duplicate).unwrap_err().code,
         ErrorCode::Unauthorized
     );
 }
@@ -846,7 +847,7 @@ fn corrupt_retry_projection_cannot_authorize_replaying_an_unsafe_failure() {
     let mut store = store(&path);
     let input = fixture_input(&store, false);
     let item = input.envelope().items[0].item_id;
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let produced = produce(&mut store, &input, item);
     let mut failed = produced.envelope().clone();
     failed.outcome = ExecutionState::Failed;
@@ -894,7 +895,7 @@ fn corrupt_retry_projection_cannot_authorize_replaying_an_unsafe_failure() {
     );
     assert!(
         reopened
-            .enqueue_execution(&input.retry(&[item]).unwrap())
+            .enqueue_read_only_execution(&input.retry(&[item]).unwrap())
             .is_err()
     );
     assert_eq!(
@@ -914,7 +915,7 @@ fn execution_crash_child() {
     let _schema = TestSchema::enable();
     let mut store = ProjectStore::open(&path).unwrap();
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     if std::env::var("TSUMUGI_EXECUTION_CRASH").as_deref() == Ok("after-runner-call") {
         struct InterruptedRunner;
         impl Runner for InterruptedRunner {
@@ -970,7 +971,7 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
     let mut store = store(&path);
     install_targets(&store);
     let input = fixture_input(&store, true);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let mut successful = Vec::new();
     for item in &input.envelope().items[..2] {
         let result = produce(&mut store, &input, item.item_id);
@@ -1018,7 +1019,7 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
         .execution_retry_input(input.envelope().attempt_id, &[failed])
         .unwrap();
     assert_eq!(retry.envelope().reused_results.len(), 2);
-    store.enqueue_execution(&retry).unwrap();
+    store.enqueue_read_only_execution(&retry).unwrap();
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
     let view = reopened
@@ -1080,7 +1081,7 @@ fn duplicate_adoption_commands_compete_for_one_durable_receipt() {
     let mut store = store(&parent.path().join("project"));
     install_targets(&store);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let result = produce(&mut store, &input, input.envelope().items[0].item_id);
     store.save_execution_result(&result).unwrap();
     store
@@ -1134,7 +1135,7 @@ fn concurrent_cancel_and_adoption_have_one_transaction_order() {
         let mut store = store(&parent.path().join("project"));
         install_targets(&store);
         let input = fixture_input(&store, false);
-        store.enqueue_execution(&input).unwrap();
+        store.enqueue_read_only_execution(&input).unwrap();
         let result = produce(&mut store, &input, input.envelope().items[0].item_id);
         store.save_execution_result(&result).unwrap();
         store
@@ -1333,7 +1334,7 @@ fn cancellation_preserves_committed_failed_and_undispatched_items_and_late_evide
     let mut store = store(&parent.path().join("project"));
     install_targets(&store);
     let input = fixture_input(&store, false);
-    store.enqueue_execution(&input).unwrap();
+    store.enqueue_read_only_execution(&input).unwrap();
     let a = input.envelope().items[0].item_id;
     let b = input.envelope().items[1].item_id;
     let c = input.envelope().items[2].item_id;

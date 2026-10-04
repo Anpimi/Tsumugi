@@ -56,7 +56,7 @@ pub fn source_fixture_hook(store: &mut ProjectStore, stage: &str) -> Result<(), 
                 .project_id(),
         )?;
         let mut runtime = ExecutionRuntime::new(store)?;
-        runtime.register(std::sync::Arc::new(crate::content::SourceRunner))?;
+        runtime.register_read_only(std::sync::Arc::new(crate::content::SourceRunner))?;
         runtime.submit(store, &input)?;
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let result = loop {

@@ -13,6 +13,7 @@ export const aiTask = fixtureIdentity(402);
 export function aiViewFixture(item: AiItem, config: AiConfig): AiView {
   const view: unknown = structuredClone(ai.responses.view);
   if (!validateAi(view)) throw new Error("Invalid AI fixture");
+  view.budget = {limit:config.maxRequests,dispatched:1,legacyHeld:0,unresolved:0,usageUnknown:1,promptTokens:"0",completionTokens:"0"};
   view.config = config;
   view.detail.attemptId = aiAttempt;
   view.detail.taskId = aiTask;
@@ -31,6 +32,7 @@ export function arenaViewFixture(item: AiItem): ArenaView {
   view.detail.attemptId = aiAttempt;
   view.detail.taskId = aiTask;
   view.detail.recovery.attemptId = aiAttempt;
+  view.budget = {limit:40,dispatched:2,legacyHeld:0,unresolved:0,usageUnknown:2,promptTokens:"0",completionTokens:"0"};
   view.rows.forEach((row, i) => {
     row.item = item;
     row.output = { ...row.output!, unitId: item.unitId, targetLocale: item.targetLocale, text: i === 0 ? "Second output" : "First output", usage: null, usageIncomplete: true };

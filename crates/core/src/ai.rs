@@ -5,7 +5,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, io::Read, sync::Mutex, time::Duration};
+use std::{io::Read, sync::Arc};
+pub mod provider;
 
 pub mod arena;
 
@@ -91,9 +92,7 @@ impl AiConfig {
         {
             return Err(error(ErrorCode::InvalidInput, "ai-credential"));
         }
-        if !["max_tokens", "max_completion_tokens"].contains(&self.token_field.as_str()) {
-            return Err(error(ErrorCode::InvalidInput, "ai-token-field"));
-        }
+        provider::ProviderProfile::parameters(&self.token_field)?;
         if !(1..=100).contains(&self.max_items)
             || !(1..=2).contains(&self.concurrency)
             || !(1..=300).contains(&self.max_requests)
@@ -217,13 +216,18 @@ pub fn item_payload(input: &FixedInput, id: ExecutionId) -> Result<AiItem, Execu
     Ok(p)
 }
 pub fn request_body(config: &AiConfig, item: &AiItem) -> Result<Value, ExecutionError> {
+    let profile = provider::ProviderProfile::parameters(&config.token_field)?;
     // Only explicitly shared data enters the user message; local identities and
     // resource bookkeeping are never copied as an unrestricted project dump.
     let shared = json!({"unitId":item.unit_id,"sourceLocale":item.source_locale,"targetLocale":item.target_locale,"nativeKey":item.native_key,"sourceText":item.source_text,"terms":item.terms.iter().map(|t|json!({"source":t.source,"target":t.target,"protected":t.protected})).collect::<Vec<_>>(),"context":item.context.as_ref().map(|c|&c.text)});
-    let content = String::from_utf8(codec::encode(&shared, 32 * 1024)?)
+    let content = String::from_utf8(codec::encode(&shared, profile.max_prompt_bytes)?)
         .map_err(|_| error(ErrorCode::InvalidInput, "ai-prompt"))?;
-    let mut body = json!({"model":config.model,"stream":false,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]});
-    body[&config.token_field] = config.max_output_tokens.into();
+    let mut body = match profile.protocol {
+        provider::ProviderProtocol::ChatCompletionsJson => {
+            json!({"model":config.model,"stream":false,"messages":[{"role":"system","content":SYSTEM},{"role":"user","content":content}]})
+        }
+    };
+    body[&profile.output_token_field] = config.max_output_tokens.into();
     Ok(body)
 }
 pub fn validate_output(
@@ -251,9 +255,12 @@ pub(super) fn validate_item_output(
 
 #[derive(Default)]
 pub struct AiRunner {
-    requests: Mutex<BTreeMap<ExecutionId, u32>>,
+    service: Arc<provider::ProviderService>,
 }
 impl AiRunner {
+    pub fn with_service(service: Arc<provider::ProviderService>) -> Self {
+        Self { service }
+    }
     fn execute(
         &self,
         request: &DispatchRequest,
@@ -270,38 +277,34 @@ impl AiRunner {
         config: &AiConfig,
         item: &AiItem,
     ) -> Result<AiOutput, ExecutionError> {
-        let client = reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(config.timeout_seconds as u64))
-            .build()
-            .map_err(|_| error(ErrorCode::InvalidInput, "ai-client"))?;
-        let key = if config.credential_env.is_empty() {
-            None
-        } else {
-            Some(
-                std::env::var(&config.credential_env)
-                    .ok()
-                    .filter(|v| !v.is_empty())
-                    .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-credential"))?,
-            )
-        };
+        let profile = provider::ProviderProfile::compatible(config)?;
+        let client = self.service.client(config)?;
+        let budget = request
+            .provider
+            .as_ref()
+            .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-budget-host"))?;
         let body = request_body(config, item)?;
         for retry in 0..=config.max_retries {
             if cancel.is_requested() {
                 return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
             }
-            {
-                let mut budgets = self
-                    .requests
-                    .lock()
-                    .map_err(|_| error(ErrorCode::Busy, "ai-budget"))?;
-                let used = budgets
-                    .entry(request.input.envelope().attempt_id)
-                    .or_default();
-                if *used >= config.max_requests {
-                    return Err(error(ErrorCode::LimitExceeded, "ai-budget"));
-                }
-                *used += 1;
+            let key = if config.credential_env.is_empty() {
+                None
+            } else {
+                Some(
+                    std::env::var(&config.credential_env)
+                        .ok()
+                        .filter(|v| !v.is_empty())
+                        .ok_or_else(|| error(ErrorCode::Unauthorized, "ai-credential"))?,
+                )
+            };
+            self.service.wait_rate(config, cancel)?;
+            let reservation = budget.reserve(config.max_requests, cancel)?;
+            if cancel.is_requested() {
+                return Err(error(
+                    ErrorCode::OutcomeUnknown,
+                    "ai-cancelled-after-reservation",
+                ));
             }
             let mut call = client.post(&config.endpoint).json(&body);
             if let Some(key) = &key {
@@ -318,15 +321,19 @@ impl AiRunner {
             }
             let status = response.status();
             if (status.as_u16() == 429 || status.as_u16() == 503) && retry < config.max_retries {
-                for _ in 0..10 {
-                    if cancel.is_requested() {
-                        return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+                budget.settle(reservation, None, cancel)?;
+                provider::wait_backoff(
+                    retry,
+                    response
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok()),
+                    cancel,
+                )?;
                 continue;
             }
             if !status.is_success() {
+                budget.settle(reservation, None, cancel)?;
                 return Err(error(
                     ErrorCode::OutputInvalid,
                     match status.as_u16() {
@@ -339,11 +346,27 @@ impl AiRunner {
             }
             let mut bytes = Vec::new();
             response
-                .take(65537)
+                .take(profile.max_response_bytes as u64 + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))?;
-            let value: Value = codec::decode(&bytes, 65536)
+            budget.settle(reservation, None, cancel)?;
+            let value: Value = codec::decode(&bytes, profile.max_response_bytes)
                 .map_err(|_| error(ErrorCode::OutputInvalid, "ai-response"))?;
+            let usage = match (
+                value["usage"]["prompt_tokens"].as_u64(),
+                value["usage"]["completion_tokens"].as_u64(),
+            ) {
+                (Some(p), Some(c))
+                    if p <= i64::MAX as u64 && c <= config.max_output_tokens as u64 =>
+                {
+                    Some(Usage {
+                        prompt_tokens: p,
+                        completion_tokens: c,
+                    })
+                }
+                _ => None,
+            };
+            budget.settle(reservation, usage.clone(), cancel)?;
             let choices = value["choices"]
                 .as_array()
                 .filter(|rows| rows.len() == 1)
@@ -360,7 +383,7 @@ impl AiRunner {
             let content = choice["message"]["content"]
                 .as_str()
                 .ok_or_else(|| error(ErrorCode::OutputInvalid, "ai-response"))?;
-            let model: ModelOutput = codec::decode(content.as_bytes(), 32768)
+            let model: ModelOutput = codec::decode(content.as_bytes(), profile.max_output_bytes)
                 .map_err(|_| error(ErrorCode::OutputInvalid, "ai-output"))?;
             if model.unit_id != item.unit_id
                 || model.target_locale != item.target_locale
@@ -368,20 +391,6 @@ impl AiRunner {
             {
                 return Err(error(ErrorCode::OutputInvalid, "ai-output"));
             }
-            let usage = match (
-                value["usage"]["prompt_tokens"].as_u64(),
-                value["usage"]["completion_tokens"].as_u64(),
-            ) {
-                (Some(p), Some(c))
-                    if p <= i64::MAX as u64 && c <= config.max_output_tokens as u64 =>
-                {
-                    Some(Usage {
-                        prompt_tokens: p,
-                        completion_tokens: c,
-                    })
-                }
-                _ => None,
-            };
             return Ok(AiOutput {
                 unit_id: model.unit_id,
                 target_locale: model.target_locale,

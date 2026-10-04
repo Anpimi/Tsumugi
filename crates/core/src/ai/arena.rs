@@ -120,7 +120,7 @@ impl ArenaPreview {
             .config
             .variants
             .iter()
-            .map(|c| ((c.timeout_seconds * 1000 + 1000) * (c.max_retries + 1)).min(600_000))
+            .map(|c| ((c.timeout_seconds * 1000 + 6000) * (c.max_retries + 1)).min(600_000))
             .max()
             .ok_or_else(|| error(ErrorCode::InvalidInput, "arena-input"))?;
         let input = FixedInput::capture(e)?;
@@ -227,6 +227,13 @@ pub fn validate_output(
 #[derive(Default)]
 pub struct ArenaRunner {
     transport: AiRunner,
+}
+impl ArenaRunner {
+    pub fn with_service(service: std::sync::Arc<super::provider::ProviderService>) -> Self {
+        Self {
+            transport: AiRunner::with_service(service),
+        }
+    }
 }
 impl Runner for ArenaRunner {
     fn capability_id(&self) -> &str {

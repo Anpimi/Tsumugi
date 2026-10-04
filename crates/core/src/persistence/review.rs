@@ -1906,7 +1906,7 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(store).unwrap();
-        runtime.register(Arc::new(SourceRunner)).unwrap();
+        runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
         runtime.submit(store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let result = loop {
@@ -1961,7 +1961,7 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(store).unwrap();
-        runtime.register(Arc::new(TranslationRunner)).unwrap();
+        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
         runtime.submit(store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
@@ -2583,7 +2583,7 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
-        runtime.register(Arc::new(SourceRunner)).unwrap();
+        runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let result = loop {
@@ -4017,7 +4017,7 @@ mod tests {
         let input = store
             .prepare_locale_build(project, attempt, &choices, &ready.basis)
             .unwrap();
-        store.enqueue_execution(&input).unwrap();
+        store.enqueue_read_only_execution(&input).unwrap();
         let before = store.changes_since(Revision::new(0).unwrap());
         translate(&mut store, project, units[0], "zh-CN", "新输入 {{name}}");
         assert!(
@@ -4032,7 +4032,7 @@ mod tests {
             .unwrap();
         assert_eq!(replay.bytes(), input.bytes());
         assert_eq!(replay.digest(), input.digest());
-        store.enqueue_execution(&replay).unwrap();
+        store.enqueue_read_only_execution(&replay).unwrap();
         assert_eq!(
             serde_json::to_value(store.changes_since(Revision::new(0).unwrap())).unwrap(),
             serde_json::to_value(after_edit).unwrap()
@@ -4190,7 +4190,7 @@ mod tests {
         );
 
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register(Arc::new(BuildRunner)).unwrap();
+        runtime.register_read_only(Arc::new(BuildRunner)).unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let result = loop {
@@ -4674,7 +4674,7 @@ mod tests {
             }
         }
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register(Arc::new(BuildRunner)).unwrap();
+        runtime.register_read_only(Arc::new(BuildRunner)).unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         let results = loop {

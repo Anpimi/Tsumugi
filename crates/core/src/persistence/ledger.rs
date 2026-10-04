@@ -2,6 +2,8 @@ use super::ProjectStore;
 use crate::execution::{codec, *};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+pub(crate) mod provider;
+pub use provider::ProviderBudget;
 
 const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
@@ -12,7 +14,7 @@ pub(super) const EXECUTION_RESULTS_TABLE_V3: &str = "CREATE TABLE execution_resu
         bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
 
-const TABLES: &[(&str, &str)] = &[
+pub(super) const TABLES: &[(&str, &str)] = &[
     ("execution_tasks", "CREATE TABLE execution_tasks (
         task_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL, operation TEXT NOT NULL,
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0), UNIQUE(task_id, project_id))"),
@@ -709,10 +711,15 @@ impl ProjectStore {
                     entry.blocked_reason = Some("retry-not-safe".into());
                 }
             }
-            if matches!(
-                input.envelope().operation.as_str(),
-                crate::ai::OPERATION | crate::ai::arena::OPERATION
-            ) {
+            if !provider::recovery_policy(connection, attempt)?.allows_replay() {
+                if entry.actions.iter().any(|a| {
+                    matches!(
+                        a,
+                        RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                    )
+                }) {
+                    entry.blocked_reason = Some("external-new-consent".into());
+                }
                 entry.actions.retain(|a| {
                     !matches!(
                         a,
@@ -801,12 +808,18 @@ impl ProjectStore {
         &self,
         after: Revision,
     ) -> Result<Vec<ExecutionId>, ExecutionError> {
-        let mut statement=self.execution_connection()?.prepare("SELECT a.attempt_id FROM execution_attempts a WHERE a.sequence>?1 AND EXISTS(SELECT 1 FROM execution_items i WHERE i.attempt_id=a.attempt_id AND i.execution='queued') ORDER BY a.sequence LIMIT 32").map_err(sql_error)?;
+        let mut statement=self.execution_connection()?.prepare("SELECT a.attempt_id FROM execution_attempts a WHERE a.sequence>?1 AND EXISTS(SELECT 1 FROM execution_items i WHERE i.attempt_id=a.attempt_id AND i.execution='queued') ORDER BY a.sequence LIMIT 128").map_err(sql_error)?;
         statement
             .query_map([after.get() as i64], |r| r.get::<_, String>(0))
             .map_err(sql_error)?
             .map(|row| parse_id(row.map_err(sql_error)?))
             .collect()
+    }
+    pub(crate) fn queued_execution_item_count(
+        &self,
+        after: Revision,
+    ) -> Result<usize, ExecutionError> {
+        self.execution_connection()?.query_row("SELECT COUNT(*) FROM execution_items i JOIN execution_attempts a USING(attempt_id) WHERE a.sequence>?1 AND i.execution='queued'",[after.get() as i64],|r|r.get::<_,u32>(0)).map(|n|n as usize).map_err(sql_error)
     }
     pub(crate) fn next_queued_execution_item(
         &self,
@@ -839,6 +852,7 @@ impl ProjectStore {
             )
             .map_err(sql_error)?;
         Ok(DispatchRequest {
+            provider: None,
             input,
             item_id: item,
             dispatch_token: parse_id(
@@ -902,6 +916,21 @@ impl ProjectStore {
     }
 
     pub fn enqueue_execution(&mut self, input: &FixedInput) -> Result<(), ExecutionError> {
+        self.enqueue_execution_with_policy(input, RecoveryPolicy::ExternalUnknown, None)
+    }
+    /// Core-only operation with a reviewed read-only execution effect.
+    pub fn enqueue_read_only_execution(
+        &mut self,
+        input: &FixedInput,
+    ) -> Result<(), ExecutionError> {
+        self.enqueue_execution_with_policy(input, RecoveryPolicy::ReadOnly, None)
+    }
+    pub(crate) fn enqueue_execution_with_policy(
+        &mut self,
+        input: &FixedInput,
+        policy: RecoveryPolicy,
+        parent: Option<ExecutionId>,
+    ) -> Result<(), ExecutionError> {
         let project = self
             .metadata()
             .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
@@ -919,7 +948,10 @@ impl ProjectStore {
             .optional()
             .map_err(sql_error)?;
         if let Some(digest) = existing {
-            return if digest == input.digest() {
+            return if digest == input.digest()
+                && provider::recovery_policy(&tx, envelope.attempt_id)? == policy
+                && provider::matches_parent(&tx, envelope.task_id, parent)?
+            {
                 Ok(())
             } else {
                 Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
@@ -948,6 +980,9 @@ impl ProjectStore {
         }
         if let Some(previous) = envelope.previous_attempt_id {
             let old = load_input(&tx, previous)?;
+            if provider::recovery_policy(&tx, previous)? != policy || !policy.allows_replay() {
+                return Err(error(ErrorCode::Unauthorized, "effect-policy"));
+            }
             if old.envelope().task_id != envelope.task_id {
                 return Err(error(ErrorCode::ResultMismatch, "previous-attempt"));
             }
@@ -1016,6 +1051,7 @@ impl ProjectStore {
                 tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
             }
         }
+        provider::record_input(&tx, input, policy, parent)?;
         super::content::record_input(&tx, input)?;
         super::translation::record_input(&tx, input)?;
         super::release::record_input(&tx, input)?;
@@ -1176,6 +1212,7 @@ impl ProjectStore {
         #[cfg(test)]
         crash_hook("after-dispatch-intent");
         Ok(DispatchRequest {
+            provider: None,
             input,
             item_id: item,
             dispatch_token: token,
@@ -1331,6 +1368,26 @@ impl ProjectStore {
         )
         .map_err(sql_error)?;
         tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM execution_attempts WHERE task_id=?1)",[task.to_string()]).map_err(sql_error)?;
+        let descendants = {
+            let mut stmt = tx.prepare("SELECT task_id FROM execution_budget_ancestry WHERE ancestor_id=?1 AND task_id<>?1").map_err(sql_error)?;
+            stmt.query_map([task.to_string()], |r| r.get::<_, String>(0))
+                .map_err(sql_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(sql_error)?
+        };
+        for child in descendants {
+            let child_revision = cancel_revision(&tx, parse_id(child.clone())?)?.next()?;
+            tx.execute(
+                "INSERT INTO execution_cancellations VALUES (?1,?2,?3)",
+                params![
+                    ExecutionId::new().to_string(),
+                    child,
+                    child_revision.get() as i64
+                ],
+            )
+            .map_err(sql_error)?;
+            tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='parent-cancelled' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM execution_attempts WHERE task_id=?1)",[child]).map_err(sql_error)?;
+        }
         commit(tx)?;
         Ok(revision)
     }

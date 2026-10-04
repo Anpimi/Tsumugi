@@ -93,7 +93,7 @@ fn cfg(url: &str) -> ArenaConfig {
 }
 fn runtime(store: &ProjectStore) -> ExecutionRuntime {
     let mut r = ExecutionRuntime::new(store).unwrap();
-    r.register(Arc::new(ArenaRunner::default())).unwrap();
+    r.register_with_policy(Arc::new(ArenaRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
     r
 }
 fn adopt(store: &mut ProjectStore, input: &FixedInput, item: ExecutionId) -> ExecutionId {
@@ -686,6 +686,7 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_schema_ten_b
     );
     // Remove only the additive relations to obtain an authentic schema-10 shape.
     conn.execute_batch("DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
+    crate::persistence::ledger::provider::drop_for_legacy_fixture(&conn).unwrap();
     conn.pragma_update(None, "user_version", 10).unwrap();
     drop(conn);
     let reopened = ProjectStore::open(&path).unwrap();
@@ -818,9 +819,9 @@ fn approve_and_build(store: &mut ProjectStore, unit: ExecutionId, vtt: bool) -> 
         .unwrap();
     let mut rt = ExecutionRuntime::new(store).unwrap();
     if vtt {
-        rt.register(Arc::new(WebvttBuildRunner)).unwrap();
+        rt.register_read_only(Arc::new(WebvttBuildRunner)).unwrap();
     } else {
-        rt.register(Arc::new(BuildRunner)).unwrap();
+        rt.register_read_only(Arc::new(BuildRunner)).unwrap();
     }
     rt.submit(store, &input).unwrap();
     drain(&mut rt, store, input.envelope().attempt_id);
@@ -1023,9 +1024,9 @@ fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_revi
             .unwrap();
         let mut source_rt = ExecutionRuntime::new(&store).unwrap();
         if vtt {
-            source_rt.register(Arc::new(WebvttSourceRunner)).unwrap();
+            source_rt.register_read_only(Arc::new(WebvttSourceRunner)).unwrap();
         } else {
-            source_rt.register(Arc::new(SourceRunner)).unwrap();
+            source_rt.register_read_only(Arc::new(SourceRunner)).unwrap();
         }
         source_rt.submit(&mut store, &source).unwrap();
         drain(&mut source_rt, &mut store, source.envelope().attempt_id);
@@ -1072,7 +1073,7 @@ fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_revi
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut rt = ExecutionRuntime::new(&store).unwrap();
-        rt.register(Arc::new(AiRunner::default())).unwrap();
+        rt.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
         rt.submit(&mut store, &ai).unwrap();
         drain(&mut rt, &mut store, ai.envelope().attempt_id);
         let ai_result = store
@@ -1138,6 +1139,7 @@ fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_revi
         };
         let prior = facts(&c);
         c.execute_batch("DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
+        crate::persistence::ledger::provider::drop_for_legacy_fixture(&c).unwrap();
         c.pragma_update(None, "user_version", 10).unwrap();
         drop(c);
         let mut store = ProjectStore::open(&path).unwrap();
@@ -1155,7 +1157,7 @@ fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_revi
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            11
+            12
         );
         drop(c);
         let backup = std::fs::read_dir(&path)
