@@ -96,6 +96,8 @@ arena: {
 },
 protection: {
   evidence: "Evidence details",
+  editingBlocked: "This draft is read-only until protection is confirmed. Refresh or retry an uncertain action below; after releasing protection, protect the entry again to edit.",
+  refreshEntry: "Refresh current entry",
   "title": "Automation protection",
   "loading": "Reading protection…",
   "unavailable": "Protection unavailable. Refresh before changing it.",

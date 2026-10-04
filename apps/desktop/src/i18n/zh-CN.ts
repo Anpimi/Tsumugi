@@ -97,6 +97,8 @@ arena: {
 },
 protection: {
   evidence: "证据详情",
+  editingBlocked: "保护确认前，草稿保持只读。请在下方刷新或重试结果不确定的操作；解除保护后，重新启用保护才能编辑。",
+  refreshEntry: "刷新当前条目",
   "title": "自动化保护",
   "loading": "正在读取保护状态…",
   "unavailable": "保护状态不可用，请刷新后再修改。",

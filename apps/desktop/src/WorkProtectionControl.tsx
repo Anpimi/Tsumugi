@@ -29,6 +29,11 @@ export interface WorkProtectionControlProps {
   draftBlocked: boolean;
   run: (work: (current: () => boolean) => Promise<void>) => Promise<void>;
   onBlockedChange: (blocked: boolean) => void;
+  onEditingReadyChange?: (scope: string, ready: boolean) => void;
+}
+
+export function editingProtectionScope(context: SessionRequest, target: { unitId: string; sourceRevisionId: string }, locale: string) {
+  return JSON.stringify([context.projectId, context.sessionToken, target.unitId, locale, target.sourceRevisionId]);
 }
 
 function protectionKey(unitId: string, locale: string, sourceRevisionId: string, selectionId: string | null) {
@@ -44,7 +49,7 @@ function protectionIdentity(request: Pick<ProtectionRequest, "projectId" | "sess
 
 /** The parent must retain this controller and guard navigation while blocked. */
 export function WorkProtectionControl({ context, target, locale, selectionId, selectionText, open, disabled,
-  draftBlocked, run, onBlockedChange }: WorkProtectionControlProps) {
+  draftBlocked, run, onBlockedChange, onEditingReadyChange }: WorkProtectionControlProps) {
   const { t } = useTranslation();
   const reads = useSessionReads();
   const [release, setRelease] = useState<ProtectionBasis | null>(null);
@@ -53,6 +58,8 @@ export function WorkProtectionControl({ context, target, locale, selectionId, se
   const inFlight = useRef(false);
   const section = useRef<HTMLElement>(null);
   const focusAfterRelease = useRef(false);
+  const attemptedEdit = useRef<string | null>(null);
+  const editingScope = editingProtectionScope(context, target, locale);
   const scope = scopeIdentity({ ...context, ...target, locale, selectionId });
   const protectionScope = protectionIdentity({ ...context, unitId: target.unitId, locale });
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -70,6 +77,26 @@ export function WorkProtectionControl({ context, target, locale, selectionId, se
   const canRelease = ready && query.data?.protected && !disabled && !draftBlocked && !pending;
   const releaseCurrent = release !== null && scopeIdentity(release.request) === scope
     && release.request.expectedRevision === query.data?.revision;
+
+  useEffect(() => {
+    if (!onEditingReadyChange) return;
+    if (!open || pending) onEditingReadyChange(editingScope, false);
+    else if (ready) onEditingReadyChange(editingScope, query.data?.protected === true);
+    // Retain a confirmed protection across an ordinary save/refetch. Locking
+    // an existing editor during those reads would interrupt newer input/IME.
+  }, [editingScope, open, pending !== null, ready, query.data?.protected, onEditingReadyChange]);
+
+  useEffect(() => {
+    if (!onEditingReadyChange || !open || disabled || pending || !ready
+      || attemptedEdit.current === scope || inFlight.current) return;
+    attemptedEdit.current = scope;
+    if (!query.data?.protected) {
+      const basis = capture();
+      if (basis) void change(basis, true);
+    }
+    // Opening the editor establishes protection once. Explicit release keeps
+    // the editor read-only until the user protects it again, without a loop.
+  }, [scope, open, disabled, pending !== null, ready, query.data?.protected, onEditingReadyChange]);
 
   function capture(): ProtectionBasis | null {
     if (!query.data || !ready) return null;

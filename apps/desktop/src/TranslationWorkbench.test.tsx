@@ -1,6 +1,6 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { createRef } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
@@ -24,6 +24,8 @@ let applied: boolean;
 let conflicting: boolean;
 let identity: number;
 let savedActions: Map<string, ReturnType<typeof saveReceipt>>;
+let protection: Map<string, { unitId: string; locale: string; revision: string; protected: boolean }>;
+let protectionActions: Map<string, { unitId: string; locale: string; revision: string; protected: boolean }>;
 function saveReceipt(request: Record<string, unknown>) {
   const prior = history.current?.unitId === request.unitId ? history.current : null;
   const sequence = (BigInt(prior?.sequence ?? "0") + 1n).toString();
@@ -40,6 +42,7 @@ function saveReceipt(request: Record<string, unknown>) {
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map();
+  protection = new Map(); protectionActions = new Map();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
@@ -54,7 +57,17 @@ beforeEach(async () => {
     };
     if (command === "read_review_neighbor") return { unitId: fixtureIdentity(217), afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) };
     if (command === "read_translation_history") return history;
-    if (command === "read_work_protection") return {unitId:args.request.unitId,locale:args.request.locale,revision:"0",protected:false};
+    if (command === "read_work_protection") return protection.get(`${args.request.unitId}:${args.request.locale}`)
+      ?? { unitId: args.request.unitId, locale: args.request.locale, revision: "0", protected: false };
+    if (command === "set_work_protection") {
+      const action = String(args.request.actionId), scope = `${args.request.unitId}:${args.request.locale}`;
+      if (protectionActions.has(action)) return protectionActions.get(action);
+      const current = protection.get(scope);
+      if ((current?.revision ?? "0") !== args.request.expectedRevision) throw errorFixture.errors[1];
+      const next = { unitId: String(args.request.unitId), locale: String(args.request.locale),
+        revision: (BigInt(String(args.request.expectedRevision)) + 1n).toString(), protected: args.request.protected === true };
+      protection.set(scope, next); protectionActions.set(action, next); return next;
+    }
     if (command === "resolve_terms") return { unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
     if (command === "read_context_revision") return { revisionId: fixtureIdentity(225), unitId: fixtureIdentity(204), locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
     if (command === "select_source") return { selectionId: fixtureIdentity(207), folderName: "Example Mod" };
@@ -342,6 +355,7 @@ it("keeps text typed after an earlier save and checks the new selection before s
     ? new Promise(resolve => { complete = () => { const receipt = saveReceipt(args.request); history = { ...emptyHistory, total: "1", current: receipt.selection, currentText: "A", rows: [] }; resolve(receipt); }; })
     : original(command, args));
   await user.click(screen.getByRole("button", { name: "Save revision" }));
+  expect(editor).not.toHaveAttribute("readonly");
   await user.type(editor, "B");
   await act(async () => { complete(history.current); });
   await screen.findByText(/Your newer draft is still here/);
@@ -553,7 +567,6 @@ it("retains an uncertain protection action while guarding entry, language and pr
   });
   render(<TranslationWorkbench ref={ref} project={project} disabled={false}/>);const user=userEvent.setup();
   await user.click(screen.getByRole("button",{name:"Translations"}));await user.click(await screen.findByRole("button",{name:"first"}));
-  await user.click(await screen.findByRole("button",{name:"Protect from automation"}));
   await screen.findByRole("button",{name:"Retry same protection action"});
   expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
   expect(screen.getByRole("combobox",{name:"Target language"})).toBeDisabled();
@@ -561,8 +574,177 @@ it("retains an uncertain protection action while guarding entry, language and pr
   let leave=true,opened=true;
   await act(async()=>{leave=await ref.current!.allowLeave();opened=ref.current!.openUnit({unitId:fixtureIdentity(217),sourceRevisionId:fixtureIdentity(218),key:"second",sourceText:"Second"},"zh-CN");});
   expect(leave).toBe(false);expect(opened).toBe(false);
-  const draft=screen.getByRole("textbox",{name:"Your draft"});await user.type(draft,"Retained manual input");
+  const draft=screen.getByRole("textbox",{name:"Your draft"});
+  expect(draft).toHaveAttribute("readonly");await user.type(draft,"Unsafe input");expect(draft).toHaveValue("");
   await user.click(screen.getByRole("button",{name:"Retry same protection action"}));
-  await screen.findByText("Protected from automatic selection");expect(draft).toHaveValue("Retained manual input");
+  await screen.findByText("Protected from automatic selection");
+  await waitFor(()=>expect(draft).not.toHaveAttribute("readonly"));await user.type(draft,"Retained manual input");expect(draft).toHaveValue("Retained manual input");
   const mutations=invoke.mock.calls.filter(([name])=>name==="set_work_protection");expect(mutations).toHaveLength(2);expect(mutations[1][1].request).toEqual(mutations[0][1].request);
+});
+
+it("accepts no editable draft before protection commits and confirms current state", async () => {
+  const original = invoke.getMockImplementation()!;
+  let finishProtection!: () => Promise<void>;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "set_work_protection") return new Promise(resolve => {
+      finishProtection = async () => resolve(await original(command, args));
+    });
+    return original(command, args);
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await waitFor(() => expect(finishProtection).toBeDefined());
+  expect(draft).toHaveAttribute("readonly");
+  await user.type(draft, "Before protection");
+  expect(draft).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
+  await act(finishProtection);
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  await user.type(draft, "After protection");
+  expect(draft).toHaveValue("After protection");
+  expect(invoke.mock.calls.filter(([name]) => name === "set_work_protection")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_work_protection")).toHaveLength(2);
+});
+
+it("keeps unreadable protection read-only and recovers through its existing refresh action", async () => {
+  const original = invoke.getMockImplementation()!;
+  let failedRead = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_work_protection" && failedRead) return Promise.reject(new Error("Read unavailable"));
+    return original(command, args);
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await screen.findByRole("button", { name: "Refresh protection" });
+  expect(draft).toHaveAttribute("readonly");
+  expect(invoke.mock.calls.filter(([name]) => name === "set_work_protection")).toHaveLength(0);
+  failedRead = false;
+  await user.click(screen.getByRole("button", { name: "Refresh protection" }));
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  await user.type(draft, "Recovered input");
+  expect(draft).toHaveValue("Recovered input");
+});
+
+it("keeps a released entry read-only until explicit protection without re-protecting in a loop", async () => {
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  await user.click(screen.getByRole("button", { name: "Release protection" }));
+  await user.click(await screen.findByRole("button", { name: "Release for this entry" }));
+  await screen.findByText("Automatic selection is not protected");
+  expect(draft).toHaveAttribute("readonly");
+  await user.type(draft, "Unprotected input");
+  expect(draft).toHaveValue("");
+  expect(invoke.mock.calls.filter(([name]) => name === "set_work_protection")).toHaveLength(2);
+  await user.click(screen.getByRole("button", { name: "Protect from automation" }));
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  await user.type(draft, "Protected input");
+  expect(draft).toHaveValue("Protected input");
+  expect(invoke.mock.calls.filter(([name]) => name === "set_work_protection")).toHaveLength(3);
+});
+
+it("refreshes a conflicting entry basis before protecting it and never saves a blocked suggested draft", async () => {
+  const original = invoke.getMockImplementation()!, ref = createRef<TranslationHandle>();
+  let firstWrite = true;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "set_work_protection" && firstWrite) {
+      firstWrite = false;
+      const receipt = saveReceipt({ ...args.request, text: "Another selection", expectedSelectionId: null });
+      history = { ...emptyHistory, total: "1", current: receipt.selection, currentText: receipt.revision.text, rows: [receipt.revision] };
+      throw errorFixture.errors[1];
+    }
+    return original(command, args);
+  });
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await act(async () => { ref.current!.openUnit({ unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205), key: "first", sourceText: "Original" }, "zh-CN", "Suggested draft"); });
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await screen.findByRole("alert");
+  expect(draft).toHaveAttribute("readonly");
+  expect(draft).toHaveValue("Suggested draft");
+  let leaving!: Promise<boolean>;
+  await act(async () => { leaving = ref.current!.allowLeave(); });
+  await screen.findByRole("dialog");
+  expect(screen.getByRole("button", { name: "Save and continue" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: i18n.t("translation.stay") }));
+  expect(await leaving).toBe(false);
+  expect(draft).toHaveValue("Suggested draft");
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Discard draft" }));
+  await user.click(screen.getByRole("button", { name: "Refresh current entry" }));
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  expect(draft).toHaveValue("Another selection");
+  const writes = invoke.mock.calls.filter(([name]) => name === "set_work_protection");
+  expect(writes).toHaveLength(2);
+  expect(writes[1][1].request.selectionId).toBe(history.current!.eventId);
+});
+
+it("does not save or leave during composition and preserves the draft for the next ordinary save", async () => {
+  const ref = createRef<TranslationHandle>();
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  await user.type(draft, "Draft");
+  fireEvent.compositionStart(draft);
+  fireEvent.keyDown(draft, { key: "s", metaKey: true, isComposing: true });
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
+  expect(await ref.current!.allowLeave()).toBe(false);
+  expect(ref.current!.openUnit({ unitId: fixtureIdentity(217), sourceRevisionId: fixtureIdentity(218), key: "second", sourceText: "Second" }, "zh-CN")).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
+  expect(draft).toHaveValue("Draft");
+  fireEvent.compositionEnd(draft);
+  fireEvent.keyDown(draft, { key: "s", metaKey: true, isComposing: true });
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
+  fireEvent.keyDown(draft, { key: "s", metaKey: true });
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1));
+  expect(draft).toHaveValue("Draft");
+});
+
+it.each(["newer-text", "composition"])("preserves %s when a manual selection acknowledgement arrives", async mode => {
+  const revision = saveReceipt({ projectId: project.metadata.projectId, actionId: fixtureIdentity(3000),
+    unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), text: "Older revision", expectedSelectionId: null }).revision;
+  history = { ...emptyHistory, total: "1", rows: [revision] };
+  const original = invoke.getMockImplementation()!;
+  let complete!: () => void;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "select_translation_revision") return new Promise(resolve => {
+      complete = () => {
+        const selection = { eventId: fixtureIdentity(3001), unitId: revision.unitId, locale: revision.locale,
+          sequence: "1", revisionId: revision.revisionId, actionId: String(args.request.actionId), previousEventId: null };
+        history = { ...history, current: selection, currentText: revision.text };
+        resolve(selection);
+      };
+    });
+    return original(command, args);
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await waitFor(() => expect(draft).not.toHaveAttribute("readonly"));
+  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByRole("button", { name: "Select this revision" }));
+  await waitFor(() => expect(complete).toBeDefined());
+  if (mode === "newer-text") await user.type(draft, "Newer input");
+  else fireEvent.compositionStart(draft);
+  await act(async () => { complete(); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Back to overview" })).toBeEnabled());
+  expect(draft).not.toHaveAttribute("readonly");
+  expect(draft).toHaveValue(mode === "newer-text" ? "Newer input" : "");
+  if (mode === "composition") fireEvent.compositionEnd(draft);
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
 });

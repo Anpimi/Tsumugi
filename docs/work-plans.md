@@ -121,8 +121,18 @@ responses retain their original action identity for receipt reconciliation. A sa
 authorization whose enqueue fails remains available to start or stop explicitly.
 The translation editor shows persistent protection and confirms release against
 the current entry, language, source, selection and protection revision. Dirty or
-unresolved saves block release. Automatic selection, resource adoption and delivery
-remain unfinished; their effects cannot be granted through this interface. The API is not a stable plugin
+unresolved saves block release. Opening an unprotected entry records protection
+before enabling draft input. Until that write and a current protection read are
+confirmed, the draft remains read-only. Failed reads can be refreshed; uncertain
+writes retain their original action. If selection changed before protection,
+discard any suggested draft and refresh the current entry before retrying.
+Explicit release leaves the entry read-only until it is protected again. Saves
+and subsequent reads keep an already protected editor editable, preserving newer
+input. Composition prevents save shortcuts and entry/project navigation until
+it ends.
+
+Automatic selection, resource adoption and delivery remain unfinished in the
+desktop flow; their effects cannot be granted through this interface. The API is not a stable plugin
 SDK. A model or plugin must not receive unrestricted access to human-authorization
 methods, `ProjectStore` or the raw runtime; its host must carry the issued lease
 and parent identity through the scoped application entry points.
