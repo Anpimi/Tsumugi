@@ -1,0 +1,30 @@
+{
+  "name": "@tsumugi/javascript-host",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=26.10.0 <27"
+  },
+  "scripts": {
+    "generate:contracts": "node scripts/generate-contracts.mjs",
+    "check:contracts": "node scripts/generate-contracts.mjs --check",
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs",
+    "test:process": "node scripts/test-process.mjs"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.10",
+    "jsonc-parser": "3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "ajv": "8.20.0",
+    "json-schema-to-typescript": "16.0.0",
+    "typescript": "7.0.2"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "MIT"
+}

@@ -17,8 +17,10 @@ bump the application when the desktop runtime and stored data are unchanged.
 
 The experimental process Host inherits the workspace version as an internal
 application component. Its conformance-worker binary is test tooling, not a
-separate published plugin. The process protocol is SDK-owned and independently
-versioned; adding the unintegrated Host does not distribute a new desktop build.
+separate published plugin. The private JavaScript Host workspace has no separate
+release version; it is an internal runtime for the same application release unit.
+Its generated wire profile records the independently versioned SDK. The process
+protocol is SDK-owned and independently versioned; adding the unintegrated Host does not distribute a new desktop build.
 
 ## Choosing the next version
 

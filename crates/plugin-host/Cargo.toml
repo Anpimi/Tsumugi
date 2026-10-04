@@ -25,3 +25,4 @@ required-features = ["conformance-worker"]
 
 [features]
 conformance-worker = []
+javascript-conformance = []

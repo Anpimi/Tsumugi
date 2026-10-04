@@ -66,6 +66,17 @@ pub fn process_schema() -> schemars::Schema {
     schemars::schema_for!(ProcessFrame)
 }
 
+/// Build-time metadata for generated language bindings, from the same constants
+/// that the Rust receiver enforces. This is not a runtime authorization policy.
+#[cfg(feature = "schema")]
+pub fn process_profile() -> serde_json::Value {
+    serde_json::json!({
+        "protocolVersion": PROCESS_PROTOCOL,
+        "maxFrameBytes": MAX_EXCHANGE_BYTES,
+        "sdkVersion": env!("CARGO_PKG_VERSION")
+    })
+}
+
 #[cfg(feature = "schema")]
 fn process_protocol_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type":"integer", "const": PROCESS_PROTOCOL})

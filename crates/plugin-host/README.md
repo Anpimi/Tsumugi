@@ -5,11 +5,13 @@ SDK process protocol. It has no Core, database, domain runner or model dependenc
 and is not yet connected to the desktop's production extension catalog.
 
 The implemented profile is one serialized capability on a project-scoped native
-worker. The Unix launcher creates an owned process group; this profile is tested
-on macOS. Windows is refused until an owned Job Object implementation is verified.
-The JavaScript interpreter launcher accepts an absolute path from a trusted
-runtime installer; its Cordis component coordinator and packaged runtime are
-separate integration work, not established by the native conformance tests.
+worker or JavaScript component. The Unix launcher creates an owned process group;
+this profile is tested on macOS. Windows is refused until an owned Job Object implementation is verified.
+The JavaScript launcher requires absolute paths for both an approved Node runtime
+and the [built component Host](../../runtimes/javascript-host/README.md). That Host
+owns the process protocol and privately uses Cordis behind the SDK facade. The
+plugin entrypoint exports a component; it is not launched as a protocol peer.
+Runtime installation/pinning and desktop distribution remain separate work.
 
 ## Captured package and actual channel
 
@@ -30,8 +32,8 @@ before spawning, after materialization, as well as during the handshake.
 `ProcessSession::launch` requires a current authority callback and an explicit
 acknowledgement of unsandboxed execution. The manifest's requested permissions do
 not provide either. Launch resolves the declared entrypoint and contribution,
-clears the entire child environment, and assigns a fresh instance identity to the
-actual process/pipe channel. Required dependencies without an implemented broker
+does not inherit the parent environment, and assigns a fresh instance identity
+to the actual process/pipe channel. Required dependencies without an implemented broker
 are refused; other component scopes are refused. The handshake must echo the
 captured capability and provider binding exactly. It cannot upgrade declarations,
 effects, versions, limits or permission requests.

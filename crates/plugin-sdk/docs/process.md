@@ -47,3 +47,18 @@ package-path rules, identities, payload digest verification and live Host state
 remain semantic checks. A JSON parser in another language may discard duplicate
 members; a schema alone cannot detect that loss. The receiving Rust SDK parses
 the original bytes and rejects duplicate typed fields.
+
+## JavaScript component profile
+
+The experimental [JavaScript Host](../../../runtimes/javascript-host/README.md)
+loads SDK components using generated [wire types](../javascript/process.d.ts) and
+a small [component facade](../javascript/component.d.ts). The Rust schema remains
+the wire source; the Host's `generate:contracts` command emits those TypeScript
+types and an Ajv standalone validator. `profile-process` exports the Rust protocol
+version, frame bound and SDK package version for generation.
+
+This JavaScript profile rejects duplicate decoded JSON keys, non-scalar strings,
+non-integer numeric tokens, unsafe JavaScript integers and excessive nesting.
+Exact payload UTF-8 (including BOM, CRLF and Unicode) remains opaque data. These
+additional parser limits are profile constraints; structural validation does not
+replace Rust's semantic matching or the real parent's channel/authority checks.

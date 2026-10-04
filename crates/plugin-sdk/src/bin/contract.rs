@@ -30,6 +30,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 1 && args[0] == "schema-process" {
         return print(&process_schema());
     }
+    if args.len() == 1 && args[0] == "profile-process" {
+        return print(&process_profile());
+    }
     if args.len() == 2 && args[0] == "validate-process" {
         return print(&parse_process_frame(&read(&args[1], MAX_EXCHANGE_BYTES)?)?);
     }
@@ -94,7 +97,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &serde_json::json!({"coverageComplete": coverage.complete, "entries": coverage.entries.len()}),
         );
     }
-    Err("usage: tsumugi-plugin-contract schema | schema-exchange | schema-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
+    Err("usage: tsumugi-plugin-contract schema | schema-exchange | schema-process | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
 }
 fn main() {
     if let Err(error) = run() {

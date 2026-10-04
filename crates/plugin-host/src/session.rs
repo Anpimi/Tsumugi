@@ -85,11 +85,15 @@ impl HostLimits {
 
 /// An approved interpreter supplied by the trusted runtime installer. Its path
 /// is not selected from PATH or a plugin manifest. Authentication/pinning of
-/// this executable belongs to that installer, not a self-reported worker frame.
+/// the interpreter, bootstrap and its dependencies belongs to that installer,
+/// not a self-reported worker frame.
 #[derive(Clone, Debug)]
 pub enum RuntimeLauncher {
     Native,
-    JavaScript { approved_node: PathBuf },
+    JavaScript {
+        approved_node: PathBuf,
+        approved_bootstrap: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -212,11 +216,15 @@ impl ProcessSession {
             );
             let mut command = match (component.runtime, launcher) {
                 (RuntimeKind::NativeWorker, RuntimeLauncher::Native) => Command::new(&entry),
-                (RuntimeKind::JavaScript, RuntimeLauncher::JavaScript { approved_node })
-                    if approved_node.is_absolute() =>
-                {
+                (
+                    RuntimeKind::JavaScript,
+                    RuntimeLauncher::JavaScript {
+                        approved_node,
+                        approved_bootstrap,
+                    },
+                ) if approved_node.is_absolute() && approved_bootstrap.is_absolute() => {
                     let mut c = Command::new(approved_node);
-                    c.arg(&entry);
+                    c.arg(approved_bootstrap).arg(&entry);
                     c
                 }
                 _ => return Err(HostError::UnsupportedRuntime),
