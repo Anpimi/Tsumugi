@@ -11,12 +11,12 @@ use tsumugi_core::execution::{
 use tsumugi_plugin_sdk as sdk;
 
 use crate::{
-    HostError, HostLimits, LaunchOptions, PackageImage, ProcessSession, ReceivedResult,
-    RuntimeLauncher, ScopeBinding,
+    CapturedRuntime, HostError, HostLimits, LaunchOptions, PackageImage, ProcessSession,
+    ReceivedResult, RuntimeLauncher, ScopeBinding,
 };
 
 /// One captured package/contribution selection. Construct this only with the
-/// trusted installer's captured image, runtime launcher, and environment digest.
+/// trusted installer's captured image and complete runtime environment.
 /// These values establish the selection, not execution permission or publisher
 /// authentication. Core supplies a separate live permit for every dispatch.
 #[derive(Clone)]
@@ -24,8 +24,7 @@ pub struct RunnerProxy {
     image: PackageImage,
     capability: sdk::CapabilityBinding,
     capability_version: String,
-    environment_digest: String,
-    launcher: RuntimeLauncher,
+    runtime: CapturedRuntime,
     staging_parent: PathBuf,
     limits: HostLimits,
 }
@@ -34,13 +33,11 @@ impl RunnerProxy {
     pub fn new(
         image: PackageImage,
         contribution_id: impl Into<String>,
-        environment_digest: impl Into<String>,
-        launcher: RuntimeLauncher,
+        runtime: CapturedRuntime,
         staging_parent: impl Into<PathBuf>,
         limits: HostLimits,
     ) -> Result<Self, ExecutionError> {
         let contribution_id = contribution_id.into();
-        let environment_digest = environment_digest.into();
         let staging_parent = staging_parent.into();
         if !staging_parent.is_absolute() {
             return Err(ExecutionError::new(
@@ -52,21 +49,35 @@ impl RunnerProxy {
         let capability =
             sdk::bind_capability(image.manifest(), &contribution_id, image.package_digest())
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-selection"))?;
+        let component = image
+            .manifest()
+            .manifest()
+            .components
+            .iter()
+            .find(|component| component.id == capability.provider.component_id)
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-selection"))?;
+        // The captured environment's current profile is Node-specific. A
+        // native process cannot acquire a Node environment binding by reuse.
+        if component.runtime != sdk::RuntimeKind::JavaScript {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "plugin-runtime-profile",
+            ));
+        }
         // Reuse Core's binding validation for the captured environment. A
         // declared profile is used only for this validation, never as a default
         // selection: execution_binding still requires an explicit profile.
         let checked = PluginExecutionBinding {
             profile: capability.declaration.profiles.first().cloned(),
             capability: capability.clone(),
-            environment_digest: environment_digest.clone(),
+            environment: runtime.descriptor().clone(),
         };
         checked.validate()?;
         Ok(Self {
             image,
             capability,
             capability_version: checked.capability_version(),
-            environment_digest,
-            launcher,
+            runtime,
             staging_parent,
             limits,
         })
@@ -81,7 +92,7 @@ impl RunnerProxy {
         let binding = PluginExecutionBinding {
             capability: self.capability.clone(),
             profile,
-            environment_digest: self.environment_digest.clone(),
+            environment: self.runtime.descriptor().clone(),
         };
         binding.validate()?;
         Ok(binding)
@@ -128,13 +139,18 @@ impl RunnerProxy {
             allow_unsandboxed_execution: true,
             limits: self.limits.clone(),
         };
+        let live_request = request.clone();
+        let live_permit = permit.clone();
+        let live_cancellation = cancellation.clone();
         let mut session = ProcessSession::launch(
             &self.image,
             &self.capability.provider.contribution_id,
             &self.staging_parent,
-            &self.launcher,
+            &RuntimeLauncher::JavaScript {
+                runtime: self.runtime.clone(),
+            },
             options,
-            || is_live(request, permit, cancellation),
+            move || is_live(&live_request, &live_permit, &live_cancellation),
         )
         .await
         .map_err(|error| current_error(error, request, permit, cancellation))?;
@@ -224,6 +240,9 @@ impl Runner for RunnerProxy {
     fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
         Some(&self.capability.provider)
     }
+    fn plugin_environment(&self) -> Option<&sdk::RuntimeEnvironmentDescriptor> {
+        Some(self.runtime.descriptor())
+    }
 
     fn run(
         &self,
@@ -304,6 +323,7 @@ fn current_error(
         HostError::PackageLimit => (ErrorCode::LimitExceeded, "plugin-package-limit"),
         HostError::PackagePath => (ErrorCode::InvalidInput, "plugin-package-path"),
         HostError::PackageMismatch => (ErrorCode::ResultMismatch, "plugin-package-binding"),
+        HostError::RuntimeMismatch => (ErrorCode::ResultMismatch, "plugin-runtime-binding"),
         HostError::PackageChanged => (ErrorCode::DependencyConflict, "plugin-package-changed"),
         HostError::CaptureFailed => (ErrorCode::StorageFailed, "plugin-package-capture"),
         HostError::MissingArtifact => (ErrorCode::DependencyConflict, "plugin-artifact"),

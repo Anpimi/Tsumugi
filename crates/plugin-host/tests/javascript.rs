@@ -9,6 +9,8 @@ use std::{
 };
 use tsumugi_plugin_host::*;
 use tsumugi_plugin_sdk::*;
+#[path = "support/runtime.rs"]
+mod runtime_fixture;
 fn contract(id: &str) -> ContractRef {
     ContractRef {
         id: id.into(),
@@ -119,7 +121,7 @@ fn request(session: &ProcessSession, dispatch: &str, text: &str) -> InvocationRe
             dispatch_id: dispatch.into(),
             input_digest: input.sha256.clone(),
             scope_digest: payload_digest("scope"),
-            environment_digest: payload_digest("environment"),
+            environment_digest: session.environment_digest().unwrap().into(),
             configuration_digest: payload_digest("configuration"),
         },
         provider: session.channel().provider,
@@ -151,14 +153,10 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 fn launcher() -> RuntimeLauncher {
     RuntimeLauncher::JavaScript {
-        approved_node: std::env::var_os("TSUMUGI_TEST_NODE")
-            .expect("test runner must select Node")
-            .into(),
-        approved_bootstrap: std::env::var_os("TSUMUGI_TEST_JS_HOST_BOOTSTRAP")
-            .expect("test runner must select built Host")
-            .into(),
+        runtime: runtime_fixture::approved_runtime(),
     }
 }
+
 #[test]
 fn javascript_sdk_calls_keep_identity_unicode_and_independent_lifetimes() {
     runtime().block_on(async {
@@ -338,5 +336,61 @@ fn javascript_close_waits_for_cleanup_and_does_not_ack_failed_or_stuck_cleanup()
             assert!(start.elapsed() < Duration::from_secs(2));
         }
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    });
+}
+
+#[test]
+fn runtime_materialization_rechecks_authority_before_writing_or_starting_node() {
+    runtime().block_on(async {
+        let staging = tempfile::tempdir().unwrap();
+        let observer = tempfile::tempdir().unwrap();
+        let marker = observer.path().join("cleanup.txt");
+        let parent = staging.path().to_owned();
+        let launcher = launcher();
+        let result = ProcessSession::launch(
+            &image_with_observer("half-fail", Some(&marker)),
+            "query.call",
+            staging.path(),
+            &launcher,
+            options(),
+            move || {
+                // Revoke as soon as the real runtime file is created. The next
+                // chunk must observe this before a partly written tool can run.
+                !std::fs::read_dir(&parent)
+                    .unwrap()
+                    .any(|entry| entry.unwrap().path().join("runtime/tool/bin/node").exists())
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(HostError::AuthorityRevoked)));
+        assert!(!marker.exists(), "component never activated");
+        assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 0);
+    });
+}
+
+#[test]
+fn captured_environment_mismatch_is_refused_before_component_execution() {
+    runtime().block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = launch("normal", directory.path()).await;
+        let mut invocation = request(&session, "wrong-environment", "input");
+        invocation.context.environment_digest = payload_digest("another environment");
+        assert_eq!(
+            session
+                .invoke(&invocation, || false, || true)
+                .await
+                .unwrap_err(),
+            HostError::RequestMismatch
+        );
+        session
+            .invoke(
+                &request(&session, "correct-environment", "input"),
+                || false,
+                || true,
+            )
+            .await
+            .unwrap();
+        assert!(session.close().await.direct_child_reaped);
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
     });
 }

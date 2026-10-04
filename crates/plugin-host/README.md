@@ -9,11 +9,12 @@ desktop's production extension catalog.
 The implemented profile is one serialized capability on a project-scoped native
 worker or JavaScript component. The Unix launcher creates an owned process group;
 this profile is tested on macOS. Windows is refused until an owned Job Object implementation is verified.
-The JavaScript launcher requires absolute paths for both an approved Node runtime
-and the [built component Host](../../runtimes/javascript-host/README.md). That Host
+The JavaScript launcher requires a `CapturedRuntime` containing the independently
+approved Node tool and complete [built component Host](../../runtimes/javascript-host/README.md) trees. That Host
 owns the process protocol and privately uses Cordis behind the SDK facade. The
 plugin entrypoint exports a component; it is not launched as a protocol peer.
-Runtime installation/pinning and desktop distribution remain separate work.
+Trusted runtime acquisition, durable runtime installation and desktop distribution
+remain separate work.
 
 ## Captured package and actual channel
 
@@ -45,6 +46,31 @@ entrypoint, unpack an archive, fetch metadata or prove publisher identity. The
 caller still owns source approval, and an installer must validate archive/source
 provenance before producing captured bytes. Network signature/update verification
 and desktop package controls remain separate work.
+
+## Fixed runtime environment
+
+`CapturedRuntime::capture_directories` captures two prebuilt, link-free trees on a
+blocking IO worker. Independent installer approval supplies the SDK's strict
+`RuntimeEnvironmentDescriptor`, exact platform/architecture, tool version,
+complete tool/Host tree digests and relative entrypoints. Every actual byte and
+executable flag must match. The trees share a 256 MiB / 2048-file / 60-second
+observed bound. Later edits or deletion of their source directories cannot change
+the retained snapshot. Capture executes no code and grants no authority.
+
+The initial `node-system-libraries-v1` profile requires the trusted installer to
+verify a Node distribution using only platform system libraries. A Homebrew
+entrypoint with external dynamic libraries cannot be approved by hashing that
+entrypoint alone. The Host does not infer this premise from a declared version,
+parse binary dependencies, authenticate signatures or freeze the OS itself.
+
+Launch materializes captured package, tool and Host bytes into one private owned
+instance (`package/`, `runtime/tool/`, `runtime/host/`). Descriptor-relative
+create-new IO uses private directories and read-only files, checking live
+authority between chunks and before spawn. The child runs the captured Node and
+Host entries with an empty inherited environment; it does not resolve them from
+PATH, global modules or the original source directories. JavaScript invocation
+requests must carry this environment's SDK-derived digest. The Native standalone
+conformance profile does not provide this Node-specific Core environment binding.
 
 ## Package catalog and fixed selection
 
@@ -120,7 +146,8 @@ cargo test -p tsumugi-plugin-host --lib --test installation --test directory --t
 ```
 
 Materialization runs on a blocking IO worker and retains ownership of its temporary
-directory if the awaiting task is cancelled. Authority is rechecked immediately
+directory while a spawned child remains unreaped. Cancelling a pre-spawn
+materialization future leaves the bounded blocking task to finish its own cleanup. Authority is rechecked immediately
 before spawning, after materialization, as well as during the handshake.
 
 `ProcessSession::launch` requires a current authority callback and an explicit
@@ -156,7 +183,9 @@ terminates the group and reaps its direct child under a separate cleanup deadlin
 `CloseReceipt` and `termination_receipt` distinguish acknowledgement, actual
 direct-child reaping and known exit status. An error/timeout does not assert that
 an external effect did not occur. Callers must await `close`; Drop kills/aborts as
-a final cleanup safeguard and does not produce an acceptance receipt.
+a final cleanup safeguard and does not produce an acceptance receipt. If Drop or
+post-spawn rollback cannot confirm reaping, it retains the instance instead of
+deleting a live child's files. Cleanup also refuses a replaced parent/root identity.
 
 Process groups provide lifecycle control, not a security sandbox. A trusted native
 program can access the user's files/network and can escape its group. CPU/RSS
@@ -166,8 +195,10 @@ artifact output opening and adoption authority are not provided by this profile.
 ## Core execution adapter
 
 With `core-adapter`, `RunnerProxy` captures a package contribution and the trusted
-installer's runtime environment digest. Core's fixed input retains this complete
-selection; registration order does not choose between providers. The adapter
+installer's `CapturedRuntime`. Core's fixed input retains the complete SDK
+descriptor and derives its digest. Registration and host policy use the exact
+provider/environment pair, so A/B environments for the same package coexist;
+registration order does not choose between them. The adapter
 checks that selection again before staging and sends only the selected item's
 captured data through the SDK channel. Installer authentication and environment
 pinning remain the installer's responsibility.
@@ -198,11 +229,12 @@ outcome, so this adapter's outcome query remains unavailable. A failed launch do
 not expose a Core-visible cleanup receipt; no result is accepted from that path.
 
 Build the JavaScript Host as described in its README, then run the synthetic
-Core integration with explicit absolute runtime paths:
+Core integration with independently approved absolute artifact-tree paths:
 
 ```sh
-TSUMUGI_TEST_NODE=/absolute/path/to/node \
-TSUMUGI_TEST_JS_HOST_BOOTSTRAP=/absolute/path/to/built/dist/main.js \
+TSUMUGI_TEST_RUNTIME_TOOL=/absolute/path/to/tool-tree \
+TSUMUGI_TEST_RUNTIME_HOST=/absolute/path/to/clean-host-tree \
+TSUMUGI_TEST_RUNTIME_APPROVAL=/absolute/path/to/approved-descriptor.json \
 cargo test -p tsumugi-plugin-host --features core-adapter,javascript-conformance --test core --locked
 ```
 

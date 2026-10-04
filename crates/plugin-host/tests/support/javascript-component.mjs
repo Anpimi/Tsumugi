@@ -20,7 +20,7 @@ export default {
       if (cleaned || !Object.isFrozen(input) || !Object.isFrozen(metadata.context)) throw new Error('Invalid lifetime');
       // macOS may inject __CF_USER_TEXT_ENCODING into a process started with env_clear.
       // Assert that parent-only data and runtime injection settings did not cross the pipe boundary.
-      if (['TSUMUGI_PARENT_ONLY', 'TSUMUGI_TEST_NODE', 'TSUMUGI_TEST_JS_HOST_BOOTSTRAP', 'HOME', 'PATH', 'NODE_OPTIONS'].some(key => key in process.env)) throw new Error('Inherited environment');
+      if (['TSUMUGI_PARENT_ONLY', 'TSUMUGI_TEST_RUNTIME_TOOL', 'TSUMUGI_TEST_RUNTIME_HOST', 'TSUMUGI_TEST_RUNTIME_APPROVAL', 'HOME', 'PATH', 'NODE_OPTIONS'].some(key => key in process.env)) throw new Error('Inherited environment');
       if (mode === 'hang') await new Promise(() => {});
       if (mode === 'spin') while (true) {}
       if (mode === 'late') await delay(500);

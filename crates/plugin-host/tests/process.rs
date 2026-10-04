@@ -458,7 +458,7 @@ fn live_authority_can_revoke_a_handshake_before_any_capability_activates() {
             dir.path(),
             &RuntimeLauncher::Native,
             options(),
-            || flag.load(Ordering::Acquire),
+            move || flag.load(Ordering::Acquire),
         )
         .await;
         assert!(matches!(result, Err(HostError::AuthorityRevoked)));
@@ -473,14 +473,15 @@ fn authority_expiring_during_materialization_prevents_even_worker_startup() {
         let observation = tempfile::tempdir().unwrap();
         let marker = observation.path().join("started");
         let package = image_with_observer("startup-marker", Some(&marker));
+        let stage_path = stage.path().to_owned();
         let result = ProcessSession::launch(
             &package,
             "query.call",
             stage.path(),
             &RuntimeLauncher::Native,
             options(),
-            || {
-                if std::fs::read_dir(stage.path()).unwrap().next().is_some() {
+            move || {
+                if std::fs::read_dir(&stage_path).unwrap().next().is_some() {
                     // If the host had already spawned, its independent process has
                     // time to expose the unauthorized startup through the marker.
                     std::thread::sleep(Duration::from_millis(100));

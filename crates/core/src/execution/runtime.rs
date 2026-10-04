@@ -10,17 +10,38 @@ use std::{
     time::{Duration, Instant},
 };
 
-type RunnerKey = (String, String, Option<String>);
+type RunnerKey = (String, String, Option<String>, Option<String>);
+fn runner_key(
+    capability: &str,
+    version: &str,
+    provider: Option<&tsumugi_plugin_sdk::ProviderSelectionBinding>,
+    environment: Option<&tsumugi_plugin_sdk::RuntimeEnvironmentDescriptor>,
+) -> Result<RunnerKey, ExecutionError> {
+    label(capability)?;
+    label(version)?;
+    let (provider, environment) = match (provider, environment) {
+        (None, None) => (None, None),
+        (Some(provider), Some(environment)) => (
+            Some(super::plugin::provider_key(provider)?),
+            Some(super::plugin::environment_key(environment)?),
+        ),
+        _ => {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "runner-registration",
+            ));
+        }
+    };
+    Ok((capability.into(), version.into(), provider, environment))
+}
 fn input_key(input: &FixedInput) -> Result<RunnerKey, ExecutionError> {
     let e = input.envelope();
-    Ok((
-        e.capability_id.clone(),
-        e.capability_version.clone(),
-        e.plugin
-            .as_ref()
-            .map(|p| super::plugin::provider_key(&p.capability.provider))
-            .transpose()?,
-    ))
+    runner_key(
+        &e.capability_id,
+        &e.capability_version,
+        e.plugin.as_ref().map(|p| &p.capability.provider),
+        e.plugin.as_ref().map(|p| &p.environment),
+    )
 }
 const CONCURRENCY: usize = 2;
 // Preserve one maximum legal fixed-input batch while bounding concurrent tasks.
@@ -120,16 +141,12 @@ impl ExecutionRuntime {
         runner: Arc<dyn Runner>,
         policy: RecoveryPolicy,
     ) -> Result<(), ExecutionError> {
-        let key = (
-            runner.capability_id().to_owned(),
-            runner.capability_version().to_owned(),
-            runner
-                .plugin_provider()
-                .map(super::plugin::provider_key)
-                .transpose()?,
-        );
-        label(&key.0)?;
-        label(&key.1)?;
+        let key = runner_key(
+            runner.capability_id(),
+            runner.capability_version(),
+            runner.plugin_provider(),
+            runner.plugin_environment(),
+        )?;
         if self.runners.contains_key(&key) {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,

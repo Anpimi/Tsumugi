@@ -244,7 +244,7 @@ mod platform {
         fs::{File, Metadata},
         io::{Read, Write},
         os::{
-            fd::{AsRawFd, FromRawFd},
+            fd::AsRawFd,
             unix::{ffi::OsStrExt, fs::MetadataExt},
         },
         path::PathBuf,
@@ -371,41 +371,19 @@ mod platform {
         Ok(())
     }
     fn chmod(file: &File, mode: u32) -> InstallResult<()> {
-        if unsafe { libc::fchmod(file.as_raw_fd(), mode as libc::mode_t) } != 0 {
-            return Err(InstallError::Io);
-        }
-        Ok(())
+        filesystem::set_mode(file, mode).map_err(|_| InstallError::Io)
     }
     fn mkdir(parent: &File, child: &OsStr) -> InstallResult<File> {
-        let child_name = name(child)?;
-        if unsafe { libc::mkdirat(parent.as_raw_fd(), child_name.as_ptr(), 0o700) } != 0 {
-            return Err(InstallError::Io);
-        }
+        name(child)?;
+        filesystem::create_directory(parent, child).map_err(|_| InstallError::Io)?;
         let file = filesystem::open_child(parent, child, true)?;
         chmod(&file, 0o700)?;
         private(&file, true, 0o700)?;
         Ok(file)
     }
     fn new_file(parent: &File, child: &OsStr) -> InstallResult<File> {
-        let child_name = name(child)?;
-        let descriptor = unsafe {
-            libc::openat(
-                parent.as_raw_fd(),
-                child_name.as_ptr(),
-                libc::O_RDWR
-                    | libc::O_CREAT
-                    | libc::O_EXCL
-                    | libc::O_NOFOLLOW
-                    | libc::O_CLOEXEC
-                    | libc::O_NONBLOCK
-                    | libc::O_NOCTTY,
-                0o600,
-            )
-        };
-        if descriptor < 0 {
-            return Err(InstallError::Io);
-        }
-        let file = unsafe { File::from_raw_fd(descriptor) };
+        name(child)?;
+        let file = filesystem::create_file(parent, child).map_err(|_| InstallError::Io)?;
         chmod(&file, 0o600)?;
         private(&file, false, 0o600)?;
         Ok(file)

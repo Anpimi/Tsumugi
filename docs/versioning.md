@@ -35,6 +35,15 @@ The SDK runtime-description data helpers add environment protocol 1 and complete
 artifact digest rules within the same unreleased SDK alpha.1. They do not alter
 process frames, the current project format or desktop execution. A data-only
 addition does not advance the application version or claim runtime distribution.
+The Host now captures complete approved Node/tool and built Host trees, materializes
+those immutable bytes for each owned process, and accepts no external launcher-path
+fallback. Core stores the SDK descriptor and derives its environment key; distinct
+environments for the same package coexist. This changes the required fixed-input
+shape and advances the current-only project format to schema 17. Schema 16 and
+other earlier development formats are refused unchanged, without migration. The
+experimental launcher and RunnerProxy APIs are incompatible with the earlier
+free-digest/path API. This remains the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; it is not a production runtime release.
 Authenticated network updates and desktop package controls remain pending. Exhaustive
 matches on the experimental Host error enum must handle its added capture errors.
 

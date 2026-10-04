@@ -8,19 +8,22 @@ use tsumugi_plugin_sdk as sdk;
 pub struct PluginExecutionBinding {
     pub capability: sdk::CapabilityBinding,
     pub profile: Option<sdk::ContractRef>,
-    /// Exact runtime/tool/resource environment captured by the trusted installer.
-    /// A digest supplied by a plugin is not source authentication.
-    pub environment_digest: String,
+    /// Exact tool and Host artifacts captured and approved by the trusted installer.
+    /// This data value does not authenticate its source or grant execution.
+    pub environment: sdk::RuntimeEnvironmentDescriptor,
 }
 impl PluginExecutionBinding {
     pub fn capability_version(&self) -> String {
         let contract = &self.capability.declaration.contract;
         format!("{}:{}", contract.schema_version, contract.behavior_version)
     }
+    pub fn environment_digest(&self) -> Result<String, ExecutionError> {
+        environment_key(&self.environment)
+    }
     pub fn validate(&self) -> Result<(), ExecutionError> {
         self.capability.validate().map_err(contract_error)?;
-        if !valid_digest(&self.environment_digest)
-            || (self.profile.is_none() && !self.capability.declaration.profiles.is_empty())
+        self.environment.validate().map_err(environment_error)?;
+        if (self.profile.is_none() && !self.capability.declaration.profiles.is_empty())
             || self
                 .profile
                 .as_ref()
@@ -46,14 +49,16 @@ pub struct PluginResultEvidence {
     pub result: sdk::InvocationResult,
 }
 
-fn valid_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
 fn contract_error(_: sdk::ContractError) -> ExecutionError {
     ExecutionError::new(ErrorCode::ResultMismatch, "plugin-contract")
+}
+fn environment_error(_: sdk::ContractError) -> ExecutionError {
+    ExecutionError::new(ErrorCode::InvalidInput, "plugin-environment")
+}
+pub(crate) fn environment_key(
+    environment: &sdk::RuntimeEnvironmentDescriptor,
+) -> Result<String, ExecutionError> {
+    environment.digest().map_err(environment_error)
 }
 pub(crate) fn provider_key(
     selection: &sdk::ProviderSelectionBinding,
@@ -113,7 +118,7 @@ impl FixedInput {
                     &(&item.scope, &item.dependencies),
                     MAX_INPUT_BYTES,
                 )?),
-                environment_digest: binding.environment_digest.clone(),
+                environment_digest: binding.environment_digest()?,
                 configuration_digest: codec::digest(&codec::encode(
                     &envelope.settings,
                     MAX_INPUT_BYTES,

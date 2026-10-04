@@ -1,7 +1,8 @@
+use crate::staging::StagedDirectory;
 use crate::*;
 use std::{
     collections::BTreeSet,
-    path::{Path, PathBuf},
+    path::Path,
     process::Stdio,
     sync::{
         Arc,
@@ -9,7 +10,6 @@ use std::{
     },
     time::Duration,
 };
-use tempfile::TempDir;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     process::{Child, Command},
@@ -83,17 +83,13 @@ impl HostLimits {
     }
 }
 
-/// An approved interpreter supplied by the trusted runtime installer. Its path
-/// is not selected from PATH or a plugin manifest. Authentication/pinning of
-/// the interpreter, bootstrap and its dependencies belongs to that installer,
-/// not a self-reported worker frame.
+/// Runtime bytes selected by the trusted installer. JavaScript launches only
+/// the captured tool and Host trees. Native is the standalone process profile;
+/// it does not provide a complete Core runtime-environment binding.
 #[derive(Clone, Debug)]
 pub enum RuntimeLauncher {
     Native,
-    JavaScript {
-        approved_node: PathBuf,
-        approved_bootstrap: PathBuf,
-    },
+    JavaScript { runtime: CapturedRuntime },
 }
 
 #[derive(Clone, Debug)]
@@ -141,7 +137,8 @@ struct Pipes {
 pub struct ProcessSession {
     child: Child,
     pid: u32,
-    directory: Option<TempDir>,
+    directory: Option<StagedDirectory>,
+    environment_digest: Option<String>,
     pipes: Pipes,
     activation: ProcessActivation,
     options: LaunchOptions,
@@ -160,7 +157,7 @@ impl ProcessSession {
         staging_parent: &Path,
         launcher: &RuntimeLauncher,
         options: LaunchOptions,
-        authorized: impl Fn() -> bool,
+        authorized: impl Fn() -> bool + Send + Sync + 'static,
     ) -> HostResult<Self> {
         options.limits.validate()?;
         if !options.allow_unsandboxed_execution {
@@ -203,34 +200,53 @@ impl ProcessSession {
             if component.dependencies.iter().any(|d| d.required) {
                 return Err(HostError::DependencyUnavailable);
             }
+            let runtime = match (component.runtime, launcher) {
+                (RuntimeKind::NativeWorker, RuntimeLauncher::Native) => None,
+                (RuntimeKind::JavaScript, RuntimeLauncher::JavaScript { runtime }) => {
+                    Some(runtime.clone())
+                }
+                _ => return Err(HostError::UnsupportedRuntime),
+            };
+            let environment_digest = runtime.as_ref().map(|r| r.environment_digest().to_owned());
+            let authorized = Arc::new(authorized);
+            let stage_guard = authorized.clone();
             let captured = image.clone();
             let parent = staging_parent.to_owned();
-            let directory = tokio::task::spawn_blocking(move || captured.stage(&parent))
-                .await
-                .map_err(|_| HostError::StageFailed)??;
-            let entry = directory.path().join(
+            let stage_runtime = runtime.clone();
+            let directory = tokio::task::spawn_blocking(move || {
+                captured.stage(&parent, stage_runtime.as_ref(), || stage_guard())
+            })
+            .await
+            .map_err(|_| HostError::StageFailed)??;
+            let package_directory = directory.path().join("package");
+            let entry = package_directory.join(
                 component
                     .entrypoint
                     .as_ref()
                     .ok_or(HostError::MissingArtifact)?,
             );
-            let mut command = match (component.runtime, launcher) {
-                (RuntimeKind::NativeWorker, RuntimeLauncher::Native) => Command::new(&entry),
-                (
-                    RuntimeKind::JavaScript,
-                    RuntimeLauncher::JavaScript {
-                        approved_node,
-                        approved_bootstrap,
-                    },
-                ) if approved_node.is_absolute() && approved_bootstrap.is_absolute() => {
-                    let mut c = Command::new(approved_node);
-                    c.arg(approved_bootstrap).arg(&entry);
+            let mut command = match runtime.as_ref() {
+                None => Command::new(&entry),
+                Some(runtime) => {
+                    let descriptor = runtime.descriptor();
+                    let mut c = Command::new(
+                        directory
+                            .path()
+                            .join("runtime/tool")
+                            .join(&descriptor.tool.entrypoint),
+                    );
+                    c.arg(
+                        directory
+                            .path()
+                            .join("runtime/host")
+                            .join(&descriptor.host.entrypoint),
+                    )
+                    .arg(&entry);
                     c
                 }
-                _ => return Err(HostError::UnsupportedRuntime),
             };
             command
-                .current_dir(directory.path())
+                .current_dir(&package_directory)
                 .env_clear()
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -243,9 +259,22 @@ impl ProcessSession {
             if !authorized() {
                 return Err(HostError::AuthorityRevoked);
             }
-            let mut child = command.spawn().map_err(|_| HostError::SpawnFailed)?;
-            let pid = child.id().ok_or(HostError::SpawnFailed)?;
-            let pipes = attach_pipes(&mut child, &options.limits)?;
+            directory.verify_binding()?;
+            let child = command.spawn().map_err(|_| HostError::SpawnFailed)?;
+            // From the first successful spawn through every subsequent await,
+            // an owned lease keeps files alive unless the direct child is reaped.
+            let mut pending = PendingChild::new(child, directory);
+            let Some(pid) = pending.pid else {
+                pending.rollback(options.limits.cleanup_timeout_ms).await;
+                return Err(HostError::SpawnFailed);
+            };
+            let pipes = match attach_pipes(pending.child.as_mut().unwrap(), &options.limits) {
+                Ok(pipes) => pipes,
+                Err(error) => {
+                    pending.rollback(options.limits.cleanup_timeout_ms).await;
+                    return Err(error);
+                }
+            };
             let activation = ProcessActivation {
                 provider: ProviderBinding {
                     plugin: manifest.plugin.clone(),
@@ -266,9 +295,10 @@ impl ProcessSession {
                 .cleanup_timeout_ms
                 .min(options.limits.cleanup_timeout_ms);
             let mut session = Self {
-                child,
+                child: pending.child.take().unwrap(),
                 pid,
-                directory: Some(directory),
+                directory: pending.directory.take(),
+                environment_digest,
                 pipes,
                 activation,
                 options,
@@ -286,7 +316,7 @@ impl ProcessSession {
                     .receive(
                         session.options.limits.handshake_timeout_ms,
                         || false,
-                        &authorized,
+                        || authorized(),
                     )
                     .await?;
                 match ready.body {
@@ -309,6 +339,9 @@ impl ProcessSession {
             child_pid: self.pid,
             scope: self.options.scope.clone(),
         }
+    }
+    pub fn environment_digest(&self) -> Option<&str> {
+        self.environment_digest.as_deref()
     }
     pub fn is_accepting(&self) -> bool {
         self.accepting
@@ -371,6 +404,10 @@ impl ProcessSession {
         request.validate().map_err(|_| HostError::InvalidContract)?;
         let c = &self.activation.capability;
         if request.provider != self.activation.provider
+            || self
+                .environment_digest
+                .as_ref()
+                .is_some_and(|digest| request.context.environment_digest != *digest)
             || request.context.project_id != self.options.scope.project_id
             || request.context.scope_id != self.options.scope.scope_id
             || request.capability != c.contract
@@ -544,15 +581,7 @@ impl ProcessSession {
         receipt
     }
     fn kill_group(&mut self) {
-        #[cfg(unix)]
-        if self.child.id().is_some() {
-            // The group was created for this owned child at spawn. This is
-            // lifecycle control, not confinement: trusted code can escape it.
-            unsafe {
-                libc::kill(-(self.pid as i32), libc::SIGKILL);
-            }
-        }
-        let _ = self.child.start_kill();
+        kill_owned_child(&mut self.child, Some(self.pid));
     }
     fn abort_pipes(&mut self) {
         for task in self.pipes.tasks.drain(..) {
@@ -585,6 +614,140 @@ impl Drop for ProcessSession {
         self.accepting = false;
         self.kill_group();
         self.abort_pipes();
+        release_or_keep(&mut self.child, &mut self.directory);
+    }
+}
+
+// A cancelled launch future cannot run async rollback. In that case the same
+// conservative Drop rule applies as to an already established session.
+struct PendingChild {
+    child: Option<Child>,
+    directory: Option<StagedDirectory>,
+    pid: Option<u32>,
+}
+impl PendingChild {
+    fn new(child: Child, directory: StagedDirectory) -> Self {
+        Self {
+            pid: child.id(),
+            child: Some(child),
+            directory: Some(directory),
+        }
+    }
+    async fn rollback(&mut self, timeout_ms: u32) {
+        let child = self.child.as_mut().unwrap();
+        kill_owned_child(child, self.pid);
+        if matches!(
+            timeout(Duration::from_millis(timeout_ms.into()), child.wait()).await,
+            Ok(Ok(_))
+        ) {
+            self.directory.take();
+        }
+    }
+}
+impl Drop for PendingChild {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            kill_owned_child(child, self.pid);
+            release_or_keep(child, &mut self.directory);
+        }
+    }
+}
+fn kill_owned_child(child: &mut Child, pid: Option<u32>) {
+    #[cfg(unix)]
+    if child.id().is_some()
+        && let Some(pid) = pid
+    {
+        // This group belongs to the unreaped child created at spawn. It is
+        // lifecycle control, not confinement of code that can escape the group.
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    let _ = child.start_kill();
+}
+fn release_or_keep(child: &mut Child, directory: &mut Option<StagedDirectory>) {
+    if let Some(directory) = directory.take() {
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            drop(directory);
+        } else {
+            // Unknown reap state must not invalidate files a live child uses.
+            // This retained instance is not a successful cleanup receipt.
+            directory.keep();
+        }
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod lifetime_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+    fn staged(parent: &Path) -> StagedDirectory {
+        crate::staging::materialize(parent, b"{}", &BTreeMap::new(), None, || true).unwrap()
+    }
+    fn sleeping_child() -> Child {
+        // A real owned process exercises reap/lease behavior independently of
+        // the synthetic protocol worker. No plugin or user project is opened.
+        let mut command = Command::new("/bin/sleep");
+        command.arg("10").env_clear().kill_on_drop(true);
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+        command.spawn().unwrap()
+    }
+
+    #[test]
+    fn post_spawn_pipe_failure_rolls_back_and_reaps_before_removing_files() {
+        runtime().block_on(async {
+            let parent = tempfile::tempdir().unwrap();
+            let directory = staged(parent.path());
+            let path = directory.path().to_owned();
+            let mut pending = PendingChild::new(sleeping_child(), directory);
+            assert!(matches!(
+                attach_pipes(pending.child.as_mut().unwrap(), &HostLimits::default()),
+                Err(HostError::ChannelFailed)
+            ));
+            pending.rollback(1000).await;
+            assert!(
+                pending
+                    .child
+                    .as_mut()
+                    .unwrap()
+                    .try_wait()
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(pending.directory.is_none());
+            assert!(!path.exists());
+        });
+    }
+
+    #[test]
+    fn an_unreaped_child_keeps_its_instance_until_explicit_owned_cleanup() {
+        runtime().block_on(async {
+            let parent = tempfile::tempdir().unwrap();
+            let directory = staged(parent.path());
+            let path = directory.path().to_owned();
+            let mut child = sleeping_child();
+            let mut lease = Some(directory);
+            assert!(child.try_wait().unwrap().is_none());
+            release_or_keep(&mut child, &mut lease);
+            assert!(lease.is_none());
+            assert!(path.join("package/manifest.json").is_file());
+            let pid = child.id();
+            kill_owned_child(&mut child, pid);
+            timeout(Duration::from_secs(1), child.wait())
+                .await
+                .unwrap()
+                .unwrap();
+            // Only this test-created tree is removed, after the real reap.
+            std::fs::remove_dir_all(path).unwrap();
+        });
     }
 }
 fn publish(sender: &mpsc::Sender<Event>, overflow: &AtomicBool, event: Event) {

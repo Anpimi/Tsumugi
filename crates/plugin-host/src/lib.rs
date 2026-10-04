@@ -8,12 +8,16 @@ pub mod core;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod filesystem;
 mod package;
+mod runtime;
 mod session;
+mod staging;
+mod tree;
 pub use package::installation::{
     InstallError, InstallReceipt, InstallResult, InstalledPackage, MAX_INSTALLED_PACKAGES,
     PackageStore,
 };
 pub use package::{PackageFile, PackageImage};
+pub use runtime::CapturedRuntime;
 pub use session::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +26,7 @@ pub enum HostError {
     PackageLimit,
     PackagePath,
     PackageMismatch,
+    RuntimeMismatch,
     PackageChanged,
     CaptureFailed,
     MissingArtifact,

@@ -1,15 +1,14 @@
-use crate::{HostError, HostResult};
+use crate::{CapturedRuntime, HostError, HostResult, staging::StagedDirectory};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, io::Write, path::Path, sync::Arc};
-use tempfile::TempDir;
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 use tsumugi_plugin_sdk::*;
 
 const MAX_FILES: usize = 256;
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const MAX_DIRECTORIES: usize = 256;
+pub(crate) const MAX_DIRECTORIES: usize = 256;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-const MAX_DEPTH: usize = 16;
+pub(crate) const MAX_DEPTH: usize = 16;
 
 mod directory;
 pub(crate) mod installation;
@@ -32,11 +31,7 @@ pub(crate) fn portable_path(path: &str) -> HostResult<()> {
     Ok(())
 }
 
-#[derive(Clone)]
-pub struct PackageFile {
-    pub bytes: Vec<u8>,
-    pub executable: bool,
-}
+pub use tsumugi_plugin_sdk::RuntimeArtifactFile as PackageFile;
 
 /// Immutable captured bytes, checked against the digest supplied by a trusted
 /// catalog/installer. This API does not authenticate a publisher or read an
@@ -129,48 +124,18 @@ impl PackageImage {
     pub fn manifest(&self) -> &ValidatedManifest {
         &self.manifest
     }
-    pub(crate) fn stage(&self, staging_parent: &Path) -> HostResult<TempDir> {
-        let mut builder = tempfile::Builder::new();
-        builder.prefix("plugin-instance-");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o700));
-        }
-        let directory = builder
-            .tempdir_in(staging_parent)
-            .map_err(|_| HostError::StageFailed)?;
-        let mut all = Vec::with_capacity(self.files.len() + 1);
-        all.push(("manifest.json", self.manifest_bytes.as_ref(), false));
-        all.extend(
-            self.files
-                .iter()
-                .map(|(path, file)| (path.as_str(), file.bytes.as_slice(), file.executable)),
-        );
-        for (name, bytes, executable) in all {
-            let path = directory.path().join(name);
-            std::fs::create_dir_all(path.parent().ok_or(HostError::StageFailed)?)
-                .map_err(|_| HostError::StageFailed)?;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .map_err(|_| HostError::StageFailed)?;
-            file.write_all(bytes).map_err(|_| HostError::StageFailed)?;
-            file.sync_all().map_err(|_| HostError::StageFailed)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                file.set_permissions(std::fs::Permissions::from_mode(if executable {
-                    0o500
-                } else {
-                    0o400
-                }))
-                .map_err(|_| HostError::StageFailed)?;
-            }
-            #[cfg(not(unix))]
-            let _ = executable;
-        }
-        Ok(directory)
+    pub(crate) fn stage(
+        &self,
+        staging_parent: &Path,
+        runtime: Option<&CapturedRuntime>,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<StagedDirectory> {
+        crate::staging::materialize(
+            staging_parent,
+            &self.manifest_bytes,
+            &self.files,
+            runtime,
+            authorized,
+        )
     }
 }

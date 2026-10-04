@@ -63,7 +63,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 16;
+pub(crate) const SCHEMA_VERSION: i64 = 17;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -1083,6 +1083,14 @@ mod tests {
         let project_path = parent.path().join("project");
         let mut store = ProjectStore::create(&project_path, metadata()).unwrap();
 
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            17
+        );
         assert_eq!(store.metadata().unwrap().metadata_revision(), 1);
         let renamed = store.rename(1, "Demo 2").unwrap();
         assert_eq!(renamed.outcome(), ChangeOutcome::Changed);
@@ -1098,6 +1106,14 @@ mod tests {
         store.close().unwrap();
 
         let reopened = ProjectStore::open(&project_path).unwrap();
+        assert_eq!(
+            reopened
+                .connection()
+                .unwrap()
+                .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            17
+        );
         let current = reopened.metadata().unwrap();
         assert_eq!(current.display_name(), "Demo 2");
         assert_eq!(current.metadata_revision(), 3);

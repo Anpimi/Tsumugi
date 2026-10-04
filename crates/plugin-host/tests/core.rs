@@ -15,6 +15,8 @@ use tsumugi_core::{
 };
 use tsumugi_plugin_host::{core::RunnerProxy, *};
 use tsumugi_plugin_sdk as sdk;
+#[path = "support/runtime.rs"]
+mod runtime_fixture;
 
 fn contract(id: &str) -> sdk::ContractRef {
     sdk::ContractRef {
@@ -103,15 +105,7 @@ fn proxy(mode: &str, parent: &Path, observer: Option<&Path>) -> Arc<RunnerProxy>
         RunnerProxy::new(
             image(mode, observer),
             "proposal.call",
-            sdk::payload_digest("verified runtime"),
-            RuntimeLauncher::JavaScript {
-                approved_node: std::env::var_os("TSUMUGI_TEST_NODE")
-                    .expect("actual Node path required")
-                    .into(),
-                approved_bootstrap: std::env::var_os("TSUMUGI_TEST_JS_HOST_BOOTSTRAP")
-                    .expect("actual built bootstrap required")
-                    .into(),
-            },
+            runtime_fixture::approved_runtime(),
             parent.to_path_buf(),
             HostLimits {
                 invocation_timeout_ms: 2000,
@@ -335,15 +329,7 @@ fn approved_installation_reopens_and_runs_fixed_package_bytes_through_core() {
         RunnerProxy::new(
             resolved.package().image().clone(),
             resolved.binding().provider.contribution_id.clone(),
-            sdk::payload_digest("verified runtime"),
-            RuntimeLauncher::JavaScript {
-                approved_node: std::env::var_os("TSUMUGI_TEST_NODE")
-                    .expect("actual Node required")
-                    .into(),
-                approved_bootstrap: std::env::var_os("TSUMUGI_TEST_JS_HOST_BOOTSTRAP")
-                    .expect("actual Host required")
-                    .into(),
-            },
+            runtime_fixture::approved_runtime(),
             temporary.path(),
             HostLimits::default(),
         )
@@ -825,13 +811,7 @@ fn smaller_transport_runs_small_proposals_and_enforces_its_own_budget() {
             RunnerProxy::new(
                 image(mode, None),
                 "proposal.call",
-                sdk::payload_digest("verified runtime"),
-                RuntimeLauncher::JavaScript {
-                    approved_node: std::env::var_os("TSUMUGI_TEST_NODE").unwrap().into(),
-                    approved_bootstrap: std::env::var_os("TSUMUGI_TEST_JS_HOST_BOOTSTRAP")
-                        .unwrap()
-                        .into(),
-                },
+                runtime_fixture::approved_runtime(),
                 dir.path().to_path_buf(),
                 HostLimits {
                     max_frame_bytes: 16 * 1024,
@@ -938,22 +918,37 @@ fn altered_installer_environment_is_rejected_before_staging() {
     let proxy = proxy("normal", dir.path(), None);
     let original = input(&mut store, &proxy);
     let mut envelope = original.envelope().clone();
-    envelope.plugin.as_mut().unwrap().environment_digest = sdk::payload_digest("different runtime");
+    envelope
+        .plugin
+        .as_mut()
+        .unwrap()
+        .environment
+        .host
+        .tree_digest = sdk::payload_digest("different runtime");
     let input = FixedInput::capture(envelope).unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
     runtime.register(proxy).unwrap();
-    authorize(&runtime, &mut store, &input);
-    runtime.submit(&mut store, &input).unwrap();
-    finish(&mut runtime, &mut store, &input);
-    assert!(
-        store
-            .execution_current_result(
-                input.envelope().attempt_id,
-                input.envelope().items[0].item_id
+    assert_eq!(
+        runtime
+            .authorize_plugin(
+                &mut store,
+                ExecutionId::new(),
+                &input,
+                expiry(),
+                PluginConsent {
+                    unsandboxed_execution: true
+                }
             )
-            .unwrap()
-            .is_none()
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
     );
+    assert_eq!(
+        runtime.submit(&mut store, &input).unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    // The rejected selection never creates an attempt or result row.
+    assert!(store.execution_input(input.envelope().attempt_id).is_err());
     assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
         !entry
             .unwrap()
@@ -961,4 +956,182 @@ fn altered_installer_environment_is_rejected_before_staging() {
             .to_string_lossy()
             .starts_with("plugin-instance-")
     }));
+}
+
+fn variant_runtime(label: &str) -> CapturedRuntime {
+    fn copy_tree(
+        source: &Path,
+        destination: &Path,
+        files: &mut BTreeMap<String, sdk::RuntimeArtifactFile>,
+        prefix: &str,
+    ) {
+        std::fs::create_dir(destination).unwrap();
+        for entry in std::fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let metadata = std::fs::symlink_metadata(entry.path()).unwrap();
+            assert!(
+                !metadata.file_type().is_symlink(),
+                "fixture requires a clean Host artifact"
+            );
+            let name = entry.file_name().into_string().unwrap();
+            let logical = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            if metadata.is_dir() {
+                copy_tree(&entry.path(), &destination.join(name), files, &logical);
+            } else {
+                assert!(metadata.is_file());
+                use std::os::unix::fs::PermissionsExt;
+                let bytes = std::fs::read(entry.path()).unwrap();
+                let executable = metadata.permissions().mode() & 0o111 != 0;
+                std::fs::write(destination.join(&name), &bytes).unwrap();
+                std::fs::set_permissions(
+                    destination.join(name),
+                    std::fs::Permissions::from_mode(if executable { 0o700 } else { 0o600 }),
+                )
+                .unwrap();
+                files.insert(logical, sdk::RuntimeArtifactFile { bytes, executable });
+            }
+        }
+    }
+    let original = runtime_fixture::approved_runtime();
+    let host_source =
+        std::path::PathBuf::from(std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").unwrap());
+    let tool_source =
+        std::path::PathBuf::from(std::env::var_os("TSUMUGI_TEST_RUNTIME_TOOL").unwrap());
+    let temporary = tempfile::tempdir().unwrap();
+    let host = temporary.path().join("host");
+    let mut files = BTreeMap::new();
+    copy_tree(&host_source, &host, &mut files, "");
+    let mut descriptor = original.descriptor().clone();
+    let entry = files.get_mut(&descriptor.host.entrypoint).unwrap();
+    let mut bytes = format!("globalThis.__environmentLabel = {label:?}; globalThis.__environmentHost = import.meta.url;\n").into_bytes();
+    bytes.extend_from_slice(&entry.bytes);
+    entry.bytes = bytes;
+    std::fs::write(host.join(&descriptor.host.entrypoint), &entry.bytes).unwrap();
+    descriptor.host.tree_digest = sdk::runtime_artifact_digest(&files).unwrap();
+    let captured =
+        CapturedRuntime::capture_directories(&tool_source, &host, &descriptor, || true).unwrap();
+    // Reopening this original path would fail. The captured Host must survive
+    // both a later source rewrite and deletion of the entire source tree.
+    std::fs::write(
+        host.join(&descriptor.host.entrypoint),
+        b"throw new Error('changed original Host');",
+    )
+    .unwrap();
+    drop(temporary);
+    captured
+}
+
+#[test]
+fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
+    let directory = tempfile::tempdir().unwrap();
+    let staging = std::fs::canonicalize(directory.path())
+        .unwrap()
+        .join("instances");
+    std::fs::create_dir(&staging).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let package = image("environment", None);
+    let a = Arc::new(
+        RunnerProxy::new(
+            package.clone(),
+            "proposal.call",
+            variant_runtime("A"),
+            &staging,
+            HostLimits::default(),
+        )
+        .unwrap(),
+    );
+    let b = Arc::new(
+        RunnerProxy::new(
+            package,
+            "proposal.call",
+            variant_runtime("B"),
+            &staging,
+            HostLimits::default(),
+        )
+        .unwrap(),
+    );
+    let mut store = store(directory.path());
+    let input_a = input(&mut store, &a);
+    let input_b = input(&mut store, &b);
+    let binding_a = input_a.envelope().plugin.as_ref().unwrap();
+    let binding_b = input_b.envelope().plugin.as_ref().unwrap();
+    assert_eq!(binding_a.capability, binding_b.capability);
+    assert_ne!(
+        binding_a.environment_digest().unwrap(),
+        binding_b.environment_digest().unwrap()
+    );
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(b).unwrap();
+    runtime.register(a).unwrap();
+    runtime.register_validator(validator(false)).unwrap();
+    let grant_a = authorize(&runtime, &mut store, &input_a);
+    assert_eq!(
+        runtime.submit(&mut store, &input_b).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+    let grant_b = authorize(&runtime, &mut store, &input_b);
+    runtime.submit(&mut store, &input_a).unwrap();
+    runtime.submit(&mut store, &input_b).unwrap();
+    finish(&mut runtime, &mut store, &input_a);
+    finish(&mut runtime, &mut store, &input_b);
+    let mut channels = Vec::new();
+    for (input, label, grant) in [(&input_a, "A", grant_a), (&input_b, "B", grant_b)] {
+        let attempt = input.envelope().attempt_id;
+        let item = input.envelope().items[0].item_id;
+        let result_id = store
+            .execution_current_result(attempt, item)
+            .unwrap()
+            .unwrap();
+        let result = store.execution_result(attempt, result_id).unwrap();
+        let evidence = result.envelope().plugin.as_ref().unwrap();
+        assert_eq!(evidence.authorization_id, grant);
+        assert_eq!(
+            evidence.channel.selection(),
+            input
+                .envelope()
+                .plugin
+                .as_ref()
+                .unwrap()
+                .capability
+                .provider
+        );
+        assert_eq!(
+            evidence.result.context.environment_digest,
+            input
+                .envelope()
+                .plugin
+                .as_ref()
+                .unwrap()
+                .environment_digest()
+                .unwrap()
+        );
+        let output = result.envelope().output.as_ref().unwrap();
+        assert_eq!(output["runtime"], label);
+        assert_eq!(
+            output["nodeVersion"],
+            input
+                .envelope()
+                .plugin
+                .as_ref()
+                .unwrap()
+                .environment
+                .tool_version
+        );
+        let tool = Path::new(output["toolPath"].as_str().unwrap());
+        let host_url = output["hostPath"].as_str().unwrap();
+        assert!(tool.starts_with(&staging) && tool.ends_with("runtime/tool/bin/node"));
+        assert!(host_url.starts_with("file://") && host_url.contains("/runtime/host/dist/main.js"));
+        assert!(!tool.exists(), "reaped child's instance is reclaimed");
+        let state = store.execution_attempt(attempt, false).unwrap();
+        assert_eq!(state.items[0].validation, ValidationState::Valid);
+        assert_eq!(state.items[0].adoption, AdoptionState::Unapplied);
+        channels.push(evidence.channel.instance_id.clone());
+    }
+    assert_ne!(channels[0], channels[1]);
+    assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
 }

@@ -14,6 +14,7 @@ export default {
       }
       if (mode === 'duplicate') return { kind: 'succeeded', utf8: '{"text":"Updated sample","text":"wrong"}' };
       if (mode === 'oversize') return { kind: 'succeeded', utf8: JSON.stringify({ text: 'x'.repeat(20000), itemIndex: item.index }) };
+      if (mode === 'environment') return { kind: 'succeeded', utf8: JSON.stringify({ text: 'Updated sample', itemIndex: item.index, runtime: globalThis.__environmentLabel, toolPath: process.execPath, hostPath: globalThis.__environmentHost, nodeVersion: process.versions.node }) };
       const text = mode === 'invalid' ? 'wrong proposal' : 'Updated sample';
       return { kind: 'succeeded', utf8: '{\r\n  "text":' + JSON.stringify(text) + ', "itemIndex":' + item.index + '\r\n}' };
     });

@@ -2,6 +2,7 @@ use super::*;
 use crate::ProjectMetadata;
 use serde_json::json;
 use std::sync::mpsc;
+use tsumugi_plugin_sdk as sdk;
 
 struct Call {
     request: DispatchRequest,
@@ -637,4 +638,381 @@ fn runtime_effect_policy_is_host_owned_and_not_operation_name_based() {
         store.enqueue_read_only_execution(&input).unwrap_err().code,
         ErrorCode::ResultMismatch
     );
+}
+
+fn plugin_binding(host_digest: &str) -> PluginExecutionBinding {
+    let contract = |id: &str| sdk::ContractRef {
+        id: id.into(),
+        schema_version: 1,
+        behavior_version: 1,
+    };
+    PluginExecutionBinding {
+        capability: sdk::CapabilityBinding {
+            provider: sdk::ProviderSelectionBinding {
+                plugin: sdk::PluginIdentity {
+                    publisher: "example".into(),
+                    id: "example.plugin".into(),
+                    version: "0.1.0".into(),
+                },
+                component_id: "worker".into(),
+                contribution_id: "call".into(),
+                package_digest: "a".repeat(64),
+            },
+            declaration: sdk::CapabilityDeclaration {
+                contract: contract("example.call"),
+                input_schema: contract("example.input"),
+                output_schema: contract("example.output"),
+                error_schema: contract("example.error"),
+                profiles: vec![],
+                effect: sdk::EffectKind::ReadOnly,
+                permissions: vec![sdk::PermissionRequest::CapturedInput],
+                limits: sdk::CapabilityLimits {
+                    max_input_bytes: 4096,
+                    max_output_bytes: 4096,
+                    concurrency: 1,
+                    timeout_ms: 1000,
+                },
+            },
+        },
+        profile: None,
+        environment: sdk::RuntimeEnvironmentDescriptor {
+            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+            platform: sdk::RuntimePlatform {
+                operating_system: sdk::RuntimeOperatingSystem::Macos,
+                architecture: sdk::RuntimeArchitecture::Aarch64,
+            },
+            sdk_version: "0.1.0-alpha.1".into(),
+            process_protocol: sdk::PROCESS_PROTOCOL,
+            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+            tool_version: "26.10.0".into(),
+            tool: sdk::RuntimeArtifactBinding {
+                tree_digest: "a".repeat(64),
+                entrypoint: "bin/node".into(),
+            },
+            host: sdk::RuntimeArtifactBinding {
+                tree_digest: host_digest.repeat(64),
+                entrypoint: "dist/main.js".into(),
+            },
+        },
+    }
+}
+
+fn plugin_input(store: &ProjectStore, binding: PluginExecutionBinding) -> FixedInput {
+    let mut envelope = InputEnvelope::new(
+        store.metadata().unwrap().project_id(),
+        "fixture",
+        &binding.capability.declaration.contract.id,
+        &binding.capability_version(),
+        vec![InputItem::new(
+            Scope {
+                kind: "fixture".into(),
+                id: "a".into(),
+                locale: None,
+            },
+            json!("captured"),
+            vec![],
+        )],
+    )
+    .unwrap();
+    envelope.plugin = Some(binding);
+    FixedInput::capture(envelope).unwrap()
+}
+
+struct PluginCall {
+    request: DispatchRequest,
+    environment_digest: String,
+    query: bool,
+}
+struct SelectedPlugin {
+    provider: Option<sdk::ProviderSelectionBinding>,
+    environment: Option<sdk::RuntimeEnvironmentDescriptor>,
+    calls: mpsc::Sender<PluginCall>,
+}
+impl SelectedPlugin {
+    fn new(binding: &PluginExecutionBinding, calls: mpsc::Sender<PluginCall>) -> Self {
+        Self {
+            provider: Some(binding.capability.provider.clone()),
+            environment: Some(binding.environment.clone()),
+            calls,
+        }
+    }
+    fn record(&self, request: &DispatchRequest, query: bool) {
+        self.calls
+            .send(PluginCall {
+                request: request.clone(),
+                environment_digest: self.environment.as_ref().unwrap().digest().unwrap(),
+                query,
+            })
+            .unwrap();
+    }
+}
+impl Runner for SelectedPlugin {
+    fn capability_id(&self) -> &str {
+        "example.call"
+    }
+    fn capability_version(&self) -> &str {
+        "1:1"
+    }
+    fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
+        self.provider.as_ref()
+    }
+    fn plugin_environment(&self) -> Option<&sdk::RuntimeEnvironmentDescriptor> {
+        self.environment.as_ref()
+    }
+    fn run(
+        &self,
+        request: DispatchRequest,
+        _cancellation: Cancellation,
+        _results: ResultSender,
+    ) -> Result<(), ExecutionError> {
+        self.record(&request, false);
+        // A missing outcome exercises the real scheduler's Unknown/query path.
+        Ok(())
+    }
+    fn query(&self, request: &DispatchRequest) -> Result<QueryOutcome, ExecutionError> {
+        self.record(request, true);
+        Ok(QueryOutcome::Unavailable)
+    }
+}
+
+fn authorize(runtime: &ExecutionRuntime, store: &mut ProjectStore, input: &FixedInput) {
+    runtime
+        .authorize_plugin(
+            store,
+            ExecutionId::new(),
+            input,
+            plugin_authority::plugin_now_ms().unwrap() + 60_000,
+            PluginConsent {
+                unsandboxed_execution: true,
+            },
+        )
+        .unwrap();
+}
+
+#[test]
+fn same_plugin_provider_retains_both_environments_and_their_host_policies() {
+    let (_temp, mut store, mut runtime, _) = setup();
+    let (tx, calls) = mpsc::channel();
+    let binding_a = plugin_binding("b");
+    let binding_b = plugin_binding("c");
+    assert_eq!(binding_a.capability, binding_b.capability);
+    let input_a = plugin_input(&store, binding_a.clone());
+    let input_b = plugin_input(&store, binding_b.clone());
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding_a, tx.clone())))
+        .unwrap();
+    authorize(&runtime, &mut store, &input_a);
+    runtime.submit(&mut store, &input_a).unwrap();
+    // Registering a later environment cannot replace an already queued choice.
+    runtime
+        .register(Arc::new(SelectedPlugin::new(&binding_b, tx.clone())))
+        .unwrap();
+    authorize(&runtime, &mut store, &input_b);
+    runtime.submit(&mut store, &input_b).unwrap();
+    assert_eq!(
+        store
+            .execution_recovery_policy(input_a.envelope().attempt_id)
+            .unwrap(),
+        RecoveryPolicy::ReadOnly
+    );
+    assert_eq!(
+        store
+            .execution_recovery_policy(input_b.envelope().attempt_id)
+            .unwrap(),
+        RecoveryPolicy::ExternalUnknown
+    );
+    let unregistered = plugin_input(&store, plugin_binding("d"));
+    assert_eq!(
+        runtime
+            .authorize_plugin(
+                &mut store,
+                ExecutionId::new(),
+                &unregistered,
+                plugin_authority::plugin_now_ms().unwrap() + 60_000,
+                PluginConsent {
+                    unsandboxed_execution: true,
+                },
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(
+        runtime.submit(&mut store, &unregistered).unwrap_err().stage,
+        "capability"
+    );
+    assert!(store.plugin_permit(&unregistered).is_err());
+    assert!(
+        store
+            .execution_input(unregistered.envelope().attempt_id)
+            .is_err()
+    );
+    pump_until(&mut runtime, &mut store, |runtime, store| {
+        [input_a.envelope().attempt_id, input_b.envelope().attempt_id]
+            .into_iter()
+            .all(|attempt| {
+                !runtime.is_active(attempt)
+                    && store
+                        .execution_attempt(attempt, true)
+                        .unwrap()
+                        .progress
+                        .unknown
+                        == 1
+            })
+    });
+    let observed: BTreeMap<_, _> = (0..2)
+        .map(|_| {
+            let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(!call.query);
+            assert!(
+                call.request
+                    .plugin_permit()
+                    .unwrap()
+                    .matches(&call.request.input)
+            );
+            (call.request.input.envelope().attempt_id, call)
+        })
+        .collect();
+    for fixed in [&input_a, &input_b] {
+        let binding = fixed.envelope().plugin.as_ref().unwrap();
+        let call = &observed[&fixed.envelope().attempt_id];
+        assert_eq!(
+            call.environment_digest,
+            binding.environment_digest().unwrap()
+        );
+        assert_eq!(call.request.input.bytes(), fixed.bytes());
+        let query = runtime
+            .outcome_query(
+                &store,
+                fixed.envelope().attempt_id,
+                fixed.envelope().items[0].item_id,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(matches!(query.run().unwrap(), QueryOutcome::Unavailable));
+        let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(call.query);
+        assert_eq!(
+            call.request.input.envelope().attempt_id,
+            fixed.envelope().attempt_id
+        );
+        assert_eq!(
+            call.environment_digest,
+            binding.environment_digest().unwrap()
+        );
+    }
+    assert!(calls.try_recv().is_err());
+}
+
+#[test]
+fn registration_rejects_unpaired_or_invalid_plugin_environment_choices() {
+    let (_temp, _store, mut runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let (tx, _calls) = mpsc::channel();
+    let mut missing_environment = SelectedPlugin::new(&binding, tx.clone());
+    missing_environment.environment = None;
+    let mut missing_provider = SelectedPlugin::new(&binding, tx.clone());
+    missing_provider.provider = None;
+    for runner in [missing_environment, missing_provider] {
+        assert_eq!(
+            runtime.register(Arc::new(runner)).unwrap_err().code,
+            ErrorCode::InvalidInput
+        );
+    }
+    let mut bad_protocol = binding.clone();
+    bad_protocol.environment.process_protocol += 1;
+    let mut bad_path = binding.clone();
+    bad_path.environment.host.entrypoint = "../outside.js".into();
+    for bad in [bad_protocol, bad_path] {
+        assert!(bad.environment_digest().is_err());
+        assert_eq!(bad.validate().unwrap_err().code, ErrorCode::InvalidInput);
+        assert_eq!(
+            runtime
+                .register(Arc::new(SelectedPlugin::new(&bad, tx.clone())))
+                .unwrap_err()
+                .stage,
+            "plugin-environment"
+        );
+    }
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, tx.clone())))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .register(Arc::new(SelectedPlugin::new(&binding, tx)))
+            .unwrap_err()
+            .stage,
+        "runner-registration"
+    );
+}
+
+#[test]
+fn plugin_environment_restore_retry_and_current_store_reopen_remain_exact() {
+    let (temp, mut store, mut runtime, _) = setup();
+    let binding = plugin_binding("b");
+    let fixed = plugin_input(&store, binding.clone());
+    let mut changed = fixed.envelope().clone();
+    changed.plugin.as_mut().unwrap().environment = plugin_binding("c").environment;
+    assert_ne!(
+        FixedInput::capture(changed).unwrap().digest(),
+        fixed.digest()
+    );
+    let restored = FixedInput::restore(fixed.bytes(), fixed.digest()).unwrap();
+    assert_eq!(restored.bytes(), fixed.bytes());
+    assert_eq!(restored.envelope().plugin.as_ref().unwrap(), &binding);
+    let item = fixed.envelope().items[0].item_id;
+    let retry = fixed.retry(&[item]).unwrap();
+    assert_eq!(retry.envelope().plugin.as_ref().unwrap(), &binding);
+    let provider = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: provider.plugin.clone(),
+        component_id: provider.component_id.clone(),
+        contribution_id: provider.contribution_id.clone(),
+        package_digest: provider.package_digest.clone(),
+        instance_id: "fixture-instance".into(),
+        activation_generation: 1,
+    };
+    assert_eq!(
+        fixed
+            .plugin_request(item, ExecutionId::new(), &channel)
+            .unwrap()
+            .context
+            .environment_digest,
+        binding.environment.digest().unwrap()
+    );
+    let encoded: serde_json::Value = serde_json::from_slice(fixed.bytes()).unwrap();
+    assert!(encoded["plugin"].get("environment").is_some());
+    assert!(encoded["plugin"].get("environmentDigest").is_none());
+    let mut missing = encoded.clone();
+    missing["plugin"]
+        .as_object_mut()
+        .unwrap()
+        .remove("environment");
+    let mut legacy = missing.clone();
+    legacy["plugin"]["environmentDigest"] = json!(binding.environment_digest().unwrap());
+    let mut conflicting = encoded.clone();
+    conflicting["plugin"]["environmentDigest"] = json!("d".repeat(64));
+    let mut invalid = encoded;
+    invalid["plugin"]["environment"]["protocolVersion"] =
+        json!(sdk::RUNTIME_ENVIRONMENT_PROTOCOL + 1);
+    for value in [missing, legacy, conflicting, invalid] {
+        let bytes = serde_json::to_vec(&value).unwrap();
+        assert!(FixedInput::restore(&bytes, &codec::digest(&bytes)).is_err());
+    }
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, mpsc::channel().0)))
+        .unwrap();
+    authorize(&runtime, &mut store, &fixed);
+    runtime.submit(&mut store, &fixed).unwrap();
+    drop(runtime);
+    store.close().unwrap();
+    let path = temp.path().join("project");
+    let reopened = ProjectStore::open(&path).unwrap();
+    let loaded = reopened
+        .execution_input(fixed.envelope().attempt_id)
+        .unwrap();
+    assert_eq!(loaded.bytes(), fixed.bytes());
+    assert_eq!(loaded.envelope().plugin.as_ref().unwrap(), &binding);
+    assert!(reopened.plugin_permit(&loaded).is_err());
+    reopened.close().unwrap();
 }

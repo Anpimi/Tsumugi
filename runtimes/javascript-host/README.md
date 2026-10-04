@@ -47,7 +47,10 @@ pnpm install --frozen-lockfile --ignore-scripts
 pnpm --dir runtimes/javascript-host generate:contracts
 pnpm --dir runtimes/javascript-host build
 pnpm --dir runtimes/javascript-host test
-pnpm --dir runtimes/javascript-host test:process
+pnpm --dir runtimes/javascript-host test:process \
+  --tool /absolute/approved/node-tree \
+  --host /absolute/new/clean-host-runtime \
+  --approval /absolute/approved/environment.json
 ```
 
 Generation checks the SDK's Rust-owned process schema, emits its TypeScript wire
@@ -60,8 +63,9 @@ also rejects duplicate decoded keys before `JSON.parse` can erase them.
 The compiler uses Bundler type resolution because Cordis's pinned declarations
 contain extensionless relative exports. Our runtime imports have explicit `.js`
 extensions and the compiled ESM runs directly in Node; no bundler is required.
-The integration script supplies the actual Node executable and built bootstrap to
-Rust tests; enabling `javascript-conformance` without those values fails. The tests
+The integration script supplies the approved tool tree, clean Host tree and
+environment descriptor to Rust tests; enabling `javascript-conformance` without
+those values fails. Prepare the clean Host tree as described below. The tests
 launch captured synthetic packages with fresh instance directories and no real
 project or model access. Native-worker tests remain separate.
 
@@ -69,16 +73,67 @@ A separate development directory can be prepared with the pinned pnpm version:
 
 ```sh
 pnpm --filter @tsumugi/javascript-host deploy --prod --ignore-scripts /absolute/new/runtime-directory
-node runtimes/javascript-host/scripts/test-process.mjs --bootstrap /absolute/new/runtime-directory/dist/main.js
 ```
 
 This directory includes runtime dependencies, not Node itself. pnpm installation
 metadata can contain machine-local cache paths; this development directory is not
 a sanitized desktop distribution artifact. A production
 installer must authenticate and pin both Node and this bootstrap/dependency set;
-the plugin manifest cannot choose them. The Rust `RuntimeLauncher::JavaScript`
-now requires `approved_node` and `approved_bootstrap`. Update/recompile callers;
-there is no historical project-data migration for this experimental API change.
+the plugin manifest cannot choose them. The Rust JavaScript launcher requires
+the independently approved, captured tool and Host environment. Update/recompile
+callers; there is no historical project-data migration for this experimental API
+change.
+
+## Prepare a clean Host runtime
+
+After building, use a trusted production deploy as an explicit input. Keep this
+input unchanged while packaging. The packager follows only the pinned dependency
+edges within that deploy; it refuses links in public package files and dependencies
+that resolve outside the input. A workspace `node_modules` tree that refers to an
+external pnpm store is not a supported input.
+
+```sh
+pnpm --filter @tsumugi/javascript-host deploy --prod --ignore-scripts /absolute/new/production-deploy
+pnpm --dir runtimes/javascript-host package:runtime \
+  --source /absolute/new/production-deploy \
+  --output /absolute/new/clean-host-runtime \
+  --cordis-license /absolute/approved/cordis-LICENSE
+```
+
+The output parent directory must already exist; the output itself must be new.
+Packaging does not install dependencies, run lifecycle scripts, execute the Host,
+or contact a network service. An IO failure can leave a partial output: discard
+that preparation directory explicitly and retry with a fresh destination. The
+packager never overwrites or removes an existing output.
+
+The resulting tree contains the complete compiled `dist`, the Host `package.json`,
+and the published public files and original `package.json` bytes for exactly
+`cordis@4.0.0-rc.10`, `cosmokit@1.8.1`, `jsonc-parser@3.3.1`, and
+`@standard-schema/spec@1.1.0`, including their licenses. Cordis owns the two
+transitive dependencies; they need not appear at the deploy's top level.
+jsonc-parser's published entrypoint is `lib/umd/main.js`. Both its UMD and ESM files,
+and both cosmokit module formats, remain in the output. This profile uses the
+Cordis library only: it does not run the published Cordis CLI or install its
+optional loader/include peers. Upstream CLI and peer declarations remain intact.
+
+The Cordis published package omits its license file. Supply the unmodified
+[upstream MIT license](https://github.com/cordiverse/cordis/blob/f8ea3cd50f1a5724e8e715995bcde131c9c12b2c/LICENSE)
+approved for this exact package revision. Its SHA-256 is
+`034fb52b1d57360ecbae6cb1632a88f86fd7c3d3f5631a5f082710203dda0be7`;
+the packager checks those bytes and adds `node_modules/cordis/LICENSE`.
+
+Files are copied into independent regular files with normalized permissions.
+Nested `node_modules`, pnpm/cache metadata, source map files and source map/source
+URL comments are omitted. Machine-local paths or unexpected dependency versions
+cause packaging to fail. The same trusted input bytes and executable flags produce
+the same output bytes and executable flags at another destination. Preparation is
+bounded to 1,024 files, 16 MiB per file and 64 MiB total.
+
+Use `dist/main.js` as the logical Host entrypoint. This artifact contains neither
+Node nor an operating system, and packaging does not authenticate its inputs or
+grant execution. The trusted Rust capture/installer must independently approve and
+capture the actual tool and Host artifacts before launch. Do not use the pnpm
+deployment's linked tree as that captured Host artifact.
 
 ## Limits and actual isolation
 
