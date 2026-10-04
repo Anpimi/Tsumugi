@@ -13,8 +13,9 @@ mod session;
 mod staging;
 mod tree;
 pub use package::installation::{
-    InstallError, InstallReceipt, InstallResult, InstalledPackage, MAX_INSTALLED_PACKAGES,
-    PackageStore,
+    InstallError, InstallReceipt, InstallResult, InstalledPackage, InstalledRuntime,
+    MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, PackageStore, RuntimeApproval,
+    RuntimeInstallReceipt,
 };
 pub use package::{PackageFile, PackageImage};
 pub use runtime::CapturedRuntime;

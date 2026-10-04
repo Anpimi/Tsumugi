@@ -4,15 +4,16 @@
 use std::{fmt, path::Path};
 
 use serde::{Deserialize, Serialize};
-use tsumugi_plugin_sdk::PluginIdentity;
+use tsumugi_plugin_sdk::{self as sdk, PluginIdentity};
 
 use super::PackageImage;
 use crate::{
-    HostError,
+    CapturedRuntime, HostError,
     catalog::{CatalogError, PackageApproval, PackageOrigin, RegisteredPackage},
 };
 
 pub const MAX_INSTALLED_PACKAGES: usize = 128;
+pub const MAX_INSTALLED_RUNTIMES: usize = 128;
 const RECEIPT_VERSION: u32 = 1;
 const MAX_RECEIPT_BYTES: usize = 4096;
 
@@ -27,6 +28,7 @@ pub enum InstallError {
     CorruptStore,
     CorruptReceipt,
     MissingPackage,
+    MissingRuntime,
     /// A verified promoted object still has its private writable wrapper.
     /// Only installation retry with its original action and approval may seal it.
     RecoveryRequired,
@@ -139,6 +141,74 @@ impl fmt::Debug for InstalledPackage {
     }
 }
 
+/// Independent trusted installer metadata for a complete captured environment.
+/// This value does not authenticate a publisher, inspect system libraries or
+/// grant execution permission. Applications must obtain approval independently
+/// of stored receipts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeApproval {
+    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub origin: PackageOrigin,
+}
+
+impl RuntimeApproval {
+    fn validate(&self) -> InstallResult<String> {
+        crate::catalog::validate_origin(&self.origin)?;
+        self.environment
+            .digest()
+            .map_err(|_| InstallError::ApprovalMismatch)
+    }
+}
+
+/// A strict record of one runtime installation, never a source of approval.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RuntimeInstallReceipt {
+    format_version: u32,
+    action_id: String,
+    approval: RuntimeApproval,
+    environment_digest: String,
+}
+
+impl RuntimeInstallReceipt {
+    pub fn action_id(&self) -> &str {
+        &self.action_id
+    }
+    pub fn approval(&self) -> &RuntimeApproval {
+        &self.approval
+    }
+    pub fn environment_digest(&self) -> &str {
+        &self.environment_digest
+    }
+
+    fn validate(&self) -> InstallResult<()> {
+        if self.format_version != RECEIPT_VERSION
+            || validate_action(&self.action_id).is_err()
+            || !valid_digest(&self.environment_digest)
+            || self.approval.validate().ok().as_deref() != Some(self.environment_digest.as_str())
+        {
+            return Err(InstallError::CorruptReceipt);
+        }
+        Ok(())
+    }
+}
+
+/// Complete immutable runtime bytes verified against independent approval.
+#[derive(Clone, Debug)]
+pub struct InstalledRuntime {
+    runtime: CapturedRuntime,
+    receipt: RuntimeInstallReceipt,
+}
+impl InstalledRuntime {
+    pub fn runtime(&self) -> &CapturedRuntime {
+        &self.runtime
+    }
+    pub fn receipt(&self) -> &RuntimeInstallReceipt {
+        &self.receipt
+    }
+}
+
 /// A single owner of an existing private application directory. Operations are
 /// synchronous bounded local IO and belong on an application blocking worker.
 /// The OS lock stays held until this value is dropped. No root provisioning,
@@ -194,6 +264,47 @@ impl PackageStore {
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
             let _ = (package, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
+    /// Persist the complete captured tool and Host under the approved environment
+    /// digest. Uses the same lock, action namespace and commit recovery as packages.
+    /// No source paths, execution permissions or activation state are retained.
+    pub fn install_runtime(
+        &mut self,
+        action_id: &str,
+        runtime: &CapturedRuntime,
+        approval: &RuntimeApproval,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<RuntimeInstallReceipt> {
+        validate_action(action_id)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner
+                .install_runtime(action_id, runtime, approval, &authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (runtime, approval, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
+    /// Reopen complete stored bytes using independently supplied exact metadata.
+    /// Unsealed objects need the original install action; loading never repairs.
+    pub fn load_runtime(
+        &self,
+        approval: &RuntimeApproval,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<InstalledRuntime> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.load_runtime(approval, &authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (approval, authorized);
             Err(InstallError::UnsupportedPlatform)
         }
     }
@@ -303,6 +414,8 @@ mod platform {
         lock_id: (u64, u64),
         objects: File,
         objects_id: (u64, u64),
+        runtimes: File,
+        runtimes_id: (u64, u64),
         #[cfg(test)]
         fail_commit_checkpoint: Option<CommitCheckpoint>,
     }
@@ -317,6 +430,36 @@ mod platform {
         receipt_bytes: Vec<u8>,
         receipt: InstallReceipt,
     }
+
+    struct RuntimeObject {
+        directory: File,
+        directory_id: (u64, u64),
+        directory_mode: u32,
+        tool: File,
+        tool_id: (u64, u64),
+        host: File,
+        host_id: (u64, u64),
+        receipt_file: File,
+        receipt_bytes: Vec<u8>,
+        receipt: RuntimeInstallReceipt,
+    }
+
+    #[derive(Clone, Copy)]
+    struct TreeProfile {
+        max_files: usize,
+        max_directories: usize,
+        max_depth: usize,
+    }
+    const PACKAGE_TREE: TreeProfile = TreeProfile {
+        max_files: super::super::MAX_FILES + 1,
+        max_directories: MAX_DIRECTORIES,
+        max_depth: MAX_DEPTH,
+    };
+    const RUNTIME_TREE: TreeProfile = TreeProfile {
+        max_files: sdk::MAX_RUNTIME_ARTIFACT_FILES,
+        max_directories: 1024,
+        max_depth: 32,
+    };
 
     #[derive(Clone, PartialEq, Eq)]
     struct Stamp {
@@ -435,6 +578,22 @@ mod platform {
         Ok(bytes)
     }
 
+    fn open_namespace(root: &File, child: &str, root_id: (u64, u64)) -> InstallResult<File> {
+        let directory = match filesystem::open_child(root, OsStr::new(child), true) {
+            Ok(file) => file,
+            Err(_) => match mkdir(root, OsStr::new(child)) {
+                Ok(file) => file,
+                Err(_) => filesystem::open_child(root, OsStr::new(child), true)
+                    .map_err(|_| InstallError::CorruptStore)?,
+            },
+        };
+        private(&directory, true, 0o700)?;
+        if filesystem::identity(&directory)?.0 != root_id.0 {
+            return Err(InstallError::CorruptStore);
+        }
+        Ok(directory)
+    }
+
     impl Store {
         pub(super) fn open(root: &Path) -> InstallResult<Self> {
             let (path, root) =
@@ -464,19 +623,10 @@ mod platform {
             let lock_id = filesystem::identity(&lock)?;
             same_root(&path, root_id)?;
             same_file(&root, OsStr::new(".lock"), false, lock_id)?;
-            let objects = match filesystem::open_child(&root, OsStr::new("objects"), true) {
-                Ok(file) => file,
-                Err(_) => match mkdir(&root, OsStr::new("objects")) {
-                    Ok(file) => file,
-                    Err(_) => filesystem::open_child(&root, OsStr::new("objects"), true)
-                        .map_err(|_| InstallError::CorruptStore)?,
-                },
-            };
-            private(&objects, true, 0o700)?;
+            let objects = open_namespace(&root, "objects", root_id)?;
             let objects_id = filesystem::identity(&objects)?;
-            if objects_id.0 != root_id.0 {
-                return Err(InstallError::CorruptStore);
-            }
+            let runtimes = open_namespace(&root, "runtimes", root_id)?;
+            let runtimes_id = filesystem::identity(&runtimes)?;
             let store = Self {
                 path,
                 root,
@@ -485,12 +635,15 @@ mod platform {
                 lock_id,
                 objects_id,
                 objects,
+                runtimes,
+                runtimes_id,
                 #[cfg(test)]
                 fail_commit_checkpoint: None,
             };
             store.check(&|| true)?;
             sync(&store.lock)?;
             sync(&store.objects)?;
+            sync(&store.runtimes)?;
             sync(&store.root)?;
             store.check(&|| true)?;
             Ok(store)
@@ -502,9 +655,11 @@ mod platform {
             }
             private(&self.root, true, 0o700)?;
             private(&self.objects, true, 0o700)?;
+            private(&self.runtimes, true, 0o700)?;
             private(&self.lock, false, 0o600)?;
             same_root(&self.path, self.root_id)?;
             same_file(&self.root, OsStr::new("objects"), true, self.objects_id)?;
+            same_file(&self.root, OsStr::new("runtimes"), true, self.runtimes_id)?;
             same_file(&self.root, OsStr::new(".lock"), false, self.lock_id)?;
             if !authorized() {
                 return Err(InstallError::AuthorityRevoked);
@@ -513,18 +668,27 @@ mod platform {
         }
 
         fn names(&self, authorized: &impl Fn() -> bool) -> InstallResult<Vec<String>> {
+            self.names_in(&self.objects, MAX_INSTALLED_PACKAGES, authorized)
+        }
+
+        fn names_in(
+            &self,
+            parent: &File,
+            limit: usize,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<Vec<String>> {
             self.check(authorized)?;
-            let before = Stamp::from(&metadata(&self.objects)?);
+            let before = Stamp::from(&metadata(parent)?);
             let failure = Cell::new(None);
             let result = filesystem::directory_names(
-                &self.objects,
+                parent,
                 || {
                     self.check(authorized).map_err(|error| {
                         failure.set(Some(error));
                         HostError::AuthorityRevoked
                     })
                 },
-                MAX_INSTALLED_PACKAGES,
+                limit,
             );
             let names = result.map_err(|error| {
                 failure
@@ -538,25 +702,27 @@ mod platform {
             if names.iter().any(|value| !valid_digest(value)) {
                 return Err(InstallError::CorruptStore);
             }
-            unchanged(&self.objects, &before)?;
+            unchanged(parent, &before)?;
             self.check(authorized)?;
             Ok(names)
         }
 
-        fn open_object(
+        fn open_envelope(
             &self,
+            parent: &File,
             digest: &str,
+            expected_names: &[&str],
             authorized: &impl Fn() -> bool,
-        ) -> InstallResult<Object> {
+        ) -> InstallResult<(File, (u64, u64), u32, File, Vec<u8>)> {
             self.check(authorized)?;
-            let directory = filesystem::open_child(&self.objects, OsStr::new(digest), true)
+            let directory = filesystem::open_child(parent, OsStr::new(digest), true)
                 .map_err(|_| InstallError::CorruptStore)?;
-            let directory_mode = metadata(&directory)?.mode() & 0o7777;
-            if directory_mode != 0o500 && directory_mode != 0o700 {
+            let mode = metadata(&directory)?.mode() & 0o7777;
+            if mode != 0o500 && mode != 0o700 {
                 return Err(InstallError::CorruptStore);
             }
-            private(&directory, true, directory_mode)?;
-            let directory_id = filesystem::identity(&directory)?;
+            private(&directory, true, mode)?;
+            let id = filesystem::identity(&directory)?;
             let names = filesystem::directory_names(
                 &directory,
                 || {
@@ -566,17 +732,88 @@ mod platform {
                         Err(HostError::AuthorityRevoked)
                     }
                 },
-                2,
+                expected_names.len(),
             )?;
-            if names != ["package", "receipt.json"] {
+            if names
+                .iter()
+                .map(String::as_str)
+                .ne(expected_names.iter().copied())
+            {
                 return Err(InstallError::CorruptStore);
             }
+            let receipt_file =
+                filesystem::open_child(&directory, OsStr::new("receipt.json"), false)?;
+            let bytes = read_receipt(&receipt_file)?;
+            self.check_envelope(
+                parent,
+                digest,
+                &directory,
+                id,
+                mode,
+                &receipt_file,
+                authorized,
+            )?;
+            Ok((directory, id, mode, receipt_file, bytes))
+        }
+
+        fn check_envelope(
+            &self,
+            parent: &File,
+            digest: &str,
+            directory: &File,
+            id: (u64, u64),
+            mode: u32,
+            receipt: &File,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.check(authorized)?;
+            same_file(parent, OsStr::new(digest), true, id)?;
+            private(directory, true, mode)?;
+            same_file(
+                directory,
+                OsStr::new("receipt.json"),
+                false,
+                filesystem::identity(receipt)?,
+            )?;
+            private(receipt, false, 0o400)?;
+            self.check(authorized)
+        }
+
+        fn seal_wrapper(
+            &self,
+            directory: &File,
+            mode: &mut u32,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.check(authorized)?;
+            if *mode == 0o700 {
+                #[cfg(test)]
+                if self.fail_commit_checkpoint == Some(CommitCheckpoint::Seal) {
+                    return Err(InstallError::Io);
+                }
+                chmod(directory, 0o500)?;
+                *mode = 0o500;
+            }
+            private(directory, true, 0o500)?;
+            sync(directory)?;
+            self.check(authorized)
+        }
+
+        fn open_object(
+            &self,
+            digest: &str,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<Object> {
+            let (directory, directory_id, directory_mode, receipt_file, receipt_bytes) = self
+                .open_envelope(
+                    &self.objects,
+                    digest,
+                    &["package", "receipt.json"],
+                    authorized,
+                )?;
             let package = filesystem::open_child(&directory, OsStr::new("package"), true)?;
             private(&package, true, 0o500)?;
             let package_id = filesystem::identity(&package)?;
-            let receipt_file =
-                filesystem::open_child(&directory, OsStr::new("receipt.json"), false)?;
-            let receipt_bytes = read_receipt(&receipt_file)?;
             let receipt: InstallReceipt =
                 serde_json::from_slice(&receipt_bytes).map_err(|_| InstallError::CorruptReceipt)?;
             receipt.validate()?;
@@ -603,20 +840,20 @@ mod platform {
             object: &Object,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
-            self.check(authorized)?;
-            same_file(&self.objects, OsStr::new(digest), true, object.directory_id)?;
-            private(&object.directory, true, object.directory_mode)?;
+            self.check_envelope(
+                &self.objects,
+                digest,
+                &object.directory,
+                object.directory_id,
+                object.directory_mode,
+                &object.receipt_file,
+                authorized,
+            )?;
             same_file(
                 &object.directory,
                 OsStr::new("package"),
                 true,
                 object.package_id,
-            )?;
-            same_file(
-                &object.directory,
-                OsStr::new("receipt.json"),
-                false,
-                filesystem::identity(&object.receipt_file)?,
             )?;
             private(&object.package, true, 0o500)?;
             private(&object.receipt_file, false, 0o400)?;
@@ -717,6 +954,8 @@ mod platform {
         ) -> InstallResult<InstallReceipt> {
             self.check(authorized)?;
             let objects_before = Stamp::from(&metadata(&self.objects)?);
+            let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
+            let mut seen_actions = self.runtime_actions(action_id, authorized)?;
             let names = self.names(authorized)?;
             let receipt = InstallReceipt {
                 format_version: RECEIPT_VERSION,
@@ -726,7 +965,6 @@ mod platform {
                 origin: package.origin().clone(),
             };
             receipt.validate()?;
-            let mut seen_actions = BTreeSet::new();
             let mut seen_plugins = BTreeSet::new();
             let mut origins: BTreeMap<String, (String, String, String)> = BTreeMap::new();
             let mut existing = None;
@@ -784,6 +1022,7 @@ mod platform {
             }
             self.check(authorized)?;
             unchanged(&self.objects, &objects_before)?;
+            unchanged(&self.runtimes, &runtimes_before)?;
             if unrelated_pending {
                 return Err(InstallError::RecoveryRequired);
             }
@@ -796,6 +1035,7 @@ mod platform {
                     self.sync_installed_parents(authorized)?;
                     self.capture_object(&receipt.package_digest, &object, authorized)?;
                     unchanged(&self.objects, &objects_before)?;
+                    unchanged(&self.runtimes, &runtimes_before)?;
                     self.check_object(&receipt.package_digest, &object, authorized)
                 })();
                 confirmed.map_err(|_| InstallError::UnknownCommit)?;
@@ -881,6 +1121,7 @@ mod platform {
             }
             self.check_candidate(&candidate_name, candidate_id, authorized)?;
             unchanged(&self.objects, &objects_before)?;
+            unchanged(&self.runtimes, &runtimes_before)?;
             promote(
                 &self.root,
                 OsStr::new(&candidate_name),
@@ -911,6 +1152,7 @@ mod platform {
                 let mut expected_names = names;
                 expected_names.push(package.package_digest().into());
                 expected_names.sort();
+                unchanged(&self.runtimes, &runtimes_before)?;
                 if self.names(authorized)? != expected_names {
                     return Err(InstallError::StoreChanged);
                 }
@@ -924,6 +1166,468 @@ mod platform {
             })();
             confirmed.map_err(|_| InstallError::UnknownCommit)?;
             Ok(receipt)
+        }
+
+        fn open_runtime_object(
+            &self,
+            digest: &str,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<RuntimeObject> {
+            let (directory, directory_id, directory_mode, receipt_file, receipt_bytes) = self
+                .open_envelope(
+                    &self.runtimes,
+                    digest,
+                    &["host", "receipt.json", "tool"],
+                    authorized,
+                )?;
+            let receipt: RuntimeInstallReceipt =
+                serde_json::from_slice(&receipt_bytes).map_err(|_| InstallError::CorruptReceipt)?;
+            receipt.validate()?;
+            if receipt.environment_digest != digest {
+                return Err(InstallError::CorruptReceipt);
+            }
+            let tool = filesystem::open_child(&directory, OsStr::new("tool"), true)?;
+            let host = filesystem::open_child(&directory, OsStr::new("host"), true)?;
+            private(&tool, true, 0o500)?;
+            private(&host, true, 0o500)?;
+            let object = RuntimeObject {
+                directory,
+                directory_id,
+                directory_mode,
+                tool_id: filesystem::identity(&tool)?,
+                host_id: filesystem::identity(&host)?,
+                tool,
+                host,
+                receipt_file,
+                receipt_bytes,
+                receipt,
+            };
+            self.check_runtime_object(digest, &object, authorized)?;
+            Ok(object)
+        }
+
+        fn check_runtime_object(
+            &self,
+            digest: &str,
+            object: &RuntimeObject,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.check_envelope(
+                &self.runtimes,
+                digest,
+                &object.directory,
+                object.directory_id,
+                object.directory_mode,
+                &object.receipt_file,
+                authorized,
+            )?;
+            same_file(&object.directory, OsStr::new("tool"), true, object.tool_id)?;
+            same_file(&object.directory, OsStr::new("host"), true, object.host_id)?;
+            private(&object.tool, true, 0o500)?;
+            private(&object.host, true, 0o500)?;
+            self.check(authorized)
+        }
+
+        fn inspect_runtime_trees(
+            &self,
+            tool: &File,
+            host: &File,
+            authorized: &impl Fn() -> bool,
+            synchronize: bool,
+        ) -> InstallResult<()> {
+            let tool = self.inspect_tree(tool, RUNTIME_TREE, authorized, synchronize)?;
+            let host = self.inspect_tree(host, RUNTIME_TREE, authorized, synchronize)?;
+            if tool
+                .0
+                .checked_add(host.0)
+                .is_none_or(|count| count > sdk::MAX_RUNTIME_ARTIFACT_FILES)
+                || tool
+                    .1
+                    .checked_add(host.1)
+                    .is_none_or(|bytes| bytes > sdk::MAX_RUNTIME_ARTIFACT_BYTES as u64)
+            {
+                return Err(InstallError::CorruptStore);
+            }
+            self.check(authorized)
+        }
+
+        // An unselected object contributes only a strict conflict index. This
+        // verifies immutable metadata and receipt bindings, not executable bytes.
+        fn inspect_runtime_index(
+            &self,
+            digest: &str,
+            object: &RuntimeObject,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.check_runtime_object(digest, object, authorized)?;
+            self.inspect_runtime_trees(&object.tool, &object.host, authorized, false)?;
+            let reopened =
+                filesystem::open_child(&object.directory, OsStr::new("receipt.json"), false)?;
+            if read_receipt(&reopened)? != object.receipt_bytes {
+                return Err(InstallError::StoreChanged);
+            }
+            self.check_runtime_object(digest, object, authorized)
+        }
+
+        fn capture_runtime_object(
+            &self,
+            digest: &str,
+            object: &RuntimeObject,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<CapturedRuntime> {
+            self.inspect_runtime_trees(&object.tool, &object.host, authorized, false)?;
+            let path = self.path.join("runtimes").join(digest);
+            let failure = Cell::new(None);
+            let runtime = CapturedRuntime::capture_directories(
+                &path.join("tool"),
+                &path.join("host"),
+                &object.receipt.approval.environment,
+                || match self.check_runtime_object(digest, object, authorized) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        failure.set(Some(error));
+                        false
+                    }
+                },
+            )
+            .map_err(|error| failure.get().unwrap_or(InstallError::from(error)))?;
+            self.inspect_runtime_trees(&object.tool, &object.host, authorized, false)?;
+            self.check_runtime_object(digest, object, authorized)?;
+            let reopened =
+                filesystem::open_child(&object.directory, OsStr::new("receipt.json"), false)?;
+            if read_receipt(&reopened)? != object.receipt_bytes {
+                return Err(InstallError::StoreChanged);
+            }
+            if runtime.environment_digest() != digest {
+                return Err(InstallError::CorruptReceipt);
+            }
+            self.check_runtime_object(digest, object, authorized)?;
+            Ok(runtime)
+        }
+
+        // Both object kinds share action UUIDs. Unselected runtime records
+        // participate only in a strict receipt/readonly metadata index.
+        fn runtime_actions(
+            &self,
+            action: &str,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<BTreeSet<String>> {
+            let mut seen = BTreeSet::new();
+            let mut pending = false;
+            for digest in self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, authorized)? {
+                let object = self.open_runtime_object(&digest, authorized)?;
+                self.inspect_runtime_index(&digest, &object, authorized)?;
+                if !seen.insert(object.receipt.action_id.clone()) {
+                    return Err(InstallError::CorruptStore);
+                }
+                if object.receipt.action_id == action {
+                    return Err(InstallError::ActionConflict);
+                }
+                pending |= object.directory_mode == 0o700;
+            }
+            if pending {
+                return Err(InstallError::RecoveryRequired);
+            }
+            Ok(seen)
+        }
+
+        fn package_actions(
+            &self,
+            action: &str,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<BTreeSet<String>> {
+            let mut seen = BTreeSet::new();
+            let mut plugins = BTreeSet::new();
+            let mut origins = BTreeMap::new();
+            let mut pending = false;
+            for digest in self.names(authorized)? {
+                let object = self.open_object(&digest, authorized)?;
+                self.capture_object(&digest, &object, authorized)?;
+                let prior = &object.receipt;
+                if !seen.insert(prior.action_id.clone()) || !plugins.insert(prior.plugin.clone()) {
+                    return Err(InstallError::CorruptStore);
+                }
+                let origin = (
+                    prior.origin.source_id.clone(),
+                    prior.origin.publisher_id.clone(),
+                    prior.plugin.publisher.clone(),
+                );
+                if origins
+                    .insert(prior.plugin.id.clone(), origin.clone())
+                    .is_some_and(|old| old != origin)
+                {
+                    return Err(InstallError::CorruptStore);
+                }
+                if prior.action_id == action {
+                    return Err(InstallError::ActionConflict);
+                }
+                pending |= object.directory_mode == 0o700;
+            }
+            if pending {
+                return Err(InstallError::RecoveryRequired);
+            }
+            Ok(seen)
+        }
+
+        pub(super) fn load_runtime(
+            &self,
+            approval: &RuntimeApproval,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<InstalledRuntime> {
+            let guard = OperationGuard::new(authorized);
+            let result = (|| {
+                self.check(&|| guard.allowed())?;
+                let digest = approval.validate()?;
+                let names =
+                    self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, &|| guard.allowed())?;
+                if !names.contains(&digest) {
+                    return Err(InstallError::MissingRuntime);
+                }
+                let object = self.open_runtime_object(&digest, &|| guard.allowed())?;
+                if object.receipt.approval != *approval {
+                    return Err(InstallError::ApprovalMismatch);
+                }
+                let runtime = self.capture_runtime_object(&digest, &object, &|| guard.allowed())?;
+                self.check_runtime_object(&digest, &object, &|| guard.allowed())?;
+                if object.directory_mode != 0o500 {
+                    return Err(InstallError::RecoveryRequired);
+                }
+                Ok(InstalledRuntime {
+                    runtime,
+                    receipt: object.receipt,
+                })
+            })();
+            guard.finish(result)
+        }
+
+        pub(super) fn install_runtime(
+            &mut self,
+            action_id: &str,
+            runtime: &CapturedRuntime,
+            approval: &RuntimeApproval,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<RuntimeInstallReceipt> {
+            let guard = OperationGuard::new(authorized);
+            let result =
+                self.install_runtime_inner(action_id, runtime, approval, &|| guard.allowed());
+            guard.finish(result)
+        }
+
+        fn install_runtime_inner(
+            &mut self,
+            action_id: &str,
+            runtime: &CapturedRuntime,
+            approval: &RuntimeApproval,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<RuntimeInstallReceipt> {
+            self.check(authorized)?;
+            let digest = approval.validate()?;
+            if runtime.descriptor() != &approval.environment
+                || runtime.environment_digest() != digest
+            {
+                return Err(InstallError::ApprovalMismatch);
+            }
+            let objects_before = Stamp::from(&metadata(&self.objects)?);
+            let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
+            let mut seen_actions = self.package_actions(action_id, authorized)?;
+            let names = self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, authorized)?;
+            let receipt = RuntimeInstallReceipt {
+                format_version: RECEIPT_VERSION,
+                action_id: action_id.into(),
+                approval: approval.clone(),
+                environment_digest: digest.clone(),
+            };
+            receipt.validate()?;
+            let mut existing = None;
+            let mut unrelated_pending = false;
+            for prior_digest in &names {
+                let object = self.open_runtime_object(prior_digest, authorized)?;
+                self.inspect_runtime_index(prior_digest, &object, authorized)?;
+                let prior = &object.receipt;
+                if !seen_actions.insert(prior.action_id.clone()) {
+                    return Err(InstallError::CorruptStore);
+                }
+                if prior.action_id == action_id && prior != &receipt {
+                    return Err(InstallError::ActionConflict);
+                }
+                if prior_digest == &digest {
+                    if prior.approval.origin.source_id != approval.origin.source_id {
+                        return Err(InstallError::SourceConflict);
+                    }
+                    if prior.approval.origin.publisher_id != approval.origin.publisher_id {
+                        return Err(InstallError::PublisherConflict);
+                    }
+                    if prior != &receipt {
+                        return Err(InstallError::ActionConflict);
+                    }
+                    self.capture_runtime_object(prior_digest, &object, authorized)?;
+                    existing = Some(object);
+                } else if object.directory_mode == 0o700 {
+                    unrelated_pending = true;
+                }
+            }
+            self.check(authorized)?;
+            unchanged(&self.objects, &objects_before)?;
+            unchanged(&self.runtimes, &runtimes_before)?;
+            if unrelated_pending {
+                return Err(InstallError::RecoveryRequired);
+            }
+            if let Some(mut object) = existing {
+                // A previous unknown commit needs all byte, mode and durability
+                // checks again; a visible receipt alone cannot complete it.
+                let confirmed = (|| {
+                    self.check_runtime_object(&digest, &object, authorized)?;
+                    self.seal_wrapper(&object.directory, &mut object.directory_mode, authorized)?;
+                    self.sync_runtime_object(&object, authorized)?;
+                    self.sync_parents(&self.runtimes, authorized)?;
+                    self.capture_runtime_object(&digest, &object, authorized)?;
+                    unchanged(&self.objects, &objects_before)?;
+                    unchanged(&self.runtimes, &runtimes_before)?;
+                    self.check_runtime_object(&digest, &object, authorized)
+                })();
+                confirmed.map_err(|_| InstallError::UnknownCommit)?;
+                return Ok(object.receipt);
+            }
+            if names.len() >= MAX_INSTALLED_RUNTIMES {
+                return Err(InstallError::LimitExceeded);
+            }
+            let candidate_name = format!(".candidate-{}", uuid::Uuid::new_v4());
+            self.check(authorized)?;
+            let candidate = mkdir(&self.root, OsStr::new(&candidate_name))?;
+            let candidate_id = filesystem::identity(&candidate)?;
+            self.check_candidate(&candidate_name, candidate_id, authorized)?;
+            let held_tool = mkdir(&candidate, OsStr::new("tool"))?;
+            let held_host = mkdir(&candidate, OsStr::new("host"))?;
+            let tool_id = filesystem::identity(&held_tool)?;
+            let host_id = filesystem::identity(&held_host)?;
+            self.write_tree(
+                runtime.tool_files(),
+                &held_tool,
+                RUNTIME_TREE,
+                &candidate_name,
+                candidate_id,
+                authorized,
+            )?;
+            self.write_tree(
+                runtime.host_files(),
+                &held_host,
+                RUNTIME_TREE,
+                &candidate_name,
+                candidate_id,
+                authorized,
+            )?;
+            let receipt_bytes =
+                serde_json::to_vec(&receipt).map_err(|_| InstallError::CorruptReceipt)?;
+            if receipt_bytes.len() > MAX_RECEIPT_BYTES {
+                return Err(InstallError::CorruptReceipt);
+            }
+            self.write_file(
+                &candidate,
+                "receipt.json",
+                &receipt_bytes,
+                false,
+                &candidate_name,
+                candidate_id,
+                authorized,
+            )?;
+            sync(&candidate)?;
+            sync(&self.root)?;
+            let check_candidate = || -> InstallResult<()> {
+                self.check_candidate(&candidate_name, candidate_id, authorized)?;
+                private(&candidate, true, 0o700)?;
+                same_file(&candidate, OsStr::new("tool"), true, tool_id)?;
+                same_file(&candidate, OsStr::new("host"), true, host_id)?;
+                self.check_candidate(&candidate_name, candidate_id, authorized)
+            };
+            check_candidate()?;
+            self.inspect_runtime_trees(&held_tool, &held_host, authorized, false)?;
+            let path = self.path.join(&candidate_name);
+            let failure = Cell::new(None);
+            let staged = CapturedRuntime::capture_directories(
+                &path.join("tool"),
+                &path.join("host"),
+                &approval.environment,
+                || match check_candidate() {
+                    Ok(()) => true,
+                    Err(error) => {
+                        failure.set(Some(error));
+                        false
+                    }
+                },
+            )
+            .map_err(|error| failure.get().unwrap_or(InstallError::from(error)))?;
+            if staged.environment_digest() != digest {
+                return Err(InstallError::ApprovalMismatch);
+            }
+            drop(staged);
+            self.inspect_runtime_trees(&held_tool, &held_host, authorized, false)?;
+            let candidate_names = filesystem::directory_names(
+                &candidate,
+                || {
+                    check_candidate().map_err(|error| {
+                        failure.set(Some(error));
+                        HostError::AuthorityRevoked
+                    })
+                },
+                3,
+            )
+            .map_err(|error| failure.get().unwrap_or(InstallError::from(error)))?;
+            if candidate_names != ["host", "receipt.json", "tool"] {
+                return Err(InstallError::CorruptStore);
+            }
+            let final_receipt =
+                filesystem::open_child(&candidate, OsStr::new("receipt.json"), false)?;
+            if read_receipt(&final_receipt)? != receipt_bytes {
+                return Err(InstallError::StoreChanged);
+            }
+            check_candidate()?;
+            unchanged(&self.objects, &objects_before)?;
+            unchanged(&self.runtimes, &runtimes_before)?;
+            promote(
+                &self.root,
+                OsStr::new(&candidate_name),
+                &self.runtimes,
+                OsStr::new(&digest),
+            )?;
+            let confirmed = (|| {
+                self.check(authorized)?;
+                same_file(&self.runtimes, OsStr::new(&digest), true, candidate_id)?;
+                let mut object = self.open_runtime_object(&digest, authorized)?;
+                if object.directory_id != candidate_id {
+                    return Err(InstallError::StoreChanged);
+                }
+                if object.receipt != receipt {
+                    return Err(InstallError::CorruptReceipt);
+                }
+                self.capture_runtime_object(&digest, &object, authorized)?;
+                self.check_runtime_object(&digest, &object, authorized)?;
+                self.seal_wrapper(&object.directory, &mut object.directory_mode, authorized)?;
+                self.sync_runtime_object(&object, authorized)?;
+                self.sync_parents(&self.runtimes, authorized)?;
+                let mut expected_names = names;
+                expected_names.push(digest.clone());
+                expected_names.sort();
+                if self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, authorized)?
+                    != expected_names
+                {
+                    return Err(InstallError::StoreChanged);
+                }
+                unchanged(&self.objects, &objects_before)?;
+                self.check_runtime_object(&digest, &object, authorized)
+            })();
+            confirmed.map_err(|_| InstallError::UnknownCommit)?;
+            Ok(receipt)
+        }
+
+        fn sync_runtime_object(
+            &self,
+            object: &RuntimeObject,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.inspect_runtime_trees(&object.tool, &object.host, authorized, true)?;
+            sync(&object.receipt_file)?;
+            sync(&object.directory)?;
+            self.check_runtime_object(&object.receipt.environment_digest, object, authorized)
         }
 
         fn check_candidate(
@@ -971,14 +1675,45 @@ mod platform {
             candidate_id: (u64, u64),
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<()> {
+            self.write_file(
+                package,
+                "manifest.json",
+                &image.manifest_bytes,
+                false,
+                candidate,
+                candidate_id,
+                authorized,
+            )?;
+            self.write_tree(
+                &image.files,
+                package,
+                PACKAGE_TREE,
+                candidate,
+                candidate_id,
+                authorized,
+            )
+        }
+
+        fn write_tree(
+            &self,
+            files: &BTreeMap<String, sdk::RuntimeArtifactFile>,
+            root: &File,
+            profile: TreeProfile,
+            candidate: &str,
+            candidate_id: (u64, u64),
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            if files.len() > profile.max_files {
+                return Err(InstallError::LimitExceeded);
+            }
             let mut directories = BTreeMap::new();
             directories.insert(
                 String::new(),
-                package.try_clone().map_err(|_| InstallError::Io)?,
+                root.try_clone().map_err(|_| InstallError::Io)?,
             );
-            for (path, captured) in image.files.iter() {
+            for (path, captured) in files {
                 let parts: Vec<_> = path.split('/').collect();
-                if parts.len() - 1 > MAX_DEPTH {
+                if parts.len() - 1 > profile.max_depth {
                     return Err(InstallError::Host(HostError::PackageLimit));
                 }
                 let mut prefix = String::new();
@@ -989,7 +1724,7 @@ mod platform {
                         format!("{prefix}/{part}")
                     };
                     if !directories.contains_key(&next) {
-                        if directories.len() >= MAX_DIRECTORIES {
+                        if directories.len() >= profile.max_directories {
                             return Err(InstallError::Host(HostError::PackageLimit));
                         }
                         self.check_candidate(candidate, candidate_id, authorized)?;
@@ -1008,17 +1743,7 @@ mod platform {
                     authorized,
                 )?;
             }
-            self.write_file(
-                package,
-                "manifest.json",
-                &image.manifest_bytes,
-                false,
-                candidate,
-                candidate_id,
-                authorized,
-            )?;
-            // Descendants first, then their parents. Every entry and final
-            // private read-only mode is synced before the candidate is sealed.
+            // Descendants first, including final read-only modes in each sync.
             let mut keys: Vec<_> = directories.keys().cloned().collect();
             keys.sort_by_key(|key| std::cmp::Reverse(key.len()));
             for key in keys {
@@ -1026,7 +1751,7 @@ mod platform {
                 chmod(&directories[&key], 0o500)?;
                 sync(&directories[&key])?;
             }
-            Ok(())
+            self.check_candidate(candidate, candidate_id, authorized)
         }
 
         fn inspect_package(
@@ -1035,20 +1760,33 @@ mod platform {
             authorized: &impl Fn() -> bool,
             synchronize: bool,
         ) -> InstallResult<()> {
+            self.inspect_tree(package, PACKAGE_TREE, authorized, synchronize)
+                .map(|_| ())
+        }
+
+        fn inspect_tree(
+            &self,
+            root: &File,
+            profile: TreeProfile,
+            authorized: &impl Fn() -> bool,
+            synchronize: bool,
+        ) -> InstallResult<(usize, u64)> {
             fn walk(
                 store: &Store,
                 directory: &File,
                 depth: usize,
-                count: &mut usize,
+                counts: &mut (usize, usize, u64),
+                profile: TreeProfile,
                 authorized: &impl Fn() -> bool,
                 synchronize: bool,
             ) -> InstallResult<()> {
                 store.check(authorized)?;
-                *count += 1;
-                if depth > MAX_DEPTH || *count > MAX_DIRECTORIES + super::super::MAX_FILES + 2 {
+                counts.0 += 1;
+                if depth > profile.max_depth || counts.0 > profile.max_directories {
                     return Err(InstallError::CorruptStore);
                 }
                 private(directory, true, 0o500)?;
+                let before = Stamp::from(&metadata(directory)?);
                 for child in filesystem::directory_names(
                     directory,
                     || {
@@ -1058,23 +1796,37 @@ mod platform {
                             Err(HostError::AuthorityRevoked)
                         }
                     },
-                    super::super::MAX_FILES + MAX_DIRECTORIES + 1,
+                    profile.max_files + profile.max_directories,
                 )? {
                     store.check(authorized)?;
                     let file = filesystem::open_entry(directory, OsStr::new(&child))?;
                     if metadata(&file)?.is_dir() {
-                        walk(store, &file, depth + 1, count, authorized, synchronize)?;
+                        walk(
+                            store,
+                            &file,
+                            depth + 1,
+                            counts,
+                            profile,
+                            authorized,
+                            synchronize,
+                        )?;
                     } else {
                         let mode = metadata(&file)?.mode() & 0o7777;
                         if mode != 0o400 && mode != 0o500 {
                             return Err(InstallError::CorruptStore);
                         }
                         private(&file, false, mode)?;
+                        let before = Stamp::from(&metadata(&file)?);
                         if synchronize {
                             sync(&file)?;
                         }
-                        *count += 1;
-                        if *count > MAX_DIRECTORIES + super::super::MAX_FILES + 2 {
+                        unchanged(&file, &before)?;
+                        counts.1 += 1;
+                        counts.2 = counts
+                            .2
+                            .checked_add(before.length)
+                            .ok_or(InstallError::CorruptStore)?;
+                        if counts.1 > profile.max_files {
                             return Err(InstallError::CorruptStore);
                         }
                     }
@@ -1082,10 +1834,12 @@ mod platform {
                 if synchronize {
                     sync(directory)?;
                 }
-                Ok(())
+                unchanged(directory, &before)?;
+                store.check(authorized)
             }
-            let mut count = 0;
-            walk(self, package, 0, &mut count, authorized, synchronize)
+            let mut counts = (0, 0, 0);
+            walk(self, root, 0, &mut counts, profile, authorized, synchronize)?;
+            Ok((counts.1, counts.2))
         }
 
         fn sync_object(
@@ -1109,26 +1863,21 @@ mod platform {
                 return Err(InstallError::ActionConflict);
             }
             self.check_object(&object.receipt.package_digest, object, authorized)?;
-            if object.directory_mode == 0o700 {
-                #[cfg(test)]
-                if self.fail_commit_checkpoint == Some(CommitCheckpoint::Seal) {
-                    return Err(InstallError::Io);
-                }
-                chmod(&object.directory, 0o500)?;
-                object.directory_mode = 0o500;
-            }
-            private(&object.directory, true, 0o500)?;
-            sync(&object.directory)?;
+            self.seal_wrapper(&object.directory, &mut object.directory_mode, authorized)?;
             self.check_object(&object.receipt.package_digest, object, authorized)
         }
 
         fn sync_installed_parents(&self, authorized: &impl Fn() -> bool) -> InstallResult<()> {
+            self.sync_parents(&self.objects, authorized)
+        }
+
+        fn sync_parents(&self, parent: &File, authorized: &impl Fn() -> bool) -> InstallResult<()> {
             self.check(authorized)?;
             #[cfg(test)]
             if self.fail_commit_checkpoint == Some(CommitCheckpoint::ObjectsSync) {
                 return Err(InstallError::Io);
             }
-            sync(&self.objects)?;
+            sync(parent)?;
             self.check(authorized)?;
             #[cfg(test)]
             if self.fail_commit_checkpoint == Some(CommitCheckpoint::RootSync) {
@@ -1200,6 +1949,207 @@ mod platform {
                 }
                 prepare(self.0.path());
             }
+        }
+
+        fn runtime_fixture(root: &Path) -> (CapturedRuntime, RuntimeApproval) {
+            let tool_root = root.join("approved-tool");
+            let host_root = root.join("approved-host");
+            fs::create_dir(&tool_root).unwrap();
+            fs::create_dir(&host_root).unwrap();
+            let tool = BTreeMap::from([(
+                "node".into(),
+                sdk::RuntimeArtifactFile {
+                    bytes: b"synthetic non-executable program".to_vec(),
+                    executable: true,
+                },
+            )]);
+            let host = BTreeMap::from([(
+                "main.js".into(),
+                sdk::RuntimeArtifactFile {
+                    bytes: b"throw new Error('capture only');".to_vec(),
+                    executable: false,
+                },
+            )]);
+            fs::write(tool_root.join("node"), &tool["node"].bytes).unwrap();
+            fs::set_permissions(tool_root.join("node"), fs::Permissions::from_mode(0o700)).unwrap();
+            fs::write(host_root.join("main.js"), &host["main.js"].bytes).unwrap();
+            let environment = sdk::RuntimeEnvironmentDescriptor {
+                protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+                platform: sdk::RuntimePlatform {
+                    operating_system: if cfg!(target_os = "macos") {
+                        sdk::RuntimeOperatingSystem::Macos
+                    } else {
+                        sdk::RuntimeOperatingSystem::Linux
+                    },
+                    architecture: if cfg!(target_arch = "aarch64") {
+                        sdk::RuntimeArchitecture::Aarch64
+                    } else {
+                        sdk::RuntimeArchitecture::X86_64
+                    },
+                },
+                sdk_version: "0.1.0-alpha.1".into(),
+                process_protocol: sdk::PROCESS_PROTOCOL,
+                profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+                tool_version: "26.10.0".into(),
+                tool: sdk::RuntimeArtifactBinding {
+                    tree_digest: sdk::runtime_artifact_digest(&tool).unwrap(),
+                    entrypoint: "node".into(),
+                },
+                host: sdk::RuntimeArtifactBinding {
+                    tree_digest: sdk::runtime_artifact_digest(&host).unwrap(),
+                    entrypoint: "main.js".into(),
+                },
+            };
+            let runtime =
+                CapturedRuntime::capture_directories(&tool_root, &host_root, &environment, || true)
+                    .unwrap();
+            (
+                runtime,
+                RuntimeApproval {
+                    environment,
+                    origin: PackageOrigin {
+                        source_id: "approved-source".into(),
+                        publisher_id: "approved-key".into(),
+                    },
+                },
+            )
+        }
+
+        #[test]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+        fn runtime_commit_checkpoints_require_original_action_and_confirm_all_syncs() {
+            for checkpoint in [
+                CommitCheckpoint::Seal,
+                CommitCheckpoint::ObjectsSync,
+                CommitCheckpoint::RootSync,
+            ] {
+                let root = OwnedRoot(
+                    tempfile::Builder::new()
+                        .permissions(fs::Permissions::from_mode(0o700))
+                        .tempdir()
+                        .unwrap(),
+                );
+                let (runtime, approval) = runtime_fixture(root.0.path());
+                let action = "00000000-0000-4000-8000-000000000001";
+                let wrong_action = "00000000-0000-4000-8000-000000000002";
+                let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                store.inner.fail_commit_checkpoint = Some(checkpoint);
+                assert_eq!(
+                    store
+                        .install_runtime(action, &runtime, &approval, || true)
+                        .unwrap_err(),
+                    InstallError::UnknownCommit
+                );
+                let object_path = root
+                    .0
+                    .path()
+                    .join("runtimes")
+                    .join(runtime.environment_digest());
+                assert!(object_path.join("receipt.json").exists());
+                assert_eq!(
+                    store
+                        .install_runtime(wrong_action, &runtime, &approval, || true)
+                        .unwrap_err(),
+                    InstallError::ActionConflict
+                );
+                let mut wrong = approval.clone();
+                wrong.origin.source_id = "other-source".into();
+                assert_eq!(
+                    store
+                        .install_runtime(action, &runtime, &wrong, || true)
+                        .unwrap_err(),
+                    InstallError::ActionConflict
+                );
+                if checkpoint == CommitCheckpoint::Seal {
+                    assert_eq!(
+                        store.load_runtime(&approval, || true).unwrap_err(),
+                        InstallError::RecoveryRequired
+                    );
+                    assert_eq!(
+                        fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                        0o700
+                    );
+                } else {
+                    // Loaded bytes establish integrity, not the durability of a
+                    // prior action whose parent sync returned an unknown result.
+                    assert_eq!(
+                        store
+                            .load_runtime(&approval, || true)
+                            .unwrap()
+                            .receipt()
+                            .action_id(),
+                        action
+                    );
+                }
+                drop(store);
+                let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                // Recovery must also retry the selected namespace and root sync,
+                // including when the wrapper was already sealed before failure.
+                store.inner.fail_commit_checkpoint = Some(CommitCheckpoint::RootSync);
+                assert_eq!(
+                    store
+                        .install_runtime(action, &runtime, &approval, || true)
+                        .unwrap_err(),
+                    InstallError::UnknownCommit
+                );
+                store.inner.fail_commit_checkpoint = None;
+                let receipt = store
+                    .install_runtime(action, &runtime, &approval, || true)
+                    .unwrap();
+                let loaded = store.load_runtime(&approval, || true).unwrap();
+                assert_eq!(loaded.receipt(), &receipt);
+                assert_eq!(
+                    loaded.runtime().tool_files()["node"].bytes,
+                    b"synthetic non-executable program"
+                );
+                assert!(loaded.runtime().tool_files()["node"].executable);
+                assert_eq!(
+                    fs::metadata(&object_path).unwrap().permissions().mode() & 0o777,
+                    0o500
+                );
+                assert_eq!(
+                    fs::read_dir(root.0.path().join("runtimes"))
+                        .unwrap()
+                        .count(),
+                    1
+                );
+            }
+        }
+
+        #[test]
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+        fn loaded_runtime_snapshot_does_not_change_with_persisted_files() {
+            let root = OwnedRoot(
+                tempfile::Builder::new()
+                    .permissions(fs::Permissions::from_mode(0o700))
+                    .tempdir()
+                    .unwrap(),
+            );
+            let (runtime, approval) = runtime_fixture(root.0.path());
+            let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+            store
+                .install_runtime(
+                    "00000000-0000-4000-8000-000000000001",
+                    &runtime,
+                    &approval,
+                    || true,
+                )
+                .unwrap();
+            let loaded = store.load_runtime(&approval, || true).unwrap();
+            let path = root
+                .0
+                .path()
+                .join("runtimes")
+                .join(runtime.environment_digest())
+                .join("host/main.js");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            fs::write(&path, b"changed stored bytes").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o400)).unwrap();
+            assert_eq!(
+                loaded.runtime().host_files()["main.js"].bytes,
+                b"throw new Error('capture only');"
+            );
+            assert!(store.load_runtime(&approval, || true).is_err());
         }
 
         #[test]

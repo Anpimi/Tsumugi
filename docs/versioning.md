@@ -46,6 +46,13 @@ free-digest/path API. This remains the same undistributed application
 `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; it is not a production runtime release.
 Authenticated network updates and desktop package controls remain pending. Exhaustive
 matches on the experimental Host error enum must handle its added capture errors.
+The same managed local store now retains approved runtime artifact trees and
+reopens them only after checking the independent complete descriptor and origin.
+This does not change SDK/process profiles, current schema 17 or desktop assembly.
+It stays in the same unreleased application/SDK batch and adds no development
+format migration or new distributed version.
+Exhaustive matches on the experimental installation error enum must now handle
+`MissingRuntime` separately from a missing plugin package.
 
 ## Choosing the next version
 

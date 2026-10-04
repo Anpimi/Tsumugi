@@ -13,8 +13,8 @@ The JavaScript launcher requires a `CapturedRuntime` containing the independentl
 approved Node tool and complete [built component Host](../../runtimes/javascript-host/README.md) trees. That Host
 owns the process protocol and privately uses Cordis behind the SDK facade. The
 plugin entrypoint exports a component; it is not launched as a protocol peer.
-Trusted runtime acquisition, durable runtime installation and desktop distribution
-remain separate work.
+The local installation store can retain and reopen the approved runtime trees.
+Trusted runtime acquisition and desktop distribution remain separate work.
 
 ## Captured package and actual channel
 
@@ -138,8 +138,38 @@ Use a blocking IO worker and a live application guard. Each install/load has a
 60-second observed deadline, checked between filesystem operations; individual
 blocking system calls are not preempted. The existing package capture limits
 remain in effect. Linux is implemented but has not been exercised in the macOS
-validation environment. Network acquisition/signatures, runtime pinning,
-uninstall/garbage collection and desktop controls remain separate work.
+validation environment. Network acquisition/signatures, complete project
+environment selection, uninstall/garbage collection and desktop controls remain
+separate work.
+
+### Reopening an approved runtime
+
+`PackageStore::install_runtime` retains a `CapturedRuntime` under its SDK-derived
+environment digest. Its independent `RuntimeApproval` contains the complete SDK
+descriptor and trusted source/publisher origin. This uses the same store lock,
+descriptor-relative IO, exclusive promotion and original-action recovery as
+package installation. Runtime files and their receipt are read-only; the store
+keeps distinct environments without replacing an installed one.
+Unselected runtimes participate only in bounded receipt, read-only metadata and
+descriptor-identity checks for conflicting actions. This does not approve their
+execution bytes. The target runtime is fully recaptured before and after promotion
+and during original-action recovery; loading always recaptures the selected trees.
+
+After closing and reopening the store, `load_runtime` requires that independent
+approval again and recaptures both complete trees, including executable flags.
+The original acquisition directories are no longer needed. An installed receipt
+records provenance and the original action; it is not a new source of trust or
+permission. Changed bytes, descriptors or origin are refused. An interrupted
+promotion remains uncertain, and an unsealed object requires its original action
+to finish rather than being repaired by loading it.
+
+The runtime trees share the SDK's 2048-file / 256 MiB bound, and each store keeps
+at most 128 runtime environments. Package and runtime installations share the
+action identity boundary. Installing or loading a runtime never executes it,
+enables a plugin, restores a Core grant or adopts project results. The returned
+runtime can be supplied to the existing JavaScript launcher or Core RunnerProxy;
+their execution consent and channel checks still apply.
+Callers with exhaustive matches on `InstallError` must handle `MissingRuntime`.
 
 ```sh
 cargo test -p tsumugi-plugin-host --lib --test installation --test directory --test catalog --locked

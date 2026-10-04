@@ -958,14 +958,22 @@ fn altered_installer_environment_is_rejected_before_staging() {
     }));
 }
 
-fn variant_runtime(label: &str) -> CapturedRuntime {
+fn variant_runtime_source(
+    label: &str,
+) -> (
+    CapturedRuntime,
+    sdk::RuntimeEnvironmentDescriptor,
+    tempfile::TempDir,
+) {
     fn copy_tree(
         source: &Path,
         destination: &Path,
         files: &mut BTreeMap<String, sdk::RuntimeArtifactFile>,
         prefix: &str,
     ) {
+        use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir(destination).unwrap();
+        std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o700)).unwrap();
         for entry in std::fs::read_dir(source).unwrap() {
             let entry = entry.unwrap();
             let metadata = std::fs::symlink_metadata(entry.path()).unwrap();
@@ -983,7 +991,6 @@ fn variant_runtime(label: &str) -> CapturedRuntime {
                 copy_tree(&entry.path(), &destination.join(name), files, &logical);
             } else {
                 assert!(metadata.is_file());
-                use std::os::unix::fs::PermissionsExt;
                 let bytes = std::fs::read(entry.path()).unwrap();
                 let executable = metadata.permissions().mode() & 0o111 != 0;
                 std::fs::write(destination.join(&name), &bytes).unwrap();
@@ -996,7 +1003,10 @@ fn variant_runtime(label: &str) -> CapturedRuntime {
             }
         }
     }
-    let original = runtime_fixture::approved_runtime();
+    let approval_source =
+        std::path::PathBuf::from(std::env::var_os("TSUMUGI_TEST_RUNTIME_APPROVAL").unwrap());
+    let mut descriptor: sdk::RuntimeEnvironmentDescriptor =
+        serde_json::from_slice(&std::fs::read(approval_source).unwrap()).unwrap();
     let host_source =
         std::path::PathBuf::from(std::env::var_os("TSUMUGI_TEST_RUNTIME_HOST").unwrap());
     let tool_source =
@@ -1005,7 +1015,6 @@ fn variant_runtime(label: &str) -> CapturedRuntime {
     let host = temporary.path().join("host");
     let mut files = BTreeMap::new();
     copy_tree(&host_source, &host, &mut files, "");
-    let mut descriptor = original.descriptor().clone();
     let entry = files.get_mut(&descriptor.host.entrypoint).unwrap();
     let mut bytes = format!("globalThis.__environmentLabel = {label:?}; globalThis.__environmentHost = import.meta.url;\n").into_bytes();
     bytes.extend_from_slice(&entry.bytes);
@@ -1014,32 +1023,258 @@ fn variant_runtime(label: &str) -> CapturedRuntime {
     descriptor.host.tree_digest = sdk::runtime_artifact_digest(&files).unwrap();
     let captured =
         CapturedRuntime::capture_directories(&tool_source, &host, &descriptor, || true).unwrap();
+    (captured, descriptor, temporary)
+}
+
+fn variant_runtime(label: &str) -> (CapturedRuntime, sdk::RuntimeEnvironmentDescriptor) {
+    let (captured, descriptor, temporary) = variant_runtime_source(label);
     // Reopening this original path would fail. The captured Host must survive
     // both a later source rewrite and deletion of the entire source tree.
     std::fs::write(
-        host.join(&descriptor.host.entrypoint),
+        temporary
+            .path()
+            .join("host")
+            .join(&descriptor.host.entrypoint),
         b"throw new Error('changed original Host');",
     )
     .unwrap();
     drop(temporary);
-    captured
+    (captured, descriptor)
+}
+
+// Only isolated fixture directories are made removable after releasing their
+// store and reaping every owned child; this is not a package-store operation.
+fn make_removable_installation_fixture(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    assert!(!metadata.file_type().is_symlink());
+    if metadata.is_dir() {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        for entry in std::fs::read_dir(path).unwrap() {
+            make_removable_installation_fixture(&entry.unwrap().path());
+        }
+    } else {
+        assert!(metadata.is_file());
+    }
 }
 
 #[test]
-fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
+fn approved_runtime_installation_reopens_and_runs_without_acquisition_paths() {
+    use std::os::unix::fs::PermissionsExt;
+    use tsumugi_plugin_host::catalog::PackageOrigin;
+
     let directory = tempfile::tempdir().unwrap();
     let staging = std::fs::canonicalize(directory.path())
         .unwrap()
         .join("instances");
-    std::fs::create_dir(&staging).unwrap();
+    let install_root = directory.path().join("managed-runtime");
+    for root in [&staging, &install_root] {
+        std::fs::create_dir(root).unwrap();
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    // This descriptor is computed from the trusted Host fixture before capture,
+    // independently of the installation receipt. The official tool stays read-only.
+    let (captured, descriptor, acquisition) = variant_runtime_source("installed");
+    let approval = RuntimeApproval {
+        environment: descriptor,
+        origin: PackageOrigin {
+            source_id: "explicit-offline-runtime-test".into(),
+            publisher_id: "reviewed-runtime-source".into(),
+        },
+    };
+    let expected_digest = approval.environment.digest().unwrap();
+    let action_id = "00000000-0000-4000-8000-000000000002";
+    let receipt = {
+        let mut packages = PackageStore::open_existing(&install_root).unwrap();
+        packages
+            .install_runtime(action_id, &captured, &approval, || true)
+            .unwrap()
+    };
+    assert_eq!(receipt.action_id(), action_id);
+    assert_eq!(receipt.approval(), &approval);
+    assert_eq!(receipt.environment_digest(), expected_digest);
+    drop(captured);
+    let original_host = acquisition.path().join("host");
+    std::fs::write(
+        original_host.join(&approval.environment.host.entrypoint),
+        b"throw new Error('changed original Host');",
+    )
+    .unwrap();
+    drop(acquisition);
+    assert!(!original_host.exists());
+
+    let packages = PackageStore::open_existing(&install_root).unwrap();
+    // Receipt metadata cannot replace the independent live approval guard.
+    assert!(matches!(
+        packages.load_runtime(receipt.approval(), || false),
+        Err(InstallError::AuthorityRevoked)
+    ));
+    let mut wrong_origin = approval.clone();
+    wrong_origin.origin.source_id = "different-runtime-source".into();
+    assert!(packages.load_runtime(&wrong_origin, || true).is_err());
+    let mut wrong_environment = approval.clone();
+    wrong_environment.environment.host.tree_digest = sdk::payload_digest("different runtime");
+    assert!(packages.load_runtime(&wrong_environment, || true).is_err());
+    let installed = packages.load_runtime(&approval, || true).unwrap();
+    assert_eq!(installed.receipt(), &receipt);
+    assert_eq!(installed.runtime().descriptor(), &approval.environment);
+    assert_eq!(installed.runtime().environment_digest(), expected_digest);
+    drop(packages);
+
+    let proxy = Arc::new(
+        RunnerProxy::new(
+            image("environment", None),
+            "proposal.call",
+            installed.runtime().clone(),
+            &staging,
+            HostLimits::default(),
+        )
+        .unwrap(),
+    );
+    drop(installed);
+    let mut store = store(directory.path());
+    let input = input(&mut store, &proxy);
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy).unwrap();
+    runtime.register_validator(validator(false)).unwrap();
+    // Loading durable bytes and registering a runner do not authorize Core.
+    assert_eq!(
+        runtime.submit(&mut store, &input).unwrap_err().code,
+        ErrorCode::Unauthorized
+    );
+    assert!(store.execution_input(input.envelope().attempt_id).is_err());
+
+    // Authorize only after the bounded installation and load have completed.
+    let grant = authorize(&runtime, &mut store, &input);
+    let mut wrong_envelope = input.envelope().clone();
+    wrong_envelope.plugin.as_mut().unwrap().environment = wrong_environment.environment;
+    let wrong_input = FixedInput::capture(wrong_envelope).unwrap();
+    assert_eq!(
+        runtime
+            .authorize_plugin(
+                &mut store,
+                ExecutionId::new(),
+                &wrong_input,
+                expiry(),
+                PluginConsent {
+                    unsandboxed_execution: true,
+                },
+            )
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(
+        runtime.submit(&mut store, &wrong_input).unwrap_err().code,
+        ErrorCode::InvalidInput
+    );
+    runtime.submit(&mut store, &input).unwrap();
+    finish(&mut runtime, &mut store, &input);
+    let attempt = input.envelope().attempt_id;
+    let item = input.envelope().items[0].item_id;
+    let dispatch = store.execution_dispatch(attempt, item).unwrap();
+    let permit = dispatch.plugin_permit().unwrap();
+    assert_eq!(permit.grant_id(), grant);
+    assert!(permit.matches(&input));
+    assert!(!permit.matches(&wrong_input));
+    let result_id = store
+        .execution_current_result(attempt, item)
+        .unwrap()
+        .unwrap();
+    let result = store.execution_result(attempt, result_id).unwrap();
+    let evidence = result.envelope().plugin.as_ref().unwrap();
+    assert_eq!(evidence.authorization_id, grant);
+    assert_eq!(
+        evidence.channel.selection(),
+        input
+            .envelope()
+            .plugin
+            .as_ref()
+            .unwrap()
+            .capability
+            .provider
+    );
+    assert_eq!(evidence.result.context.environment_digest, expected_digest);
+    let output = result.envelope().output.as_ref().unwrap();
+    assert_eq!(output["runtime"], "installed");
+    assert_eq!(output["nodeVersion"], approval.environment.tool_version);
+    let tool = Path::new(output["toolPath"].as_str().unwrap());
+    let host_url = output["hostPath"].as_str().unwrap();
+    assert!(tool.starts_with(&staging) && tool.ends_with("runtime/tool/bin/node"));
+    assert!(host_url.starts_with("file://") && host_url.contains("/runtime/host/dist/main.js"));
+    assert!(!tool.exists(), "reaped child's instance is reclaimed");
+    let state = store.execution_attempt(attempt, false).unwrap();
+    assert_eq!(state.items[0].execution, ExecutionState::Succeeded);
+    assert_eq!(state.items[0].validation, ValidationState::Valid);
+    assert_eq!(state.items[0].adoption, AdoptionState::Unapplied);
+    drop(runtime);
+    assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
+
+    make_removable_installation_fixture(&install_root);
+}
+
+#[test]
+fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o700)).unwrap();
+    use tsumugi_plugin_host::catalog::PackageOrigin;
+    let directory = tempfile::tempdir().unwrap();
+    let staging = std::fs::canonicalize(directory.path())
+        .unwrap()
+        .join("instances");
+    let install_root = directory.path().join("managed-runtimes");
+    for root in [&staging, &install_root] {
+        std::fs::create_dir(root).unwrap();
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let (captured_a, descriptor_a) = variant_runtime("A");
+    let (captured_b, descriptor_b) = variant_runtime("B");
+    let origin = PackageOrigin {
+        source_id: "explicit-offline-runtime-test".into(),
+        publisher_id: "reviewed-runtime-source".into(),
+    };
+    // Both approvals precede installation and come from the independent
+    // descriptor plus each actual Host tree, never from an install receipt.
+    let approval_a = RuntimeApproval {
+        environment: descriptor_a,
+        origin: origin.clone(),
+    };
+    let approval_b = RuntimeApproval {
+        environment: descriptor_b,
+        origin,
+    };
+    let action_a = "00000000-0000-4000-8000-000000000003";
+    let action_b = "00000000-0000-4000-8000-000000000004";
+    {
+        let mut packages = PackageStore::open_existing(&install_root).unwrap();
+        let receipt_a = packages
+            .install_runtime(action_a, &captured_a, &approval_a, || true)
+            .unwrap();
+        let receipt_b = packages
+            .install_runtime(action_b, &captured_b, &approval_b, || true)
+            .unwrap();
+        assert_eq!(receipt_a.action_id(), action_a);
+        assert_eq!(receipt_b.action_id(), action_b);
+        assert_ne!(
+            receipt_a.environment_digest(),
+            receipt_b.environment_digest()
+        );
+    }
+    drop(captured_a);
+    drop(captured_b);
+    let packages = PackageStore::open_existing(&install_root).unwrap();
+    let installed_a = packages.load_runtime(&approval_a, || true).unwrap();
+    let installed_b = packages.load_runtime(&approval_b, || true).unwrap();
+    assert_eq!(installed_a.receipt().action_id(), action_a);
+    assert_eq!(installed_b.receipt().action_id(), action_b);
+    assert_eq!(installed_a.runtime().descriptor(), &approval_a.environment);
+    assert_eq!(installed_b.runtime().descriptor(), &approval_b.environment);
+    drop(packages);
     let package = image("environment", None);
     let a = Arc::new(
         RunnerProxy::new(
             package.clone(),
             "proposal.call",
-            variant_runtime("A"),
+            installed_a.runtime().clone(),
             &staging,
             HostLimits::default(),
         )
@@ -1049,12 +1284,14 @@ fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
         RunnerProxy::new(
             package,
             "proposal.call",
-            variant_runtime("B"),
+            installed_b.runtime().clone(),
             &staging,
             HostLimits::default(),
         )
         .unwrap(),
     );
+    drop(installed_a);
+    drop(installed_b);
     let mut store = store(directory.path());
     let input_a = input(&mut store, &a);
     let input_b = input(&mut store, &b);
@@ -1133,5 +1370,7 @@ fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
         channels.push(evidence.channel.instance_id.clone());
     }
     assert_ne!(channels[0], channels[1]);
+    drop(runtime);
     assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
+    make_removable_installation_fixture(&install_root);
 }

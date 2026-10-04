@@ -342,7 +342,7 @@ impl PackageCatalog {
     }
 }
 
-fn validate_origin(origin: &PackageOrigin) -> CatalogResult<()> {
+pub(crate) fn validate_origin(origin: &PackageOrigin) -> CatalogResult<()> {
     for (value, field) in [
         (&origin.source_id, OriginField::SourceId),
         (&origin.publisher_id, OriginField::PublisherId),
