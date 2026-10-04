@@ -290,6 +290,27 @@ do not prove a production plugin catalog, domain migration or desktop workflow.
 
 ## Real-process conformance
 
+The `official` pairing test consumes an explicitly selected prebuilt WebVTT
+candidate from the independent
+[official plugin repository](https://github.com/Anpimi/tsumugi-plugins). It installs
+and reopens the approved package, then runs its extraction, locale builder and
+artifact checker through the actual captured JavaScript Host. Literal expected
+bytes cover Unicode, BOM/CRLF, notes and layout; malformed source/target and
+rehashed timing/note changes are refused. It does not link domain source or
+establish Core adoption, desktop selection or a complete migration.
+
+Provide reviewed package bytes/digest and the same independently approved runtime
+trees described above; missing selections fail instead of skipping:
+
+```sh
+TSUMUGI_TEST_PLUGIN_PACKAGE=/absolute/path/to/prebuilt-webvtt \
+TSUMUGI_TEST_PLUGIN_DIGEST='<independently-approved-package-digest>' \
+TSUMUGI_TEST_RUNTIME_TOOL=/absolute/path/to/tool-tree \
+TSUMUGI_TEST_RUNTIME_HOST=/absolute/path/to/clean-host-tree \
+TSUMUGI_TEST_RUNTIME_APPROVAL=/absolute/path/to/approved-descriptor.json \
+cargo test -p tsumugi-plugin-host --features javascript-conformance --test official --locked -- --test-threads=1
+```
+
 ```sh
 cargo test -p tsumugi-plugin-host --features conformance-worker --locked
 ```
