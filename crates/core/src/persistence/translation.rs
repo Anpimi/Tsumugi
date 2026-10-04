@@ -263,38 +263,6 @@ fn current_sql(name: &str, sql: &str) -> String {
        .replace("file_digest IS NOT NULL)))", "file_digest IS NOT NULL) OR (origin_kind='ai' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)))")
 }
 
-#[cfg(test)]
-pub(super) fn legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch("PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE; CREATE TEMP TABLE translation_fixture AS SELECT * FROM translation_revisions; DROP TABLE translation_revisions;")?;
-    connection.execute_batch(TABLES[0].1)?;
-    connection.execute_batch("INSERT INTO translation_revisions SELECT * FROM translation_fixture; DROP TABLE translation_fixture; COMMIT; PRAGMA foreign_keys=ON;")
-}
-
-pub(super) fn migrate_v9(connection: &mut Connection) -> rusqlite::Result<()> {
-    // Recreate the owning table with unchanged columns and relaxed origin CHECK.
-    // Foreign keys are restored even when the transaction fails; no dependent
-    // selection/review/release records are rebuilt or discarded.
-    connection.pragma_update(None, "foreign_keys", false)?;
-    let outcome = (|| {
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute_batch("CREATE TEMP TABLE translation_copy AS SELECT * FROM translation_revisions; DROP TABLE translation_revisions;")?;
-        tx.execute_batch(&current_sql(TABLES[0].0, TABLES[0].1))?;
-        tx.execute_batch("INSERT INTO translation_revisions SELECT * FROM translation_copy; DROP TABLE translation_copy;")?;
-        if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        tx.pragma_update(None, "user_version", 10)?;
-        #[cfg(test)]
-        super::migration_crash_hook("before-ai-migration-commit");
-        tx.commit()?;
-        #[cfg(test)]
-        super::migration_crash_hook("after-ai-migration-commit");
-        Ok(())
-    })();
-    connection.pragma_update(None, "foreign_keys", true)?;
-    outcome
-}
-
 pub(super) fn table_names() -> impl Iterator<Item = String> {
     TABLES.iter().map(|(name, _)| (*name).to_owned())
 }
@@ -303,26 +271,6 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     for (name, sql) in TABLES {
         connection.execute_batch(&current_sql(name, sql))?;
     }
-    Ok(())
-}
-
-pub(super) fn migrate_v4(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    for (_, sql) in TABLES {
-        transaction.execute_batch(sql)?;
-    }
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    transaction.pragma_update(None, "user_version", 5)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-translation-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-translation-migration-commit");
     Ok(())
 }
 
@@ -1438,6 +1386,7 @@ impl ProjectStore {
         }
         // Build the response before commit: a projection failure must roll back,
         // rather than misreporting an already committed save as rejected.
+        super::application::protect_manual_in(&transaction, request.unit_id, &request.locale)?;
         let result = project_result(&transaction, &selection)?;
         #[cfg(test)]
         if merge.is_some() {
@@ -1520,12 +1469,31 @@ impl ProjectStore {
             current,
             next_sequence,
         )?;
+        super::application::protect_manual_in(&transaction, request.unit_id, &request.locale)?;
         commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             error(ErrorCode::OutcomeUnknown, "translation-commit")
         })?;
         Ok(selection)
     }
+}
+
+pub(super) fn check_protection_basis(
+    connection: &Connection,
+    request: &crate::application::SetWorkProtection,
+) -> Result<(), ExecutionError> {
+    check_target(connection, request.project_id, &request.locale)?;
+    let (_, source) = source_basis(connection, request.project_id, request.unit_id)?;
+    let selection = current_selection(connection, request.unit_id, &request.locale)?;
+    if source != request.source_revision_id
+        || selection.map(|value| value.event_id) != request.selection_id
+    {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "work-protection-basis",
+        ));
+    }
+    Ok(())
 }
 
 fn save_receipt_in(
@@ -2123,7 +2091,9 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+        runtime
+            .register_read_only(Arc::new(TranslationRunner))
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -2378,7 +2348,9 @@ mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+        runtime
+            .register_read_only(Arc::new(TranslationRunner))
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
@@ -2487,7 +2459,9 @@ mod tests {
             .unwrap();
             let input = bundle.fixed_input(project_id).unwrap();
             let mut runtime = ExecutionRuntime::new(&store).unwrap();
-            runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+            runtime
+                .register_read_only(Arc::new(TranslationRunner))
+                .unwrap();
             runtime.submit(&mut store, &input).unwrap();
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {

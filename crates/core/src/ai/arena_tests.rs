@@ -542,7 +542,7 @@ fn arena_merge_commit_uncertainty_reconciles_before_same_action_retry() {
 }
 
 #[test]
-fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_schema_ten_backup() {
+fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_current_reopen() {
     let (temp, mut store, rows) = source_project();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let unit = rows[0].unit_id.unwrap();
@@ -684,10 +684,12 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_schema_ten_b
         .unwrap(),
         2
     );
-    // Remove only the additive relations to obtain an authentic schema-10 shape.
-    conn.execute_batch("DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
-    crate::persistence::ledger::provider::drop_for_legacy_fixture(&conn).unwrap();
-    conn.pragma_update(None, "user_version", 10).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM translation_revisions", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
     drop(conn);
     let reopened = ProjectStore::open(&path).unwrap();
     assert_eq!(
@@ -698,32 +700,6 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_schema_ten_b
         Some(merged)
     );
     reopened.close().unwrap();
-    let backup = std::fs::read_dir(&path)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| {
-            p.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("project.sqlite3.pre-v10-")
-        })
-        .unwrap();
-    let backup =
-        rusqlite::Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .unwrap();
-    assert_eq!(
-        backup
-            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .unwrap(),
-        10
-    );
-    assert_eq!(
-        backup
-            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |r| r
-                .get::<_, i64>(0))
-            .unwrap(),
-        4
-    );
 }
 
 #[test]
@@ -1000,7 +976,7 @@ fn arena_merge_process_interrupt_is_atomic_and_lost_response_reconciles_by_actio
 }
 
 #[test]
-fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_reviewed_merges() {
+fn arena_both_domains_preserve_current_history_and_build_only_explicitly_reviewed_merges() {
     for vtt in [false, true] {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("project");
@@ -1064,8 +1040,8 @@ fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_revi
             .remove(0);
         let unit = row.unit_id.unwrap();
         let project = source.envelope().project_id;
-        // Populate the old schema with a genuine single-model candidate, manual selection,
-        // QA, approval and release. The two new requests use the same real HTTP transport.
+        // Capture a genuine single-model candidate, manual selection, QA,
+        // approval and release. The two new requests use the same real HTTP transport.
         let wire = controlled_for("success", 10);
         let ai = store
             .preview_ai(cfg(&wire.url).variants[0].clone(), "zh-CN", &[unit])
@@ -1138,9 +1114,6 @@ fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_revi
             .collect()
         };
         let prior = facts(&c);
-        c.execute_batch("DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
-        crate::persistence::ledger::provider::drop_for_legacy_fixture(&c).unwrap();
-        c.pragma_update(None, "user_version", 10).unwrap();
         drop(c);
         let mut store = ProjectStore::open(&path).unwrap();
         assert_eq!(store.release_view(old_release).unwrap(), old_view);
@@ -1157,29 +1130,7 @@ fn arena_both_domains_preserve_schema_ten_history_and_build_only_explicitly_revi
         assert_eq!(
             c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                 .unwrap(),
-            12
-        );
-        drop(c);
-        let backup = std::fs::read_dir(&path)
-            .unwrap()
-            .map(|p| p.unwrap().path())
-            .find(|p| {
-                p.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("project.sqlite3.pre-v10-")
-            })
-            .unwrap();
-        let c = rusqlite::Connection::open_with_flags(
-            backup,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        assert_eq!(facts(&c), prior);
-        assert_eq!(
-            c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-                .unwrap(),
-            10
+            crate::persistence::SCHEMA_VERSION
         );
         drop(c);
         let arena = store

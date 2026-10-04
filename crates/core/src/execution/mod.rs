@@ -359,6 +359,8 @@ pub struct InputEnvelope {
     pub task_id: ExecutionId,
     pub attempt_id: ExecutionId,
     pub previous_attempt_id: Option<ExecutionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation: Option<crate::application::AutomationLease>,
     pub operation: String,
     pub capability_id: String,
     pub capability_version: String,
@@ -395,6 +397,7 @@ impl InputEnvelope {
             task_id: ExecutionId::new(),
             attempt_id: ExecutionId::new(),
             previous_attempt_id: None,
+            automation: None,
             operation: operation.into(),
             capability_id: capability_id.into(),
             capability_version: capability_version.into(),
@@ -419,7 +422,12 @@ impl InputEnvelope {
     }
 
     pub fn validate(&self) -> Result<(), ExecutionError> {
-        if self.version != 1 || self.previous_attempt_id == Some(self.attempt_id) {
+        if self.version != 1
+            || self.previous_attempt_id == Some(self.attempt_id)
+            || self
+                .automation
+                .is_some_and(|lease| lease.generation.get() == 0)
+        {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "input"));
         }
         label(&self.operation)?;

@@ -7,7 +7,8 @@ use crate::{
     ProjectId,
     ai::{self, AiPreview},
     execution::{
-        ErrorCode, ExecutionError, ExecutionId, FixedInput, InputEnvelope, MAX_INPUT_BYTES, codec,
+        ErrorCode, ExecutionError, ExecutionId, FixedInput, InputEnvelope, MAX_INPUT_BYTES,
+        Revision, codec,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,100 @@ pub enum AutomationEffect {
     ReplaceCapturedSelection,
     AdoptResources,
     Deliver,
+}
+
+/// A reference to durable authority. Possessing or editing this reference does
+/// not grant permission; Core checks the stored generation at every boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutomationLease {
+    pub plan_id: ExecutionId,
+    pub generation: Revision,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkPlanState {
+    Active,
+    Paused,
+    Stopped,
+    TakenOver,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkPlanCommand {
+    Pause,
+    Stop,
+    TakeOver,
+    Continue,
+}
+
+/// Supplied only by a trusted human-facing application entry point. Semantic
+/// answers are deliberately absent from this authorization contract.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthorizeWorkPlan {
+    pub action_id: ExecutionId,
+    pub plan_digest: String,
+    pub confirmed: bool,
+    pub effects: Vec<AutomationEffect>,
+    pub expires_at: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ControlWorkPlan {
+    pub action_id: ExecutionId,
+    pub plan_id: ExecutionId,
+    pub expected_generation: Revision,
+    pub command: WorkPlanCommand,
+    pub confirmed: bool,
+    pub expires_at: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanReceipt {
+    pub action_id: ExecutionId,
+    pub lease: AutomationLease,
+    pub state: WorkPlanState,
+    /// A continuation is a child of the original budget owner. No request
+    /// reservation or unknown exposure is refunded by a control operation.
+    pub input: Option<InputEnvelope>,
+    pub parent_task: Option<ExecutionId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkPlanStatus {
+    pub lease: AutomationLease,
+    pub state: WorkPlanState,
+    pub effects: Vec<AutomationEffect>,
+    pub expires_at: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkProtection {
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub revision: Revision,
+    pub protected: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetWorkProtection {
+    pub action_id: ExecutionId,
+    pub project_id: ExecutionId,
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub source_revision_id: ExecutionId,
+    pub selection_id: Option<ExecutionId>,
+    pub expected_revision: Revision,
+    pub protected: bool,
+    pub confirmed_release: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -219,6 +314,7 @@ impl WorkPlan {
             || self.input.capability_id != ai::CAPABILITY
             || self.input.capability_version != "1"
             || self.input.previous_attempt_id.is_some()
+            || self.input.automation.is_some()
             || !self.input.reused_results.is_empty()
         {
             return Err(ExecutionError::new(

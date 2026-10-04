@@ -234,7 +234,7 @@ fn config(url: String) -> AiConfig {
     }
 }
 #[test]
-fn direct_ai_schema_nine_preserves_manual_history_and_backup() {
+fn direct_ai_current_reopen_preserves_manual_history() {
     let (temp, mut store, rows) = source_project();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let saved = store
@@ -249,11 +249,6 @@ fn direct_ai_schema_nine_preserves_manual_history_and_backup() {
         })
         .unwrap();
     store.close().unwrap();
-    let connection =
-        rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
-    crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-    connection.pragma_update(None, "user_version", 9).unwrap();
-    drop(connection);
     let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
     let history = reopened
         .translation_history(project, rows[0].unit_id.unwrap(), "zh-CN", 0, 10)
@@ -264,31 +259,6 @@ fn direct_ai_schema_nine_preserves_manual_history_and_backup() {
         "Preserved manual translation"
     );
     reopened.close().unwrap();
-    let backup = std::fs::read_dir(temp.path().join("project"))
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| {
-            p.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("project.sqlite3.pre-v9-")
-        })
-        .unwrap();
-    let connection =
-        rusqlite::Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .unwrap();
-    assert_eq!(
-        connection
-            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .unwrap(),
-        9
-    );
-    assert_eq!(
-        connection
-            .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
-            .unwrap(),
-        "ok"
-    );
 }
 #[test]
 fn direct_ai_wire_partial_budget_candidates_and_reopen() {

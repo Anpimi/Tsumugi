@@ -29,65 +29,6 @@ pub(crate) fn initialize(c: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-pub(crate) fn migrate(c: &mut Connection) -> rusqlite::Result<()> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&tx)?;
-    // Old evidence cannot prove that an arbitrary producer is safe to replay.
-    tx.execute("INSERT INTO execution_effects SELECT attempt_id,'external-unknown' FROM execution_attempts", [])?;
-    let tasks = {
-        let mut statement = tx.prepare("SELECT task_id FROM execution_tasks")?;
-        statement
-            .query_map([], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-    };
-    for task in tasks {
-        let latest:String=tx.query_row("SELECT attempt_id FROM execution_attempts WHERE task_id=?1 ORDER BY sequence DESC LIMIT 1",[&task],|r|r.get(0))?;
-        let input = load_input(
-            &tx,
-            parse_id(latest).map_err(|_| rusqlite::Error::InvalidQuery)?,
-        )
-        .map_err(|_| rusqlite::Error::InvalidQuery)?;
-        if let Some(limit) = input
-            .envelope()
-            .settings
-            .get("config")
-            .and_then(|v| v.get("maxRequests"))
-            .and_then(|v| v.as_u64())
-            .filter(|n| (1..=300).contains(n))
-        {
-            let dispatched:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a USING(attempt_id) WHERE a.task_id=?1 AND i.dispatch_token IS NOT NULL)",[&task],|r|r.get(0))?;
-            // Older ledgers did not record each HTTP retry. Hold the full possible
-            // remaining exposure instead of inventing an exact dispatch count.
-            tx.execute(
-                "INSERT INTO execution_budgets VALUES (?1,NULL,?2,?3)",
-                params![
-                    task,
-                    limit as u32,
-                    if dispatched { limit as u32 } else { 0 }
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO execution_budget_ancestry VALUES (?1,?1)",
-                [task],
-            )?;
-        }
-    }
-    tx.pragma_update(None, "user_version", 12)?;
-    validate(&tx).map_err(|_| rusqlite::Error::InvalidQuery)?;
-    #[cfg(test)]
-    super::super::migration_crash_hook("before-provider-migration-commit");
-    tx.commit()?;
-    #[cfg(test)]
-    super::super::migration_crash_hook("after-provider-migration-commit");
-    Ok(())
-}
-#[cfg(test)]
-pub(crate) fn drop_for_legacy_fixture(c: &Connection) -> rusqlite::Result<()> {
-    for (name, _) in TABLES.iter().rev() {
-        c.execute_batch(&format!("DROP TABLE IF EXISTS {name}"))?;
-    }
-    Ok(())
-}
 pub(crate) fn validate(c: &Connection) -> Result<(), ExecutionError> {
     for (name, expected) in TABLES {
         let actual: String = c
@@ -411,6 +352,7 @@ impl ProjectStore {
         limit: u32,
     ) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
+        super::super::application::check_input(&tx, &request.input)?;
         let e = request.input.envelope();
         let cancelled:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_budget_ancestry x JOIN execution_cancellations c ON c.task_id=x.ancestor_id WHERE x.task_id=?1)",[e.task_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
         if cancelled {

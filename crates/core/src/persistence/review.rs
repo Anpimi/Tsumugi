@@ -430,30 +430,6 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-#[cfg(test)]
-pub(super) fn drop_for_legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    for (name, _) in TABLES.iter().rev() {
-        connection.execute_batch(&format!("DROP TABLE {name}"))?;
-    }
-    Ok(())
-}
-pub(super) fn migrate_v6(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&transaction)?;
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    transaction.pragma_update(None, "user_version", 7)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-review-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-review-migration-commit");
-    Ok(())
-}
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
@@ -3262,110 +3238,6 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn schema_six_migration_keeps_a_recoverable_backup() {
-        let (directory, mut store, project, _) = fixture();
-        let connection = store.connection_mut().unwrap();
-        crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
-        for (name, _) in TABLES.iter().rev() {
-            connection
-                .execute_batch(&format!("DROP TABLE {name}"))
-                .unwrap();
-        }
-        connection
-            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-            .unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-        connection.pragma_update(None, "user_version", 6).unwrap();
-        drop(store);
-        let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
-        assert_eq!(
-            reopened.review_page(project, "zh-CN", 0, 10).unwrap().total,
-            2
-        );
-        let backups: Vec<_> = std::fs::read_dir(directory.path().join("project"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().contains("pre-v6"))
-            .collect();
-        assert_eq!(backups.len(), 1);
-        let backup = Connection::open_with_flags(
-            backups[0].path(),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        assert_eq!(
-            backup
-                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            6
-        );
-    }
-
-    #[test]
-    fn schema_six_crash_child() {
-        let Ok(path) = std::env::var("TSUMUGI_M06_CRASH_PROJECT") else {
-            return;
-        };
-        let _ = ProjectStore::open(path);
-        panic!("migration crash hook did not run");
-    }
-
-    #[test]
-    fn schema_six_migration_recovers_across_process_commit_boundaries() {
-        for (point, expected) in [
-            ("before-review-migration-commit", 6),
-            ("after-review-migration-commit", 7),
-        ] {
-            let (directory, mut store, project, _) = fixture();
-            let path = directory.path().join("project");
-            let connection = store.connection_mut().unwrap();
-            crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
-            for (name, _) in TABLES.iter().rev() {
-                connection
-                    .execute_batch(&format!("DROP TABLE {name}"))
-                    .unwrap();
-            }
-            connection
-                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-                .unwrap();
-            crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-            connection.pragma_update(None, "user_version", 6).unwrap();
-            drop(store);
-            let child = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "persistence::review::tests::schema_six_crash_child",
-                ])
-                .env("TSUMUGI_M06_CRASH_PROJECT", &path)
-                .env("TSUMUGI_MIGRATION_CRASH", point)
-                .output()
-                .unwrap();
-            assert!(!child.status.success());
-            let database = Connection::open(path.join("project.sqlite3")).unwrap();
-            assert_eq!(
-                database
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                expected
-            );
-            drop(database);
-            let reopened = ProjectStore::open(&path).unwrap();
-            assert_eq!(
-                reopened.review_page(project, "zh-CN", 0, 10).unwrap().total,
-                2
-            );
-            assert_eq!(
-                std::fs::read_dir(&path)
-                    .unwrap()
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.file_name().to_string_lossy().contains("pre-v6"))
-                    .count(),
-                if expected == 6 { 2 } else { 1 }
-            );
-        }
-    }
-
-    #[test]
     fn fixed_qa_findings_resolve_and_recur_without_reusing_old_waivers() {
         let (_directory, mut store, project, units) = fixture();
         translate(&mut store, project, units[0], "zh-CN", "你好");
@@ -4144,7 +4016,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn approved_locale_build_preserves_history_across_schema_nine_upgrade_and_reopen() {
+    fn approved_locale_build_preserves_current_history_artifacts_and_reopen() {
         use crate::{
             BuildLocaleChoice, ReleaseAdoptionHandler,
             content::{BuildManifest, BuildOutput, BuildRunner, validate_build_output},
@@ -4411,16 +4283,12 @@ pub(super) mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        let before_upgrade = history_rows(store.connection().unwrap());
-        assert!(before_upgrade.iter().all(|rows| !rows.is_empty()));
+        let before_reopen = history_rows(store.connection().unwrap());
+        assert!(before_reopen.iter().all(|rows| !rows.is_empty()));
         drop(runtime);
         drop(store);
-        let legacy = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&legacy).unwrap();
-        legacy.pragma_update(None, "user_version", 9).unwrap();
-        drop(legacy);
         let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
-        assert_eq!(history_rows(reopened.connection().unwrap()), before_upgrade);
+        assert_eq!(history_rows(reopened.connection().unwrap()), before_reopen);
         assert_eq!(
             reopened.release_artifact(release_id, "zh-CN").unwrap().1,
             bytes

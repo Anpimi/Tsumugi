@@ -635,7 +635,7 @@ fn versions_and_corrupt_inputs_are_rejected_without_rebuilding_and_bad_output_is
 }
 
 #[test]
-fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
+fn current_reopen_preserves_results_adoption_receipts_and_relations() {
     let parent = tempfile::tempdir().unwrap();
     let path = parent.path().join("project");
     let mut store = store(&path);
@@ -703,46 +703,6 @@ fn schema_v3_result_limit_upgrade_preserves_results_and_relations() {
         .unwrap();
     let source_result_bytes = source_result.bytes().to_vec();
     store.close().unwrap();
-
-    let database = path.join(super::super::DATABASE_FILENAME);
-    let mut connection = Connection::open(&database).unwrap();
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .unwrap();
-    transaction
-        .pragma_update(None, "defer_foreign_keys", true)
-        .unwrap();
-    crate::persistence::arena::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::ledger::provider::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::release::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::review::drop_for_legacy_fixture(&transaction).unwrap();
-    crate::persistence::resources::drop_for_legacy_fixture(&transaction).unwrap();
-    transaction
-        .execute_batch(
-            "CREATE TEMP TABLE execution_results_copy AS SELECT * FROM main.execution_results;
-             DROP TABLE main.execution_results;",
-        )
-        .unwrap();
-    transaction
-        .execute_batch(super::EXECUTION_RESULTS_TABLE_V3)
-        .unwrap();
-    transaction
-        .execute_batch(
-            "INSERT INTO main.execution_results SELECT * FROM temp.execution_results_copy;
-             DROP TABLE temp.execution_results_copy;",
-        )
-        .unwrap();
-    transaction
-        .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
-        .unwrap();
-    transaction
-        .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-        .unwrap();
-    transaction
-        .pragma_update(None, "user_version", 3i64)
-        .unwrap();
-    transaction.commit().unwrap();
-    drop(connection);
 
     let reopened = ProjectStore::open(&path).unwrap();
     let persisted = reopened

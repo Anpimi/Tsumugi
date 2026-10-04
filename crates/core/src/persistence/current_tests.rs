@@ -269,7 +269,7 @@ fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
     let backup =
         Connection::open_with_flags(backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     backup.pragma_update(None, "foreign_keys", true).unwrap();
-    validate_schema_shape(&backup, false, true, true, true, true, true).unwrap();
+    validate_schema_shape(&backup).unwrap();
     assert_eq!(facts(&backup), all_facts);
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();

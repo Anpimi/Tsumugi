@@ -1,9 +1,13 @@
-//! Read-only work-plan preparation from the existing project authorities.
+//! Work plans use the existing project and execution authorities.
+mod control;
 use super::ProjectStore;
 use crate::{
     ai::{self, AiConfig},
     application::{PlanOptions, PlanSelectionBasis, WorkPlan},
     execution::{ErrorCode, ExecutionError, ExecutionId},
+};
+pub(super) use control::{
+    check_enqueue, check_input, initialize, protect_manual_in, record_input, table_names, validate,
 };
 
 impl ProjectStore {
@@ -302,5 +306,514 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+    fn consent(plan: &WorkPlan) -> crate::application::AuthorizeWorkPlan {
+        crate::application::AuthorizeWorkPlan {
+            action_id: ExecutionId::new(),
+            plan_digest: plan.digest.clone(),
+            confirmed: true,
+            effects: vec![AutomationEffect::SaveCandidate],
+            expires_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 600,
+        }
+    }
+    fn control(
+        plan: &WorkPlan,
+        generation: u64,
+        command: crate::application::WorkPlanCommand,
+    ) -> crate::application::ControlWorkPlan {
+        let continuing = command == crate::application::WorkPlanCommand::Continue;
+        crate::application::ControlWorkPlan {
+            action_id: ExecutionId::new(),
+            plan_id: plan.plan_id,
+            expected_generation: crate::execution::Revision::new(generation).unwrap(),
+            command,
+            confirmed: continuing,
+            expires_at: continuing.then(|| consent(plan).expires_at),
+        }
+    }
+    #[test]
+    fn work_plan_authority_is_explicit_bounded_idempotent_and_durable() {
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let directory = store.directory().to_path_buf();
+        let request = consent(&plan);
+        let before = fs::read(directory.join(super::super::DATABASE_FILENAME)).unwrap();
+        let mut rejected = request.clone();
+        rejected.confirmed = false;
+        assert_eq!(
+            store
+                .authorize_work_plan(&plan, &rejected)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        rejected = request.clone();
+        rejected.effects.push(AutomationEffect::Deliver);
+        assert_eq!(
+            store
+                .authorize_work_plan(&plan, &rejected)
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        rejected = request.clone();
+        rejected.expires_at = 1;
+        assert_eq!(
+            store
+                .authorize_work_plan(&plan, &rejected)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidInput
+        );
+        assert_eq!(
+            fs::read(directory.join(super::super::DATABASE_FILENAME)).unwrap(),
+            before
+        );
+        let receipt = store.authorize_work_plan(&plan, &request).unwrap();
+        let after = fs::read(directory.join(super::super::DATABASE_FILENAME)).unwrap();
+        assert_eq!(store.authorize_work_plan(&plan, &request).unwrap(), receipt);
+        assert_eq!(
+            fs::read(directory.join(super::super::DATABASE_FILENAME)).unwrap(),
+            after
+        );
+        assert_eq!(receipt.input.as_ref().unwrap().task_id, plan.input.task_id);
+        let fixed = crate::execution::FixedInput::capture(receipt.input.unwrap()).unwrap();
+        store.enqueue_execution(&fixed).unwrap();
+        assert_eq!(
+            store
+                .provider_budget(plan.input.task_id)
+                .unwrap()
+                .unwrap()
+                .dispatched,
+            0
+        );
+        let pause = control(&plan, 1, crate::application::WorkPlanCommand::Pause);
+        let paused = store.control_work_plan(&pause).unwrap();
+        assert_eq!(paused.state, crate::application::WorkPlanState::Paused);
+        assert_eq!(store.control_work_plan(&pause).unwrap(), paused);
+        assert_eq!(
+            store.check_work_plan_input(&fixed).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+        store.close().unwrap();
+        let mut reopened = ProjectStore::open(&directory).unwrap();
+        assert_eq!(
+            reopened.work_plan_status(plan.plan_id).unwrap().lease,
+            paused.lease
+        );
+        assert_eq!(
+            reopened.authorize_work_plan(&plan, &request).unwrap().state,
+            crate::application::WorkPlanState::Active
+        );
+        assert_eq!(
+            reopened.work_plan_status(plan.plan_id).unwrap().state,
+            crate::application::WorkPlanState::Paused
+        );
+        assert_eq!(
+            reopened.check_work_plan_input(&fixed).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+        reopened.reconcile_execution().unwrap();
+    }
+    #[test]
+    fn work_plan_stop_rejects_new_roots_children_dispatch_and_preserves_unknown_budget() {
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let grant = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
+        let fixed = crate::execution::FixedInput::capture(grant.input.unwrap()).unwrap();
+        store.enqueue_execution(&fixed).unwrap();
+        let item = fixed.envelope().items[0].item_id;
+        let dispatch = store
+            .dispatch_execution_item(fixed.envelope().attempt_id, item)
+            .unwrap();
+        store
+            .reserve_provider_request(&dispatch, ExecutionId::new(), config().max_requests)
+            .unwrap();
+        let before = store.provider_budget(plan.input.task_id).unwrap().unwrap();
+        assert_eq!(before.dispatched, 1);
+        assert_eq!(before.unresolved, 1);
+        let stop = control(&plan, 1, crate::application::WorkPlanCommand::Stop);
+        store.control_work_plan(&stop).unwrap();
+        assert_eq!(
+            store
+                .reserve_provider_request(&dispatch, ExecutionId::new(), config().max_requests)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert_eq!(
+            store.enqueue_execution(&fixed).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+        // A late result remains evidence. New action identities cannot regain
+        // mutation authority after the stop.
+        let payload = crate::ai::item_payload(&fixed, item).unwrap();
+        let result = crate::execution::FixedResult::capture(
+            crate::execution::ResultEnvelope {
+                project_id: plan.project_id,
+                attempt_id: fixed.envelope().attempt_id,
+                item_id: item,
+                result_id: ExecutionId::new(),
+                supersedes: None,
+                dispatch_token: dispatch.dispatch_token,
+                capability_id: crate::ai::CAPABILITY.into(),
+                capability_version: "1".into(),
+                outcome: crate::execution::ExecutionState::Succeeded,
+                output: Some(
+                    serde_json::to_value(crate::ai::AiOutput {
+                        unit_id: payload.unit_id,
+                        target_locale: payload.target_locale,
+                        text: payload.source_text,
+                        usage: None,
+                        requests: 1,
+                        usage_incomplete: true,
+                    })
+                    .unwrap(),
+                ),
+                diagnostic: None,
+            },
+            &fixed,
+            dispatch.dispatch_token,
+        )
+        .unwrap();
+        assert!(store.save_execution_result(&result).unwrap());
+        store
+            .validate_execution_result(fixed.envelope().attempt_id, result.envelope().result_id)
+            .unwrap();
+        let action = store
+            .prepare_adoption(
+                fixed.envelope().attempt_id,
+                fixed
+                    .envelope()
+                    .units
+                    .iter()
+                    .find(|unit| unit.item_ids.contains(&item))
+                    .unwrap()
+                    .unit_id,
+                vec![result.envelope().result_id],
+                serde_json::Value::Null,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .adopt_execution(&action, &crate::AiAdoptionHandler)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert_eq!(
+            store
+                .execution_current_result(fixed.envelope().attempt_id, item)
+                .unwrap(),
+            Some(result.envelope().result_id)
+        );
+
+        let mut child = fixed.envelope().clone();
+        child.task_id = ExecutionId::new();
+        child.attempt_id = ExecutionId::new();
+        let child = crate::execution::FixedInput::capture(child).unwrap();
+        assert_eq!(
+            store
+                .enqueue_execution_with_policy(
+                    &child,
+                    crate::execution::RecoveryPolicy::ExternalUnknown,
+                    Some(plan.input.task_id)
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        let resume = control(&plan, 2, crate::application::WorkPlanCommand::Continue);
+        let mut denied = resume.clone();
+        denied.confirmed = false;
+        assert_eq!(
+            store.control_work_plan(&denied).unwrap_err().code,
+            ErrorCode::Unauthorized
+        );
+        let receipt = store.control_work_plan(&resume).unwrap();
+        assert_eq!(receipt.parent_task, Some(plan.input.task_id));
+        let new = crate::execution::FixedInput::capture(receipt.input.unwrap()).unwrap();
+        assert_ne!(new.envelope().task_id, plan.input.task_id);
+        assert_eq!(
+            store.enqueue_execution(&new).unwrap_err().code,
+            ErrorCode::Unauthorized
+        );
+        store
+            .enqueue_execution_with_policy(
+                &new,
+                crate::execution::RecoveryPolicy::ExternalUnknown,
+                receipt.parent_task,
+            )
+            .unwrap();
+        assert_eq!(
+            store.provider_budget(plan.input.task_id).unwrap().unwrap(),
+            before
+        );
+        assert_eq!(
+            store.check_work_plan_input(&fixed).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+        assert_eq!(store.check_work_plan_input(&new), Ok(()));
+        // Removing the stamp cannot create a manually authorized child.
+        let mut stripped = new.envelope().clone();
+        stripped.automation = None;
+        stripped.task_id = ExecutionId::new();
+        stripped.attempt_id = ExecutionId::new();
+        let stripped = crate::execution::FixedInput::capture(stripped).unwrap();
+        assert_eq!(
+            store
+                .enqueue_execution_with_policy(
+                    &stripped,
+                    crate::execution::RecoveryPolicy::ExternalUnknown,
+                    Some(plan.input.task_id)
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        let stale = control(&plan, 1, crate::application::WorkPlanCommand::TakeOver);
+        assert_eq!(
+            store.control_work_plan(&stale).unwrap_err().code,
+            ErrorCode::DependencyConflict
+        );
+        store.reconcile_execution().unwrap();
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(&directory).unwrap();
+        assert_eq!(
+            reopened
+                .provider_budget(plan.input.task_id)
+                .unwrap()
+                .unwrap(),
+            before
+        );
+        assert_eq!(
+            reopened
+                .work_plan_status(plan.plan_id)
+                .unwrap()
+                .lease
+                .generation
+                .get(),
+            3
+        );
+    }
+    #[test]
+    fn manual_selection_protection_persists_and_release_rechecks_current_basis() {
+        let (_temp, mut store, units) = fixture();
+        let unit = units[0];
+        let locale = "zh-CN";
+        let protected = store.work_protection(unit, locale).unwrap();
+        assert!(protected.protected);
+        assert_eq!(protected.revision.get(), 1);
+        let source = store
+            .source_content(
+                store.content_scope().unwrap().current_snapshot.unwrap(),
+                0,
+                10,
+            )
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|row| row.unit_id == Some(unit))
+            .unwrap();
+        let project =
+            ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let selected = store
+            .translation_history(project, unit, locale, 0, 1)
+            .unwrap()
+            .current
+            .unwrap();
+        let request = crate::application::SetWorkProtection {
+            action_id: ExecutionId::new(),
+            project_id: project,
+            unit_id: unit,
+            locale: locale.into(),
+            source_revision_id: source.source_revision_id.unwrap(),
+            selection_id: Some(selected.event_id),
+            expected_revision: protected.revision,
+            protected: false,
+            confirmed_release: false,
+        };
+        assert_eq!(
+            store.set_work_protection(&request).unwrap_err().code,
+            ErrorCode::Unauthorized
+        );
+        let mut request = request;
+        request.confirmed_release = true;
+        let released = store.set_work_protection(&request).unwrap();
+        assert!(!released.protected);
+        assert_eq!(released.revision.get(), 2);
+        assert_eq!(store.set_work_protection(&request).unwrap(), released);
+        let saved = store
+            .save_translation_revision(&crate::SaveTranslationRevision {
+                action_id: ExecutionId::new(),
+                project_id: project,
+                unit_id: unit,
+                locale: locale.into(),
+                source_revision_id: source.source_revision_id.unwrap(),
+                expected_selection_id: Some(selected.event_id),
+                text: "new human text".into(),
+            })
+            .unwrap();
+        assert!(store.work_protection(unit, locale).unwrap().protected);
+        assert_eq!(
+            store.work_protection(unit, locale).unwrap().revision.get(),
+            3
+        );
+        let mut stale = request.clone();
+        stale.action_id = ExecutionId::new();
+        assert_eq!(
+            store.set_work_protection(&stale).unwrap_err().code,
+            ErrorCode::DependencyConflict
+        );
+        stale.selection_id = Some(saved.event_id);
+        assert_eq!(
+            store.set_work_protection(&stale).unwrap_err().stage,
+            "work-protection-revision"
+        );
+        // An old acknowledgement reports its historical result without clearing new protection.
+        assert_eq!(store.set_work_protection(&request).unwrap(), released);
+        assert!(store.work_protection(unit, locale).unwrap().protected);
+        store.reconcile_execution().unwrap();
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(&directory).unwrap();
+        assert_eq!(
+            reopened
+                .work_protection(unit, locale)
+                .unwrap()
+                .revision
+                .get(),
+            3
+        );
+        assert!(reopened.work_protection(unit, locale).unwrap().protected);
+    }
+
+    #[test]
+    fn work_plan_takeover_signals_the_actual_running_worker() {
+        use crate::execution::{
+            Cancellation, DispatchRequest, ExecutionRuntime, ResultSender, Runner,
+        };
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+        struct WaitForHuman(Arc<AtomicBool>);
+        impl Runner for WaitForHuman {
+            fn capability_id(&self) -> &str {
+                crate::ai::CAPABILITY
+            }
+            fn capability_version(&self) -> &str {
+                "1"
+            }
+            fn run(
+                &self,
+                _request: DispatchRequest,
+                cancel: Cancellation,
+                _results: ResultSender,
+            ) -> Result<(), ExecutionError> {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                while !cancel.is_requested() && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                self.0.store(cancel.is_requested(), Ordering::Release);
+                Ok(())
+            }
+        }
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let receipt = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
+        let fixed = crate::execution::FixedInput::capture(receipt.input.unwrap()).unwrap();
+        let observed = Arc::new(AtomicBool::new(false));
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime
+            .register(Arc::new(WaitForHuman(observed.clone())))
+            .unwrap();
+        runtime.submit(&mut store, &fixed).unwrap();
+        runtime.tick(&mut store).unwrap();
+        assert!(runtime.is_active(fixed.envelope().attempt_id));
+        store
+            .control_work_plan(&control(
+                &plan,
+                1,
+                crate::application::WorkPlanCommand::TakeOver,
+            ))
+            .unwrap();
+        runtime.tick(&mut store).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while runtime.is_active(fixed.envelope().attempt_id) && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            runtime.tick(&mut store).unwrap();
+        }
+        assert!(observed.load(Ordering::Acquire));
+        assert!(!runtime.is_active(fixed.envelope().attempt_id));
+        assert_eq!(
+            store.work_plan_status(plan.plan_id).unwrap().state,
+            crate::application::WorkPlanState::TakenOver
+        );
+        store.reconcile_execution().unwrap();
+    }
+    #[test]
+    fn current_work_plan_authority_and_receipt_damage_are_refused_without_reset() {
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
+        store
+            .control_work_plan(&control(
+                &plan,
+                1,
+                crate::application::WorkPlanCommand::Stop,
+            ))
+            .unwrap();
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let path = directory.join(super::super::DATABASE_FILENAME);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE application_plans SET state='active' WHERE plan_id=?1",
+                [plan.plan_id.to_string()],
+            )
+            .unwrap();
+        drop(connection);
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(
+            ProjectStore::open(&directory),
+            Err(crate::PersistenceError::CorruptProject { .. })
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE application_plans SET state='stopped' WHERE plan_id=?1",
+                [plan.plan_id.to_string()],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE application_actions SET receipt=X'7B7D' WHERE plan_id=?1",
+                [plan.plan_id.to_string()],
+            )
+            .unwrap();
+        drop(connection);
+        let before = fs::read(&path).unwrap();
+        assert!(matches!(
+            ProjectStore::open(&directory),
+            Err(crate::PersistenceError::CorruptProject { .. })
+        ));
+        assert_eq!(fs::read(&path).unwrap(), before);
     }
 }

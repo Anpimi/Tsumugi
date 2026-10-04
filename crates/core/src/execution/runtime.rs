@@ -239,6 +239,14 @@ impl ExecutionRuntime {
             let worker = &mut self.workers[index];
             let attempt = worker.request.input.envelope().attempt_id;
             let item = worker.request.item_id;
+            if let Err(error) = store.check_work_plan_input(&worker.request.input) {
+                if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
+                    worker.cancellation.request();
+                    worker.cancellation_started.get_or_insert(now);
+                } else {
+                    return Err(error);
+                }
+            }
             // Persist dispatch reservations before acknowledging the worker. A lost
             // acknowledgement leaves an unknown reservation, never free budget.
             for _ in 0..2 {
@@ -376,7 +384,11 @@ impl ExecutionRuntime {
             let Some(item) = store.next_queued_execution_item(attempt)? else {
                 continue;
             };
-            let mut request = store.dispatch_execution_item(attempt, item)?;
+            let mut request = match store.dispatch_execution_item(attempt, item) {
+                Ok(request) => request,
+                Err(error) if error.code == ErrorCode::Cancelled => continue,
+                Err(error) => return Err(error),
+            };
             let (budget, budget_events) = crate::ai::provider::budget_channel();
             request.provider = Some(budget);
             self.scheduling_cursor = Some(attempt);

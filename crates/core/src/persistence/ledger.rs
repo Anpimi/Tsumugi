@@ -9,10 +9,6 @@ const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
         bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 2097152), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
-pub(super) const EXECUTION_RESULTS_TABLE_V3: &str = "CREATE TABLE execution_results (
-        result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
-        FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
 
 pub(super) const TABLES: &[(&str, &str)] = &[
     ("execution_tasks", "CREATE TABLE execution_tasks (
@@ -73,17 +69,10 @@ pub(super) fn table_names(_connection: &Connection) -> Vec<String> {
 thread_local! { static TEST_SCHEMA: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(connection, false)
+    validate_schema(connection)
 }
 
-pub(super) fn validate_v3(connection: &Connection) -> Result<(), ExecutionError> {
-    validate_schema(connection, true)
-}
-
-fn validate_schema(
-    connection: &Connection,
-    legacy_result_limit: bool,
-) -> Result<(), ExecutionError> {
+fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
     #[cfg(feature = "execution-test-host")]
     if let Some(sql) = connection
         .query_row(
@@ -99,11 +88,7 @@ fn validate_schema(
         }
     }
     for (name, expected) in TABLES {
-        let expected = if legacy_result_limit && *name == "execution_results" {
-            EXECUTION_RESULTS_TABLE_V3
-        } else {
-            *expected
-        };
+        let expected = *expected;
         let actual: String = connection
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -179,58 +164,6 @@ fn validate_schema(
         }
     }
     Ok(())
-}
-
-pub(super) fn migrate_v3_result_limit(connection: &mut Connection) -> rusqlite::Result<()> {
-    let foreign_keys: bool =
-        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
-    if !foreign_keys {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    connection.pragma_update(None, "foreign_keys", false)?;
-
-    let migration = (|| {
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let create_sql = EXECUTION_RESULTS_TABLE.replacen(
-            "\"execution_results\"",
-            "\"execution_results_v4\"",
-            1,
-        );
-        transaction.execute_batch(&create_sql)?;
-        transaction.execute(
-            "INSERT INTO execution_results_v4 (result_id,attempt_id,item_id,dispatch_token,bytes,digest)
-             SELECT result_id,attempt_id,item_id,dispatch_token,bytes,digest FROM execution_results",
-            [],
-        )?;
-        transaction.execute_batch(
-            "DROP TABLE execution_results;
-             ALTER TABLE execution_results_v4 RENAME TO execution_results;",
-        )?;
-        if transaction
-            .prepare("PRAGMA foreign_key_check")?
-            .exists([])?
-        {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        transaction.pragma_update(None, "user_version", 4)?;
-        #[cfg(test)]
-        super::migration_crash_hook("before-v3-migration-commit");
-        transaction.commit()?;
-        #[cfg(test)]
-        super::migration_crash_hook("after-v3-migration-commit");
-        Ok(())
-    })();
-    let restore_foreign_keys = connection.pragma_update(None, "foreign_keys", true);
-    match migration {
-        Err(error) => {
-            restore_foreign_keys?;
-            Err(error)
-        }
-        Ok(()) => {
-            restore_foreign_keys?;
-            Ok(())
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -880,17 +813,17 @@ impl ProjectStore {
         self.connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "session"))
     }
-    fn execution_write(&mut self) -> Result<ExecutionTransaction<'_>, ExecutionError> {
+    pub(super) fn execution_write(&self) -> Result<ExecutionTransaction<'_>, ExecutionError> {
         if self.is_reconciling() {
             return Err(error(ErrorCode::OutcomeUnknown, "session"));
         }
         let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
-        let tx = self
-            .connection_mut()
-            .map_err(|_| error(ErrorCode::StorageFailed, "session"))?
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(sql_error)?;
+        let tx = rusqlite::Transaction::new_unchecked(
+            self.execution_connection()?,
+            TransactionBehavior::Immediate,
+        )
+        .map_err(sql_error)?;
         let observer = change_clock.observe(&tx, super::ChangeScope::Execution);
         Ok(ExecutionTransaction {
             tx,
@@ -910,6 +843,7 @@ impl ProjectStore {
             .map_err(|_| error(ErrorCode::CorruptLedger, "translation"))?;
         super::release::validate(connection)
             .map_err(|_| error(ErrorCode::CorruptLedger, "release"))?;
+        super::application::validate(connection)?;
         self.execution_unknown
             .store(false, std::sync::atomic::Ordering::Release);
         Ok(())
@@ -939,6 +873,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::Unauthorized, "project"));
         }
         let tx = self.execution_write()?;
+        super::application::check_enqueue(&tx, input, parent)?;
         let existing: Option<String> = tx
             .query_row(
                 "SELECT digest FROM execution_attempts WHERE attempt_id=?1",
@@ -1055,6 +990,7 @@ impl ProjectStore {
         super::content::record_input(&tx, input)?;
         super::translation::record_input(&tx, input)?;
         super::release::record_input(&tx, input)?;
+        super::application::record_input(&tx, input)?;
         #[cfg(test)]
         crash_hook("before-enqueue-commit");
         commit(tx)?;
@@ -1173,6 +1109,13 @@ impl ProjectStore {
     ) -> Result<DispatchRequest, ExecutionError> {
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
+        if let Err(error) = super::application::check_input(&tx, &input) {
+            if error.code == ErrorCode::Cancelled {
+                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
+                commit(tx)?;
+            }
+            return Err(error);
+        }
         let captured: i64 = tx
             .query_row(
                 "SELECT cancellation_revision FROM execution_attempts WHERE attempt_id=?1",
@@ -1599,6 +1542,7 @@ fn capture_adoption_in(
             Err(error(ErrorCode::CorruptLedger, "receipt"))
         };
     }
+    super::application::check_input(connection, &input)?;
     let results = action
         .result_ids
         .iter()
@@ -1678,10 +1622,10 @@ pub(super) fn read_receipt(
     })
     .transpose()
 }
-struct ExecutionTransaction<'a> {
+pub(super) struct ExecutionTransaction<'a> {
     tx: rusqlite::Transaction<'a>,
     unknown: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    observer: super::changes::CommitObserver,
+    pub(super) observer: super::changes::CommitObserver,
 }
 impl<'a> std::ops::Deref for ExecutionTransaction<'a> {
     type Target = rusqlite::Transaction<'a>;
@@ -1689,7 +1633,7 @@ impl<'a> std::ops::Deref for ExecutionTransaction<'a> {
         &self.tx
     }
 }
-fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), ExecutionError> {
+pub(super) fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), ExecutionError> {
     transaction.observer.commit(transaction.tx).map_err(|_| {
         transaction
             .unknown

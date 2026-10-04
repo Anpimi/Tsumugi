@@ -35,27 +35,6 @@ pub(super) fn initialize(c: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-pub(super) fn migrate(c: &mut Connection) -> rusqlite::Result<()> {
-    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&tx)?;
-    if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    tx.pragma_update(None, "user_version", 11)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-arena-migration-commit");
-    tx.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-arena-migration-commit");
-    Ok(())
-}
-#[cfg(test)]
-pub(super) fn drop_for_legacy_fixture(c: &Connection) -> rusqlite::Result<()> {
-    for (name, _) in TABLES.iter().rev() {
-        c.execute_batch(&format!("DROP TABLE IF EXISTS {name}"))?;
-    }
-    Ok(())
-}
 pub(super) fn validate(c: &Connection) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String =

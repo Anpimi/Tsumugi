@@ -601,24 +601,6 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-pub(super) fn migrate_v5(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    initialize(&transaction)?;
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    transaction.pragma_update(None, "user_version", 6)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-resource-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-resource-migration-commit");
-    Ok(())
-}
-
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     for (name, _) in TABLES {
         let columns: i64 = connection.query_row(
@@ -690,14 +672,6 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     for json in fixed.query_map([], |row| row.get::<_, String>(0))? {
         serde_json::from_str::<ContextCapture>(&json?)
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-pub(crate) fn drop_for_legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    for (name, _) in TABLES.iter().rev() {
-        connection.execute(&format!("DROP TABLE {name}"), [])?;
     }
     Ok(())
 }

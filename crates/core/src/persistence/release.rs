@@ -94,30 +94,6 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-#[cfg(test)]
-pub(super) fn drop_for_legacy_fixture(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute_batch(
-        "DROP TABLE release_deliveries; DROP TABLE release_artifacts; DROP TABLE release_records;",
-    )
-}
-pub(super) fn migrate_v7(connection: &mut Connection) -> rusqlite::Result<()> {
-    let transaction =
-        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    initialize(&transaction)?;
-    if transaction
-        .prepare("PRAGMA foreign_key_check")?
-        .exists([])?
-    {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    transaction.pragma_update(None, "user_version", 8)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-release-migration-commit");
-    transaction.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-release-migration-commit");
-    Ok(())
-}
 pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(

@@ -78,26 +78,6 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     connection.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
     Ok(())
 }
-pub(super) fn migrate_v8(connection: &mut Connection) -> rusqlite::Result<()> {
-    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    tx.execute_batch(LINEAGE_TABLE)?;
-    tx.execute_batch(LINEAGE_EVIDENCE_TABLE)?;
-    tx.execute(
-        "INSERT INTO source_lineage(occurrence_id,relation)
-                SELECT occurrence_id,'initial' FROM source_occurrences",
-        [],
-    )?;
-    if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    tx.pragma_update(None, "user_version", 9)?;
-    #[cfg(test)]
-    super::migration_crash_hook("before-maintenance-migration-commit");
-    tx.commit()?;
-    #[cfg(test)]
-    super::migration_crash_hook("after-maintenance-migration-commit");
-    Ok(())
-}
 fn corrupt() -> ExecutionError {
     failure(ErrorCode::CorruptLedger, "source-corrupt")
 }

@@ -37,10 +37,11 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
-- Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization; upgraded historical operations preserve uncertain exposure and do not replay automatically. Earlier AI/Arena requests without durable per-request evidence hold their full configured limit after upgrade.
+- Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization; uncertain external requests retain their recorded budget exposure and do not replay automatically.
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically.
-- Project storage now uses schema 12. Valid schema 3 through 11 projects receive a SQLite backup before automatic upgrade. Schema 1 and 2 projects from early development are unsupported; preserve their directories and create a new project to reimport their source files. Unsupported or corrupt databases are rejected without reset. Downgrading an upgraded project is not supported.
+- Manual translation saves and selections now persist unit protection. Core callers can release protection explicitly against the current source, selection and protection revision; old acknowledgements cannot clear newer protection.
+- Project storage now uses schema 13 for durable work-plan authorization and human control. This development build opens schema 13 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
