@@ -1,0 +1,22 @@
+[package]
+name = "tsumugi-plugin-sdk"
+version = "0.1.0-alpha.1"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Experimental data contracts and declaration harness for Tsumugi plugins"
+
+[features]
+schema = ["dep:schemars"]
+
+[dependencies]
+schemars = { version = "=1.2.2", optional = true }
+semver = "=1.0.28"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+[[bin]]
+name = "tsumugi-plugin-contract"
+path = "src/bin/contract.rs"
+required-features = ["schema"]

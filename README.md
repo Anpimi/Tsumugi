@@ -115,6 +115,11 @@ Long-running or domain-specific operations can run outside the Core through boun
 
 ## Development
 
+The experimental, standalone [plugin declaration SDK](crates/plugin-sdk) provides
+data contracts and a schema/validation harness without depending on Core. It
+validates declarations only; production plugin loading and runtime binding are
+not yet supplied by this SDK unit. See [plugin declarations](crates/plugin-sdk/docs/declarations.md).
+
 The desktop supports Windows x64 and macOS (Apple Silicon and Intel build targets), and uses Rust 1.98+, React 19, TypeScript 7, Vite 8, Tauri 2, and pnpm 12. The native Windows build requires Visual Studio C++ Build Tools, a Windows SDK, and the Microsoft Edge WebView2 Runtime. The macOS build requires Xcode Command Line Tools and uses the system WKWebView. Install the platform prerequisites from the [Tauri guide](https://v2.tauri.app/start/prerequisites/). macOS application bundles target macOS 11 or later; each architecture must be built with its corresponding Rust target.
 
 Project lifecycle, command error, change notification, execution, source content, translation, resource, review, release, AI and Arena DTOs use the Rust/Serde definitions as their wire source. After changing these definitions, run `pnpm --dir apps/desktop generate:contracts`; `pnpm --dir apps/desktop check:contracts` verifies that the checked-in schemas, TypeScript types and precompiled validators are current. Generation is partitioned by domain; add `--domain=project`, `--domain=execution`, `--domain=source`, `--domain=translation`, `--domain=resource`, `--domain=review`, `--domain=release`, `--domain=ai` or `--domain=arena` for a focused update or check. The optional `wire-schema` Cargo feature is used for generation; the application does not compile schemas dynamically. AI display counters use exact decimal strings; their persisted execution inputs and results retain their original representation.

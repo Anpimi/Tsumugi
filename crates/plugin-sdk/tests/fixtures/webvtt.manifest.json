@@ -1,0 +1,322 @@
+{
+  "protocolVersion": 1,
+  "plugin": {
+    "publisher": "org.example",
+    "id": "fixture-webvtt",
+    "version": "0.1.0-alpha.1"
+  },
+  "permissions": [
+    {
+      "kind": "captured-input"
+    },
+    {
+      "kind": "staged-output"
+    }
+  ],
+  "components": [
+    {
+      "id": "format-worker",
+      "scope": "attempt",
+      "runtime": "native-worker",
+      "entrypoint": "bin/worker",
+      "dependencies": [],
+      "exit": {
+        "stopTimeoutMs": 1000,
+        "cleanupTimeoutMs": 1000
+      }
+    }
+  ],
+  "contributions": [
+    {
+      "id": "detect",
+      "componentId": "format-worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.content.detect",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.content.detect.input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.content.detect.output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "webvtt-captions",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 1048576,
+            "maxOutputBytes": 2097152,
+            "concurrency": 2,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "extract-source",
+      "componentId": "format-worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.content.extract-source",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.content.extract-source.input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.content.extract-source.output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "webvtt-captions",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 1048576,
+            "maxOutputBytes": 2097152,
+            "concurrency": 2,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "match-source",
+      "componentId": "format-worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.content.match-source",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.content.match-source.input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.content.match-source.output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "webvtt-captions",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 1048576,
+            "maxOutputBytes": 2097152,
+            "concurrency": 2,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "validate-content",
+      "componentId": "format-worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.content.validate-content",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.content.validate-content.input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.content.validate-content.output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "webvtt-captions",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 1048576,
+            "maxOutputBytes": 2097152,
+            "concurrency": 2,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "build",
+      "componentId": "format-worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.content.build",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.content.build.input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.content.build.output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "webvtt-captions",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            },
+            {
+              "kind": "staged-output"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 1048576,
+            "maxOutputBytes": 2097152,
+            "concurrency": 2,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "validate-artifact",
+      "componentId": "format-worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.content.validate-artifact",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "example.content.validate-artifact.input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "example.content.validate-artifact.output",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "example.error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "webvtt-captions",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 1048576,
+            "maxOutputBytes": 2097152,
+            "concurrency": 2,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    }
+  ]
+}

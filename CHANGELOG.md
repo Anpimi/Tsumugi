@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental standalone plugin declaration SDK and schema/validation harness, with explicit contribution owners, exact schema/profile behavior identities, requested permissions and deterministic provider choice. Declaration validation does not activate plugins or grant runtime authority.
+
 - The AI workbench prepares manual plans without a model, or confirms assisted generation with a fixed scope and authorization expiry. Pause, stop, manual takeover and explicitly renewed continuation preserve saved work and the original shared budget. Explicit policies select missing translations or replace captured translations only after mechanical checks and current authority, basis and protection checks. Results retain candidate and policy evidence without human approval. Reopening reads history with grants paused; uncertain controls and permitted storage retries retain their original action identities.
 
 - Shared AI and Arena connection reuse, independent per-provider request rate limits, fair bounded scheduling, and durable request reservations with known usage and unknown exposure shown after reopening. Trusted Core child tasks inherit scope, connection settings, cancellation and ancestor budgets.

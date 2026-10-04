@@ -148,6 +148,9 @@ Workers / Data Extensions / External Tools
 
 ## 开发环境
 
+实验性的独立[插件声明 SDK](crates/plugin-sdk)提供数据契约与 schema/校验 harness，不依赖 Core。
+当前仅校验声明，本单元尚未提供生产插件加载与运行绑定。详见[插件声明契约](crates/plugin-sdk/docs/declarations.md)。
+
 桌面支持 Windows x64 和 macOS（Apple Silicon 与 Intel 构建目标），使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
 
 命令失败会保留原始结构化证据。已保存依据发生变化时，可展开诊断查看提交值与拒绝时的值；恢复提示说明下一步读取或决策，不会自动重试写入。诊断编号关联命令边界日志，日志只包含操作标签、错误分类与编号，不包含请求正文或工程路径。结果未知时继续保留原行动以供核对。
@@ -194,7 +197,7 @@ pnpm --dir apps/desktop tauri build --no-bundle
 
 “Arena 对比”在整轮共享预算内生成二至四个方案，也可离线比较已保存修订。可选盲评保留固定匿名标签，只有明确揭示才显示身份。用户可保存候选、选择译文或编辑带贡献来源的原子人工合并，再继续正常审阅和 QA。详见 [AI 翻译与 Arena 对比说明](docs/ai-translation.md)。
 
-当前开发版本仅支持数据库 schema 14，不升级过去的开发数据库。其他版本会明确拒绝，保留原目录及其内容。请保持这些目录完整，为当前版本创建新项目并重新导入源文件。应用仍属于尚未发布的 `0.2.0-alpha.1` 开发批次。变化、兼容性及后续版本决策见[更新日志](CHANGELOG.zh-CN.md)和[版本管理策略](docs/versioning.md)。
+当前开发版本仅支持数据库 schema 15，不升级过去的开发数据库。其他版本会明确拒绝，保留原目录及其内容。请保持这些目录完整，为当前版本创建新项目并重新导入源文件。应用仍属于尚未发布的 `0.2.0-alpha.1` 开发批次。变化、兼容性及后续版本决策见[更新日志](CHANGELOG.zh-CN.md)和[版本管理策略](docs/versioning.md)。
 
 当前项目采用 SQLite DELETE 日志模式与 FULL 同步。不受支持的存储设置会明确拒绝，并与损坏的结构、缺失引用或被篡改产物区分。Tsumugi 保留该目录，不转换存储模式、不重置内容。请保持被拒绝的目录完整，在打开对话框中另选受支持的项目继续。不要自行修改 SQLite 设置来冒充受支持的存储方案。交付失败后，已保存发布仍保留，导出采用经过校验的原始字节。结果未知的交付须先核对，再对同一目标发起交付；显式重试沿用原 action 身份，或经新的目标预览确认后创建新交付。
 

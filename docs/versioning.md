@@ -8,6 +8,13 @@ The release unit is the desktop application built from one verified source commi
 
 The supported user-facing scope is the documented project workflow and import/export formats. Internal Rust, storage and IPC interfaces are not a stable public SDK. The application remains in initial development.
 
+The experimental standalone plugin declaration SDK has its own package version
+in `crates/plugin-sdk/Cargo.toml`, currently `0.1.0-alpha.1`. Its declaration
+protocol and schema/behavior identities are separate from that SemVer and the
+application version. SDK source is in this repository and has not been published;
+its package is a separate release unit. A declaration-only SDK change does not
+bump the application when the desktop runtime and stored data are unchanged.
+
 ## Choosing the next version
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
