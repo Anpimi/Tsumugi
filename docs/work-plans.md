@@ -78,9 +78,17 @@ and protection reads/writes. Authorization and start are separate operations: a
 saved authorization is not reported as a failed authorization when later enqueue
 cannot run. Start uses the stored receipt and current grant, rather than accepting
 raw execution input from the client. Historical acknowledgements cannot reactivate
-a stopped generation. The user interface still uses its existing explicit AI
-preview/start and candidate adoption flow; plan controls, automatic selection,
-resource adoption and delivery remain unfinished. The API is not a stable plugin
+a stopped generation. The desktop AI workbench prepares manual or assisted generation plans, shows
+captured scope and sharing, and requires explicit confirmation and an authorization
+duration before candidate generation. It exposes pause, stop, manual takeover and
+renewed continuation. Reopening an attempt reads its stored plan association and
+current authority; it sends no provider request. Lost control or authorization
+responses retain their original action identity for receipt reconciliation. A saved
+authorization whose enqueue fails remains available to start or stop explicitly.
+The translation editor shows persistent protection and confirms release against
+the current entry, language, source, selection and protection revision. Dirty or
+unresolved saves block release. Automatic selection, resource adoption and delivery
+remain unfinished; their effects cannot be granted through this interface. The API is not a stable plugin
 SDK. A model or plugin must not receive unrestricted access to human-authorization
 methods, `ProjectStore` or the raw runtime; its host must carry the issued lease
 and parent identity through the scoped application entry points.

@@ -95,7 +95,74 @@ arena: {
     "outcome-unknown": "结果不确定，请保留本行动并核对保存结果。"
   }
 },
+protection: {
+  evidence: "证据详情",
+  "title": "自动化保护",
+  "loading": "正在读取保护状态…",
+  "unavailable": "保护状态不可用，请刷新后再修改。",
+  "protected": "已禁止自动选择译文",
+  "unprotected": "尚未保护自动选择",
+  "readFailed": "无法读取当前保护状态。工作已保留，请刷新后核对。",
+  "refresh": "刷新保护状态",
+  "draftBlocked": "解除保护前，请保存或放弃草稿，并核对尚未确认的保存操作。",
+  "unknown": "{{key}} · {{locale}} 的保护操作可能已保存。请保留原操作并重试以确认。",
+  "pending": "正在记录保护…",
+  "protect": "启用自动化保护",
+  "release": "解除保护",
+  "releaseTitle": "解除自动化保护？",
+  "releaseHelp": "允许已授权的自动化按照当前显示的依据，为 {{key}} · {{locale}} 选择译文。本操作不会授予自动化权限。",
+  "sourceRevision": "原文版本",
+  "selection": "当前选择",
+  "noSelection": "尚无已选译文",
+  "revision": "保护版本",
+  "scopeChanged": "原文、选择或保护已变化。请刷新并核对后再解除保护。",
+  "cancel": "保留保护",
+  "confirmRelease": "解除此条目保护",
+  "retry": "重试原保护操作"
+},
 ai: {
+  plan: {
+  "controls": "工作计划控制",
+  "title": "工作计划",
+  "stagesTitle": "选择工作方式",
+  "stages": {
+    "understanding": "理解原文",
+    "resources": "准备术语与上下文",
+    "generation": "翻译",
+    "checks": "检查与审校",
+    "delivery": "构建与导出"
+  },
+  "modes": {
+    "manual": "人工处理",
+    "assisted": "AI 辅助",
+    "skipped": "跳过"
+  },
+  "prepareManual": "准备人工计划",
+  "manualHelp": "无需模型或网络请求。打开条目即可手动翻译；其他人工阶段可在“术语与上下文”“审阅与质量检查”和“构建与导出”中完成。",
+  "candidatesOnly": "自动化可生成和保存候选。选择译文、人工审批、采用资源和导出仍需人工操作。",
+  "scope": "{{count}} 个条目 · {{locale}}",
+  "edit": "打开人工编辑器",
+  "duration": "授权有效期（分钟）",
+  "expires": "授权到期时间：{{time}}",
+  "stopHelp": "这些操作会停止新的自动工作，并撤销旧权限。已经发出的请求仍可能执行或计费。已保存工作和预算用量会保留。",
+  "pause": "暂停自动化",
+  "stop": "停止此计划",
+  "takeOver": "转为人工接管",
+  "continue": "重新授权并继续",
+  "refresh": "刷新计划状态",
+  "continueHelp": "请核对原范围和共享内容。继续会沿用原共享预算，包括未知用量。原文、选择或共享资源变化后需要准备新计划。",
+  "renewConsent": "我授权在原范围和共享内容下，按剩余预算与新有效期继续生成候选。",
+  "ready": "授权已保存，尚未确认工作已进入队列。可启动此已授权操作，或暂停、停止计划。",
+  "startAuthorized": "启动已授权工作",
+  "actionUnknown": "控制或授权可能已保存。重试前请核对原操作。",
+  "pending": "正在记录操作…",
+  "states": {
+    "active": "自动化已获授权",
+    "paused": "自动化已暂停",
+    "stopped": "计划已停止",
+    "taken-over": "人工接管中"
+  }
+},
   "open": "AI 翻译",
   "title": "AI 翻译",
   "description": "根据所选原文生成候选，发送前先预览。",
@@ -158,6 +225,8 @@ ai: {
   "discard": "丢弃草稿并离开",
   "origin": "AI 候选 · 生成依据保留在任务中",
   "errors": {
+"work-plan-selection": "当前已选译文变化了。工作已保留，请核对并准备新计划。","work-plan-evidence": "原文或共享资源已变化。请准备并确认新计划。","work-plan-control": "此权限已暂停、停止、转为人工接管或过期。输出和预算用量已保留，请核对当前计划。","work-plan-consent": "启动前请明确确认当前范围、共享内容与候选生成权限。","work-plan-digest": "计划与已准备的预览不一致。请准备并核对新计划。","work-plan-scope": "捕获的条目或目标语言已变化。请刷新并准备当前计划。","work-plan-parent-generation": "之前的计划权限已被撤销。请刷新当前计划，不要重试旧工作。",
+"work-plan-expiry": "请选择 1 至 1440 分钟的授权有效期。","work-plan-pending": "离开前，请在此处理已保存的授权或结果不明的原操作。","work-plan-preview": "计划预览已变化或不可用。请准备并核对新计划。","work-plan-generation": "计划已在其他位置受到控制。新操作前请刷新当前状态。","work-plan-continue-consent": "继续前请核对并确认重新授权。","work-plan-basis": "捕获的原文或选择已变化。工作已保留，请准备新计划。","work-plan-resources": "共享术语或上下文已变化。请准备并确认新的共享预览。","work-plan-authorization": "启动工作前请读取当前权限。已停止或过期的授权不能启动自动化。","work-plan-inactive": "自动化已暂停、停止或转为人工接管。输出已保留，保存前请核对计划。","work-plan-effect": "当前计划尚不支持此自动操作。",
     "ai-endpoint": "请输入完整 HTTPS 或 loopback HTTP 地址，移除地址凭证、查询与片段。",
     "ai-model": "请输入服务支持的模型。",
     "ai-credential": "凭证变量无效或缺失。请在应用外配置后重启。",

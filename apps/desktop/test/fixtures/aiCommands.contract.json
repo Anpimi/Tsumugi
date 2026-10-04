@@ -210,7 +210,9 @@
         "maxRetries": 0
       },
       "recipe": "direct-translation-1",
-      "budget": null
+      "budget": null,
+      "planId": null,
+      "planGeneration": null
     },
     "identity": "60000000-0000-4000-8000-000000000002"
   }

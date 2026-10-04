@@ -7,10 +7,10 @@ export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | 
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+export type Revision = string;
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
-export type Revision = string;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 /**
  * Requested automatic effects, never a human language-review approval.
@@ -83,6 +83,8 @@ export interface AiView {
   budget: ProviderBudget | null;
   config: AiConfig;
   detail: AttemptDetail;
+  planGeneration: Revision | null;
+  planId: ExecutionId | null;
   recipe: string;
   rows: AiRow[];
 }

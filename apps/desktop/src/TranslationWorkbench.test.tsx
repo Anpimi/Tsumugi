@@ -54,6 +54,7 @@ beforeEach(async () => {
     };
     if (command === "read_review_neighbor") return { unitId: fixtureIdentity(217), afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) };
     if (command === "read_translation_history") return history;
+    if (command === "read_work_protection") return {unitId:args.request.unitId,locale:args.request.locale,revision:"0",protected:false};
     if (command === "resolve_terms") return { unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
     if (command === "read_context_revision") return { revisionId: fixtureIdentity(225), unitId: fixtureIdentity(204), locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
     if (command === "select_source") return { selectionId: fixtureIdentity(207), folderName: "Example Mod" };
@@ -537,4 +538,31 @@ it("shows Chinese import labels and an actionable missing-source state", async (
   render(<TranslationWorkbench project={project} disabled={false} />);
   await userEvent.setup().click(screen.getByRole("button", { name: "译文" }));
   expect(await screen.findByText("请先导入源内容，再回来匹配译文。")) .toBeInTheDocument();
+});
+
+it("retains an uncertain protection action while guarding entry, language and project navigation", async () => {
+  const original=invoke.getMockImplementation()!,ref=createRef<TranslationHandle>();let lost=true,protectedValue=false;
+  invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
+    if(command==="read_review_summary_page"){const page=await original(command,args);return {...page,total:2,rows:[...page.rows,reviewSummaryFor(reviewTargetFixture({unitId:fixtureIdentity(217),sourceRevisionId:fixtureIdentity(218),sourceSnapshotId:fixtureIdentity(200),nativeKey:"second",sourceText:"Second"}))]};}
+    if(command==="read_work_protection")return {unitId:args.request.unitId,locale:args.request.locale,revision:protectedValue?"1":"0",protected:protectedValue};
+    if(command==="set_work_protection"){
+      if(lost){lost=false;throw {code:"outcome-unknown"};}
+      protectedValue=true;return {unitId:args.request.unitId,locale:args.request.locale,revision:"1",protected:true};
+    }
+    return original(command,args);
+  });
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false}/>);const user=userEvent.setup();
+  await user.click(screen.getByRole("button",{name:"Translations"}));await user.click(await screen.findByRole("button",{name:"first"}));
+  await user.click(await screen.findByRole("button",{name:"Protect from automation"}));
+  await screen.findByRole("button",{name:"Retry same protection action"});
+  expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
+  expect(screen.getByRole("combobox",{name:"Target language"})).toBeDisabled();
+  expect(screen.getByRole("button",{name:"second"})).toBeDisabled();
+  let leave=true,opened=true;
+  await act(async()=>{leave=await ref.current!.allowLeave();opened=ref.current!.openUnit({unitId:fixtureIdentity(217),sourceRevisionId:fixtureIdentity(218),key:"second",sourceText:"Second"},"zh-CN");});
+  expect(leave).toBe(false);expect(opened).toBe(false);
+  const draft=screen.getByRole("textbox",{name:"Your draft"});await user.type(draft,"Retained manual input");
+  await user.click(screen.getByRole("button",{name:"Retry same protection action"}));
+  await screen.findByText("Protected from automatic selection");expect(draft).toHaveValue("Retained manual input");
+  const mutations=invoke.mock.calls.filter(([name])=>name==="set_work_protection");expect(mutations).toHaveLength(2);expect(mutations[1][1].request).toEqual(mutations[0][1].request);
 });

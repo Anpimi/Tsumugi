@@ -905,6 +905,14 @@ mod tests {
         );
         assert_eq!(fixture.attempt_count(), count + 1);
         fixture.assert_fixed_input(&receipt);
+        let view = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":prepared["attemptId"]}),
+            )
+            .unwrap();
+        assert_eq!(view["planId"], prepared["planId"]);
+        assert_eq!(view["planGeneration"], receipt["lease"]["generation"]);
         let paused = fixture
             .call(
                 "control_work_plan",

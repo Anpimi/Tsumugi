@@ -94,7 +94,74 @@ arena: {
     "outcome-unknown": "The result is uncertain. Keep this action and reconcile the saved result."
   }
 },
+protection: {
+  evidence: "Evidence details",
+  "title": "Automation protection",
+  "loading": "Reading protection…",
+  "unavailable": "Protection unavailable. Refresh before changing it.",
+  "protected": "Protected from automatic selection",
+  "unprotected": "Automatic selection is not protected",
+  "readFailed": "Could not read current protection. Your work is preserved. Refresh to inspect it.",
+  "refresh": "Refresh protection",
+  "draftBlocked": "Save or discard your draft and reconcile pending saves before releasing protection.",
+  "unknown": "The protection action for {{key}} · {{locale}} may have been saved. Keep the original action and retry it to confirm.",
+  "pending": "Recording protection…",
+  "protect": "Protect from automation",
+  "release": "Release protection",
+  "releaseTitle": "Release automation protection?",
+  "releaseHelp": "Allow authorized automation to select a translation for {{key}} · {{locale}} against the shown current basis. This does not grant automation permission.",
+  "sourceRevision": "Source revision",
+  "selection": "Current selection",
+  "noSelection": "No selected translation",
+  "revision": "Protection revision",
+  "scopeChanged": "The source, selection or protection changed. Refresh and review before releasing protection.",
+  "cancel": "Keep protection",
+  "confirmRelease": "Release for this entry",
+  "retry": "Retry same protection action"
+},
 ai: {
+  plan: {
+  "controls": "Work plan controls",
+  "title": "Work plan",
+  "stagesTitle": "Choose how to work",
+  "stages": {
+    "understanding": "Understand the source",
+    "resources": "Prepare terms and context",
+    "generation": "Translate",
+    "checks": "Check and review",
+    "delivery": "Build and export"
+  },
+  "modes": {
+    "manual": "Manual",
+    "assisted": "AI assistance",
+    "skipped": "Skip"
+  },
+  "prepareManual": "Prepare manual plan",
+  "manualHelp": "No model or network request is needed. Open an entry to translate manually; use Glossary and context, Review and QA, and Build and export for the other manual stages.",
+  "candidatesOnly": "Automation may generate and save candidates. Selecting translations, approving them, adopting resources and exporting remain manual actions.",
+  "scope": "{{count}} entries · {{locale}}",
+  "edit": "Open manual editor",
+  "duration": "Authorization duration (minutes)",
+  "expires": "Authorization expires: {{time}}",
+  "stopHelp": "These controls stop new automated work and invalidate older permissions. Requests already sent may still run or be billed. Saved work and budget usage are retained.",
+  "pause": "Pause automation",
+  "stop": "Stop this plan",
+  "takeOver": "Take over manually",
+  "continue": "Continue with renewed authorization",
+  "refresh": "Refresh plan status",
+  "continueHelp": "Review the captured scope and sharing above. Continuing uses the original shared budget, including unknown usage. Changes to source, selection or shared resources require a new plan.",
+  "renewConsent": "I authorize candidate generation for this same scope and sharing within the remaining budget and the new expiry.",
+  "ready": "Authorization saved. The work has not been confirmed as queued. Start this authorized action, or pause or stop it.",
+  "startAuthorized": "Start authorized work",
+  "actionUnknown": "The control or authorization may have been saved. Check the original action before retrying.",
+  "pending": "Recording the action…",
+  "states": {
+    "active": "Automation authorized",
+    "paused": "Automation paused",
+    "stopped": "Plan stopped",
+    "taken-over": "Manual control"
+  }
+},
   "open": "AI translation",
   "title": "AI translation",
   "description": "Generate candidates from selected original strings. Preview before sending.",
@@ -157,6 +224,8 @@ ai: {
   "discard": "Discard draft and leave",
   "origin": "AI candidate · generation evidence retained in Tasks",
   "errors": {
+"work-plan-selection": "The selected translation changed. Your work is retained; review it and prepare a new plan.","work-plan-evidence": "The source or shared resources changed. Prepare and confirm a new plan.","work-plan-control": "This permission was paused, stopped, taken over or expired. Output and budget usage are retained; review the current plan.","work-plan-consent": "Confirm this exact scope, sharing and candidate-generation permission before starting.","work-plan-digest": "The plan no longer matches the prepared preview. Prepare and review a new plan.","work-plan-scope": "The captured entries or target language changed. Refresh and prepare a current plan.","work-plan-parent-generation": "An earlier plan permission was revoked. Refresh the current plan; do not retry old work.",
+"work-plan-expiry": "Choose an authorization duration between 1 and 1440 minutes.","work-plan-pending": "Resolve the saved authorization or uncertain action here before leaving.","work-plan-preview": "The plan preview changed or is unavailable. Prepare and review a new plan.","work-plan-generation": "The plan was controlled elsewhere. Refresh its current status before a new action.","work-plan-continue-consent": "Review and confirm the renewed authorization before continuing.","work-plan-basis": "The captured source or selection changed. Your work is retained; prepare a new plan.","work-plan-resources": "Shared terms or context changed. Prepare and confirm a new sharing preview.","work-plan-authorization": "Read current authority before starting work. A stopped or expired grant cannot start automation.","work-plan-inactive": "Automation is paused, stopped or taken over. Output is retained; review the plan before saving.","work-plan-effect": "This automated effect is not supported by the current plan.",
     "ai-endpoint": "Enter a full HTTPS URL, or loopback HTTP. Remove URL credentials, query and fragment.",
     "ai-model": "Enter a model supported by the service.",
     "ai-credential": "Credential variable is invalid or missing. Configure it outside the application and restart.",
