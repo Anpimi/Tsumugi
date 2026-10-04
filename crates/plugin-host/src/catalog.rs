@@ -3,6 +3,8 @@
 
 use std::{collections::BTreeMap, fmt};
 
+use serde::{Deserialize, Serialize};
+
 use tsumugi_plugin_sdk as sdk;
 
 use crate::PackageImage;
@@ -15,7 +17,8 @@ const MAX_ORIGIN_ID_BYTES: usize = 128;
 /// credentials, a URL to fetch, or a claim taken from the package manifest.
 /// Each is 1..=128 bytes of ASCII letters, digits, dots, underscores, hyphens
 /// and colons; the caller remains responsible for supplying non-secret values.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PackageOrigin {
     pub source_id: String,
     pub publisher_id: String,

@@ -27,8 +27,11 @@ earlier development databases are refused rather than migrated. It does not
 establish a stable public Core API or distribute a production plugin catalog.
 The Host's directory capture and in-memory package catalog stay in this same
 unreleased batch. They add source approval and fixed declaration selection without
-changing the SDK wire profile or project schema. They do not yet provide persistent
-installation, authenticated network updates or desktop package controls. Exhaustive
+changing the SDK wire profile or project schema. The managed local package store
+adds strict receipts, private immutable objects, exclusive promotion and original
+action reconciliation in the same unreleased batch. It does not change the SDK
+wire protocol or schema 16 and provides no historical development-format migration.
+Authenticated network updates and desktop package controls remain pending. Exhaustive
 matches on the experimental Host error enum must handle its added capture errors.
 
 ## Choosing the next version

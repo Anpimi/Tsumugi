@@ -5,8 +5,14 @@
 pub mod catalog;
 #[cfg(feature = "core-adapter")]
 pub mod core;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod filesystem;
 mod package;
 mod session;
+pub use package::installation::{
+    InstallError, InstallReceipt, InstallResult, InstalledPackage, MAX_INSTALLED_PACKAGES,
+    PackageStore,
+};
 pub use package::{PackageFile, PackageImage};
 pub use session::*;
 

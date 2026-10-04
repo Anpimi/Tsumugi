@@ -239,7 +239,7 @@ fn action(store: &mut ProjectStore, input: &FixedInput) -> AdoptionAction {
 }
 
 #[test]
-fn approved_directory_catalog_selection_runs_the_captured_package_through_core() {
+fn approved_installation_reopens_and_runs_fixed_package_bytes_through_core() {
     use std::os::unix::fs::PermissionsExt;
     use tsumugi_plugin_host::catalog::*;
     let temporary = tempfile::tempdir().unwrap();
@@ -268,15 +268,36 @@ fn approved_directory_catalog_selection_runs_the_captured_package_through_core()
     };
     let captured = PackageImage::capture_directory(&root, &expected_digest, || true).unwrap();
     let mut catalog = PackageCatalog::new();
+    let approval = PackageApproval {
+        plugin: expected_plugin.clone(),
+        package_digest: expected_digest.clone(),
+        origin: origin.clone(),
+    };
+    catalog.register(captured, approval.clone()).unwrap();
+    let install_root = temporary.path().join("managed-packages");
+    std::fs::create_dir(&install_root).unwrap();
+    std::fs::set_permissions(&install_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let action_id = "00000000-0000-4000-8000-000000000001";
+    {
+        let mut packages = PackageStore::open_existing(&install_root).unwrap();
+        let receipt = packages
+            .install(
+                action_id,
+                catalog.registered(&expected_plugin).unwrap(),
+                || true,
+            )
+            .unwrap();
+        assert_eq!(receipt.origin(), &origin);
+    }
+    // A fresh owner reads the durable object rather than the source catalog.
+    let packages = PackageStore::open_existing(&install_root).unwrap();
+    let installed = packages.load(&approval, || true).unwrap();
+    assert_eq!(installed.receipt().action_id(), action_id);
+    drop(packages);
+    drop(catalog);
+    let mut catalog = PackageCatalog::new();
     catalog
-        .register(
-            captured,
-            PackageApproval {
-                plugin: expected_plugin.clone(),
-                package_digest: expected_digest.clone(),
-                origin: origin.clone(),
-            },
-        )
+        .register(installed.image().clone(), approval)
         .unwrap();
     assert_eq!(
         catalog
@@ -380,6 +401,12 @@ fn approved_directory_catalog_selection_runs_the_captured_package_through_core()
             .count(),
         0
     );
+    // These two known directories belong only to this isolated fixture. Make
+    // them removable after the owned child has been reaped.
+    let object = install_root.join("objects").join(&expected_digest);
+    for path in [object.join("package"), object] {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
 }
 
 #[test]

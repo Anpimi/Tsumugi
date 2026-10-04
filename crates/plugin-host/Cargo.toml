@@ -15,6 +15,7 @@ sha2 = "=0.10.9"
 tempfile = "=3.27.0"
 uuid = { version = "=1.26.1", features = ["v4"] }
 tokio = { version = "=1.53.1", features = ["rt", "macros", "process", "io-util", "sync", "time"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

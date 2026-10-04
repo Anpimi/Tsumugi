@@ -43,8 +43,8 @@ on macOS; the Linux implementation has not been exercised here.
 Captured bytes remain fixed after source edits. Capturing does not execute the
 entrypoint, unpack an archive, fetch metadata or prove publisher identity. The
 caller still owns source approval, and an installer must validate archive/source
-provenance before producing captured bytes. Network signature/update verification,
-persistent installation and desktop package controls remain separate work.
+provenance before producing captured bytes. Network signature/update verification
+and desktop package controls remain separate work.
 
 ## Package catalog and fixed selection
 
@@ -72,6 +72,51 @@ Run the admission and selection tests without a worker runtime:
 
 ```sh
 cargo test -p tsumugi-plugin-host --test directory --test catalog --locked
+```
+
+## Durable local installation
+
+`PackageStore::open_existing` opens a selected application-owned directory on
+macOS and Linux. The directory must already exist, belong to the current user
+and have mode `0700`; the API does not provision arbitrary paths. A held lock
+permits one cooperating store owner. Root, lock and object-directory identities
+are checked throughout descriptor-relative IO. Read-only package objects reject
+links, hard-linked regular files, unexpected modes and unknown receipt fields.
+The same-user process can still change permissions; these checks do not create
+an OS sandbox or authenticate the publisher.
+
+Installation accepts an already approved `RegisteredPackage` and a canonical
+non-nil UUID action. It writes captured bytes into a private candidate, synchronizes
+files and nested directories, then promotes the whole object exclusively under
+its actual package digest. The private outer directory stays writable for the
+rename and is sealed after the promoted identity and bytes are rechecked;
+package files and descendants are already read-only. The object and required parent directories must be
+synchronized before returning a successful immutable receipt. A failure after
+promotion is `InstallError::UnknownCommit`; retain the object and retry the same
+action to verify and synchronize it. A promoted but unsealed object returns
+`RecoveryRequired` from `load`; only the original action with the exact approval
+can seal and finish it. A new action cannot silently reuse the old receipt or
+repair a different pending installation. Candidates interrupted before promotion
+remain private and are not installed objects; this API does not delete unknown candidates.
+
+Each store contains at most 128 installed package versions. Conflicting action,
+identity, source or publisher metadata is rejected; same-source versions coexist.
+The original action can be reconciled even at capacity. Reopening and `load`
+require an independent `PackageApproval` and recapture actual bytes, rather than
+trusting a receipt or digest-shaped directory name. Loading returns an immutable
+image and receipt without catalog enablement, execution, a Core grant or project
+adoption. The receipt format is owned by this experimental store, not a new
+project database or public SDK protocol.
+
+Use a blocking IO worker and a live application guard. Each install/load has a
+60-second observed deadline, checked between filesystem operations; individual
+blocking system calls are not preempted. The existing package capture limits
+remain in effect. Linux is implemented but has not been exercised in the macOS
+validation environment. Network acquisition/signatures, runtime pinning,
+uninstall/garbage collection and desktop controls remain separate work.
+
+```sh
+cargo test -p tsumugi-plugin-host --lib --test installation --test directory --test catalog --locked
 ```
 
 Materialization runs on a blocking IO worker and retains ownership of its temporary

@@ -31,21 +31,15 @@ impl PackageImage {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod platform {
     use super::*;
+    use crate::filesystem::{directory_names, open_directory, open_entry};
     use std::{
-        collections::BTreeSet,
-        ffi::{CStr, CString, OsStr},
+        ffi::OsStr,
         fs::{File, Metadata},
         io::Read,
-        os::{
-            fd::{AsRawFd, FromRawFd, IntoRawFd},
-            unix::{ffi::OsStrExt, fs::MetadataExt},
-        },
-        path::{Component, PathBuf},
+        os::unix::fs::MetadataExt,
         time::{Duration, Instant},
     };
 
-    const MAX_DIRECTORIES: usize = 256;
-    const MAX_DEPTH: usize = 16;
     const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,61 +97,6 @@ mod platform {
         }
     }
 
-    // macOS APIs return these OS-owned aliases for temporary directories. Map
-    // only those fixed aliases, without canonicalizing arbitrary user links.
-    fn system_path(root: &Path) -> PathBuf {
-        #[cfg(target_os = "macos")]
-        for alias in ["/var", "/tmp"] {
-            if let Ok(rest) = root.strip_prefix(alias) {
-                return Path::new("/private").join(&alias[1..]).join(rest);
-            }
-        }
-        root.to_owned()
-    }
-    fn open_child(parent: &File, name: &OsStr, directory: bool) -> HostResult<File> {
-        let name = CString::new(name.as_bytes()).map_err(|_| HostError::PackagePath)?;
-        let flags = libc::O_RDONLY
-            | libc::O_CLOEXEC
-            | libc::O_NOFOLLOW
-            | libc::O_NONBLOCK
-            | if directory { libc::O_DIRECTORY } else { 0 };
-        // Success transfers ownership of the new descriptor. O_NONBLOCK keeps
-        // a replaced FIFO/device from blocking before its type can be checked.
-        let descriptor = unsafe { libc::openat(parent.as_raw_fd(), name.as_ptr(), flags) };
-        if descriptor < 0 {
-            return Err(HostError::PackagePath);
-        }
-        let file = unsafe { File::from_raw_fd(descriptor) };
-        let metadata = file.metadata().map_err(|_| HostError::CaptureFailed)?;
-        if (directory && !metadata.is_dir()) || (!directory && !metadata.is_file()) {
-            return Err(HostError::PackagePath);
-        }
-        Ok(file)
-    }
-    fn open_root(root: &Path) -> HostResult<File> {
-        if !root.is_absolute() {
-            return Err(HostError::PackagePath);
-        }
-        let mut file = File::open("/").map_err(|_| HostError::CaptureFailed)?;
-        let mut count = 0;
-        for part in root.components() {
-            match part {
-                Component::RootDir => {}
-                Component::Normal(name) => {
-                    count += 1;
-                    if count > 128 {
-                        return Err(HostError::PackagePath);
-                    }
-                    file = open_child(&file, name, true)?;
-                }
-                _ => return Err(HostError::PackagePath),
-            }
-        }
-        if count == 0 {
-            return Err(HostError::PackagePath);
-        }
-        Ok(file)
-    }
     fn metadata(file: &File) -> HostResult<Metadata> {
         file.metadata().map_err(|_| HostError::CaptureFailed)
     }
@@ -166,65 +105,6 @@ mod platform {
             return Err(HostError::PackageChanged);
         }
         Ok(())
-    }
-    struct DirectoryStream(*mut libc::DIR);
-    impl Drop for DirectoryStream {
-        fn drop(&mut self) {
-            // fdopendir owns the fresh descriptor until this single close.
-            unsafe { libc::closedir(self.0) };
-        }
-    }
-    fn errno() -> *mut libc::c_int {
-        #[cfg(target_os = "macos")]
-        unsafe {
-            libc::__error()
-        }
-        #[cfg(target_os = "linux")]
-        unsafe {
-            libc::__errno_location()
-        }
-    }
-    fn names<F: Fn() -> bool>(directory: &File, guard: &Guard<F>) -> HostResult<Vec<String>> {
-        // A fresh open description keeps readdir's cursor off the held root.
-        let file = open_child(directory, OsStr::new("."), true)?;
-        let descriptor = file.into_raw_fd();
-        let stream = unsafe { libc::fdopendir(descriptor) };
-        if stream.is_null() {
-            unsafe { libc::close(descriptor) };
-            return Err(HostError::CaptureFailed);
-        }
-        let stream = DirectoryStream(stream);
-        let mut result = Vec::new();
-        let mut folded = BTreeSet::new();
-        loop {
-            guard.check()?;
-            // POSIX uses a null entry for both EOF and error, distinguished by
-            // errno. readdir's result remains valid until the next call.
-            unsafe { *errno() = 0 };
-            let entry = unsafe { libc::readdir(stream.0) };
-            if entry.is_null() {
-                if unsafe { *errno() } != 0 {
-                    return Err(HostError::CaptureFailed);
-                }
-                break;
-            }
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }
-                .to_str()
-                .map_err(|_| HostError::PackagePath)?;
-            if name == "." || name == ".." {
-                continue;
-            }
-            portable_path(name)?;
-            if !folded.insert(name.to_ascii_lowercase()) {
-                return Err(HostError::PackagePath);
-            }
-            result.push(name.to_owned());
-            if result.len() > MAX_FILES + MAX_DIRECTORIES + 1 {
-                return Err(HostError::PackageLimit);
-            }
-        }
-        result.sort();
-        Ok(result)
     }
     fn walk<F: Fn() -> bool>(
         directory: &File,
@@ -247,7 +127,7 @@ mod platform {
                 digest: None,
             },
         );
-        for name in names(directory, guard)? {
+        for name in directory_names(directory, || guard.check(), MAX_FILES + MAX_DIRECTORIES + 1)? {
             guard.check()?;
             let path = if prefix.is_empty() {
                 name.clone()
@@ -260,24 +140,7 @@ mod platform {
             }
             // Inspect the actual held child without following a link. The file
             // descriptor supplies the type, not a preceding path stat.
-            let child = {
-                let name = CString::new(name.as_bytes()).map_err(|_| HostError::PackagePath)?;
-                let fd = unsafe {
-                    libc::openat(
-                        directory.as_raw_fd(),
-                        name.as_ptr(),
-                        libc::O_RDONLY
-                            | libc::O_CLOEXEC
-                            | libc::O_NOFOLLOW
-                            | libc::O_NONBLOCK
-                            | libc::O_NOCTTY,
-                    )
-                };
-                if fd < 0 {
-                    return Err(HostError::PackagePath);
-                }
-                unsafe { File::from_raw_fd(fd) }
-            };
+            let child = open_entry(directory, OsStr::new(&name))?;
             let info = metadata(&child)?;
             if info.is_dir() {
                 if path == "manifest.json" {
@@ -365,15 +228,14 @@ mod platform {
             deadline: Instant::now() + CAPTURE_TIMEOUT,
         };
         guard.check()?;
-        let root = system_path(root);
-        let held = open_root(&root)?;
+        let (root, held) = open_directory(root)?;
         let before = Stamp::from(&metadata(&held)?);
         let mut snapshot = Snapshot::default();
         walk(&held, "", 0, &mut snapshot, true, &guard)?;
         let mut observed = Snapshot::default();
         // Reopening from the selected absolute path detects replacement of the
         // root or any ancestor. Every file is reread with O_NOFOLLOW.
-        let reopened = open_root(&root)?;
+        let (_, reopened) = open_directory(&root)?;
         if Stamp::from(&metadata(&reopened)?) != before {
             return Err(HostError::PackageChanged);
         }
