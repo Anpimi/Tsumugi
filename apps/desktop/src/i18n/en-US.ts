@@ -943,6 +943,7 @@ ai: {
       missingProject: "No compatible Tsumugi project was found at that folder.",
       permissionDenied: "Tsumugi cannot access that folder with the current permissions.",
       unsupportedSchema: "This project was created by an unsupported Tsumugi version.",
+      unsupportedStorage: "This project's storage settings are not supported. The original directory is preserved. Choose another supported project to continue. Tsumugi has not converted or reset this project.",
       corruptProject: "The project data is not valid. Tsumugi left it untouched.",
       sessionInvalid: "This project session is no longer active. Open the project again.",
       projectInUse: "Another Tsumugi session owns this project. Close it before opening here.",

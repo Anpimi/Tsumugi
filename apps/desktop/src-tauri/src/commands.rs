@@ -1199,6 +1199,11 @@ fn map_persistence_error(error: PersistenceError, fallback: CommandStage) -> Com
         PersistenceError::UnsupportedSchema { .. } => {
             CommandError::simple(CommandErrorCode::UnsupportedSchema, stage)
         }
+        PersistenceError::UnsupportedStorage { .. } => {
+            let mut error = CommandError::simple(CommandErrorCode::UnsupportedSchema, stage);
+            error.reason = Some("storage-mode".into());
+            error
+        }
         PersistenceError::CorruptProject { .. } => {
             CommandError::simple(CommandErrorCode::CorruptProject, stage)
         }
@@ -1244,6 +1249,32 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    #[test]
+    fn current_storage_profile_errors_keep_the_wire_reason_and_refusal_outcome() {
+        let error = map_persistence_error(
+            PersistenceError::UnsupportedStorage {
+                stage: PersistenceStage::Open,
+            },
+            CommandStage::Open,
+        );
+        assert_eq!(error.code, CommandErrorCode::UnsupportedSchema);
+        assert_eq!(error.reason.as_deref(), Some("storage-mode"));
+        assert_eq!(error.stage, CommandStage::Open);
+        assert_eq!(error.outcome, CommandOutcome::Rejected);
+        assert!(!error.recovery_required);
+        let encoded = serde_json::to_value(error).unwrap();
+        assert_eq!(encoded["code"], "unsupported-schema");
+        assert_eq!(encoded["reason"], "storage-mode");
+        let corrupt = map_persistence_error(
+            PersistenceError::CorruptProject {
+                stage: PersistenceStage::Open,
+            },
+            CommandStage::Open,
+        );
+        assert_eq!(corrupt.code, CommandErrorCode::CorruptProject);
+        assert!(corrupt.reason.is_none());
+    }
 
     #[test]
     fn early_command_errors_keep_one_sanitized_diagnostic_reference() {

@@ -243,7 +243,7 @@ function failureMessageKey(failure: CommandError): TranslationKey {
     case "permission-denied":
       return "errors.permissionDenied";
     case "unsupported-schema":
-      return "errors.unsupportedSchema";
+      return failure.reason === "storage-mode" ? "errors.unsupportedStorage" : "errors.unsupportedSchema";
     case "corrupt-project":
       return "errors.corruptProject";
     case "stale-revision":

@@ -944,6 +944,7 @@ ai: {
       missingProject: "该文件夹中没有找到兼容的 Tsumugi 项目。",
       permissionDenied: "当前权限无法访问该文件夹。",
       unsupportedSchema: "该项目由不受支持的 Tsumugi 版本创建。",
+      unsupportedStorage: "该项目的存储设置不受支持，原目录已保留。请选择另一个受支持的项目继续。Tsumugi 未转换存储模式，也未重置项目。",
       corruptProject: "项目数据无效。Tsumugi 未修改原数据。",
       sessionInvalid: "该项目会话已不再有效。请重新打开项目。",
       projectInUse: "另一个 Tsumugi 会话正在使用该项目。请先关闭它。",

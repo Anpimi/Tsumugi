@@ -165,6 +165,10 @@ Arena comparison generates two to four schemes under a shared round budget or co
 
 New projects use database schema 12. Valid schema 3 through 11 projects are backed up in their project directory and upgraded when opened. Other schema versions are rejected without resetting the directory. The application is in the unreleased `0.2.0-alpha.1` development batch. See the [changelog](CHANGELOG.md) and [versioning policy](docs/versioning.md) for changes, compatibility and future version decisions.
 
+Current projects use SQLite DELETE journaling and FULL synchronization. Unsupported storage settings are refused separately from corrupt schemas, broken references or altered artifacts; Tsumugi preserves the directory and does not convert the storage mode or reset its contents. Keep a refused directory intact and select another supported project in the opening dialog to continue. Do not change SQLite settings manually as a substitute for a supported storage profile. Saved releases remain available after a failed delivery and export uses their verified original bytes. Uncertain deliveries must be reconciled before another delivery to the same destination; explicit retries use the existing action identity, or a fresh confirmed destination preview for a new delivery.
+
+Compatibility and migration support between early development snapshots is not guaranteed. Current project identity, stored manifests, release bytes and receipts remain integrity requirements. Core Rust callers with exhaustive matches on `PersistenceError` or `PersistenceErrorCode` must handle `UnsupportedStorage`; desktop errors use the existing `unsupported-schema` code with `reason: "storage-mode"`.
+
 The bundled WebVTT integration supports a limited plain-text caption profile with explicit cue IDs. It preserves timing, layout and original non-text structure through import, translation, source maintenance and checked local subtitle export. See [bundled integrations and compatibility](docs/integrations.md) for supported syntax and interface maturity.
 
 ## Status

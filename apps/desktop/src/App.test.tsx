@@ -499,6 +499,30 @@ describe("project lifecycle workbench", () => {
     vi.resetAllMocks();
   });
 
+  it.each([
+    ["en-US", "unsupported-schema", "storage-mode", "errors.unsupportedStorage"],
+    ["zh-CN", "unsupported-schema", "storage-mode", "errors.unsupportedStorage"],
+    ["en-US", "unsupported-schema", undefined, "errors.unsupportedSchema"],
+    ["en-US", "corrupt-project", undefined, "errors.corruptProject"],
+  ] as const)("current storage refusal %s %s %s stays actionable", async (language, code, reason, message) => {
+    const user = userEvent.setup();
+    await renderApp();
+    await i18n.changeLanguage(language);
+    await user.click(screen.getByRole("button", { name: i18n.t("empty.open") }));
+    const directory = screen.getByRole("textbox", { name: new RegExp(i18n.t("open.destination")) });
+    await user.type(directory, "C:\\Projects\\unsupported");
+    mocks.invoke.mockRejectedValueOnce({ code, ...(reason ? { reason } : {}), stage: "open", outcome: "rejected", recoveryRequired: false });
+    await user.click(screen.getByRole("button", { name: i18n.t("open.submit") }));
+    expect(await screen.findByText(i18n.t(message))).toBeInTheDocument();
+    expect(directory).toHaveValue("C:\\Projects\\unsupported");
+    expect(screen.getByRole("button", { name: i18n.t("open.submit") })).toBeEnabled();
+    await user.clear(directory);
+    await user.type(directory, "C:\\Projects\\supported");
+    await user.click(screen.getByRole("button", { name: i18n.t("open.submit") }));
+    expect(await screen.findByRole("heading", { name: "Demo" })).toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(2);
+  });
+
   it("uses the native picker to fill paths without inventing a command success", async () => {
     const user = userEvent.setup();
     await renderApp();

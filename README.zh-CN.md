@@ -196,6 +196,10 @@ pnpm --dir apps/desktop tauri build --no-bundle
 
 新项目使用数据库 schema 12。有效的 schema 3 至 11 项目在打开时先于项目目录建立备份，再执行升级；其他版本会明确拒绝，不重置原目录。应用当前属于尚未发布的 `0.2.0-alpha.1` 开发批次。变化、兼容性及后续版本决策见[更新日志](CHANGELOG.zh-CN.md)和[版本管理策略](docs/versioning.md)。
 
+当前项目采用 SQLite DELETE 日志模式与 FULL 同步。不受支持的存储设置会明确拒绝，并与损坏的结构、缺失引用或被篡改产物区分。Tsumugi 保留该目录，不转换存储模式、不重置内容。请保持被拒绝的目录完整，在打开对话框中另选受支持的项目继续。不要自行修改 SQLite 设置来冒充受支持的存储方案。交付失败后，已保存发布仍保留，导出采用经过校验的原始字节。结果未知的交付须先核对，再对同一目标发起交付；显式重试沿用原 action 身份，或经新的目标预览确认后创建新交付。
+
+前期开发快照之间不保证兼容或迁移支持；当前工程身份、已存 manifest、发布字节与回执仍须保持完整。Core Rust 调用方若穷尽匹配 `PersistenceError` 或 `PersistenceErrorCode`，须处理 `UnsupportedStorage`；桌面错误通过既有 `unsupported-schema` 与 `reason: "storage-mode"` 表示该分类。
+
 ## 当前状态
 
 Tsumugi 仍处于早期开发阶段，当前主要在设计和实现完整本地化流程所需的基础能力，包括：

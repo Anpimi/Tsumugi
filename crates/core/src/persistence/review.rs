@@ -1885,7 +1885,7 @@ impl ProjectStore {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::{
         ProjectMetadata, SaveContext, SaveTerm, SaveTranslationRevision, SelectTranslationRevision,
@@ -4076,6 +4076,70 @@ mod tests {
             .unwrap();
         assert_eq!(found.bytes(), input.bytes());
         assert_eq!(found.digest(), input.digest());
+    }
+
+    pub(in crate::persistence) fn current_release_fixture(
+        large: bool,
+    ) -> (
+        tempfile::TempDir,
+        ProjectStore,
+        crate::execution::AdoptionAction,
+    ) {
+        let (directory, mut store, project, units) = fixture();
+        let first = if large {
+            format!("你好 {{{{name}}}}{}", "甲".repeat(3000))
+        } else {
+            "你好 {{name}}".into()
+        };
+        for (unit, text) in [(units[0], first.as_str()), (units[1], "普通")] {
+            translate(&mut store, project, unit, "zh-CN", text);
+            check(&mut store, project, unit, "zh-CN");
+            approve(&mut store, project, unit, "zh-CN");
+        }
+        let ready = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        assert!(ready.ready);
+        let attempt = ExecutionId::new();
+        let input = store
+            .prepare_locale_build(
+                project,
+                attempt,
+                &[crate::BuildLocaleChoice {
+                    locale: "zh-CN".into(),
+                    file_name: "i18n/zh.json".into(),
+                }],
+                &ready.basis,
+            )
+            .unwrap();
+        let mut runtime = ExecutionRuntime::new(&store).unwrap();
+        runtime
+            .register_read_only(Arc::new(crate::content::BuildRunner))
+            .unwrap();
+        runtime.submit(&mut store, &input).unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        let result = loop {
+            runtime.tick(&mut store).unwrap();
+            if let Some(result) = store
+                .execution_current_result(attempt, input.envelope().items[0].item_id)
+                .unwrap()
+            {
+                break result;
+            }
+            assert!(Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        store.validate_execution_result(attempt, result).unwrap();
+        let action = store
+            .prepare_adoption_with_id(
+                ExecutionId::new(),
+                attempt,
+                input.envelope().units[0].unit_id,
+                vec![result],
+                serde_json::Value::Null,
+            )
+            .unwrap();
+        (directory, store, action)
     }
 
     #[test]

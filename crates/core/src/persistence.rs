@@ -15,6 +15,8 @@ use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 mod ai;
 mod changes;
+#[cfg(test)]
+mod current_tests;
 pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;
@@ -85,6 +87,7 @@ pub enum PersistenceErrorCode {
     MissingProject,
     PermissionDenied,
     UnsupportedSchema,
+    UnsupportedStorage,
     CorruptProject,
     StaleRevision,
     SessionInvalid,
@@ -127,6 +130,9 @@ pub enum PersistenceError {
         found_version: i64,
         stage: PersistenceStage,
     },
+    UnsupportedStorage {
+        stage: PersistenceStage,
+    },
     CorruptProject {
         stage: PersistenceStage,
     },
@@ -159,6 +165,7 @@ impl PersistenceError {
             Self::MissingProject { .. } => PersistenceErrorCode::MissingProject,
             Self::PermissionDenied { .. } => PersistenceErrorCode::PermissionDenied,
             Self::UnsupportedSchema { .. } => PersistenceErrorCode::UnsupportedSchema,
+            Self::UnsupportedStorage { .. } => PersistenceErrorCode::UnsupportedStorage,
             Self::CorruptProject { .. } => PersistenceErrorCode::CorruptProject,
             Self::StaleRevision { .. } => PersistenceErrorCode::StaleRevision,
             Self::SessionInvalid { .. } => PersistenceErrorCode::SessionInvalid,
@@ -176,6 +183,7 @@ impl PersistenceError {
             | Self::MissingProject { stage }
             | Self::PermissionDenied { stage }
             | Self::UnsupportedSchema { stage, .. }
+            | Self::UnsupportedStorage { stage }
             | Self::CorruptProject { stage }
             | Self::StaleRevision { stage, .. }
             | Self::SessionInvalid { stage }
@@ -788,7 +796,7 @@ fn validate_existing_connection(
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     if !journal_mode.eq_ignore_ascii_case("delete") {
-        return Err(PersistenceError::CorruptProject {
+        return Err(PersistenceError::UnsupportedStorage {
             stage: PersistenceStage::Open,
         });
     }
@@ -796,7 +804,7 @@ fn validate_existing_connection(
         .query_row("PRAGMA synchronous", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     if synchronous != 2 {
-        return Err(PersistenceError::CorruptProject {
+        return Err(PersistenceError::UnsupportedStorage {
             stage: PersistenceStage::Open,
         });
     }
