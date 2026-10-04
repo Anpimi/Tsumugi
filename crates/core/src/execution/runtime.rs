@@ -478,17 +478,26 @@ impl ExecutionRuntime {
     }
     pub fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
         self.accepting = false;
-        // Persist cancellation for queued work as well as running attempts.
+        // Revoking the generation covers idle grants as well as queued/running
+        // automation. Pausing never resets or refunds its original budget.
+        store.pause_active_work_plans()?;
         let mut tasks = BTreeSet::new();
-        for worker in &self.workers {
+        for worker in &mut self.workers {
             if worker.cancellation_started.is_none() {
-                tasks.insert(worker.request.input.envelope().task_id);
+                if worker.request.input.envelope().automation.is_some() {
+                    worker.cancellation.request();
+                    worker.cancellation_started = Some(Instant::now());
+                } else {
+                    tasks.insert(worker.request.input.envelope().task_id);
+                }
             }
         }
         // One bounded window per call; the host retries while quiescing.
         for attempt in store.queued_execution_attempts(self.initial_sequence)? {
             let input = store.execution_input(attempt)?;
-            tasks.insert(input.envelope().task_id);
+            if input.envelope().automation.is_none() {
+                tasks.insert(input.envelope().task_id);
+            }
         }
         for task in tasks {
             self.cancel(store, task, ExecutionId::new())?;

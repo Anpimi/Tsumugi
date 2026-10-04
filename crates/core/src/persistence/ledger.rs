@@ -239,7 +239,10 @@ fn decode_enum<T: serde::de::DeserializeOwned>(value: String) -> Result<T, Execu
     serde_json::from_value(serde_json::Value::String(value))
         .map_err(|_| error(ErrorCode::CorruptLedger, "state"))
 }
-fn cancel_revision(connection: &Connection, task: ExecutionId) -> Result<Revision, ExecutionError> {
+pub(super) fn cancel_revision(
+    connection: &Connection,
+    task: ExecutionId,
+) -> Result<Revision, ExecutionError> {
     let revision: i64 = connection
         .query_row(
             "SELECT COALESCE(MAX(revision),0) FROM execution_cancellations WHERE task_id=?1",
@@ -1288,7 +1291,7 @@ impl ProjectStore {
         task: ExecutionId,
         request: ExecutionId,
     ) -> Result<Revision, ExecutionError> {
-        let tx = self.execution_write()?;
+        let mut tx = self.execution_write()?;
         let existing: Option<(String, i64)> = tx
             .query_row(
                 "SELECT task_id,revision FROM execution_cancellations WHERE request_id=?1",
@@ -1303,6 +1306,9 @@ impl ProjectStore {
             } else {
                 Err(error(ErrorCode::ResultMismatch, "cancel-identity"))
             };
+        }
+        if super::application::stop_execution_plan_in(&tx, task, request)? {
+            tx.observer.add_scope(super::ChangeScope::Project);
         }
         let revision = cancel_revision(&tx, task)?.next()?;
         tx.execute(

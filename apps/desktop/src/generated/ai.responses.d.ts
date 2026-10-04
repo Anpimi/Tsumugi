@@ -7,11 +7,26 @@ export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | 
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
+export type StageMode = "manual" | "assisted" | "skipped";
+export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
+export type Revision = string;
+export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
+/**
+ * Requested automatic effects, never a human language-review approval.
+ */
+export type AutomationEffect =
+  "save-candidate" | "run-checks" | "select-missing" | "replace-captured-selection" | "adopt-resources" | "deliver";
 
 export interface Responses {
   identity: ExecutionId;
   prepared: AiPrepared;
   view: AiView;
+  workPlan: WorkPlanView;
+  workPlanAction: WorkPlanReceiptView | null;
+  workPlanReceipt: WorkPlanReceiptView;
+  workPlanStatus: WorkPlanStatusView;
+  workProtection: WorkProtection;
 }
 export interface AiPrepared {
   attemptId: ExecutionId;
@@ -149,4 +164,58 @@ export interface AiOutputView {
 export interface AiUsageView {
   completionTokens: UnsignedDecimal;
   promptTokens: UnsignedDecimal;
+}
+export interface WorkPlanView {
+  attemptId: ExecutionId | null;
+  digest: string;
+  locale: string;
+  options: PlanOptions;
+  planId: ExecutionId;
+  preview: AiPreviewView | null;
+  scope: PlanSelectionBasis[];
+}
+export interface PlanOptions {
+  adoptResources: boolean;
+  deliver: boolean;
+  selectionPolicy: SelectionPolicy;
+  stages: StageChoice[];
+}
+export interface StageChoice {
+  mode: StageMode;
+  stage: WorkStage;
+}
+export interface PlanSelectionBasis {
+  nativeKey: string;
+  selectionId: ExecutionId | null;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface WorkPlanReceiptView {
+  actionId: ExecutionId;
+  attemptId: ExecutionId | null;
+  lease: AutomationLease;
+  parentTask: ExecutionId | null;
+  state: WorkPlanState;
+}
+/**
+ * A reference to durable authority. Possessing or editing this reference does
+ * not grant permission; Core checks the stored generation at every boundary.
+ */
+export interface AutomationLease {
+  generation: Revision;
+  planId: ExecutionId;
+}
+export interface WorkPlanStatusView {
+  effects: AutomationEffect[];
+  expiresAt: UnsignedDecimal;
+  lease: AutomationLease;
+  plan: WorkPlanView;
+  state: WorkPlanState;
+}
+export interface WorkProtection {
+  locale: string;
+  protected: boolean;
+  revision: Revision;
+  unitId: ExecutionId;
 }

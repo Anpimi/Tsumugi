@@ -16,7 +16,7 @@ const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
 mod queries;
-pub(super) use queries::read_snapshot;
+pub(super) use queries::{read_snapshot, targets_in};
 #[cfg(test)]
 mod query_tests;
 mod views;
@@ -1938,7 +1938,9 @@ pub(super) mod tests {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(store).unwrap();
-        runtime.register_read_only(Arc::new(TranslationRunner)).unwrap();
+        runtime
+            .register_read_only(Arc::new(TranslationRunner))
+            .unwrap();
         runtime.submit(store, &input).unwrap();
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {

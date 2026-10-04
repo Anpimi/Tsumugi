@@ -7,13 +7,14 @@ use crate::{
     execution::{ErrorCode, ExecutionError, ExecutionId},
 };
 pub(super) use control::{
-    check_enqueue, check_input, initialize, protect_manual_in, record_input, table_names, validate,
+    allows_cancelled_ancestor, check_enqueue, check_input, initialize, protect_manual_in,
+    record_input, stop_execution_plan_in, table_names, validate,
 };
 
 impl ProjectStore {
     pub fn prepare_work_plan(
         &self,
-        config: AiConfig,
+        config: Option<AiConfig>,
         locale: &str,
         units: &[ExecutionId],
         options: PlanOptions,
@@ -27,17 +28,45 @@ impl ProjectStore {
                 .metadata()
                 .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "work-plan-read"))?
                 .project_id();
-            let preview = self.preview_ai(config, locale, units)?;
             let project_id = ExecutionId::parse(&project.to_string())?;
+            if units.is_empty()
+                || units.len() > 1000
+                || units
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != units.len()
+            {
+                return Err(ExecutionError::new(
+                    ErrorCode::LimitExceeded,
+                    "work-plan-scope",
+                ));
+            }
             let mut selection_basis = Vec::with_capacity(units.len());
-            for &unit_id in units {
-                let history = self.translation_history(project_id, unit_id, locale, 0, 1)?;
+            for target in super::review::targets_in(connection, project_id, units, locale)? {
                 selection_basis.push(PlanSelectionBasis {
-                    unit_id,
-                    selection_id: history.current.map(|current| current.event_id),
+                    unit_id: target.unit_id,
+                    source_snapshot_id: target.source_snapshot_id,
+                    source_revision_id: target.source_revision_id,
+                    native_key: target.native_key,
+                    selection_id: target.selection_id,
                 });
             }
-            WorkPlan::capture(project, preview, selection_basis, options)
+            if options.requests(crate::application::AutomationEffect::SaveCandidate) {
+                let config = config.ok_or_else(|| {
+                    ExecutionError::new(ErrorCode::InvalidInput, "work-plan-model")
+                })?;
+                let preview = self.preview_ai(config, locale, units)?;
+                WorkPlan::capture(project, preview, selection_basis, options)
+            } else {
+                if config.is_some() {
+                    return Err(ExecutionError::new(
+                        ErrorCode::InvalidInput,
+                        "work-plan-model-unused",
+                    ));
+                }
+                WorkPlan::capture_manual(project, locale.into(), selection_basis, options)
+            }
         })
     }
 
@@ -61,38 +90,48 @@ impl ProjectStore {
                     "work-plan-project",
                 ));
             }
-            let input = plan.fixed_input()?;
-            let settings = ai::settings(&input)?;
-            let mut items = input
-                .envelope()
-                .items
+            if plan.input.is_some() {
+                let input = plan.fixed_input()?;
+                let settings = ai::settings(&input)?;
+                let mut items = input
+                    .envelope()
+                    .items
+                    .iter()
+                    .map(|item| ai::item_payload(&input, item.item_id))
+                    .collect::<Result<Vec<_>, _>>()?;
+                items.sort_by_key(|item| item.unit_id);
+                let locale = &items[0].target_locale;
+                let units = items.iter().map(|item| item.unit_id).collect::<Vec<_>>();
+                let mut current = self.preview_ai(settings.config, locale, &units)?;
+                current.items.sort_by_key(|item| item.unit_id);
+                for (observed, captured) in current.items.iter_mut().zip(&items) {
+                    // Global snapshot/resource clocks can advance for unrelated
+                    // work. Actual unit revisions and shared query contents below
+                    // remain the authority, including an initially empty query.
+                    observed.source_snapshot_id = captured.source_snapshot_id;
+                    observed.resource_baseline = captured.resource_baseline;
+                }
+                if current.items != items {
+                    return Err(ExecutionError::new(
+                        ErrorCode::DependencyConflict,
+                        "work-plan-evidence",
+                    ));
+                }
+            }
+            let units = plan
+                .selection_basis
                 .iter()
-                .map(|item| ai::item_payload(&input, item.item_id))
-                .collect::<Result<Vec<_>, _>>()?;
-            items.sort_by_key(|item| item.unit_id);
-            let locale = &items[0].target_locale;
-            let units = items.iter().map(|item| item.unit_id).collect::<Vec<_>>();
-            let mut current = self.preview_ai(settings.config, locale, &units)?;
-            current.items.sort_by_key(|item| item.unit_id);
-            for (observed, captured) in current.items.iter_mut().zip(&items) {
-                // Global snapshot/resource clocks can advance for unrelated
-                // work. Actual unit revisions and shared query contents below
-                // remain the authority, including an initially empty query.
-                observed.source_snapshot_id = captured.source_snapshot_id;
-                observed.resource_baseline = captured.resource_baseline;
-            }
-            if current.items != items {
-                return Err(ExecutionError::new(
-                    ErrorCode::DependencyConflict,
-                    "work-plan-evidence",
-                ));
-            }
+                .map(|basis| basis.unit_id)
+                .collect::<Vec<_>>();
+            let current =
+                super::review::targets_in(connection, plan.project_id, &units, &plan.locale)?;
             for basis in &plan.selection_basis {
-                let current = self
-                    .translation_history(plan.project_id, basis.unit_id, locale, 0, 1)?
-                    .current
-                    .map(|selection| selection.event_id);
-                if current != basis.selection_id {
+                if !current.iter().any(|target| {
+                    target.unit_id == basis.unit_id
+                        && target.source_revision_id == basis.source_revision_id
+                        && target.native_key == basis.native_key
+                        && target.selection_id == basis.selection_id
+                }) {
                     return Err(ExecutionError::new(
                         ErrorCode::DependencyConflict,
                         "work-plan-selection",
@@ -146,7 +185,7 @@ mod tests {
         let database = store.directory().join("project.sqlite3");
         let before = fs::read(&database).unwrap();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
             .unwrap();
         store.verify_work_plan(&plan).unwrap();
         assert_eq!(fs::read(&database).unwrap(), before);
@@ -167,7 +206,10 @@ mod tests {
         ] {
             assert!(!plan.options.requests(effect));
         }
-        assert_eq!(plan.fixed_input().unwrap().envelope(), &plan.input);
+        assert_eq!(
+            plan.fixed_input().unwrap().envelope(),
+            plan.execution_input().unwrap()
+        );
         assert_eq!(
             plan.fixed_input().unwrap().digest(),
             plan.fixed_input().unwrap().digest()
@@ -186,7 +228,7 @@ mod tests {
     fn work_plan_current_selection_change_and_other_project_are_rejected() {
         let (_temp, mut store, units) = fixture();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &[units[0]], PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &[units[0]], PlanOptions::default())
             .unwrap();
         let other = tempfile::tempdir().unwrap();
         let other_store = ProjectStore::create(
@@ -221,7 +263,7 @@ mod tests {
     fn work_plan_empty_shared_query_changes_but_unrelated_edits_do_not_conflict() {
         let (_temp, mut store, units) = fixture();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &[units[0]], PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &[units[0]], PlanOptions::default())
             .unwrap();
         let metadata = store.metadata().unwrap();
         store
@@ -264,23 +306,23 @@ mod tests {
     fn work_plan_tampering_and_implicit_effect_expansion_are_refused() {
         let (_temp, store, units) = fixture();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &[units[0]], PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &[units[0]], PlanOptions::default())
             .unwrap();
         let mut changed = plan.clone();
         changed.options.selection_policy = SelectionPolicy::MissingOnly;
         assert!(changed.validate().is_err());
         let mut changed = plan.clone();
-        changed.input.settings["config"]["endpoint"] =
+        changed.input.as_mut().unwrap().settings["config"]["endpoint"] =
             serde_json::json!("https://other.example/v1/chat/completions");
         assert!(changed.validate().is_err());
         let mut changed = plan.clone();
-        changed.input.settings["config"]["shareTerms"] = serde_json::json!(true);
+        changed.input.as_mut().unwrap().settings["config"]["shareTerms"] = serde_json::json!(true);
         assert!(changed.validate().is_err());
         let mut options = PlanOptions::default();
         options.deliver = true;
         assert!(
             store
-                .prepare_work_plan(config(), "zh-CN", &[units[0]], options)
+                .prepare_work_plan(Some(config()), "zh-CN", &[units[0]], options)
                 .is_err()
         );
         let options = PlanOptions {
@@ -293,13 +335,13 @@ mod tests {
             deliver: false,
         };
         let manual = store
-            .prepare_work_plan(config(), "zh-CN", &[units[0]], options)
+            .prepare_work_plan(None, "zh-CN", &[units[0]], options)
             .unwrap();
         assert!(!manual.options.requests(AutomationEffect::SaveCandidate));
         assert!(
             store
                 .prepare_work_plan(
-                    config(),
+                    Some(config()),
                     "zh-CN",
                     &[units[0], units[0]],
                     PlanOptions::default()
@@ -339,7 +381,7 @@ mod tests {
     fn work_plan_authority_is_explicit_bounded_idempotent_and_durable() {
         let (_temp, mut store, units) = fixture();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
             .unwrap();
         let directory = store.directory().to_path_buf();
         let request = consent(&plan);
@@ -382,12 +424,15 @@ mod tests {
             fs::read(directory.join(super::super::DATABASE_FILENAME)).unwrap(),
             after
         );
-        assert_eq!(receipt.input.as_ref().unwrap().task_id, plan.input.task_id);
+        assert_eq!(
+            receipt.input.as_ref().unwrap().task_id,
+            plan.execution_input().unwrap().task_id
+        );
         let fixed = crate::execution::FixedInput::capture(receipt.input.unwrap()).unwrap();
         store.enqueue_execution(&fixed).unwrap();
         assert_eq!(
             store
-                .provider_budget(plan.input.task_id)
+                .provider_budget(plan.execution_input().unwrap().task_id)
                 .unwrap()
                 .unwrap()
                 .dispatched,
@@ -425,7 +470,7 @@ mod tests {
     fn work_plan_stop_rejects_new_roots_children_dispatch_and_preserves_unknown_budget() {
         let (_temp, mut store, units) = fixture();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
             .unwrap();
         let grant = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
         let fixed = crate::execution::FixedInput::capture(grant.input.unwrap()).unwrap();
@@ -437,7 +482,10 @@ mod tests {
         store
             .reserve_provider_request(&dispatch, ExecutionId::new(), config().max_requests)
             .unwrap();
-        let before = store.provider_budget(plan.input.task_id).unwrap().unwrap();
+        let before = store
+            .provider_budget(plan.execution_input().unwrap().task_id)
+            .unwrap()
+            .unwrap();
         assert_eq!(before.dispatched, 1);
         assert_eq!(before.unresolved, 1);
         let stop = control(&plan, 1, crate::application::WorkPlanCommand::Stop);
@@ -525,7 +573,7 @@ mod tests {
                 .enqueue_execution_with_policy(
                     &child,
                     crate::execution::RecoveryPolicy::ExternalUnknown,
-                    Some(plan.input.task_id)
+                    Some(plan.execution_input().unwrap().task_id)
                 )
                 .unwrap_err()
                 .code,
@@ -539,9 +587,15 @@ mod tests {
             ErrorCode::Unauthorized
         );
         let receipt = store.control_work_plan(&resume).unwrap();
-        assert_eq!(receipt.parent_task, Some(plan.input.task_id));
+        assert_eq!(
+            receipt.parent_task,
+            Some(plan.execution_input().unwrap().task_id)
+        );
         let new = crate::execution::FixedInput::capture(receipt.input.unwrap()).unwrap();
-        assert_ne!(new.envelope().task_id, plan.input.task_id);
+        assert_ne!(
+            new.envelope().task_id,
+            plan.execution_input().unwrap().task_id
+        );
         assert_eq!(
             store.enqueue_execution(&new).unwrap_err().code,
             ErrorCode::Unauthorized
@@ -554,7 +608,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            store.provider_budget(plan.input.task_id).unwrap().unwrap(),
+            store
+                .provider_budget(plan.execution_input().unwrap().task_id)
+                .unwrap()
+                .unwrap(),
             before
         );
         assert_eq!(
@@ -573,7 +630,7 @@ mod tests {
                 .enqueue_execution_with_policy(
                     &stripped,
                     crate::execution::RecoveryPolicy::ExternalUnknown,
-                    Some(plan.input.task_id)
+                    Some(plan.execution_input().unwrap().task_id)
                 )
                 .unwrap_err()
                 .code,
@@ -590,7 +647,7 @@ mod tests {
         let reopened = ProjectStore::open(&directory).unwrap();
         assert_eq!(
             reopened
-                .provider_budget(plan.input.task_id)
+                .provider_budget(plan.execution_input().unwrap().task_id)
                 .unwrap()
                 .unwrap(),
             before
@@ -730,7 +787,7 @@ mod tests {
         }
         let (_temp, mut store, units) = fixture();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
             .unwrap();
         let receipt = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
         let fixed = crate::execution::FixedInput::capture(receipt.input.unwrap()).unwrap();
@@ -762,13 +819,189 @@ mod tests {
             store.work_plan_status(plan.plan_id).unwrap().state,
             crate::application::WorkPlanState::TakenOver
         );
+        let root = fixed.envelope().task_id;
+        let resumed = store
+            .control_work_plan(&control(
+                &plan,
+                2,
+                crate::application::WorkPlanCommand::Continue,
+            ))
+            .unwrap();
+        let next = crate::execution::FixedInput::capture(resumed.input.unwrap()).unwrap();
+        runtime.submit_child(&mut store, &next, root).unwrap();
+        let idle = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        store.authorize_work_plan(&idle, &consent(&idle)).unwrap();
+        observed.store(false, Ordering::Release);
+        runtime.tick(&mut store).unwrap();
+        assert!(runtime.is_active(next.envelope().attempt_id));
+        runtime.begin_quiesce(&mut store).unwrap();
+        assert_eq!(
+            store.work_plan_status(plan.plan_id).unwrap().state,
+            crate::application::WorkPlanState::Paused
+        );
+        assert_eq!(
+            store.work_plan_status(idle.plan_id).unwrap().state,
+            crate::application::WorkPlanState::Paused
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match runtime.finish_quiesce(&mut store) {
+                Ok(()) => break,
+                Err(error)
+                    if error.code == ErrorCode::Busy && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(error) => panic!("quiesce failed: {error:?}"),
+            }
+        }
+        assert!(observed.load(Ordering::Acquire));
+        assert!(!runtime.is_active(next.envelope().attempt_id));
+        assert_eq!(
+            super::super::ledger::cancel_revision(store.connection().unwrap(), root)
+                .unwrap()
+                .get(),
+            0
+        );
         store.reconcile_execution().unwrap();
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let mut reopened = ProjectStore::open(&directory).unwrap();
+        let receipt = reopened
+            .control_work_plan(&control(
+                &plan,
+                4,
+                crate::application::WorkPlanCommand::Continue,
+            ))
+            .unwrap();
+        assert_eq!(receipt.parent_task, Some(root));
+        let input = crate::execution::FixedInput::capture(receipt.input.unwrap()).unwrap();
+        reopened
+            .enqueue_execution_with_policy(
+                &input,
+                crate::execution::RecoveryPolicy::ExternalUnknown,
+                Some(root),
+            )
+            .unwrap();
+    }
+    #[test]
+    fn cancelled_root_requires_new_grant_without_refunding_original_budget() {
+        use crate::application::{WorkPlanCommand, WorkPlanState};
+        use crate::execution::{FixedInput, RecoveryPolicy};
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let authorization = consent(&plan);
+        let receipt = store.authorize_work_plan(&plan, &authorization).unwrap();
+        assert_eq!(store.work_plan(plan.plan_id).unwrap(), plan);
+        assert_eq!(
+            store.work_plan_receipt(authorization.action_id).unwrap(),
+            Some(receipt.clone())
+        );
+        assert!(
+            store
+                .work_plan_receipt(ExecutionId::new())
+                .unwrap()
+                .is_none()
+        );
+        let input = FixedInput::capture(receipt.input.unwrap()).unwrap();
+        store.enqueue_execution(&input).unwrap();
+        let item = input.envelope().items[0].item_id;
+        let dispatched = store
+            .dispatch_execution_item(input.envelope().attempt_id, item)
+            .unwrap();
+        store
+            .reserve_provider_request(&dispatched, ExecutionId::new(), config().max_requests)
+            .unwrap();
+        let root = input.envelope().task_id;
+        let cancel_id = ExecutionId::new();
+        assert_eq!(store.cancel_execution(root, cancel_id).unwrap().get(), 1);
+        let stopped = store.work_plan_status(plan.plan_id).unwrap();
+        assert_eq!(stopped.state, WorkPlanState::Stopped);
+        assert_eq!(stopped.lease.generation.get(), 2);
+        assert_eq!(store.cancel_execution(root, cancel_id).unwrap().get(), 1);
+        assert_eq!(store.work_plan_status(plan.plan_id).unwrap(), stopped);
+        assert_eq!(
+            store.check_work_plan_input(&input).unwrap_err().code,
+            ErrorCode::Cancelled
+        );
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let mut store = ProjectStore::open(&directory).unwrap();
+        let continued = store
+            .control_work_plan(&control(&plan, 2, WorkPlanCommand::Continue))
+            .unwrap();
+        assert_eq!(continued.cancellation_revision.get(), 1);
+        assert_eq!(continued.parent_task, Some(root));
+        let child = FixedInput::capture(continued.input.unwrap()).unwrap();
+        store
+            .enqueue_execution_with_policy(&child, RecoveryPolicy::ExternalUnknown, Some(root))
+            .unwrap();
+        let request = store
+            .dispatch_execution_item(
+                child.envelope().attempt_id,
+                child.envelope().items[0].item_id,
+            )
+            .unwrap();
+        store
+            .reserve_provider_request(&request, ExecutionId::new(), config().max_requests)
+            .unwrap();
+        let budget = store.provider_budget(root).unwrap().unwrap();
+        assert_eq!(budget.dispatched, 2);
+        assert_eq!(budget.unresolved, 2);
+        // Cancelling only a child never reauthorizes that child or stops the
+        // unrelated root grant. Its branch remains cancelled.
+        store
+            .cancel_execution(child.envelope().task_id, ExecutionId::new())
+            .unwrap();
+        assert_eq!(
+            store.work_plan_status(plan.plan_id).unwrap().state,
+            WorkPlanState::Active
+        );
+        assert_eq!(
+            store
+                .reserve_provider_request(&request, ExecutionId::new(), config().max_requests)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        store.cancel_execution(root, ExecutionId::new()).unwrap();
+        assert_eq!(
+            store
+                .work_plan_status(plan.plan_id)
+                .unwrap()
+                .lease
+                .generation
+                .get(),
+            4
+        );
+        assert_eq!(
+            store
+                .reserve_provider_request(&request, ExecutionId::new(), config().max_requests)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert_eq!(store.provider_budget(root).unwrap().unwrap(), budget);
+        store.reconcile_execution().unwrap();
+        store.close().unwrap();
+        assert_eq!(
+            ProjectStore::open(&directory)
+                .unwrap()
+                .work_plan_status(plan.plan_id)
+                .unwrap()
+                .state,
+            WorkPlanState::Stopped
+        );
     }
     #[test]
     fn current_work_plan_authority_and_receipt_damage_are_refused_without_reset() {
         let (_temp, mut store, units) = fixture();
         let plan = store
-            .prepare_work_plan(config(), "zh-CN", &units, PlanOptions::default())
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
             .unwrap();
         store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
         store
@@ -815,5 +1048,123 @@ mod tests {
             Err(crate::PersistenceError::CorruptProject { .. })
         ));
         assert_eq!(fs::read(&path).unwrap(), before);
+    }
+    fn manual_options() -> PlanOptions {
+        let mut options = PlanOptions::default();
+        for choice in &mut options.stages {
+            choice.mode = StageMode::Manual;
+        }
+        options
+    }
+    #[test]
+    fn manual_work_plan_needs_no_model_and_remains_read_only_without_authority() {
+        let (_temp, mut store, units) = fixture();
+        let directory = store.directory().to_path_buf();
+        let before = fs::read(directory.join(super::super::DATABASE_FILENAME)).unwrap();
+        let plan = store
+            .prepare_work_plan(None, "zh-CN", &units, manual_options())
+            .unwrap();
+        assert!(plan.input.is_none());
+        assert_eq!(plan.locale, "zh-CN");
+        assert_eq!(plan.selection_basis.len(), units.len());
+        assert!(
+            plan.selection_basis
+                .iter()
+                .all(|basis| !basis.native_key.is_empty() && basis.selection_id.is_some())
+        );
+        store.verify_work_plan(&plan).unwrap();
+        assert_eq!(
+            plan.fixed_input().unwrap_err().code,
+            ErrorCode::Unauthorized
+        );
+        assert_eq!(
+            store
+                .authorize_work_plan(&plan, &consent(&plan))
+                .unwrap_err()
+                .code,
+            ErrorCode::Unauthorized
+        );
+        assert!(store.connection().unwrap().is_autocommit());
+        assert_eq!(
+            fs::read(directory.join(super::super::DATABASE_FILENAME)).unwrap(),
+            before
+        );
+        let wire = serde_json::to_value(&plan).unwrap();
+        assert!(wire["input"].is_null());
+        assert_eq!(serde_json::from_value::<WorkPlan>(wire).unwrap(), plan);
+        assert_eq!(
+            store
+                .prepare_work_plan(None, "zh-CN", &units, PlanOptions::default())
+                .unwrap_err()
+                .stage,
+            "work-plan-model"
+        );
+        assert_eq!(
+            store
+                .prepare_work_plan(Some(config()), "zh-CN", &units, manual_options())
+                .unwrap_err()
+                .stage,
+            "work-plan-model-unused"
+        );
+    }
+    #[test]
+    fn manual_work_plan_uses_current_scope_and_refuses_changed_selections_and_tampering() {
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(None, "zh-CN", &[units[0]], manual_options())
+            .unwrap();
+        let wire = serde_json::to_value(&plan).unwrap();
+        for field in ["locale", "nativeKey", "sourceRevisionId", "selectionId"] {
+            let mut changed = wire.clone();
+            if field == "locale" {
+                changed[field] = "ja".into();
+            } else {
+                changed["selectionBasis"][0][field] = if field == "nativeKey" {
+                    "different".into()
+                } else {
+                    ExecutionId::new().to_string().into()
+                };
+            }
+            let changed: WorkPlan = serde_json::from_value(changed).unwrap();
+            assert!(changed.validate().is_err(), "{field}");
+        }
+        let before = fs::read(store.directory().join(super::super::DATABASE_FILENAME)).unwrap();
+        assert!(
+            store
+                .prepare_work_plan(None, "zh-CN", &[ExecutionId::new()], manual_options())
+                .is_err()
+        );
+        assert!(
+            store
+                .prepare_work_plan(None, "zh-CN", &[units[0], units[0]], manual_options())
+                .is_err()
+        );
+        assert!(
+            store
+                .prepare_work_plan(None, "fr", &units, manual_options())
+                .is_err()
+        );
+        assert_eq!(
+            fs::read(store.directory().join(super::super::DATABASE_FILENAME)).unwrap(),
+            before
+        );
+        let target = store
+            .review_target(plan.project_id, units[0], "zh-CN")
+            .unwrap();
+        store
+            .save_translation_revision(&SaveTranslationRevision {
+                project_id: plan.project_id,
+                action_id: ExecutionId::new(),
+                unit_id: units[0],
+                locale: "zh-CN".into(),
+                source_revision_id: target.source_revision_id,
+                expected_selection_id: target.selection_id,
+                text: "manual plan edit".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            store.verify_work_plan(&plan).unwrap_err().code,
+            ErrorCode::DependencyConflict
+        );
     }
 }

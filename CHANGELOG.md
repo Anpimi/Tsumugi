@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Core work plans can capture manual stages without a model connection. Renewed authorization can resume cancelled automated work under its original budget; closing a project pauses active grants until explicit continuation.
+
 - Shared AI and Arena connection reuse, independent per-provider request rate limits, fair bounded scheduling, and durable request reservations with known usage and unknown exposure shown after reopening. Trusted Core child tasks inherit scope, connection settings, cancellation and ancestor budgets.
 
 - Added macOS desktop builds and local source, translation, glossary import and verified release export, with descriptor-based file authorization and Command-key editing shortcuts.
@@ -41,7 +43,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically.
 - Manual translation saves and selections now persist unit protection. Core callers can release protection explicitly against the current source, selection and protection revision; old acknowledgements cannot clear newer protection.
-- Project storage now uses schema 13 for durable work-plan authorization and human control. This development build opens schema 13 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
+- Project storage now uses schema 14 for durable work-plan authorization and human control. This development build opens schema 14 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 

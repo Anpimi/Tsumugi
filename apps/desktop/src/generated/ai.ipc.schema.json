@@ -155,7 +155,381 @@
         ],
         "type": "object"
       },
+      "AutomationEffect": {
+        "description": "Requested automatic effects, never a human language-review approval.",
+        "enum": [
+          "save-candidate",
+          "run-checks",
+          "select-missing",
+          "replace-captured-selection",
+          "adopt-resources",
+          "deliver"
+        ],
+        "type": "string"
+      },
       "ExecutionId": {
+        "type": "string"
+      },
+      "PlanOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "adoptResources": {
+            "type": "boolean"
+          },
+          "deliver": {
+            "type": "boolean"
+          },
+          "selectionPolicy": {
+            "$ref": "#/definitions/SelectionPolicy"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/definitions/StageChoice"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "stages",
+          "selectionPolicy",
+          "adoptResources",
+          "deliver"
+        ],
+        "type": "object"
+      },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
+      "SelectionPolicy": {
+        "enum": [
+          "candidates-only",
+          "missing-only",
+          "replace-captured-selection"
+        ],
+        "type": "string"
+      },
+      "StageChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/definitions/StageMode"
+          },
+          "stage": {
+            "$ref": "#/definitions/WorkStage"
+          }
+        },
+        "required": [
+          "stage",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "StageMode": {
+        "enum": [
+          "manual",
+          "assisted",
+          "skipped"
+        ],
+        "type": "string"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
+      "WorkPlanActionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAuthorizeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "digest": {
+            "type": "string"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/definitions/AutomationEffect"
+            },
+            "type": "array"
+          },
+          "expiresAt": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "digest",
+          "actionId",
+          "confirmed",
+          "effects",
+          "expiresAt"
+        ],
+        "type": "object"
+      },
+      "WorkPlanCommand": {
+        "enum": [
+          "pause",
+          "stop",
+          "take-over",
+          "continue"
+        ],
+        "type": "string"
+      },
+      "WorkPlanControlRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "command": {
+            "$ref": "#/definitions/WorkPlanCommand"
+          },
+          "confirmed": {
+            "type": "boolean"
+          },
+          "expectedGeneration": {
+            "$ref": "#/definitions/Revision"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/UnsignedDecimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId",
+          "planId",
+          "expectedGeneration",
+          "command",
+          "confirmed"
+        ],
+        "type": "object"
+      },
+      "WorkPlanPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AiConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/definitions/PlanOptions"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "locale",
+          "unitIds",
+          "options"
+        ],
+        "type": "object"
+      },
+      "WorkPlanStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedGeneration": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId",
+          "actionId",
+          "expectedGeneration"
+        ],
+        "type": "object"
+      },
+      "WorkPlanStatusRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "planId"
+        ],
+        "type": "object"
+      },
+      "WorkProtectionReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "unitId",
+          "locale"
+        ],
+        "type": "object"
+      },
+      "WorkProtectionSetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "confirmedRelease": {
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId",
+          "unitId",
+          "locale",
+          "sourceRevisionId",
+          "expectedRevision",
+          "protected",
+          "confirmedRelease"
+        ],
+        "type": "object"
+      },
+      "WorkStage": {
+        "enum": [
+          "understanding",
+          "resources",
+          "generation",
+          "checks",
+          "delivery"
+        ],
         "type": "string"
       }
     },
@@ -168,12 +542,44 @@
       },
       "start": {
         "$ref": "#/definitions/AiStartRequest"
+      },
+      "workPlanAction": {
+        "$ref": "#/definitions/WorkPlanActionRequest"
+      },
+      "workPlanAuthorize": {
+        "$ref": "#/definitions/WorkPlanAuthorizeRequest"
+      },
+      "workPlanControl": {
+        "$ref": "#/definitions/WorkPlanControlRequest"
+      },
+      "workPlanPrepare": {
+        "$ref": "#/definitions/WorkPlanPrepareRequest"
+      },
+      "workPlanStart": {
+        "$ref": "#/definitions/WorkPlanStartRequest"
+      },
+      "workPlanStatus": {
+        "$ref": "#/definitions/WorkPlanStatusRequest"
+      },
+      "workProtectionRead": {
+        "$ref": "#/definitions/WorkProtectionReadRequest"
+      },
+      "workProtectionSet": {
+        "$ref": "#/definitions/WorkProtectionSetRequest"
       }
     },
     "required": [
       "preview",
       "start",
-      "read"
+      "read",
+      "workPlanPrepare",
+      "workPlanAuthorize",
+      "workPlanStart",
+      "workPlanControl",
+      "workPlanStatus",
+      "workPlanAction",
+      "workProtectionRead",
+      "workProtectionSet"
     ],
     "title": "Requests",
     "type": "object",
@@ -553,6 +959,35 @@
         ],
         "type": "object"
       },
+      "AutomationEffect": {
+        "description": "Requested automatic effects, never a human language-review approval.",
+        "enum": [
+          "save-candidate",
+          "run-checks",
+          "select-missing",
+          "replace-captured-selection",
+          "adopt-resources",
+          "deliver"
+        ],
+        "type": "string"
+      },
+      "AutomationLease": {
+        "additionalProperties": false,
+        "description": "A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "planId",
+          "generation"
+        ],
+        "type": "object"
+      },
       "ContextRevision": {
         "additionalProperties": false,
         "properties": {
@@ -670,6 +1105,68 @@
           "status",
           "scope",
           "resultId"
+        ],
+        "type": "object"
+      },
+      "PlanOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "adoptResources": {
+            "type": "boolean"
+          },
+          "deliver": {
+            "type": "boolean"
+          },
+          "selectionPolicy": {
+            "$ref": "#/definitions/SelectionPolicy"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/definitions/StageChoice"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "stages",
+          "selectionPolicy",
+          "adoptResources",
+          "deliver"
+        ],
+        "type": "object"
+      },
+      "PlanSelectionBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "nativeKey": {
+            "type": "string"
+          },
+          "selectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sourceRevisionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceSnapshotId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "sourceSnapshotId",
+          "sourceRevisionId",
+          "nativeKey",
+          "selectionId"
         ],
         "type": "object"
       },
@@ -885,6 +1382,10 @@
         ],
         "type": "object"
       },
+      "Revision": {
+        "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
+        "type": "string"
+      },
       "Scope": {
         "additionalProperties": false,
         "properties": {
@@ -907,6 +1408,14 @@
           "locale"
         ],
         "type": "object"
+      },
+      "SelectionPolicy": {
+        "enum": [
+          "candidates-only",
+          "missing-only",
+          "replace-captured-selection"
+        ],
+        "type": "string"
       },
       "SharedTerm": {
         "additionalProperties": false,
@@ -932,6 +1441,30 @@
         ],
         "type": "object"
       },
+      "StageChoice": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/definitions/StageMode"
+          },
+          "stage": {
+            "$ref": "#/definitions/WorkStage"
+          }
+        },
+        "required": [
+          "stage",
+          "mode"
+        ],
+        "type": "object"
+      },
+      "StageMode": {
+        "enum": [
+          "manual",
+          "assisted",
+          "skipped"
+        ],
+        "type": "string"
+      },
       "UnsignedDecimal": {
         "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
         "type": "string"
@@ -942,6 +1475,175 @@
           "pending",
           "valid",
           "invalid"
+        ],
+        "type": "string"
+      },
+      "WorkPlanReceiptView": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "attemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "parentTask": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "actionId",
+          "lease",
+          "state",
+          "attemptId",
+          "parentTask"
+        ],
+        "type": "object"
+      },
+      "WorkPlanState": {
+        "enum": [
+          "active",
+          "paused",
+          "stopped",
+          "taken-over"
+        ],
+        "type": "string"
+      },
+      "WorkPlanStatusView": {
+        "additionalProperties": false,
+        "properties": {
+          "effects": {
+            "items": {
+              "$ref": "#/definitions/AutomationEffect"
+            },
+            "type": "array"
+          },
+          "expiresAt": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "plan": {
+            "$ref": "#/definitions/WorkPlanView"
+          },
+          "state": {
+            "$ref": "#/definitions/WorkPlanState"
+          }
+        },
+        "required": [
+          "plan",
+          "lease",
+          "state",
+          "effects",
+          "expiresAt"
+        ],
+        "type": "object"
+      },
+      "WorkPlanView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "digest": {
+            "type": "string"
+          },
+          "locale": {
+            "type": "string"
+          },
+          "options": {
+            "$ref": "#/definitions/PlanOptions"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/AiPreviewView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "planId",
+          "digest",
+          "locale",
+          "options",
+          "scope",
+          "preview",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "WorkProtection": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "type": "string"
+          },
+          "protected": {
+            "type": "boolean"
+          },
+          "revision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "unitId",
+          "locale",
+          "revision",
+          "protected"
+        ],
+        "type": "object"
+      },
+      "WorkStage": {
+        "enum": [
+          "understanding",
+          "resources",
+          "generation",
+          "checks",
+          "delivery"
         ],
         "type": "string"
       }
@@ -955,12 +1657,39 @@
       },
       "view": {
         "$ref": "#/definitions/AiView"
+      },
+      "workPlan": {
+        "$ref": "#/definitions/WorkPlanView"
+      },
+      "workPlanAction": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/WorkPlanReceiptView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "workPlanReceipt": {
+        "$ref": "#/definitions/WorkPlanReceiptView"
+      },
+      "workPlanStatus": {
+        "$ref": "#/definitions/WorkPlanStatusView"
+      },
+      "workProtection": {
+        "$ref": "#/definitions/WorkProtection"
       }
     },
     "required": [
       "prepared",
       "identity",
-      "view"
+      "view",
+      "workPlan",
+      "workPlanReceipt",
+      "workPlanStatus",
+      "workPlanAction",
+      "workProtection"
     ],
     "title": "Responses",
     "type": "object",

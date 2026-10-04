@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 const TABLES: &[(&str, &str)] = &[
     (
         "application_plans",
-        "CREATE TABLE application_plans (plan_id TEXT PRIMARY KEY NOT NULL, plan BLOB NOT NULL CHECK(length(plan) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest)=64), generation INTEGER NOT NULL CHECK(generation>0), state TEXT NOT NULL CHECK(state IN ('active','paused','stopped','taken-over')), effects BLOB NOT NULL CHECK(length(effects) BETWEEN 1 AND 1024), expires_at INTEGER NOT NULL CHECK(expires_at>0))",
+        "CREATE TABLE application_plans (plan_id TEXT PRIMARY KEY NOT NULL, plan BLOB NOT NULL CHECK(length(plan) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest)=64), generation INTEGER NOT NULL CHECK(generation>0), state TEXT NOT NULL CHECK(state IN ('active','paused','stopped','taken-over')), effects BLOB NOT NULL CHECK(length(effects) BETWEEN 1 AND 1024), expires_at INTEGER NOT NULL CHECK(expires_at>0), cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision>=0))",
     ),
     (
         "application_actions",
@@ -80,11 +80,12 @@ struct StoredPlan {
     state: WorkPlanState,
     expires_at: u64,
     effects: Vec<AutomationEffect>,
+    cancellation_revision: Revision,
 }
 fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, ExecutionError> {
-    let (bytes, digest, generation, state, effects, expires): (Vec<u8>, String, i64, String, Vec<u8>, i64) =
-        c.query_row("SELECT plan,digest,generation,state,effects,expires_at FROM application_plans WHERE plan_id=?1", [id.to_string()],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(sql)?;
+    let (bytes, digest, generation, state, effects, expires, cancellation): (Vec<u8>, String, i64, String, Vec<u8>, i64, i64) =
+        c.query_row("SELECT plan,digest,generation,state,effects,expires_at,cancellation_revision FROM application_plans WHERE plan_id=?1", [id.to_string()],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).map_err(sql)?;
     let plan: WorkPlan = codec::decode(&bytes, MAX_INPUT_BYTES)?;
     plan.validate()?;
     let effects: Vec<AutomationEffect> = codec::decode(&effects, 1024)?;
@@ -92,10 +93,19 @@ fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, ExecutionError> {
         || plan.digest != digest
         || generation <= 0
         || expires <= 0
+        || cancellation < 0
         || effects != [AutomationEffect::SaveCandidate]
         || !plan.options.requests(AutomationEffect::SaveCandidate)
     {
         return Err(err(ErrorCode::CorruptLedger, "work-plan-authority"));
+    }
+    if cancellation as u64
+        > super::super::ledger::cancel_revision(c, plan.execution_input()?.task_id)?.get()
+    {
+        return Err(err(
+            ErrorCode::CorruptLedger,
+            "work-plan-cancellation-baseline",
+        ));
     }
     Ok(StoredPlan {
         plan,
@@ -106,6 +116,7 @@ fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, ExecutionError> {
         state: decode_state(&state)?,
         expires_at: expires as u64,
         effects,
+        cancellation_revision: Revision::new(cancellation as u64)?,
     })
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -185,6 +196,77 @@ fn active(c: &Connection, input: &FixedInput) -> Result<Option<StoredPlan>, Exec
     }
     Ok(Some(stored))
 }
+/// Only a renewed grant can acknowledge cancellation of its original budget
+/// owner. Cancellation of a child, or a later root cancellation, stays binding.
+pub(in crate::persistence) fn allows_cancelled_ancestor(
+    c: &Connection,
+    input: &FixedInput,
+    task: ExecutionId,
+) -> Result<bool, ExecutionError> {
+    let revision = super::super::ledger::cancel_revision(c, task)?;
+    if revision.get() == 0 {
+        return Ok(true);
+    }
+    let Some(stored) = active(c, input)? else {
+        return Ok(false);
+    };
+    Ok(task == stored.plan.execution_input()?.task_id && revision <= stored.cancellation_revision)
+}
+/// Generic cancellation of an automated root also revokes its plan in the
+/// same ledger transaction. A new adoption identity cannot bypass the stop.
+pub(in crate::persistence) fn stop_execution_plan_in(
+    c: &Connection,
+    task: ExecutionId,
+    action_id: ExecutionId,
+) -> Result<bool, ExecutionError> {
+    let id: Option<String> = c.query_row(
+        "SELECT p.plan_id FROM application_executions p JOIN execution_attempts a USING(attempt_id) WHERE a.task_id=?1 LIMIT 1",
+        [task.to_string()], |r| r.get(0),
+    ).optional().map_err(sql)?;
+    let Some(id) = id else {
+        return Ok(false);
+    };
+    let stored = load(c, ExecutionId::parse(&id)?)?;
+    if task != stored.plan.execution_input()?.task_id || stored.state == WorkPlanState::Stopped {
+        return Ok(false);
+    }
+    let control = ControlWorkPlan {
+        action_id,
+        plan_id: stored.plan.plan_id,
+        expected_generation: stored.lease.generation,
+        command: WorkPlanCommand::Stop,
+        confirmed: false,
+        expires_at: None,
+    };
+    let request = Request::Control { request: control };
+    if existing(c, &request)?.is_some() {
+        return Ok(false);
+    }
+    let lease = AutomationLease {
+        plan_id: stored.plan.plan_id,
+        generation: stored.lease.generation.next()?,
+    };
+    c.execute(
+        "UPDATE application_plans SET generation=?2,state='stopped' WHERE plan_id=?1",
+        params![lease.plan_id.to_string(), lease.generation.get() as i64],
+    )
+    .map_err(sql)?;
+    c.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND generation<?2)",
+        params![lease.plan_id.to_string(), lease.generation.get() as i64]).map_err(sql)?;
+    save(
+        c,
+        &request,
+        &WorkPlanReceipt {
+            cancellation_revision: stored.cancellation_revision,
+            action_id,
+            lease,
+            state: WorkPlanState::Stopped,
+            input: None,
+            parent_task: None,
+        },
+    )?;
+    Ok(true)
+}
 fn matches_scope(input: &InputEnvelope, root: &InputEnvelope) -> bool {
     input.project_id == root.project_id
         && input.operation == root.operation
@@ -224,25 +306,25 @@ pub(in crate::persistence) fn check_enqueue(
         }
     }
     let Some(stored) = stored else { return Ok(()) };
-    if !matches_scope(input.envelope(), &stored.plan.input) {
+    if !matches_scope(input.envelope(), stored.plan.execution_input()?) {
         return Err(err(ErrorCode::Unauthorized, "work-plan-scope"));
     }
     if let Some(parent) = parent {
         let ancestor: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM execution_budget_ancestry WHERE task_id=?1 AND ancestor_id=?2)",
-            params![parent.to_string(), stored.plan.input.task_id.to_string()], |r|r.get(0)).map_err(sql)?;
-        if !ancestor || input.envelope().task_id == stored.plan.input.task_id {
+            params![parent.to_string(), stored.plan.execution_input()?.task_id.to_string()], |r|r.get(0)).map_err(sql)?;
+        if !ancestor || input.envelope().task_id == stored.plan.execution_input()?.task_id {
             return Err(err(ErrorCode::Unauthorized, "work-plan-budget-owner"));
         }
         // A new generation may start only at the original budget anchor. An old
         // child cannot silently create another branch after a human stop.
-        if parent != stored.plan.input.task_id {
+        if parent != stored.plan.execution_input()?.task_id {
             let bytes: Vec<u8> = c.query_row("SELECT input FROM execution_attempts WHERE task_id=?1 ORDER BY sequence DESC LIMIT 1", [parent.to_string()], |r|r.get(0)).map_err(sql)?;
             if fixed(&bytes)?.envelope().automation != Some(stored.lease) {
                 return Err(err(ErrorCode::Cancelled, "work-plan-parent-generation"));
             }
         }
     } else {
-        let mut expected = stored.plan.input;
+        let mut expected = stored.plan.execution_input()?.clone();
         expected.automation = input.envelope().automation;
         if input.envelope() != &expected {
             return Err(err(ErrorCode::Unauthorized, "work-plan-root"));
@@ -285,7 +367,7 @@ pub(in crate::persistence) fn check_input(
             if id == lease.plan_id.to_string() && generation == lease.generation.get() as i64 =>
         {
             let stored = active(c, input)?.unwrap();
-            if !matches_scope(input.envelope(), &stored.plan.input)
+            if !matches_scope(input.envelope(), stored.plan.execution_input()?)
                 || !stored.effects.contains(&AutomationEffect::SaveCandidate)
             {
                 return Err(err(ErrorCode::Unauthorized, "work-plan-scope"));
@@ -402,12 +484,74 @@ impl ProjectStore {
             input,
         )
     }
+    pub fn work_plan(&self, plan_id: ExecutionId) -> Result<WorkPlan, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        Ok(load(c, plan_id)?.plan)
+    }
+    pub fn work_plan_receipt(
+        &self,
+        action_id: ExecutionId,
+    ) -> Result<Option<WorkPlanReceipt>, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        let row: Option<(Vec<u8>, String)> = c
+            .query_row(
+                "SELECT receipt,receipt_digest FROM application_actions WHERE action_id=?1",
+                [action_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(sql)?;
+        row.map(|(bytes, digest)| {
+            if codec::digest(&bytes) != digest {
+                return Err(err(ErrorCode::CorruptLedger, "work-plan-receipt"));
+            }
+            let receipt: WorkPlanReceipt = codec::decode(&bytes, MAX_INPUT_BYTES)?;
+            if receipt.action_id != action_id {
+                return Err(err(ErrorCode::CorruptLedger, "work-plan-receipt"));
+            }
+            Ok(receipt)
+        })
+        .transpose()
+    }
+    /// Pause grants before closing their session. Continuing requires renewed
+    /// consent; no budget reservation or exposure is changed here.
+    pub fn pause_active_work_plans(&mut self) -> Result<(), ExecutionError> {
+        let plans = {
+            let c = self
+                .connection()
+                .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+            let mut statement = c
+                .prepare("SELECT plan_id,generation FROM application_plans WHERE state='active'")
+                .map_err(sql)?;
+            statement
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .map_err(sql)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(sql)?
+        };
+        for (id, generation) in plans {
+            self.control_work_plan(&ControlWorkPlan {
+                action_id: ExecutionId::new(),
+                plan_id: ExecutionId::parse(&id)?,
+                expected_generation: Revision::new(generation as u64)?,
+                command: WorkPlanCommand::Pause,
+                confirmed: false,
+                expires_at: None,
+            })?;
+        }
+        Ok(())
+    }
     pub fn work_plan_status(&self, plan_id: ExecutionId) -> Result<WorkPlanStatus, ExecutionError> {
         let c = self
             .connection()
             .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
         let stored = load(c, plan_id)?;
         Ok(WorkPlanStatus {
+            cancellation_revision: stored.cancellation_revision,
             lease: stored.lease,
             state: stored.state,
             effects: stored.effects,
@@ -453,7 +597,7 @@ impl ProjectStore {
         let bytes = codec::encode(plan, MAX_INPUT_BYTES)?;
         let effects = codec::encode(&authorization.effects, 1024)?;
         tx.execute(
-            "INSERT INTO application_plans VALUES (?1,?2,?3,1,'active',?4,?5)",
+            "INSERT INTO application_plans VALUES (?1,?2,?3,1,'active',?4,?5,0)",
             params![
                 plan.plan_id.to_string(),
                 bytes,
@@ -467,9 +611,10 @@ impl ProjectStore {
             plan_id: plan.plan_id,
             generation: Revision::new(1)?,
         };
-        let mut input = plan.input.clone();
+        let mut input = plan.execution_input()?.clone();
         input.automation = Some(lease);
         let receipt = WorkPlanReceipt {
+            cancellation_revision: Revision::new(0)?,
             action_id: authorization.action_id,
             lease,
             state: WorkPlanState::Active,
@@ -503,6 +648,7 @@ impl ProjectStore {
             WorkPlanCommand::Continue => WorkPlanState::Active,
         };
         let mut expires = stored.expires_at;
+        let mut cancellation_revision = stored.cancellation_revision;
         let lease = AutomationLease {
             plan_id: control.plan_id,
             generation: stored.lease.generation.next()?,
@@ -516,19 +662,21 @@ impl ProjectStore {
                 .ok_or_else(|| err(ErrorCode::InvalidInput, "work-plan-expiry"))?;
             expiry(expires)?;
             self.verify_work_plan(&stored.plan)?;
+            cancellation_revision =
+                super::super::ledger::cancel_revision(&tx, stored.plan.execution_input()?.task_id)?;
             let anchor: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
-                    [stored.plan.input.task_id.to_string()],
+                    [stored.plan.execution_input()?.task_id.to_string()],
                     |r| r.get(0),
                 )
                 .map_err(sql)?;
-            let mut input = stored.plan.input.clone();
+            let mut input = stored.plan.execution_input()?.clone();
             input.automation = Some(lease);
             let parent = if anchor {
                 input.task_id = ExecutionId::new();
                 input.attempt_id = ExecutionId::new();
-                Some(stored.plan.input.task_id)
+                Some(stored.plan.execution_input()?.task_id)
             } else {
                 None
             };
@@ -540,17 +688,19 @@ impl ProjectStore {
             (None, None)
         };
         tx.execute(
-            "UPDATE application_plans SET generation=?2,state=?3,expires_at=?4 WHERE plan_id=?1",
+            "UPDATE application_plans SET generation=?2,state=?3,expires_at=?4,cancellation_revision=?5 WHERE plan_id=?1",
             params![
                 control.plan_id.to_string(),
                 lease.generation.get() as i64,
                 encode_state(state),
-                expires as i64
+                expires as i64,
+                cancellation_revision.get() as i64
             ],
         )
         .map_err(sql)?;
         tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND generation<?2)",params![control.plan_id.to_string(),lease.generation.get() as i64]).map_err(sql)?;
         let receipt = WorkPlanReceipt {
+            cancellation_revision,
             action_id: control.action_id,
             lease,
             state,
@@ -575,6 +725,7 @@ fn validate_receipt(
                 && request.effects == stored.effects
                 && request.expires_at > 0
                 && request.expires_at <= i64::MAX as u64
+                && receipt.cancellation_revision.get() == 0
                 && receipt.lease.generation.get() == 1
                 && receipt.state == WorkPlanState::Active
                 && receipt.input.is_some()
@@ -609,19 +760,19 @@ fn validate_receipt(
         let fixed = FixedInput::capture(input.clone())?;
         if fixed.envelope() != input
             || input.automation != Some(receipt.lease)
-            || !matches_scope(input, &stored.plan.input)
+            || !matches_scope(input, stored.plan.execution_input()?)
         {
             return Err(err(ErrorCode::CorruptLedger, "work-plan-receipt-input"));
         }
         if let Some(parent) = receipt.parent_task {
-            if parent != stored.plan.input.task_id
+            if parent != stored.plan.execution_input()?.task_id
                 || input.task_id == parent
-                || input.attempt_id == stored.plan.input.attempt_id
+                || input.attempt_id == stored.plan.execution_input()?.attempt_id
             {
                 return Err(err(ErrorCode::CorruptLedger, "work-plan-receipt-parent"));
             }
         } else {
-            let mut expected = stored.plan.input.clone();
+            let mut expected = stored.plan.execution_input()?.clone();
             expected.automation = Some(receipt.lease);
             if input != &expected {
                 return Err(err(ErrorCode::CorruptLedger, "work-plan-receipt-root"));
@@ -657,6 +808,7 @@ fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), Execution
     }
     let mut previous_state = None;
     let mut expires = 0;
+    let mut cancellation = Revision::new(0)?;
     let mut expected = 1;
     for (generation, (request, receipt)) in &history {
         if *generation != expected {
@@ -677,6 +829,13 @@ fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), Execution
                             "work-plan-generation-history",
                         ));
                     }
+                    if receipt.cancellation_revision < cancellation {
+                        return Err(err(
+                            ErrorCode::CorruptLedger,
+                            "work-plan-cancellation-history",
+                        ));
+                    }
+                    cancellation = receipt.cancellation_revision;
                     expires = request.expires_at.unwrap();
                 }
             }
@@ -687,12 +846,19 @@ fn validate_history(c: &Connection, stored: &StoredPlan) -> Result<(), Execution
                 ));
             }
         }
+        if receipt.cancellation_revision != cancellation {
+            return Err(err(
+                ErrorCode::CorruptLedger,
+                "work-plan-cancellation-history",
+            ));
+        }
         previous_state = Some(receipt.state);
         expected += 1;
     }
     if expected - 1 != stored.lease.generation.get()
         || previous_state != Some(stored.state)
         || expires != stored.expires_at
+        || cancellation != stored.cancellation_revision
     {
         return Err(err(ErrorCode::CorruptLedger, "work-plan-current-authority"));
     }
@@ -776,7 +942,7 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
                 let stored = load(c, lease.plan_id)?;
                 if generation == 0
                     || generation as u64 > stored.lease.generation.get()
-                    || !matches_scope(input.envelope(), &stored.plan.input)
+                    || !matches_scope(input.envelope(), stored.plan.execution_input()?)
                 {
                     return Err(err(ErrorCode::CorruptLedger, "work-plan-execution"));
                 }

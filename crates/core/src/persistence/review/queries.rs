@@ -42,7 +42,7 @@ const WANTED: &str = "WITH wanted AS MATERIALIZED (
            json_extract(value,'$[1]') AS basis FROM json_each(?3))";
 
 /// A constant number of statements for any bounded number of current units.
-pub(super) fn targets_in(
+pub(in crate::persistence) fn targets_in(
     connection: &Connection,
     project_id: ExecutionId,
     units: &[ExecutionId],

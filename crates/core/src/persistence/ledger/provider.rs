@@ -197,7 +197,7 @@ pub(super) fn record_input(
         let parent_input = load_input(c, parse_id(parent_attempt)?)?;
         if !inherits_configuration(input, &parent_input)
             || limit > parent_limit as u64
-            || cancel_revision(c, parent)?.get() > 0
+            || !super::super::application::allows_cancelled_ancestor(c, input, parent)?
             || !e.items.iter().all(|i| {
                 parent_input.envelope().items.iter().any(|p| {
                     p.scope == i.scope
@@ -354,9 +354,22 @@ impl ProjectStore {
         let tx = self.execution_write()?;
         super::super::application::check_input(&tx, &request.input)?;
         let e = request.input.envelope();
-        let cancelled:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_budget_ancestry x JOIN execution_cancellations c ON c.task_id=x.ancestor_id WHERE x.task_id=?1)",[e.task_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
-        if cancelled {
-            return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
+        let ancestors = {
+            let mut statement = tx.prepare("SELECT DISTINCT x.ancestor_id FROM execution_budget_ancestry x JOIN execution_cancellations c ON c.task_id=x.ancestor_id WHERE x.task_id=?1").map_err(sql_error)?;
+            statement
+                .query_map([e.task_id.to_string()], |r| r.get::<_, String>(0))
+                .map_err(sql_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(sql_error)?
+        };
+        for ancestor in ancestors {
+            if !super::super::application::allows_cancelled_ancestor(
+                &tx,
+                &request.input,
+                parse_id(ancestor)?,
+            )? {
+                return Err(error(ErrorCode::Cancelled, "ai-cancelled"));
+            }
         }
         let state:(String,String)=tx.query_row("SELECT execution,dispatch_token FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![e.attempt_id.to_string(),request.item_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).map_err(sql_error)?;
         if state != ("dispatched".into(), request.dispatch_token.to_string()) {

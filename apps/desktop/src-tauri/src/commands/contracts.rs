@@ -225,6 +225,14 @@ struct AiRequests {
     preview: execution::ai::AiPreviewRequest,
     start: execution::ai::AiStartRequest,
     read: execution::ai::AiReadRequest,
+    work_plan_prepare: execution::work_plans::WorkPlanPrepareRequest,
+    work_plan_authorize: execution::work_plans::WorkPlanAuthorizeRequest,
+    work_plan_start: execution::work_plans::WorkPlanStartRequest,
+    work_plan_control: execution::work_plans::WorkPlanControlRequest,
+    work_plan_status: execution::work_plans::WorkPlanStatusRequest,
+    work_plan_action: execution::work_plans::WorkPlanActionRequest,
+    work_protection_read: execution::work_plans::WorkProtectionReadRequest,
+    work_protection_set: execution::work_plans::WorkProtectionSetRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -233,6 +241,11 @@ struct AiResponses {
     prepared: execution::ai::AiPrepared,
     identity: tsumugi_core::execution::ExecutionId,
     view: execution::ai::AiView,
+    work_plan: execution::work_plans::WorkPlanView,
+    work_plan_receipt: execution::work_plans::WorkPlanReceiptView,
+    work_plan_status: execution::work_plans::WorkPlanStatusView,
+    work_plan_action: Option<execution::work_plans::WorkPlanReceiptView>,
+    work_protection: tsumugi_core::application::WorkProtection,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]

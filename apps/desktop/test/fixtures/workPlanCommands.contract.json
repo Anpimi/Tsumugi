@@ -1,0 +1,289 @@
+{
+  "requests": {
+    "prepare": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "locale": "zh-CN",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ],
+      "sessionToken": "isolated-ai-arena-session",
+      "config": {
+        "maxItems": 20,
+        "tokenField": "max_tokens",
+        "shareTerms": true,
+        "concurrency": 1,
+        "timeoutSeconds": 60,
+        "model": "synthetic-model",
+        "shareContext": true,
+        "maxRequests": 20,
+        "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+        "maxOutputTokens": 2000,
+        "credentialEnv": "",
+        "maxRetries": 0
+      },
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false
+      }
+    },
+    "authorize": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "confirmed": true,
+      "effects": [
+        "save-candidate"
+      ],
+      "expiresAt": "18446744073709551615"
+    },
+    "start": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "expectedGeneration": "1"
+    },
+    "control": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "expectedGeneration": "9007199254740993",
+      "command": "pause",
+      "confirmed": false,
+      "expiresAt": null
+    },
+    "status": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "planId": "60000000-0000-4000-8000-000000000007"
+    },
+    "action": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "actionId": "60000000-0000-4000-8000-000000000008"
+    },
+    "protectionRead": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN"
+    },
+    "protectionSet": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN",
+      "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+      "selectionId": null,
+      "expectedRevision": "9007199254740993",
+      "protected": false,
+      "confirmedRelease": true
+    }
+  },
+  "responses": {
+    "plan": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "locale": "zh-CN",
+      "options": {
+        "stages": [
+          {
+            "stage": "generation",
+            "mode": "assisted"
+          }
+        ],
+        "selectionPolicy": "candidates-only",
+        "adoptResources": false,
+        "deliver": false
+      },
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        }
+      ],
+      "preview": {
+        "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "items": [
+          {
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "targetLocale": "zh-CN",
+            "omissions": [],
+            "resourceBaseline": "18446744073709551615",
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "context": {
+              "revisionId": "30000000-0000-4000-8000-000000000008",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "locale": "zh-CN",
+              "text": "Translator note 中文 👩🏽‍💻 é",
+              "reason": "Reviewed context",
+              "previousRevisionId": null
+            },
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "terms": [
+              {
+                "target": "木桶 👩🏽‍💻 é",
+                "revisionId": "60000000-0000-4000-8000-000000000006",
+                "source": "barrel",
+                "protected": true
+              }
+            ],
+            "sourceText": "Barrel {name}",
+            "sourceLocale": "en"
+          }
+        ],
+        "config": {
+          "maxItems": 20,
+          "tokenField": "max_tokens",
+          "shareTerms": true,
+          "concurrency": 1,
+          "timeoutSeconds": 60,
+          "model": "synthetic-model",
+          "shareContext": true,
+          "maxRequests": 20,
+          "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+          "maxOutputTokens": 2000,
+          "credentialEnv": "",
+          "maxRetries": 0
+        },
+        "recipe": "direct-translation-1"
+      },
+      "attemptId": "60000000-0000-4000-8000-000000000002"
+    },
+    "receipt": {
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "1"
+      },
+      "state": "active",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "parentTask": null
+    },
+    "control": {
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "9007199254740994"
+      },
+      "state": "paused",
+      "attemptId": null,
+      "parentTask": null
+    },
+    "status": {
+      "plan": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "locale": "zh-CN",
+        "options": {
+          "stages": [
+            {
+              "stage": "generation",
+              "mode": "assisted"
+            }
+          ],
+          "selectionPolicy": "candidates-only",
+          "adoptResources": false,
+          "deliver": false
+        },
+        "scope": [
+          {
+            "unitId": "60000000-0000-4000-8000-000000000003",
+            "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+            "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+            "nativeKey": "barrel",
+            "selectionId": null
+          }
+        ],
+        "preview": {
+          "digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "items": [
+            {
+              "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+              "targetLocale": "zh-CN",
+              "omissions": [],
+              "resourceBaseline": "18446744073709551615",
+              "unitId": "60000000-0000-4000-8000-000000000003",
+              "context": {
+                "revisionId": "30000000-0000-4000-8000-000000000008",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "locale": "zh-CN",
+                "text": "Translator note 中文 👩🏽‍💻 é",
+                "reason": "Reviewed context",
+                "previousRevisionId": null
+              },
+              "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+              "nativeKey": "barrel",
+              "terms": [
+                {
+                  "target": "木桶 👩🏽‍💻 é",
+                  "revisionId": "60000000-0000-4000-8000-000000000006",
+                  "source": "barrel",
+                  "protected": true
+                }
+              ],
+              "sourceText": "Barrel {name}",
+              "sourceLocale": "en"
+            }
+          ],
+          "config": {
+            "maxItems": 20,
+            "tokenField": "max_tokens",
+            "shareTerms": true,
+            "concurrency": 1,
+            "timeoutSeconds": 60,
+            "model": "synthetic-model",
+            "shareContext": true,
+            "maxRequests": 20,
+            "endpoint": "http://127.0.0.1:4000/v1/chat/completions",
+            "maxOutputTokens": 2000,
+            "credentialEnv": "",
+            "maxRetries": 0
+          },
+          "recipe": "direct-translation-1"
+        },
+        "attemptId": "60000000-0000-4000-8000-000000000002"
+      },
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "1"
+      },
+      "state": "active",
+      "effects": [
+        "save-candidate"
+      ],
+      "expiresAt": "18446744073709551615"
+    },
+    "action": {
+      "actionId": "60000000-0000-4000-8000-000000000008",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "1"
+      },
+      "state": "active",
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "parentTask": null
+    },
+    "protection": {
+      "unitId": "60000000-0000-4000-8000-000000000003",
+      "locale": "zh-CN",
+      "revision": "9007199254740994",
+      "protected": false
+    }
+  }
+}

@@ -6,11 +6,14 @@ translation and resource authorities. Both operations are read-only and use one
 SQLite snapshot. The plan is an internal application contract, not a stable plugin
 SDK or permission grant.
 
-`ProjectStore::prepare_work_plan` accepts the existing `AiConfig`, one target
+`ProjectStore::prepare_work_plan` accepts an optional `AiConfig`, one target
 locale, a bounded set of source unit IDs and `PlanOptions`. It returns a `WorkPlan`
-with a new plan identity, fixed execution input, observed translation selection
-identities, explicit stage choices and a canonical digest. Re-reading its fixed
-input preserves the task, attempt, item and adoption-unit identities.
+with a new plan identity, captured source revisions and selection identities,
+explicit stage choices and a canonical digest. A manual plan requires no model
+configuration and carries no execution input or permission. An assisted generation
+plan includes fixed execution input; re-reading it preserves the task, attempt,
+item and adoption-unit identities. Unused model configuration is refused for
+manual generation so it cannot accidentally acquire a provider scope.
 
 Stages cover understanding, resources, generation, checks and delivery. Each
 stage can be manual, assisted or skipped; the requested list may omit stages. The
@@ -35,9 +38,9 @@ renames and global resource-clock increments do not invalidate a plan whose
 actual scoped evidence is unchanged. A successful comparison is evidence
 validation, not execution or mutation authorization.
 
-Schema 13 stores plan authority, control generations, action receipts, execution
+Schema 14 stores plan authority, control generations, action receipts, execution
 associations and unit protection beside the existing execution ledger. This
-initial development build opens current schema 13 only. Unsupported development
+initial development build opens current schema 14 only. Unsupported development
 projects are preserved and refused; recreate projects and reimport source files.
 
 `authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit
@@ -57,7 +60,11 @@ basis. After initial enqueue its returned work is a child of the original task:
 submit it with the returned `parent_task` so all ancestor budgets remain charged.
 Control never refunds requests, resets unknown exposure or rolls back committed
 facts. An old action returns its original receipt; use `work_plan_status` for the
-current state. Human task cancellation remains a separate execution boundary.
+current state. Cancelling an automated root task also stops its plan in the same
+transaction. Continuing explicitly acknowledges that original root cancellation
+baseline; a newer root cancellation or cancellation of a child still prevents
+requests. Closing the project pauses all active grants, including grants without
+queued work, and signals their workers. Reopening requires explicit continuation.
 
 Manual saves and manual selections protect the unit in the same transaction.
 Protection survives project reopen. Explicit release requires confirmation and
@@ -65,9 +72,14 @@ matching protection revision, source revision and selection identity. Historical
 release receipts report their original result without clearing newer protection.
 Saving a candidate does not select it or give human language-review approval.
 
-The desktop still uses its existing explicit AI preview/start and candidate
-adoption flow. The new authorization/control API is currently a Core integration
-contract; Desktop controls, manual planning without a model, automatic selection,
+The desktop command API uses the existing project session and execution runtime
+for plan preparation, authorization, start, control, status and action recovery,
+and protection reads/writes. Authorization and start are separate operations: a
+saved authorization is not reported as a failed authorization when later enqueue
+cannot run. Start uses the stored receipt and current grant, rather than accepting
+raw execution input from the client. Historical acknowledgements cannot reactivate
+a stopped generation. The user interface still uses its existing explicit AI
+preview/start and candidate adoption flow; plan controls, automatic selection,
 resource adoption and delivery remain unfinished. The API is not a stable plugin
 SDK. A model or plugin must not receive unrestricted access to human-authorization
 methods, `ProjectStore` or the raw runtime; its host must carry the issued lease

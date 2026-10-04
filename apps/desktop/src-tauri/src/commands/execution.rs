@@ -37,7 +37,10 @@ macro_rules! handlers {
         release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
-        arena::reveal_arena_identity,arena::save_arena_merge,$($extra),*
+        arena::reveal_arena_identity,arena::save_arena_merge,
+        work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,
+        work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,
+        work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
     ] };
 }
 pub(super) fn handler<R: tauri::Runtime>()
@@ -110,6 +113,7 @@ pub(super) struct ExecutionHost {
     release: release::ReleaseSession,
     ai: ai::AiSession,
     arena: arena::ArenaSession,
+    work_plans: work_plans::WorkPlanSession,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -132,6 +136,7 @@ impl ExecutionHost {
             release: release::ReleaseSession::default(),
             ai: ai::AiSession::default(),
             arena: arena::ArenaSession::default(),
+            work_plans: work_plans::WorkPlanSession::default(),
         };
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::SourceRunner))
@@ -150,14 +155,24 @@ impl ExecutionHost {
             .map_err(map_read)?;
         let provider_service = Arc::new(tsumugi_core::ai::provider::ProviderService::default());
         host.runtime
-            .register_with_policy(Arc::new(tsumugi_core::ai::AiRunner::with_service(provider_service.clone())), tsumugi_core::execution::RecoveryPolicy::ExternalUnknown)
+            .register_with_policy(
+                Arc::new(tsumugi_core::ai::AiRunner::with_service(
+                    provider_service.clone(),
+                )),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            )
             .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::ai::OPERATION.into(),
             Arc::new(tsumugi_core::AiAdoptionHandler),
         );
         host.runtime
-            .register_with_policy(Arc::new(tsumugi_core::ai::arena::ArenaRunner::with_service(provider_service)), tsumugi_core::execution::RecoveryPolicy::ExternalUnknown)
+            .register_with_policy(
+                Arc::new(tsumugi_core::ai::arena::ArenaRunner::with_service(
+                    provider_service,
+                )),
+                tsumugi_core::execution::RecoveryPolicy::ExternalUnknown,
+            )
             .map_err(map_read)?;
         host.handlers.insert(
             tsumugi_core::ai::arena::OPERATION.into(),
@@ -365,6 +380,7 @@ pub(super) mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;
+pub(super) mod work_plans;
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     SessionRequest {}
