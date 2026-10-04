@@ -16,6 +16,7 @@ const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
 mod queries;
+pub(super) use queries::read_snapshot;
 #[cfg(test)]
 mod query_tests;
 mod views;

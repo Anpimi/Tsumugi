@@ -4,6 +4,7 @@
 //! remaining independent of the desktop webview.
 
 pub mod ai;
+pub mod application;
 pub mod content;
 pub mod execution;
 mod persistence;

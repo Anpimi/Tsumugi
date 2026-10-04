@@ -14,6 +14,7 @@ use rusqlite::{Connection, OpenFlags, params};
 use crate::{ChangeOutcome, MetadataError, ProjectId, ProjectMetadata};
 
 mod ai;
+mod application;
 mod changes;
 #[cfg(test)]
 mod current_tests;
