@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::review::CHECK_VERSION;
 mod checks;
 pub use checks::{ComputedReviewCheck, PreparedReviewCheck};
+pub(super) use checks::record_check_in;
 const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
@@ -579,7 +580,7 @@ fn latest_decision(
         .map(Option::flatten)
 }
 
-fn check_by_action(
+pub(super) fn check_by_action(
     connection: &Connection,
     project_id: ExecutionId,
     action_id: ExecutionId,
@@ -1923,7 +1924,7 @@ pub(super) mod tests {
             .unwrap();
     }
 
-    pub(super) fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
+    pub(in crate::persistence) fn adopt_source(store: &mut ProjectStore, bytes: &[u8]) {
         adopt_source_files(
             store,
             br#"{"UniqueID":"Review.Test","Name":"Review","Version":"1.0.0","EntryDll":"Review.dll"}"#,
@@ -2008,7 +2009,7 @@ pub(super) mod tests {
         }
     }
 
-    pub(super) fn fixture() -> (
+    pub(in crate::persistence) fn fixture() -> (
         tempfile::TempDir,
         ProjectStore,
         ExecutionId,
@@ -2030,7 +2031,7 @@ pub(super) mod tests {
             page.rows.iter().map(|row| row.unit_id).collect(),
         )
     }
-    pub(super) fn translate(
+    pub(in crate::persistence) fn translate(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,

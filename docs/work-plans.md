@@ -38,25 +38,29 @@ renames and global resource-clock increments do not invalidate a plan whose
 actual scoped evidence is unchanged. A successful comparison is evidence
 validation, not execution or mutation authorization.
 
-Schema 14 stores plan authority, control generations, action receipts, execution
-associations and unit protection beside the existing execution ledger. This
-initial development build opens current schema 14 only. Unsupported development
+Schema 15 stores plan authority, control generations, action receipts, execution
+associations, checked selection receipts and unit protection beside the existing
+execution ledger. This initial development build opens current schema 15 only. Unsupported development
 projects are preserved and refused; recreate projects and reimport source files.
 
 `authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit
-confirmation, the exact plan digest, candidate-saving permission and an expiry
+confirmation, the exact plan digest, the exact supported effect set and an expiry
 within the next 24 hours. It rechecks the plan inside the existing write
 transaction. Semantic answers do not form part of this permission request. The
 returned execution input carries an `AutomationLease`; the lease refers to stored
-authority and cannot grant effects itself. Other planned automatic effects are
-currently refused by this authorization API until their mutation policies exist.
+authority and cannot grant effects itself. The effect set includes candidate saving, plus checks and the chosen selection
+policy when selection is requested. Selection requires the assisted check stage.
+Resource adoption, delivery and standalone automated checks remain refused until
+their mutation contracts are assembled.
 
 Pause, stop and takeover advance a persisted generation and cancel old queued
 work. The runtime signals running workers; enqueue, dispatch, HTTP reservation
 and adoption recheck authority. Late outputs and uncertain request reservations
 remain evidence. A new action identity cannot regain a stopped input's authority.
 Continue requires a new explicit confirmation, an expiry and a current plan
-basis. After initial enqueue its returned work is a child of the original task:
+basis. The plan's own checked selections count as progress; a later manual or
+other-plan selection changes the basis and requires a new plan. After initial
+enqueue its returned work is a child of the original task:
 submit it with the returned `parent_task` so all ancestor budgets remain charged.
 Control never refunds requests, resets unknown exposure or rolls back committed
 facts. An old action returns its original receipt; use `work_plan_status` for the
@@ -71,6 +75,36 @@ Protection survives project reopen. Explicit release requires confirmation and
 matching protection revision, source revision and selection identity. Historical
 release receipts report their original result without clearing newer protection.
 Saving a candidate does not select it or give human language-review approval.
+
+
+`prepare_automatic_selection` accepts a saved AI revision from this plan generation
+and returns an opaque, store-created capture. Its `compute` method runs the current
+bundled deterministic checks on owned source, candidate and term data without a
+SQLite transaction. `commit_automatic_selection` rechecks the current grant,
+source, selection, shared resources, scoped resource changes and protection in a
+short transaction. A candidate from another plan, revoked generation, cancelled
+attempt or changed basis cannot acquire selection authority. Selecting one entry
+does not invalidate untouched entries of the same plan.
+
+The initial `checked-selection-1` policy supports missing-only selection or
+explicit replacement of the captured selection. Protection always prevents it;
+missing-only also preserves existing selections. Incomplete checks, findings,
+failed or unavailable rules prevent selection, even when a warning could be
+waived manually elsewhere. The action receipt keeps the candidate check evidence
+and its blocked outcome without deleting the candidate or attaching those results
+to a different current translation. Successful selection and the ordinary QA
+record for its new basis commit together. Policy identity, plan lease, observed
+protection and immutable receipt remain separate from human review decisions;
+selection never transfers approval or makes a release eligible.
+
+A human-facing host must record protection through `set_work_protection` before
+accepting an editable draft. This uses the existing persistent protection gate;
+draft text is not sent to automation. Hosts must retain unknown protection writes
+and keep input protected until reconciliation. The current desktop automatic
+selection flow is not yet assembled, so these policies are currently available
+only to trusted Core application callers. Current bundled checks are limited to
+the existing validator profile; they do not certify future domain check sets or
+external model quality.
 
 The desktop command API uses the existing project session and execution runtime
 for plan preparation, authorization, start, control, status and action recovery,

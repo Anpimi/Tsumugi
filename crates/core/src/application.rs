@@ -217,7 +217,7 @@ impl PlanOptions {
                 .iter()
                 .any(|choice| !stages.insert(choice.stage))
             || (self.selection_policy != SelectionPolicy::CandidatesOnly
-                && !self.assisted(WorkStage::Generation))
+                && (!self.assisted(WorkStage::Generation) || !self.assisted(WorkStage::Checks)))
             || (self.adopt_resources && !self.assisted(WorkStage::Resources))
             || (self.deliver && !self.assisted(WorkStage::Delivery))
         {
@@ -249,6 +249,76 @@ impl PlanOptions {
             AutomationEffect::Deliver => self.deliver,
         }
     }
+
+    /// The current application can grant candidate generation, deterministic
+    /// checks and bounded selection. Resource adoption and delivery require
+    /// separate implemented contracts, rather than an enum granting permission.
+    pub(crate) fn authorization_effects(&self) -> Result<Vec<AutomationEffect>, ExecutionError> {
+        self.validate()?;
+        if !self.requests(AutomationEffect::SaveCandidate) || self.adopt_resources || self.deliver {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "work-plan-effect",
+            ));
+        }
+        if self.requests(AutomationEffect::RunChecks)
+            && self.selection_policy == SelectionPolicy::CandidatesOnly
+        {
+            // Standalone automatic checking is not yet assembled. The current
+            // check permission is exercised by the checked-selection service.
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "work-plan-effect",
+            ));
+        }
+        Ok([
+            AutomationEffect::SaveCandidate,
+            AutomationEffect::RunChecks,
+            AutomationEffect::SelectMissing,
+            AutomationEffect::ReplaceCapturedSelection,
+        ]
+        .into_iter()
+        .filter(|effect| self.requests(*effect))
+        .collect())
+    }
+}
+
+/// The host supplies only a saved AI revision and a durable lease. Core derives
+/// the observed scope and policy from the authorized plan, never from model text.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutomaticSelectionRequest {
+    pub project_id: ExecutionId,
+    pub action_id: ExecutionId,
+    pub lease: AutomationLease,
+    pub unit_id: ExecutionId,
+    pub locale: String,
+    pub revision_id: ExecutionId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AutomaticSelectionBlock {
+    Protected,
+    AlreadySelected,
+    Checks,
+}
+
+/// A policy action is distinct from a human review decision. Replaying this
+/// receipt does not select again or restore an older authority or check basis.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutomaticSelectionReceipt {
+    pub request: AutomaticSelectionRequest,
+    pub policy_version: String,
+    pub policy: SelectionPolicy,
+    pub protection_revision: Revision,
+    pub candidate_basis: crate::ReviewBasis,
+    pub validator_version: String,
+    pub rules: Vec<crate::CheckRuleResult>,
+    pub blocked: Option<AutomaticSelectionBlock>,
+    pub selection: Option<crate::TranslationSelection>,
+    pub check_run_id: Option<ExecutionId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

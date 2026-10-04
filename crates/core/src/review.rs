@@ -5,6 +5,20 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 pub(crate) const CHECK_VERSION: &str = "smapi-prebuild-2";
+pub(crate) const REQUIRED_RULES: [&str; 4] = [
+    "required-translation",
+    "placeholders",
+    "format",
+    "terminology",
+];
+
+pub(crate) fn complete_rules(rules: &[CheckRuleResult]) -> bool {
+    rules.len() == REQUIRED_RULES.len()
+        && rules
+            .iter()
+            .zip(REQUIRED_RULES)
+            .all(|(rule, required)| rule.rule == required)
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct CheckInput {
@@ -59,20 +73,15 @@ fn result(rule: &str, findings: Vec<CheckFinding>, reason: Option<&str>) -> Chec
 }
 
 pub(crate) fn interrupted_rules(status: &str, reason: &str) -> Vec<CheckRuleResult> {
-    [
-        "required-translation",
-        "placeholders",
-        "format",
-        "terminology",
-    ]
-    .into_iter()
-    .map(|rule| CheckRuleResult {
-        rule: rule.to_owned(),
-        status: status.to_owned(),
-        reason: Some(reason.to_owned()),
-        findings: Vec::new(),
-    })
-    .collect()
+    REQUIRED_RULES
+        .into_iter()
+        .map(|rule| CheckRuleResult {
+            rule: rule.to_owned(),
+            status: status.to_owned(),
+            reason: Some(reason.to_owned()),
+            findings: Vec::new(),
+        })
+        .collect()
 }
 
 /// The first bundled format uses named `{{token}}` markers. A malformed marker

@@ -17,11 +17,11 @@ pub use persistence::{
 };
 pub use persistence::{
     AttemptView, BuildLocaleChoice, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,
-    CheckRuleResult, CheckRun, ComputedReviewCheck, ContextCapture, ContextItem, ContextOmission,
+    CheckRuleResult, CheckRun, ComputedAutomaticSelection, ComputedReviewCheck, ContextCapture, ContextItem, ContextOmission,
     ContextRevision, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, Eligibility,
     EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite, GlossaryCapture,
     GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason, PersistenceError,
-    PersistenceErrorCode, PersistenceStage, PreparedReviewCheck, ProjectStore, Reconciliation,
+    PersistenceErrorCode, PersistenceStage, PreparedAutomaticSelection, PreparedReviewCheck, ProjectStore, Reconciliation,
     ProviderBudget, RecoveryPlan, RecoveryUnit, ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind,
     ReleaseView, ReleasedArtifact, ResourceChangeKind, ResourceDecision, ResourceDecisionKind,
     ResourceDecisionResult, ResourceImpactConfidence, ResourceImpactKind, ResourceImpactStatus,

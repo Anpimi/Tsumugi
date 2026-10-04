@@ -531,7 +531,7 @@ fn check_target(
     Ok(())
 }
 
-fn current_selection(
+pub(super) fn current_selection(
     connection: &Connection,
     unit: ExecutionId,
     locale: &str,
@@ -569,7 +569,7 @@ fn current_selection(
     .transpose()
 }
 
-fn selection_by_action(
+pub(super) fn selection_by_action(
     connection: &Connection,
     action: ExecutionId,
 ) -> Result<Option<(TranslationSelection, String)>, ExecutionError> {
@@ -612,7 +612,7 @@ fn selection_by_action(
     .transpose()
 }
 
-fn check_expected(
+pub(super) fn check_expected(
     current: &Option<TranslationSelection>,
     expected: Option<ExecutionId>,
 ) -> Result<u64, ExecutionError> {
@@ -635,7 +635,7 @@ fn check_expected(
     })
 }
 
-fn insert_selection(
+pub(super) fn insert_selection(
     connection: &Connection,
     project: ExecutionId,
     unit: ExecutionId,

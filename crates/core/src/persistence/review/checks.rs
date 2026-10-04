@@ -209,29 +209,15 @@ impl ProjectStore {
         if cancellation.is_requested() {
             rules = interrupted_rules("cancelled", "Cancelled before completion");
         }
-        let mut rules_json = serde_json::to_string(&rules)
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        if rules_json.len() > 65_536 {
-            rules_json = serde_json::to_string(&interrupted_rules("failed", "limit-exceeded"))
-                .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        }
-        let basis_json = serde_json::to_string(&target.basis_evidence)
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-basis"))?;
-        if cancellation.is_requested() {
-            rules_json = serde_json::to_string(&interrupted_rules(
-                "cancelled",
-                "Cancelled before completion",
-            ))
-            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
-        }
-        transaction.execute(
-            "INSERT INTO review_checks
-             (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![ExecutionId::new().to_string(), capture.action_id.to_string(),
-                capture.project_id.to_string(), target.unit_id.to_string(), target.locale,
-                target.basis, basis_json, CHECK_VERSION, rules_json, capture.request_digest],
-        ).map_err(sql)?;
+        record_check_in(
+            &transaction,
+            capture.project_id,
+            capture.action_id,
+            &capture.request_digest,
+            &target,
+            &rules,
+            cancellation,
+        )?;
         commit_observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-check-commit")
@@ -245,6 +231,45 @@ impl ProjectStore {
         .map(|item| item.0)
         .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-receipt"))
     }
+}
+
+/// Record computed rules against an already rechecked target inside the caller's
+/// transaction. Both manual checks and automatic selection use this authority.
+pub(in crate::persistence) fn record_check_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    request_digest: &str,
+    target: &ReviewTarget,
+    rules: &[CheckRuleResult],
+    cancellation: &Cancellation,
+) -> Result<CheckRun, ExecutionError> {
+    let mut rules_json = serde_json::to_string(rules)
+        .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
+    if rules_json.len() > 65_536 {
+        rules_json = serde_json::to_string(&interrupted_rules("failed", "limit-exceeded"))
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
+    }
+    let basis_json = serde_json::to_string(&target.basis_evidence)
+        .map_err(|_| failure(ErrorCode::StorageFailed, "review-basis"))?;
+    if cancellation.is_requested() {
+        rules_json = serde_json::to_string(&interrupted_rules(
+            "cancelled",
+            "Cancelled before completion",
+        ))
+        .map_err(|_| failure(ErrorCode::StorageFailed, "review-check-encode"))?;
+    }
+    connection.execute(
+        "INSERT INTO review_checks
+         (run_id,action_id,project_id,unit_id,locale,basis,basis_json,validator_version,rules_json,request_digest)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![ExecutionId::new().to_string(), action_id.to_string(), project_id.to_string(),
+            target.unit_id.to_string(), target.locale, target.basis, basis_json,
+            CHECK_VERSION, rules_json, request_digest],
+    ).map_err(sql)?;
+    check_by_action(connection, project_id, action_id)?
+        .map(|item| item.0)
+        .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-receipt"))
 }
 
 #[cfg(test)]

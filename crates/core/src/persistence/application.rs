@@ -1,5 +1,6 @@
 //! Work plans use the existing project and execution authorities.
 mod control;
+mod selection;
 use super::ProjectStore;
 use crate::{
     ai::{self, AiConfig},
@@ -10,6 +11,7 @@ pub(super) use control::{
     allows_cancelled_ancestor, check_enqueue, check_input, initialize, protect_manual_in,
     record_input, stop_execution_plan_in, table_names, validate,
 };
+pub use selection::{ComputedAutomaticSelection, PreparedAutomaticSelection};
 
 impl ProjectStore {
     pub fn prepare_work_plan(
@@ -126,12 +128,21 @@ impl ProjectStore {
             let current =
                 super::review::targets_in(connection, plan.project_id, &units, &plan.locale)?;
             for basis in &plan.selection_basis {
-                if !current.iter().any(|target| {
+                let target = current.iter().find(|target| {
                     target.unit_id == basis.unit_id
                         && target.source_revision_id == basis.source_revision_id
                         && target.native_key == basis.native_key
-                        && target.selection_id == basis.selection_id
-                }) {
+                });
+                if match target {
+                    Some(target) => !selection::selection_matches_plan(
+                        connection,
+                        plan,
+                        basis.unit_id,
+                        target.selection_id,
+                        u64::MAX,
+                    )?,
+                    None => true,
+                } {
                     return Err(ExecutionError::new(
                         ErrorCode::DependencyConflict,
                         "work-plan-selection",

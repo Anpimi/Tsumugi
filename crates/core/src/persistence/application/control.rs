@@ -28,6 +28,10 @@ const TABLES: &[(&str, &str)] = &[
         "application_protection_actions",
         "CREATE TABLE application_protection_actions (action_id TEXT PRIMARY KEY NOT NULL, request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest)=64), receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1048576), receipt_digest TEXT NOT NULL CHECK(length(receipt_digest)=64))",
     ),
+    (
+        "application_selection_actions",
+        "CREATE TABLE application_selection_actions (action_id TEXT PRIMARY KEY NOT NULL, plan_id TEXT NOT NULL REFERENCES application_plans(plan_id), revision_id TEXT NOT NULL REFERENCES translation_revisions(revision_id), selection_id TEXT REFERENCES translation_selections(event_id), request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 1048576), request_digest TEXT NOT NULL CHECK(length(request_digest)=64), receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1048576), receipt_digest TEXT NOT NULL CHECK(length(receipt_digest)=64))",
+    ),
 ];
 pub(in crate::persistence) fn initialize(c: &Connection) -> rusqlite::Result<()> {
     for (_, sql) in TABLES {
@@ -44,7 +48,7 @@ fn err(code: ErrorCode, stage: &str) -> ExecutionError {
 fn sql(_: rusqlite::Error) -> ExecutionError {
     err(ErrorCode::StorageFailed, "work-plan-storage")
 }
-fn now() -> Result<u64, ExecutionError> {
+pub(super) fn now() -> Result<u64, ExecutionError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -74,15 +78,15 @@ fn decode_state(state: &str) -> Result<WorkPlanState, ExecutionError> {
         _ => Err(err(ErrorCode::CorruptLedger, "work-plan-state")),
     }
 }
-struct StoredPlan {
-    plan: WorkPlan,
-    lease: AutomationLease,
-    state: WorkPlanState,
-    expires_at: u64,
-    effects: Vec<AutomationEffect>,
+pub(super) struct StoredPlan {
+    pub(super) plan: WorkPlan,
+    pub(super) lease: AutomationLease,
+    pub(super) state: WorkPlanState,
+    pub(super) expires_at: u64,
+    pub(super) effects: Vec<AutomationEffect>,
     cancellation_revision: Revision,
 }
-fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, ExecutionError> {
+pub(super) fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, ExecutionError> {
     let (bytes, digest, generation, state, effects, expires, cancellation): (Vec<u8>, String, i64, String, Vec<u8>, i64, i64) =
         c.query_row("SELECT plan,digest,generation,state,effects,expires_at,cancellation_revision FROM application_plans WHERE plan_id=?1", [id.to_string()],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).map_err(sql)?;
@@ -94,8 +98,7 @@ fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, ExecutionError> {
         || generation <= 0
         || expires <= 0
         || cancellation < 0
-        || effects != [AutomationEffect::SaveCandidate]
-        || !plan.options.requests(AutomationEffect::SaveCandidate)
+        || plan.options.authorization_effects().ok().as_ref() != Some(&effects)
     {
         return Err(err(ErrorCode::CorruptLedger, "work-plan-authority"));
     }
@@ -377,7 +380,7 @@ pub(in crate::persistence) fn check_input(
         _ => Err(err(ErrorCode::CorruptLedger, "work-plan-execution")),
     }
 }
-fn protection(
+pub(super) fn protection(
     c: &Connection,
     unit: ExecutionId,
     locale: &str,
@@ -577,8 +580,7 @@ impl ProjectStore {
         }
         if !authorization.confirmed
             || authorization.plan_digest != plan.digest
-            || authorization.effects != [AutomationEffect::SaveCandidate]
-            || !plan.options.requests(AutomationEffect::SaveCandidate)
+            || plan.options.authorization_effects().ok().as_ref() != Some(&authorization.effects)
         {
             return Err(err(ErrorCode::Unauthorized, "work-plan-consent"));
         }
@@ -1023,5 +1025,6 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
             "work-protection-release-evidence",
         ));
     }
+    super::selection::validate(c)?;
     Ok(())
 }
