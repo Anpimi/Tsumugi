@@ -31,6 +31,10 @@ changing the SDK wire profile or project schema. The managed local package store
 adds strict receipts, private immutable objects, exclusive promotion and original
 action reconciliation in the same unreleased batch. It does not change the SDK
 wire protocol or schema 16 and provides no historical development-format migration.
+The SDK runtime-description data helpers add environment protocol 1 and complete
+artifact digest rules within the same unreleased SDK alpha.1. They do not alter
+process frames, the current project format or desktop execution. A data-only
+addition does not advance the application version or claim runtime distribution.
 Authenticated network updates and desktop package controls remain pending. Exhaustive
 matches on the experimental Host error enum must handle its added capture errors.
 

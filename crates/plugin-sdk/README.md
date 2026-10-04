@@ -50,3 +50,9 @@ independently supplied package digest. `ProviderSelectionBinding` identifies tha
 fixed choice without an instance or activation generation; `ProviderBinding`
 adds those fields for an actual channel. Neither data value grants execution or
 adoption authority, and a digest does not authenticate a package publisher.
+
+[Captured runtime descriptions](docs/environment.md) define the experimental
+`node-system-libraries-v1` profile, complete tool/Host artifact hashes, and an
+SDK-owned environment digest derived from the full validated descriptor.
+These data helpers contain no filesystem capture or loader. Host integration
+must independently approve and retain the actual runtime bytes.
