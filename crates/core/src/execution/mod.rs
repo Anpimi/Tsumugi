@@ -192,6 +192,11 @@ impl From<u64> for UnsignedDecimal {
     }
 }
 impl UnsignedDecimal {
+    pub fn parse(value: &str) -> Result<Self, ExecutionError> {
+        parse_decimal(value)
+            .map(Self)
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "unsigned-decimal"))
+    }
     pub fn get(self) -> u64 {
         self.0
     }
@@ -199,9 +204,7 @@ impl UnsignedDecimal {
 impl TryFrom<String> for UnsignedDecimal {
     type Error = ExecutionError;
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        parse_decimal(&value)
-            .map(Self)
-            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "unsigned-decimal"))
+        Self::parse(&value)
     }
 }
 impl From<UnsignedDecimal> for String {

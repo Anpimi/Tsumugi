@@ -152,6 +152,8 @@ Workers / Data Extensions / External Tools
 
 命令失败会保留原始结构化证据。已保存依据发生变化时，可展开诊断查看提交值与拒绝时的值；恢复提示说明下一步读取或决策，不会自动重试写入。诊断编号关联命令边界日志，日志只包含操作标签、错误分类与编号，不包含请求正文或工程路径。结果未知时继续保留原行动以供核对。
 
+源内容与译文捕获范围使用原始捕获文件中左闭右开的 UTF-8 字节位置，位于转义解码和换行规范化之前，不是 JavaScript 字符串索引。共用的 `crates/core/tests/fixtures/source-unicode.contract.json` 覆盖 BOM、CRLF、中文、emoji、组合字符和 JSON 转义，并用 UTF-16 位置作为 Rust 与 TypeScript 的测试对照。
+
 在仓库根目录执行：
 
 ```text

@@ -66,6 +66,7 @@ describe("project command wire contract", () => {
       stage: "rename",
       recoveryRequired: true,
       recoveryGuidance: "reconcile-original",
+      diagnosticId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     });
   });
 

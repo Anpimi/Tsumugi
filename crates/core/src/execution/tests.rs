@@ -6,6 +6,7 @@ use std::sync::{Mutex, mpsc};
 fn decimal_wire_values_are_canonical_and_keep_their_distinct_bounds() {
     for number in [0, 9007199254740993, u64::MAX] {
         let value = UnsignedDecimal::from(number);
+        assert_eq!(UnsignedDecimal::parse(&number.to_string()).unwrap(), value);
         let json = serde_json::to_string(&value).unwrap();
         assert_eq!(json, format!("\"{number}\""));
         assert_eq!(
@@ -26,6 +27,7 @@ fn decimal_wire_values_are_canonical_and_keep_their_distinct_bounds() {
         "18446744073709551616",
     ] {
         let json = serde_json::to_string(text).unwrap();
+        assert!(UnsignedDecimal::parse(text).is_err(), "{text}");
         assert!(
             serde_json::from_str::<UnsignedDecimal>(&json).is_err(),
             "{text}"

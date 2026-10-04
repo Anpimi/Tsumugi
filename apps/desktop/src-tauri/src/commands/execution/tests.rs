@@ -31,8 +31,10 @@ fn command_error_wire_fixture_preserves_conflicts_guidance_and_diagnostics() {
             assert!(mapped.diagnostic_id.is_some());
         }
     }
-    let diagnostic_id = ExecutionId::new();
     let mut error = CommandError::unknown(CommandStage::ExecutionAdopt);
+    let diagnostic_id = error
+        .diagnostic_id
+        .expect("constructor reports early failures");
     error.reason = Some("private request text, file path, secret credential".into());
     error.field = Some("sensitive input".into());
     let line = error.diagnostic_line("controlled-boundary", diagnostic_id);
@@ -40,7 +42,7 @@ fn command_error_wire_fixture_preserves_conflicts_guidance_and_diagnostics() {
     assert!(line.contains("operation=controlled-boundary"));
     assert!(!line.contains("private") && !line.contains("secret") && !line.contains("sensitive"));
     let reported = error
-        .report("controlled-boundary", diagnostic_id)
+        .report("controlled-boundary", ExecutionId::new())
         .report("finish-boundary", ExecutionId::new());
     assert_eq!(reported.diagnostic_id, Some(diagnostic_id));
 }

@@ -142,6 +142,7 @@ impl CommandError {
                 _ => None,
             },
         }
+        .report("command-error", tsumugi_core::execution::ExecutionId::new())
     }
 
     fn invalid_input(stage: CommandStage, field: Option<&str>) -> Self {
@@ -159,6 +160,7 @@ impl CommandError {
             diagnostic_id: None,
             recovery_guidance: None,
         }
+        .report("command-error", tsumugi_core::execution::ExecutionId::new())
     }
 
     fn stale(stage: CommandStage, current_revision: u64) -> Self {
@@ -176,6 +178,7 @@ impl CommandError {
             diagnostic_id: None,
             recovery_guidance: Some(RecoveryGuidance::ReviewCurrent),
         }
+        .report("command-error", tsumugi_core::execution::ExecutionId::new())
     }
 
     fn unknown(stage: CommandStage) -> Self {
@@ -193,6 +196,7 @@ impl CommandError {
             diagnostic_id: None,
             recovery_guidance: Some(RecoveryGuidance::ReconcileOriginal),
         }
+        .report("command-error", tsumugi_core::execution::ExecutionId::new())
     }
 
     fn report(
@@ -1108,8 +1112,11 @@ fn map_locator_error(error: io::Error, stage: CommandStage) -> CommandError {
 }
 
 fn parse_revision(raw: &str, stage: CommandStage) -> Result<u64, CommandError> {
-    raw.parse::<u64>()
-        .map_err(|_| CommandError::invalid_input(stage, Some("expectedRevision")))
+    tsumugi_core::execution::UnsignedDecimal::parse(raw)
+        .ok()
+        .map(|revision| revision.get())
+        .filter(|revision| *revision > 0)
+        .ok_or_else(|| CommandError::invalid_input(stage, Some("expectedRevision")))
 }
 
 fn new_session_token() -> String {
@@ -1239,6 +1246,41 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn early_command_errors_keep_one_sanitized_diagnostic_reference() {
+        use tsumugi_core::execution::ExecutionId;
+        let errors = [
+            CommandError::simple(CommandErrorCode::Busy, CommandStage::ExecutionRead),
+            validate_locator("private-input\n", CommandStage::Open, "locator").unwrap_err(),
+            CommandError::stale(CommandStage::Rename, u64::MAX),
+            CommandError::unknown(CommandStage::ExecutionAdopt),
+        ];
+        let mut identities = std::collections::HashSet::new();
+        for mut error in errors {
+            let identity = error
+                .diagnostic_id
+                .expect("even an early rejection has an identity");
+            assert!(identities.insert(identity));
+            error.reason = Some("private-reason".into());
+            error.field = Some("private-field".into());
+            let line = error.diagnostic_line("controlled-error", identity);
+            assert!(line.contains(&identity.to_string()));
+            for private in ["private-input", "private-reason", "private-field"] {
+                assert!(!line.contains(private));
+            }
+            let reported = error.report("controlled-next-phase", ExecutionId::new());
+            assert_eq!(reported.diagnostic_id, Some(identity));
+            let value = serde_json::to_value(&reported).unwrap();
+            let decoded: CommandError = serde_json::from_value(value).unwrap();
+            assert_eq!(decoded, reported);
+        }
+        let stale = CommandError::stale(CommandStage::Rename, u64::MAX);
+        assert_eq!(
+            stale.current_revision.as_deref(),
+            Some("18446744073709551615")
+        );
+    }
+
+    #[test]
     fn repeated_reads_recover_canonicalized_results_only_for_the_matching_basis() {
         let parent = temporary_directory("acknowledgement");
         let path = parent.path().join("project");
@@ -1287,6 +1329,57 @@ mod tests {
         assert_eq!(
             manager.read(request).unwrap().reconciliation_state,
             ReconciliationState::Settled
+        );
+    }
+
+    #[test]
+    fn metadata_wire_revisions_reject_noncanonical_requests_without_writes() {
+        let parent = temporary_directory("revision-encoding");
+        let path = parent.path().join("project");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&path)).unwrap();
+        for expected_revision in [
+            "01",
+            "+1",
+            "0",
+            "-1",
+            " 1",
+            "1 ",
+            "1.0",
+            "١",
+            "18446744073709551616",
+        ] {
+            let error = manager
+                .rename(RenameProjectRequest {
+                    session_token: created.session_token.clone(),
+                    expected_revision: expected_revision.into(),
+                    display_name: "Must not be saved".into(),
+                    directory_name: None,
+                })
+                .unwrap_err();
+            assert_eq!(
+                error.code,
+                CommandErrorCode::InvalidInput,
+                "{expected_revision}"
+            );
+            assert_eq!(error.field.as_deref(), Some("expectedRevision"));
+            assert_eq!(error.outcome, CommandOutcome::Rejected);
+            assert!(error.diagnostic_id.is_some());
+            let current = manager
+                .read(ReadProjectRequest {
+                    session_token: created.session_token.clone(),
+                    expected_revision: None,
+                })
+                .unwrap();
+            assert_eq!(current.metadata, created.metadata);
+        }
+        assert_eq!(
+            parse_revision("9007199254740993", CommandStage::Rename).unwrap(),
+            9007199254740993
+        );
+        assert_eq!(
+            parse_revision("18446744073709551615", CommandStage::Rename).unwrap(),
+            u64::MAX
         );
     }
 
@@ -1551,10 +1644,12 @@ mod tests {
             fixture["responses"]["close"],
             serde_json::to_value(CloseProjectView { closed: true }).unwrap()
         );
-        assert_eq!(
-            fixture["error"],
-            serde_json::to_value(CommandError::unknown(CommandStage::Rename)).unwrap()
-        );
+        let mut error = CommandError::unknown(CommandStage::Rename);
+        assert!(error.diagnostic_id.is_some());
+        // Use the fixture's stable nonce without weakening the production constructor.
+        error.diagnostic_id =
+            Some(serde_json::from_value(fixture["error"]["diagnosticId"].clone()).unwrap());
+        assert_eq!(fixture["error"], serde_json::to_value(error).unwrap());
     }
 
     #[test]
@@ -1791,7 +1886,7 @@ mod tests {
         let stale = manager
             .add_target_locale(AddTargetLocaleRequest {
                 session_token: created.session_token.clone(),
-                expected_revision: "0".to_owned(),
+                expected_revision: "2".to_owned(),
                 locale: "ko".to_owned(),
             })
             .unwrap_err();

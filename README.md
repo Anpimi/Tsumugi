@@ -121,6 +121,8 @@ Project lifecycle, command error, change notification, execution, source content
 
 Command failures retain their original structured evidence. When a saved basis has changed, expandable diagnostics show the submitted and rejecting values; recovery guidance explains the next read or decision without automatically retrying a write. Diagnostic references correlate command-boundary logs containing only operation labels, error classifications and the reference, without request bodies or project paths. Unknown results keep the original action for reconciliation.
 
+Source and translation capture ranges are half-open UTF-8 byte offsets in the original captured artifact, before escape decoding or newline normalization. They are not JavaScript string indices. The shared `crates/core/tests/fixtures/source-unicode.contract.json` covers BOM, CRLF, Chinese text, emoji, combining characters and JSON escapes, with UTF-16 positions as a test oracle for Rust and TypeScript.
+
 From the repository root:
 
 ```text
