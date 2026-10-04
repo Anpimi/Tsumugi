@@ -99,7 +99,7 @@ Unsigned fields use standard integer bounds from their Rust primitive limits;
 no custom integer-format registration is needed in a JSON Schema validator.
 
 Use the CLI validation command as well as structural schema validation. Neither
-proves a real host, package execution, OS sandbox, effective permissions, content
-exchange or accepted project writes. The content/result envelope, generic check
-coverage and runtime host are separate follow-up interfaces; they are not silently
-supplied by these manifest types.
+proves a real host, package execution, OS sandbox, effective permissions or
+accepted project writes. The [content/result envelope and check coverage](exchange.md)
+are separate data contracts with their own protocol; manifest validation does not
+validate their payloads or provide the runtime host.

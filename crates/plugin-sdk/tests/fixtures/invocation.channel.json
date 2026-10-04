@@ -1,0 +1,12 @@
+{
+  "plugin": {
+    "publisher": "example",
+    "id": "synthetic-domain",
+    "version": "0.1.0-alpha.1"
+  },
+  "componentId": "domain-worker",
+  "contributionId": "extract-source",
+  "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "instanceId": "instance-a",
+  "activationGeneration": 1
+}

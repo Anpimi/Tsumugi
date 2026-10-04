@@ -2,44 +2,87 @@ use std::{
     io::{Read, Write},
     path::PathBuf,
 };
+use tsumugi_plugin_sdk::*;
 
-use tsumugi_plugin_sdk::{MAX_MANIFEST_BYTES, manifest_schema, parse_manifest};
-
+fn read(path: &std::ffi::OsStr, limit: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(PathBuf::from(path))?
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err("input exceeds harness limit".into());
+    }
+    Ok(bytes)
+}
+fn print<T: serde::Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error>> {
+    serde_json::to_writer_pretty(std::io::stdout().lock(), value)?;
+    std::io::stdout().write_all(b"\n")?;
+    Ok(())
+}
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && args[0] == "schema" {
-        serde_json::to_writer_pretty(std::io::stdout().lock(), &manifest_schema())?;
-        println!();
-        return Ok(());
+        return print(&manifest_schema());
     }
-    if args.len() == 2 && args[0] == "check-schema" {
-        let mut bytes = Vec::new();
-        std::fs::File::open(PathBuf::from(&args[1]))?
-            .take(MAX_MANIFEST_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > MAX_MANIFEST_BYTES {
-            return Err("schema input exceeds harness limit".into());
-        }
+    if args.len() == 1 && args[0] == "schema-exchange" {
+        return print(&exchange_schema());
+    }
+    if args.len() == 2 && (args[0] == "check-schema" || args[0] == "check-exchange-schema") {
         let actual: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| "invalid generated schema")?;
-        if actual != serde_json::to_value(manifest_schema())? {
+            serde_json::from_slice(&read(&args[1], MAX_EXCHANGE_BYTES)?)
+                .map_err(|_| "invalid generated schema")?;
+        let generated = if args[0] == "check-schema" {
+            manifest_schema()
+        } else {
+            exchange_schema()
+        };
+        if actual != serde_json::to_value(generated)? {
             return Err("generated schema differs from SDK source".into());
         }
         println!("Schema is current.");
         return Ok(());
     }
-    if args.len() != 2 || args[0] != "validate" {
-        return Err("usage: tsumugi-plugin-contract schema | check-schema <schema.json> | validate <manifest.json>".into());
+    if args.len() == 2 && args[0] == "validate" {
+        return print(parse_manifest(&read(&args[1], MAX_MANIFEST_BYTES)?)?.manifest());
     }
-    let mut bytes = Vec::new();
-    std::fs::File::open(PathBuf::from(&args[1]))?
-        .take(MAX_MANIFEST_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    let manifest = parse_manifest(&bytes)?;
-    // Print only the validated, explicit declaration, not permission state.
-    serde_json::to_writer_pretty(std::io::stdout().lock(), manifest.manifest())?;
-    std::io::stdout().write_all(b"\n")?;
-    Ok(())
+    if args.len() == 2 && args[0] == "validate-exchange" {
+        return print(parse_exchange(&read(&args[1], MAX_EXCHANGE_BYTES)?)?.document());
+    }
+    if args.len() == 4 && args[0] == "match-result" {
+        let request = parse_exchange(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
+        let ExchangeBody::Request(request) = &request.document().body else {
+            return Err("expected request fixture".into());
+        };
+        // This harness exercises channel association from an independent fixture;
+        // it cannot authenticate a real channel or grant runtime authority.
+        let channel: ProviderBinding = serde_json::from_slice(&read(&args[3], MAX_MANIFEST_BYTES)?)
+            .map_err(|_| "invalid channel binding fixture")?;
+        return print(
+            receive_invocation_result(&read(&args[2], MAX_EXCHANGE_BYTES)?, request, &channel)?
+                .document(),
+        );
+    }
+    if args.len() == 3 && args[0] == "check-coverage" {
+        let set = parse_exchange(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
+        let results = parse_exchange(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
+        let ExchangeBody::CheckSet(set) = &set.document().body else {
+            return Err("expected captured check set fixture".into());
+        };
+        let ExchangeBody::CheckResults(results) = &results.document().body else {
+            return Err("expected check results fixture".into());
+        };
+        let (core, domain) = set
+            .requirements
+            .iter()
+            .cloned()
+            .partition(|r| matches!(r.key.implementation, CheckImplementation::Core { .. }));
+        let captured = capture_required_checks(set.policy.clone(), core, domain)?;
+        let coverage = captured.evaluate(results)?;
+        return print(
+            &serde_json::json!({"coverageComplete": coverage.complete, "entries": coverage.entries.len()}),
+        );
+    }
+    Err("usage: tsumugi-plugin-contract schema | schema-exchange | check-schema <file> | check-exchange-schema <file> | validate <manifest> | validate-exchange <file> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
 }
 fn main() {
     if let Err(error) = run() {

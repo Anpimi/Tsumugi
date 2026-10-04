@@ -1,15 +1,23 @@
-//! Experimental, data-only plugin declarations shared by authors and hosts.
+//! Experimental, data-only plugin contracts shared by authors and hosts.
 //!
 //! Parsing a declaration does not install a package, start a component or grant
 //! permission. Runtime identity, activation, authorization, execution and
 //! persistence belong to the host; this crate has no Core or database dependency.
 
+mod checks;
+mod content;
 mod declaration;
+mod invocation;
 mod resolution;
+mod text;
 mod validation;
 
+pub use checks::*;
+pub use content::*;
 pub use declaration::*;
+pub use invocation::*;
 pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
+pub use text::*;
 pub use validation::{ContractError, ContractErrorCode, ValidatedManifest, parse_manifest};
 
 /// The one currently supported declaration protocol, independent of SDK SemVer.
@@ -34,4 +42,24 @@ fn positive_u32_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars:
 #[cfg(feature = "schema")]
 fn positive_u16_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type":"integer", "minimum":1, "maximum": u16::MAX})
+}
+
+/// The current experimental content/invocation/check wire protocol.
+pub const EXCHANGE_PROTOCOL: u32 = 1;
+pub const MAX_EXCHANGE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_CONTENT_ITEMS: usize = 2000;
+pub const MAX_TEXT_BYTES: usize = 16 * 1024;
+
+#[cfg(feature = "schema")]
+pub fn exchange_schema() -> schemars::Schema {
+    schemars::schema_for!(ExchangeDocument)
+}
+
+#[cfg(feature = "schema")]
+fn exchange_protocol_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer", "const": EXCHANGE_PROTOCOL})
+}
+#[cfg(feature = "schema")]
+fn offset_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer", "minimum":0, "maximum":u32::MAX})
 }

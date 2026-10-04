@@ -1,0 +1,85 @@
+{
+  "protocolVersion": 1,
+  "body": {
+    "kind": "content",
+    "data": {
+      "profile": {
+        "id": "webvtt-captions",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "sourceSetId": "source-set",
+      "sourceLanguage": "en-US",
+      "artifacts": [
+        {
+          "id": "source-artifact",
+          "logicalPath": "source.vtt",
+          "role": "source",
+          "sha256": "629b7d88d436e5ed7d38f038511e0ee9f24fb118d62ff4688d43e8dc1470b90a",
+          "utf8": "WEBVTT\r\n\r\ncue-1\r\n00:00:01.000 --> 00:00:02.000\r\n中文 👩🏽‍💻 é\r\n第二行 😀\r\n\r\n"
+        }
+      ],
+      "units": [
+        {
+          "id": "unit-0",
+          "sourceRevisionId": "revision-0",
+          "text": "中文 👩🏽‍💻 é\n第二行 😀",
+          "occurrences": [
+            {
+              "id": "occurrence-0",
+              "source": {
+                "artifactId": "source-artifact",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 48,
+                  "end": 90
+                }
+              },
+              "nativeIdentity": {
+                "namespace": "webvtt:source",
+                "value": "cue-1",
+                "policy": {
+                  "id": "example.webvtt.identity",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              }
+            }
+          ],
+          "protectedFragments": []
+        }
+      ],
+      "order": [
+        "occurrence-0"
+      ],
+      "relations": [],
+      "domainBlocks": [
+        {
+          "target": {
+            "kind": "occurrence",
+            "id": "occurrence-0"
+          },
+          "schema": {
+            "id": "example.webvtt.structure",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "handling": "required",
+          "payloadUtf8": "{\"policy\":\"webvtt-cue/1\",\"timing\":\"00:00:01.000 --> 00:00:02.000\",\"nativeId\":\"cue-1\",\"layoutDigest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}"
+        },
+        {
+          "target": {
+            "kind": "snapshot"
+          },
+          "schema": {
+            "id": "example.unknown.metadata",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "handling": "preserve",
+          "payloadUtf8": "{ \"unrecognized\": \"👩🏽‍💻 é\", \"layout\": [1, 2] }\r\n"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "protocolVersion": 1,
+  "body": {
+    "kind": "content",
+    "data": {
+      "profile": {
+        "id": "smapi-i18n-flat",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "sourceSetId": "source-set",
+      "sourceLanguage": "en-US",
+      "artifacts": [
+        {
+          "id": "companion-artifact",
+          "logicalPath": "manifest.json",
+          "role": "companion",
+          "sha256": "58273bb818cab2899e0fc0a45e1f40856cab286e07e9a9af2dbca37199118148",
+          "utf8": "﻿{\n    \"Name\": \"Lookup Anything\",\n    \"Author\": \"Pathoschild\",\n    \"Version\": \"%ProjectVersion%\",\n    \"MinimumApiVersion\": \"4.3.1\",\n    \"MinimumGameVersion\": \"1.6.15\",\n    \"Description\": \"View metadata about anything by pressing a button.\",\n    \"UniqueID\": \"Pathoschild.LookupAnything\",\n    \"EntryDll\": \"LookupAnything.dll\",\n    \"UpdateKeys\": [ \"Nexus:541\" ]\n}\n"
+        },
+        {
+          "id": "source-artifact",
+          "logicalPath": "i18n/default.json",
+          "role": "source",
+          "sha256": "6eeb97b4039773f46051ff20e19cbbfb8e8b9bbc5c0f98a75c3155ff601b53e9",
+          "utf8": "﻿// 中文\r\n{\"hello\": \"中文 👩🏽‍💻 e\\u0301\", \"escaped\": \"\\u4e16\\u754c \\ud83d\\ude00\"}\r\n"
+        }
+      ],
+      "units": [
+        {
+          "id": "unit-0",
+          "sourceRevisionId": "revision-0",
+          "text": "中文 👩🏽‍💻 é",
+          "occurrences": [
+            {
+              "id": "occurrence-0",
+              "source": {
+                "artifactId": "source-artifact",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 24,
+                  "end": 56
+                }
+              },
+              "nativeIdentity": {
+                "namespace": "Example.Mod",
+                "value": "hello",
+                "policy": {
+                  "id": "example.smapi.identity",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              }
+            }
+          ],
+          "protectedFragments": []
+        },
+        {
+          "id": "unit-1",
+          "sourceRevisionId": "revision-1",
+          "text": "世界 😀",
+          "occurrences": [
+            {
+              "id": "occurrence-1",
+              "source": {
+                "artifactId": "source-artifact",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 69,
+                  "end": 96
+                }
+              },
+              "nativeIdentity": {
+                "namespace": "Example.Mod",
+                "value": "escaped",
+                "policy": {
+                  "id": "example.smapi.identity",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              }
+            }
+          ],
+          "protectedFragments": []
+        }
+      ],
+      "order": [
+        "occurrence-0",
+        "occurrence-1"
+      ],
+      "relations": [],
+      "domainBlocks": [
+        {
+          "target": {
+            "kind": "occurrence",
+            "id": "occurrence-0"
+          },
+          "schema": {
+            "id": "example.smapi.structure",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "handling": "required",
+          "payloadUtf8": "smapi-native-key/1"
+        },
+        {
+          "target": {
+            "kind": "occurrence",
+            "id": "occurrence-1"
+          },
+          "schema": {
+            "id": "example.smapi.structure",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "handling": "required",
+          "payloadUtf8": "smapi-native-key/1"
+        },
+        {
+          "target": {
+            "kind": "snapshot"
+          },
+          "schema": {
+            "id": "example.unknown.metadata",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "handling": "preserve",
+          "payloadUtf8": "{ \"unrecognized\": \"👩🏽‍💻 é\", \"layout\": [1, 2] }\r\n"
+        }
+      ]
+    }
+  }
+}

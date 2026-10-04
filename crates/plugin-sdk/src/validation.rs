@@ -17,6 +17,10 @@ pub enum ContractErrorCode {
     InvalidPath,
     AmbiguousProvider,
     IncompatibleContract,
+    InvalidRange,
+    UnsupportedExtension,
+    ResultMismatch,
+    InvalidCoverage,
 }
 
 /// Static field names only: do not echo arbitrary manifest contents into logs.
@@ -58,7 +62,7 @@ pub fn parse_manifest(bytes: &[u8]) -> Result<ValidatedManifest, ContractError> 
     manifest.validate()
 }
 
-fn name(value: &str, field: &str) -> Result<(), ContractError> {
+pub(crate) fn name(value: &str, field: &str) -> Result<(), ContractError> {
     // Protocol identifiers are ASCII and bounded, independent of display names.
     if value.is_empty()
         || value.len() > 128
@@ -79,7 +83,7 @@ fn name(value: &str, field: &str) -> Result<(), ContractError> {
     }
     Ok(())
 }
-fn version(value: &str) -> Result<(), ContractError> {
+pub(crate) fn version(value: &str) -> Result<(), ContractError> {
     if value.len() > 64 || semver::Version::parse(value).is_err() {
         return Err(ContractError::at(
             ContractErrorCode::InvalidDeclaration,
@@ -88,7 +92,7 @@ fn version(value: &str) -> Result<(), ContractError> {
     }
     Ok(())
 }
-fn reference(value: &ContractRef, field: &str) -> Result<(), ContractError> {
+pub(crate) fn reference(value: &ContractRef, field: &str) -> Result<(), ContractError> {
     name(&value.id, field)?;
     if value.schema_version == 0 || value.behavior_version == 0 {
         return Err(ContractError::at(
@@ -98,7 +102,7 @@ fn reference(value: &ContractRef, field: &str) -> Result<(), ContractError> {
     }
     Ok(())
 }
-fn path(value: &str, field: &str) -> Result<(), ContractError> {
+pub(crate) fn path(value: &str, field: &str) -> Result<(), ContractError> {
     if value.is_empty()
         || value.len() > 1024
         || value.starts_with('/')
@@ -135,7 +139,10 @@ fn permission(value: &PermissionRequest) -> Result<(), ContractError> {
     }
     Ok(())
 }
-fn unique<T: Ord>(values: impl IntoIterator<Item = T>, field: &str) -> Result<(), ContractError> {
+pub(crate) fn unique<T: Ord>(
+    values: impl IntoIterator<Item = T>,
+    field: &str,
+) -> Result<(), ContractError> {
     let mut seen = BTreeSet::new();
     for value in values {
         if !seen.insert(value) {
@@ -147,7 +154,7 @@ fn unique<T: Ord>(values: impl IntoIterator<Item = T>, field: &str) -> Result<()
     }
     Ok(())
 }
-fn count(len: usize, field: &str) -> Result<(), ContractError> {
+pub(crate) fn count(len: usize, field: &str) -> Result<(), ContractError> {
     if len > 128 {
         return Err(ContractError::at(ContractErrorCode::LimitExceeded, field));
     }
@@ -341,4 +348,32 @@ impl ValidatedManifest {
         }
         Ok(declaration)
     }
+}
+
+pub(crate) fn opaque_id(value: &str, field: &str) -> Result<(), ContractError> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b".-_:/".contains(&c))
+    {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            field,
+        ));
+    }
+    Ok(())
+}
+pub(crate) fn digest(value: &str, field: &str) -> Result<(), ContractError> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            field,
+        ));
+    }
+    Ok(())
 }
