@@ -15,6 +15,11 @@ application version. SDK source is in this repository and has not been published
 its package is a separate release unit. An SDK-only data contract change does not
 bump the application when the desktop runtime and stored data are unchanged.
 
+The experimental process Host inherits the workspace version as an internal
+application component. Its conformance-worker binary is test tooling, not a
+separate published plugin. The process protocol is SDK-owned and independently
+versioned; adding the unintegrated Host does not distribute a new desktop build.
+
 ## Choosing the next version
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:

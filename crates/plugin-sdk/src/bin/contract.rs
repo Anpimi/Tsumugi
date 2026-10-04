@@ -27,12 +27,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 1 && args[0] == "schema-exchange" {
         return print(&exchange_schema());
     }
-    if args.len() == 2 && (args[0] == "check-schema" || args[0] == "check-exchange-schema") {
+    if args.len() == 1 && args[0] == "schema-process" {
+        return print(&process_schema());
+    }
+    if args.len() == 2 && args[0] == "validate-process" {
+        return print(&parse_process_frame(&read(&args[1], MAX_EXCHANGE_BYTES)?)?);
+    }
+    if args.len() == 2
+        && (args[0] == "check-schema"
+            || args[0] == "check-exchange-schema"
+            || args[0] == "check-process-schema")
+    {
         let actual: serde_json::Value =
             serde_json::from_slice(&read(&args[1], MAX_EXCHANGE_BYTES)?)
                 .map_err(|_| "invalid generated schema")?;
         let generated = if args[0] == "check-schema" {
             manifest_schema()
+        } else if args[0] == "check-process-schema" {
+            process_schema()
         } else {
             exchange_schema()
         };
@@ -82,7 +94,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &serde_json::json!({"coverageComplete": coverage.complete, "entries": coverage.entries.len()}),
         );
     }
-    Err("usage: tsumugi-plugin-contract schema | schema-exchange | check-schema <file> | check-exchange-schema <file> | validate <manifest> | validate-exchange <file> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
+    Err("usage: tsumugi-plugin-contract schema | schema-exchange | schema-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
 }
 fn main() {
     if let Err(error) = run() {

@@ -149,7 +149,7 @@ Workers / Data Extensions / External Tools
 ## 开发环境
 
 实验性的独立[插件 SDK](crates/plugin-sdk)提供数据契约与 schema/校验 harness，不依赖 Core。
-当前校验声明、内容/执行交换帧及固定检查覆盖；本单元尚未提供生产插件加载与运行绑定。详见[插件声明契约](crates/plugin-sdk/docs/declarations.md)与[内容交换契约](crates/plugin-sdk/docs/exchange.md)。
+当前校验声明、内容/执行交换帧及固定检查覆盖；本单元尚未提供生产插件加载与运行绑定。详见[插件声明契约](crates/plugin-sdk/docs/declarations.md)与[内容交换契约](crates/plugin-sdk/docs/exchange.md)。[实验性进程 Host](crates/plugin-host)增加 SDK 所有的[帧协议](crates/plugin-sdk/docs/process.md)和 macOS 实际原生 conformance 进程；生产目录/Core 集成仍未完成。
 
 桌面支持 Windows x64 和 macOS（Apple Silicon 与 Intel 构建目标），使用 Rust 1.98+、React 19、TypeScript 7、Vite 8、Tauri 2 和 pnpm 12。Windows 原生构建需要 Visual Studio C++ Build Tools、Windows SDK 以及 Microsoft Edge WebView2 Runtime。
 

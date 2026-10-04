@@ -39,3 +39,8 @@ alone cannot prove those relationships or runtime authorization.
 The crate has its own experimental version and can be packaged independently.
 It has not been published. Plugin authors may use an explicitly pinned development
 SDK snapshot; a production distribution must use a verified SDK artifact.
+
+The [local process protocol](docs/process.md) adds SDK-owned handshake, invocation,
+cancel/close and heartbeat frames. The [experimental process Host](../plugin-host/README.md)
+binds those frames to captured packages and actual child pipes; the SDK remains
+data-only and has no runtime or Core dependency.

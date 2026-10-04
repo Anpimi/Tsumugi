@@ -1,0 +1,27 @@
+[package]
+name = "tsumugi-plugin-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Experimental bounded process channels for Tsumugi plugin contracts"
+
+[dependencies]
+tsumugi-plugin-sdk = { path = "../plugin-sdk", version = "=0.1.0-alpha.1" }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+tempfile = "=3.27.0"
+uuid = { version = "=1.26.1", features = ["v4"] }
+tokio = { version = "=1.53.1", features = ["rt", "macros", "process", "io-util", "sync", "time"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[[bin]]
+name = "tsumugi-process-conformance-worker"
+path = "tests/support/worker.rs"
+required-features = ["conformance-worker"]
+
+[features]
+conformance-worker = []

@@ -266,7 +266,7 @@ impl PluginManifest {
     }
 }
 impl CapabilityDeclaration {
-    fn validate(&self, requested: &[PermissionRequest]) -> Result<(), ContractError> {
+    pub(crate) fn validate(&self, requested: &[PermissionRequest]) -> Result<(), ContractError> {
         for (value, field) in [
             (&self.contract, "contributions.contract"),
             (&self.input_schema, "contributions.inputSchema"),

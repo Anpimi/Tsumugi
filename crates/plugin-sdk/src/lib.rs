@@ -8,6 +8,7 @@ mod checks;
 mod content;
 mod declaration;
 mod invocation;
+mod process;
 mod resolution;
 mod text;
 mod validation;
@@ -16,6 +17,7 @@ pub use checks::*;
 pub use content::*;
 pub use declaration::*;
 pub use invocation::*;
+pub use process::*;
 pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
 pub use text::*;
 pub use validation::{ContractError, ContractErrorCode, ValidatedManifest, parse_manifest};
@@ -49,6 +51,25 @@ pub const EXCHANGE_PROTOCOL: u32 = 1;
 pub const MAX_EXCHANGE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_CONTENT_ITEMS: usize = 2000;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
+
+/// Length-prefixed local process messages, independent of content protocols.
+pub const PROCESS_PROTOCOL: u32 = 1;
+
+/// Validate a logical package file path before a host materializes captured bytes.
+/// This does not open a path or prove filesystem containment.
+pub fn validate_package_path(value: &str) -> Result<(), ContractError> {
+    validation::path(value, "package.path")
+}
+
+#[cfg(feature = "schema")]
+pub fn process_schema() -> schemars::Schema {
+    schemars::schema_for!(ProcessFrame)
+}
+
+#[cfg(feature = "schema")]
+fn process_protocol_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer", "const": PROCESS_PROTOCOL})
+}
 
 #[cfg(feature = "schema")]
 pub fn exchange_schema() -> schemars::Schema {

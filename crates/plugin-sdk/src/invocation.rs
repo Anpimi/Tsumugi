@@ -187,7 +187,7 @@ pub struct InvocationResult {
     pub outcome: InvocationOutcome,
 }
 impl InvocationResult {
-    fn validate(&self) -> Result<(), ContractError> {
+    pub(crate) fn validate(&self) -> Result<(), ContractError> {
         self.context.validate()?;
         self.provider.validate()?;
         reference(&self.capability, "result.capability")?;
