@@ -125,6 +125,7 @@ describe("project lifecycle workbench", () => {
       if (command === "read_translation_history") return { unitId: fixtureIdentity(501), locale: "zh-CN", total: "0", rows: [], nextOrdinal: null, currentText: text, current: text === null ? null : { eventId: fixtureIdentity(503), revisionId: fixtureIdentity(504), unitId: fixtureIdentity(501), locale: "zh-CN", actionId: fixtureIdentity(1), sequence: "1", previousEventId: null } };
       if (command === "resolve_terms") return { unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502), entries: [] };
       if (command === "read_context_revision") return null;
+      if (command === "read_work_protection") return {unitId:args.request.unitId,locale:args.request.locale,revision:"1",protected:true};
       if (command === "create_execution_identity") return fixtureIdentity(1);
       if (command === "save_translation_revision") {
         text = String(args.request.text);
@@ -144,6 +145,7 @@ describe("project lifecycle workbench", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "first" }));
     const editor = await screen.findByRole("textbox", { name: "Your draft" });
+    await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
     await user.type(editor, "Draft");
     await user.click(screen.getByRole("button", { name: "Tasks" }));
     expect(await screen.findByRole("dialog")).toHaveTextContent("Leave with an unsaved translation?");

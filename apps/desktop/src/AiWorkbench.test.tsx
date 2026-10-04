@@ -36,7 +36,7 @@ beforeEach(async()=>{
   }
   if(command==="authorize_work_plan"){
    const receipt:WorkPlanReceiptView={actionId:String(request.actionId),lease:{planId,generation:"1"},state:"active",attemptId:aiAttempt,parentTask:null};
-   actions.set(receipt.actionId,receipt);authority={plan,lease:receipt.lease,state:"active",effects:["save-candidate"],expiresAt:String(request.expiresAt)};return receipt;
+   actions.set(receipt.actionId,receipt);authority={plan,lease:receipt.lease,state:"active",effects:request.effects as WorkPlanStatusView["effects"],expiresAt:String(request.expiresAt)};return receipt;
   }
   if(command==="control_work_plan"){
    const state=({pause:"paused",stop:"stopped","take-over":"taken-over",continue:"active"} as const)[request.command as "pause"];
@@ -159,7 +159,7 @@ it("pauses and takes over live work, then requires renewed consent and uses the 
  await screen.findByText("Automation paused");expect(screen.getByRole("button",{name:"Continue with renewed authorization"})).toBeDisabled();
  expect(screen.getByRole("button",{name:"Save candidate"})).toBeDisabled();
  await user.click(screen.getByRole("button",{name:"Take over manually"}));await screen.findByText("Manual control");
- await user.click(screen.getByRole("checkbox",{name:/I authorize candidate generation/}));
+ await user.click(screen.getByRole("checkbox",{name:/I authorize the displayed generation/}));
  await user.click(screen.getByRole("button",{name:"Continue with renewed authorization"}));
  await waitFor(()=>expect(invoke.mock.calls.filter(([c])=>c==="start_work_plan")).toHaveLength(2));
  const controls=invoke.mock.calls.filter(([c])=>c==="control_work_plan").map(([,a])=>a.request);
@@ -202,4 +202,32 @@ it("reopens a persisted plan through its execution view and reads current contro
  expect(invoke.mock.calls.some(([c])=>["authorize_work_plan","control_work_plan","start_work_plan"].includes(c))).toBe(false);
  await user.click(screen.getByRole("button",{name:"Refresh plan status"}));
  expect(invoke.mock.calls.filter(([c])=>c==="read_work_plan_status").every(([,a])=>a.request.planId===planId)).toBe(true);
+});
+
+
+it("confirms the displayed checked selection effects before dispatch", async () => {
+  const user = await preview();
+  const selector = screen.getByRole("combobox", { name: "Choose generated translations" });
+  await user.selectOptions(selector, "missing-only");
+  expect(screen.queryByRole("checkbox", { name: /I confirm sending/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  const request = invoke.mock.calls.filter(([command]) => command === "prepare_work_plan").at(-1)![1].request;
+  expect(request.options.selectionPolicy).toBe("missing-only");
+  expect(request.options.stages.find((choice: {stage: string}) => choice.stage === "checks").mode).toBe("assisted");
+  await user.click(screen.getByRole("checkbox", { name: /I confirm sending/ }));
+  await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
+  await screen.findByText("你好");
+  expect(invoke.mock.calls.find(([command]) => command === "authorize_work_plan")![1].request.effects).toEqual(["save-candidate", "run-checks", "select-missing"]);
+});
+
+it("resets automatic selection when generation is changed to manual", async () => {
+  const user = await preview();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Choose generated translations" }), "replace-captured-selection");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Translate" }), "manual");
+  expect(screen.queryByRole("combobox", { name: "Choose generated translations" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Prepare manual plan" }));
+  const request = invoke.mock.calls.filter(([command]) => command === "prepare_work_plan").at(-1)![1].request;
+  expect(request.options.selectionPolicy).toBe("candidates-only");
+  expect(request.options.stages.find((choice: {stage: string}) => choice.stage === "checks").mode).toBe("manual");
+  expect(invoke.mock.calls.some(([command]) => command === "authorize_work_plan")).toBe(false);
 });

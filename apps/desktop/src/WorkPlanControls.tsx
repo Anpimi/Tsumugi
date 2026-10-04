@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { aiCommands } from "./aiCommands";
 import { executionCommands, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome } from "./projectCommands";
-import type { WorkPlanAuthorizeRequest, WorkPlanControlRequest, WorkPlanStartRequest } from "./generated/ai.requests";
+import type { WorkPlanAuthorizeRequest, WorkPlanControlRequest, WorkPlanStartRequest, AutomationEffect } from "./generated/ai.requests";
 import { workPlanCommands, type WorkPlanView, type WorkPlanReceiptView, type WorkPlanStatusView, type WorkPlanCommand } from "./workPlanCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 
@@ -118,8 +118,9 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   return <section aria-label={t("ai.plan.controls")}>
     {plan ? <>
       <h3>{t("ai.plan.title")}</h3>
-      <ul>{plan.options.stages.map(choice => <li key={choice.stage}>{t(`ai.plan.stages.${choice.stage}`)}: {t(`ai.plan.modes.${choice.mode}`)}</li>)}</ul>
-      {plan.preview ? <p>{t("ai.plan.candidatesOnly")}</p> : null}
+      <ul>{plan.options.stages.map(choice => <li key={choice.stage}>{t(`ai.plan.stages.${choice.stage}`)}: {t(choice.stage === "checks" && choice.mode === "assisted" ? "ai.plan.mechanicalChecks" : `ai.plan.modes.${choice.mode}`)}</li>)}</ul>
+      {plan.preview ? <p>{t(plan.options.selectionPolicy === "candidates-only" ? "ai.plan.candidatesOnly" : "ai.plan.checkedSelection")}</p> : null}
+      {plan.preview ? <p>{t(`ai.plan.policies.${plan.options.selectionPolicy}`)}</p> : null}
       <details open={!plan.preview}><summary>{t("ai.plan.scope", { count: plan.scope.length, locale: plan.locale })}</summary>
         <ul>{plan.scope.map(unit => <li key={unit.unitId}>{unit.nativeKey} <button className="text-button"
           disabled={blocked || Boolean(ready)} onClick={() => onOpenTranslation({ unitId: unit.unitId,
@@ -134,7 +135,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         const actionId = await executionCommands.identity(context);
         if (!current()) return;
         await mutate({ kind: "authorize", request: { ...context, planId: prepared.planId, digest: prepared.digest,
-          actionId, confirmed: consent, effects: ["save-candidate"], expiresAt } }, current, true);
+          actionId, confirmed: consent, effects: (prepared.options.selectionPolicy === "candidates-only" ? ["save-candidate"] : ["save-candidate", "run-checks", prepared.options.selectionPolicy === "missing-only" ? "select-missing" : "replace-captured-selection"]) satisfies AutomationEffect[], expiresAt } }, current, true);
       })}>{t("ai.generate")}</button>
     </> : null}
     {status ? <>

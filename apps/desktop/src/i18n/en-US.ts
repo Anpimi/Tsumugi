@@ -122,6 +122,12 @@ protection: {
   "retry": "Retry same protection action"
 },
 ai: {
+  effects: {
+    title: "Automatic selection", policy: "Policy: {{policy}}. This receipt records past work; review the editor for the current translation. Human approval remains separate.",
+    checks: "Mechanical check evidence", failed: "Automatic work could not finish. The candidate and earlier saved work are retained. Refresh to check the result.", retry: "Check saved result and retry original action",
+    phases: { waiting: "Waiting for a generated result", "saving-candidate": "Saving the candidate…", checking: "Checking the saved candidate…", selected: "This candidate was selected by policy", blocked: "Candidate kept; automatic selection was blocked", failed: "Automatic selection could not finish", cancelled: "Automatic selection is inactive. Review the plan before continuing." },
+    blocks: { protected: "This entry is protected. Its translation was retained; mechanical checks still ran.", "already-selected": "This entry already has a translation. The missing-only policy kept it.", checks: "Mechanical checks found issues. Review the saved candidate before choosing it." }
+  },
   plan: {
   "controls": "Work plan controls",
   "title": "Work plan",
@@ -140,6 +146,10 @@ ai: {
   },
   "prepareManual": "Prepare manual plan",
   "manualHelp": "No model or network request is needed. Open an entry to translate manually; use Glossary and context, Review and QA, and Build and export for the other manual stages.",
+  "selectionPolicy": "Choose generated translations",
+  "mechanicalChecks": "Automatic mechanical checks",
+  "checkedSelection": "Candidates are saved and checked before selection. Only clean results with unchanged source, resources and selection can be chosen. Protected entries stay unchanged. This does not approve translations or allow export.",
+  "policies": { "candidates-only": "Save candidates; choose manually", "missing-only": "Choose only entries without a translation", "replace-captured-selection": "Allow replacing the translations shown in this scope" },
   "candidatesOnly": "Automation may generate and save candidates. Selecting translations, approving them, adopting resources and exporting remain manual actions.",
   "scope": "{{count}} entries · {{locale}}",
   "edit": "Open manual editor",
@@ -152,7 +162,7 @@ ai: {
   "continue": "Continue with renewed authorization",
   "refresh": "Refresh plan status",
   "continueHelp": "Review the captured scope and sharing above. Continuing uses the original shared budget, including unknown usage. Changes to source, selection or shared resources require a new plan.",
-  "renewConsent": "I authorize candidate generation for this same scope and sharing within the remaining budget and the new expiry.",
+  "renewConsent": "I authorize the displayed generation and selection policy for this same scope and sharing within the remaining budget and the new expiry.",
   "ready": "Authorization saved. The work has not been confirmed as queued. Start this authorized action, or pause or stop it.",
   "startAuthorized": "Start authorized work",
   "actionUnknown": "The control or authorization may have been saved. Check the original action before retrying.",
@@ -203,7 +213,7 @@ ai: {
   "terms-not-shared": "Terms are not shared.",
   "context-not-shared": "Context is not shared.",
   "context-missing": "No saved context is available.",
-  "consent": "I confirm sending these original strings and included resources to this endpoint within the shown limits.",
+  "consent": "I confirm sending these original strings and included resources to this endpoint within the shown limits, and authorize the displayed selection policy.",
   "generate": "Send and generate candidates",
   "startUnknown": "Start may have succeeded. Check this attempt or retry the same identity.",
   "adoptUnknown": "Saving may have committed. Check the receipt first.",
@@ -226,7 +236,7 @@ ai: {
   "discard": "Discard draft and leave",
   "origin": "AI candidate · generation evidence retained in Tasks",
   "errors": {
-"work-plan-selection": "The selected translation changed. Your work is retained; review it and prepare a new plan.","work-plan-evidence": "The source or shared resources changed. Prepare and confirm a new plan.","work-plan-control": "This permission was paused, stopped, taken over or expired. Output and budget usage are retained; review the current plan.","work-plan-consent": "Confirm this exact scope, sharing and candidate-generation permission before starting.","work-plan-digest": "The plan no longer matches the prepared preview. Prepare and review a new plan.","work-plan-scope": "The captured entries or target language changed. Refresh and prepare a current plan.","work-plan-parent-generation": "An earlier plan permission was revoked. Refresh the current plan; do not retry old work.",
+"work-plan-selection": "The selected translation changed. Your work is retained; review it and prepare a new plan.","work-plan-evidence": "The source or shared resources changed. Prepare and confirm a new plan.","work-plan-control": "This permission was paused, stopped, taken over or expired. Output and budget usage are retained; review the current plan.","work-plan-consent": "Confirm this exact scope, sharing and displayed generation and selection policy before starting.","work-plan-digest": "The plan no longer matches the prepared preview. Prepare and review a new plan.","work-plan-scope": "The captured entries or target language changed. Refresh and prepare a current plan.","work-plan-parent-generation": "An earlier plan permission was revoked. Refresh the current plan; do not retry old work.",
 "work-plan-expiry": "Choose an authorization duration between 1 and 1440 minutes.","work-plan-pending": "Resolve the saved authorization or uncertain action here before leaving.","work-plan-preview": "The plan preview changed or is unavailable. Prepare and review a new plan.","work-plan-generation": "The plan was controlled elsewhere. Refresh its current status before a new action.","work-plan-continue-consent": "Review and confirm the renewed authorization before continuing.","work-plan-basis": "The captured source or selection changed. Your work is retained; prepare a new plan.","work-plan-resources": "Shared terms or context changed. Prepare and confirm a new sharing preview.","work-plan-authorization": "Read current authority before starting work. A stopped or expired grant cannot start automation.","work-plan-inactive": "Automation is paused, stopped or taken over. Output is retained; review the plan before saving.","work-plan-effect": "This automated effect is not supported by the current plan.",
     "ai-endpoint": "Enter a full HTTPS URL, or loopback HTTP. Remove URL credentials, query and fragment.",
     "ai-model": "Enter a model supported by the service.",

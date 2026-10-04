@@ -277,6 +277,32 @@ fn capture(
 }
 
 impl ProjectStore {
+    /// Historical policy evidence for a saved candidate, independent of the
+    /// grant's current state. It cannot reselect or reactivate that grant.
+    pub fn automatic_selection_for_candidate(
+        &self,
+        lease: AutomationLease,
+        revision: ExecutionId,
+    ) -> Result<Option<AutomaticSelectionReceipt>, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "work-selection-read"))?;
+        let action: Option<String> = c.query_row(
+            "SELECT action_id FROM application_selection_actions WHERE plan_id=?1 AND revision_id=?2 ORDER BY rowid DESC LIMIT 1",
+            params![lease.plan_id.to_string(), revision.to_string()], |row|row.get(0),
+        ).optional().map_err(ledger::sql_error)?;
+        let receipt = action
+            .map(|id| recorded(c, ExecutionId::parse(&id)?))
+            .transpose()?
+            .flatten();
+        if receipt.as_ref().is_some_and(|receipt| {
+            receipt.request.lease != lease || receipt.request.revision_id != revision
+        }) {
+            return Err(error(ErrorCode::CorruptLedger, "work-selection-receipt"));
+        }
+        Ok(receipt)
+    }
+
     /// Hosts must durably protect the entry before accepting an editable draft;
     /// the selection transaction then shares the same protection gate as saved
     /// manual work. Draft text is never needed by automation or stored here.

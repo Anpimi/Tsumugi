@@ -1,8 +1,31 @@
 use super::ProjectStore;
 use crate::{ai::*, execution::*};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 impl ProjectStore {
+    /// Resolve the ordinary saved candidate for this attempt's current result.
+    /// Reading it never adopts, selects or resumes an execution.
+    pub fn saved_ai_candidate(
+        &self,
+        attempt: ExecutionId,
+        item_id: ExecutionId,
+    ) -> Result<Option<ExecutionId>, ExecutionError> {
+        let input = self.execution_input(attempt)?;
+        let item = item_payload(&input, item_id)?;
+        let Some(result) = self.execution_current_result(attempt, item_id)? else {
+            return Ok(None);
+        };
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "ai-candidate-read"))?;
+        let revision: Option<String> = connection.query_row(
+            "SELECT revision_id FROM translation_revisions WHERE project_id=?1 AND attempt_id=?2 AND item_id=?3 AND result_id=?4 AND unit_id=?5 AND locale=?6 AND origin_kind='ai' ORDER BY ordinal LIMIT 1",
+            params![input.envelope().project_id.to_string(), attempt.to_string(), item_id.to_string(), result.to_string(), item.unit_id.to_string(), item.target_locale],
+            |row|row.get(0),
+        ).optional().map_err(super::ledger::sql_error)?;
+        revision.map(|id| ExecutionId::parse(&id)).transpose()
+    }
+
     pub fn preview_ai(
         &self,
         config: AiConfig,

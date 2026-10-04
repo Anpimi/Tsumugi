@@ -13,6 +13,9 @@ it("validates both directions of every shared AI contract", async () => {
     [validators.validateRequestPreview, fixture.requests.preview],
     [validators.validateRequestStart, fixture.requests.start],
     [validators.validateRequestRead, fixture.requests.read],
+    [validators.validateRequestEffectRetry, fixture.requests.effectRetry],
+    [validators.validateResponseEffectRetry, fixture.responses.effectRetry],
+    [validators.validateResponseView, fixture.responses.automaticView],
     [validators.validateResponsePrepared, fixture.responses.prepared],
     [validators.validateResponseIdentity, fixture.responses.identity],
     [validators.validateResponseView, fixture.responses.view],
@@ -21,6 +24,8 @@ it("validates both directions of every shared AI contract", async () => {
     ["preview_ai_translation", fixture.requests.preview, fixture.responses.prepared, () => aiCommands.preview(fixture.requests.preview)],
     ["start_ai_translation", fixture.requests.start, fixture.responses.identity, () => aiCommands.start(fixture.requests.start)],
     ["read_ai_translation", fixture.requests.read, fixture.responses.view, () => aiCommands.read(fixture.requests.read)],
+    ["retry_work_plan_effect", fixture.requests.effectRetry, fixture.responses.effectRetry, () => aiCommands.retryEffect(fixture.requests.effectRetry)],
+    ["read_ai_translation", fixture.requests.automaticRead, fixture.responses.automaticView, () => aiCommands.read(fixture.requests.automaticRead)],
   ] as const) {
     invoke.mockResolvedValueOnce(response);
     expect(await run()).toEqual(response);
@@ -72,4 +77,25 @@ it("validates durable budget counters and exact aggregate usage", () => {
   for (const value of [1, "01", "-1", "1e2", "10000000000000000000000"]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,promptTokens:value}})).toBe(false);
   for (const value of [-1, 0.5, 301]) expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,dispatched:value}})).toBe(false);
   expect(validators.validateResponseView({...fixture.responses.view,budget:{...budget,extra:true}})).toBe(false);
+});
+
+
+it("binds policy receipts to the exact project, lease, candidate, action and mechanical evidence", async () => {
+  const base = fixture.responses.automaticView;
+  const malformed = [
+    (view: typeof base) => { view.rows[0].automation.receipt.request.projectId = fixture.responses.view.rows[0].itemId; },
+    (view: typeof base) => { view.rows[0].automation.receipt.request.lease.generation = "2"; },
+    (view: typeof base) => { view.rows[0].automation.receipt.request.revisionId = fixture.responses.view.rows[0].itemId; },
+    (view: typeof base) => { view.rows[0].automation.actionId = fixture.responses.view.rows[0].itemId; },
+    (view: typeof base) => { view.rows[0].automation.receipt.selection.revisionId = fixture.responses.view.rows[0].itemId; },
+    (view: typeof base) => { view.rows[0].automation.receipt.rules.pop(); },
+    (view: typeof base) => { view.rows[0].automation.phase = "blocked"; },
+    (view: typeof base) => { view.rows[0].automation.retryable = true; },
+  ];
+  for (const alter of malformed) {
+    const view = structuredClone(base); alter(view); invoke.mockResolvedValueOnce(view);
+    await expect(aiCommands.read(fixture.requests.automaticRead)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce(false);
+  await expect(aiCommands.retryEffect(fixture.requests.effectRetry)).rejects.toSatisfy(hasUnknownOutcome);
 });

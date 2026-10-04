@@ -34,7 +34,7 @@ macro_rules! handlers {
         review::read_review_work,review::read_review_eligibility,
         release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
-        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,
+        release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::retry_work_plan_effect,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
         arena::reveal_arena_identity,arena::save_arena_merge,
@@ -205,12 +205,17 @@ impl ExecutionHost {
     fn active(&self, store: &ProjectStore) -> Result<bool, CommandError> {
         Ok(self.quiescing
             || self.source.is_active()
+            || self.ai.active()
             || !self.queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.poll_queries(store)?;
-        self.runtime.tick(store).map_err(map_read)
+        self.runtime.tick(store).map_err(map_read)?;
+        if !self.quiescing {
+            self.ai.tick(store, &self.runtime);
+        }
+        Ok(())
     }
     fn poll_queries(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.retired_queries.retain(|thread| !thread.is_finished());
@@ -268,6 +273,7 @@ impl ExecutionHost {
         self.poll_queries(store)?;
         self.quiescing = true;
         self.source.stop();
+        self.ai.stop();
         self.release.stop();
         for job in self.queries.drain(..) {
             self.retired_queries.push(job.thread);
@@ -307,6 +313,15 @@ impl ActiveSession {
             self.execution.as_mut().expect("initialized"),
             &mut self.store,
         ))
+    }
+    pub(super) fn pause_idle_automation(
+        &mut self,
+        stage: CommandStage,
+    ) -> Result<(), CommandError> {
+        self.ensure_execution_idle(stage)?;
+        self.store
+            .pause_active_work_plans()
+            .map_err(|error| map_execution(error, stage))
     }
     pub(super) fn ensure_execution_idle(&self, stage: CommandStage) -> Result<(), CommandError> {
         if let Some(host) = &self.execution {

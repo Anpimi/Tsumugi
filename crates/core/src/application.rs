@@ -287,6 +287,7 @@ impl PlanOptions {
 /// the observed scope and policy from the authorized plan, never from model text.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AutomaticSelectionRequest {
     pub project_id: ExecutionId,
     pub action_id: ExecutionId,
@@ -298,6 +299,7 @@ pub struct AutomaticSelectionRequest {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum AutomaticSelectionBlock {
     Protected,
     AlreadySelected,
@@ -308,6 +310,7 @@ pub enum AutomaticSelectionBlock {
 /// receipt does not select again or restore an older authority or check basis.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AutomaticSelectionReceipt {
     pub request: AutomaticSelectionRequest,
     pub policy_version: String,

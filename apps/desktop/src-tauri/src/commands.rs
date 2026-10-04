@@ -488,13 +488,17 @@ impl SessionManager {
             .map_err(|error| map_persistence_error(error, CommandStage::Open))?;
         let token = new_session_token();
         let view = project_view(&token, &locator, &metadata, ReconciliationState::Settled);
-        self.active = Some(ActiveSession {
+        let mut candidate = ActiveSession {
             token,
             locator,
             store,
             execution: None,
             receipt: None,
-        });
+        };
+        // A fresh host cannot inherit an earlier process's running authority.
+        // Reading an already active locator above keeps its current session.
+        candidate.pause_idle_automation(CommandStage::Open)?;
+        self.active = Some(candidate);
         Ok(view)
     }
 
@@ -861,7 +865,10 @@ impl SessionManager {
         if active.store.is_reconciling() {
             return Err(CommandError::unknown(CommandStage::Close));
         }
-        active.ensure_execution_idle(CommandStage::Close)?;
+        self.active
+            .as_mut()
+            .expect("active session checked above")
+            .pause_idle_automation(CommandStage::Close)?;
         let active = self.active.take().expect("active session checked above");
         active
             .store

@@ -14,6 +14,7 @@ export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
 
 export interface Requests {
+  effectRetry: AiEffectRetryRequest;
   preview: AiPreviewRequest;
   read: AiReadRequest;
   start: AiStartRequest;
@@ -25,6 +26,12 @@ export interface Requests {
   workPlanStatus: WorkPlanStatusRequest;
   workProtectionRead: WorkProtectionReadRequest;
   workProtectionSet: WorkProtectionSetRequest;
+}
+export interface AiEffectRetryRequest {
+  attemptId: ExecutionId;
+  itemId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
 }
 export interface AiPreviewRequest {
   config: AiConfig;

@@ -105,14 +105,21 @@ export function WorkProtectionControl({ context, target, locale, selectionId, se
   }
 
   async function submit(request: ProtectionRequest, key: string, current: () => boolean) {
+    // Publish the navigation barrier with the mutation, before a fast failure
+    // can render recovery controls ahead of the passive synchronization effect.
+    onBlockedChange(true);
     setPending({ request, key, phase: "pending" });
     try {
       await workPlanCommands.setProtection(request);
     } catch (error) {
-      if (mounted.current) setPending(hasUnknownOutcome(error) ? { request, key, phase: "unknown" } : null);
+      if (mounted.current) {
+        const unknown = hasUnknownOutcome(error);
+        onBlockedChange(unknown);
+        setPending(unknown ? { request, key, phase: "unknown" } : null);
+      }
       throw error;
     }
-    if (mounted.current) setPending(value => value?.request.actionId === request.actionId ? null : value);
+    if (mounted.current) { onBlockedChange(false); setPending(value => value?.request.actionId === request.actionId ? null : value); }
     // An idempotent receipt may precede newer manual protection. Invalidate and
     // read current facts; never copy that historical receipt into the cache.
     await reads.client.invalidateQueries({

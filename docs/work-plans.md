@@ -100,9 +100,7 @@ selection never transfers approval or makes a release eligible.
 A human-facing host must record protection through `set_work_protection` before
 accepting an editable draft. This uses the existing persistent protection gate;
 draft text is not sent to automation. Hosts must retain unknown protection writes
-and keep input protected until reconciliation. The current desktop automatic
-selection flow is not yet assembled, so these policies are currently available
-only to trusted Core application callers. Current bundled checks are limited to
+and keep input read-only until reconciliation. Current bundled checks are limited to
 the existing validator profile; they do not certify future domain check sets or
 external model quality.
 
@@ -131,8 +129,25 @@ and subsequent reads keep an already protected editor editable, preserving newer
 input. Composition prevents save shortcuts and entry/project navigation until
 it ends.
 
-Automatic selection, resource adoption and delivery remain unfinished in the
-desktop flow; their effects cannot be granted through this interface. The API is not a stable plugin
-SDK. A model or plugin must not receive unrestricted access to human-authorization
+The desktop exposes candidate-only work, selection of missing translations, or
+explicit replacement of the captured translations. Choosing a selection policy
+also enables the mechanical check stage; the sharing confirmation authorizes the
+exact corresponding effect set. The host saves ordinary candidates through the
+existing adoption ledger, computes mechanical checks on at most two background
+threads, and commits through the same Core policy service. Workers own values and
+cancellation signals, with no store or session handles. Pause, stop, takeover and
+project close prevent subsequent automatic commits. A fresh project host pauses
+crash-surviving grants before exposing its new session.
+
+Each result shows its saved candidate and automatic phase, blocked reason or
+sanitized failure. Historical policy receipts retain mechanical evidence and are
+labelled as past work, without asserting the current selection or human approval.
+A permitted storage retry first reads the saved result, then reuses the original
+candidate and selection action identities; it never generates another provider
+request. Opening an old attempt reads durable receipts without starting work.
+Incomplete automatic effects are inactive after reopen and require an explicitly
+renewed plan; they cannot silently resume an earlier grant. Candidate-only plans
+retain explicit manual candidate saving. Standalone automated checks, resource
+adoption and delivery remain unavailable. The API is not a stable plugin SDK. A model or plugin must not receive unrestricted access to human-authorization
 methods, `ProjectStore` or the raw runtime; its host must carry the issued lease
 and parent identity through the scoped application entry points.

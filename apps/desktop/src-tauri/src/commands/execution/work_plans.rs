@@ -359,6 +359,7 @@ pub async fn start_work_plan(
                 } else {
                     host.runtime.submit(store, &input).map_err(map_recover)?;
                 }
+                host.ai.track(store, &input).map_err(map_recover)?;
                 Ok(input.envelope().attempt_id)
             },
         )
@@ -738,6 +739,566 @@ mod tests {
                 "sessionToken":view["sessionToken"], "projectId":view["metadata"]["projectId"]
             });
         }
+    }
+
+    /// A bounded, credential-free HTTP producer exercises the production runner.
+    fn local_provider(text: &'static str) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_gate(text, None)
+    }
+    fn local_provider_gate(
+        text: &'static str,
+        gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        use std::io::{Read, Write};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let config = AiConfig {
+            endpoint: format!(
+                "http://{}/v1/chat/completions",
+                listener.local_addr().unwrap()
+            ),
+            model: "synthetic-work-effects".into(),
+            credential_env: String::new(),
+            max_requests: 1,
+            timeout_seconds: 2,
+            ..AiConfig::default()
+        };
+        let thread = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "provider was never dispatched");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut buffer = [0; 4096];
+            let end = loop {
+                let size = stream.read(&mut buffer).unwrap();
+                assert!(size > 0);
+                bytes.extend_from_slice(&buffer[..size]);
+                if let Some(index) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
+                    break index + 4;
+                }
+            };
+            let headers = std::str::from_utf8(&bytes[..end]).unwrap();
+            assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
+            assert!(!headers.to_lowercase().contains("authorization:"));
+            let length: usize = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|value| value.trim().parse().unwrap())
+                })
+                .unwrap();
+            while bytes.len() < end + length {
+                let size = stream.read(&mut buffer).unwrap();
+                assert!(size > 0);
+                bytes.extend_from_slice(&buffer[..size]);
+            }
+            let request: Value = serde_json::from_slice(&bytes[end..end + length]).unwrap();
+            let item: Value =
+                serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            if let Some((started, release)) = gate {
+                started.send(()).unwrap();
+                release.recv_timeout(Duration::from_secs(3)).unwrap();
+            }
+            let output =
+                json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text});
+            let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            );
+            item
+        });
+        (config, thread)
+    }
+
+    impl Fixture {
+        fn start_checked(
+            &self,
+            config: AiConfig,
+            policy: tsumugi_core::application::SelectionPolicy,
+        ) -> Value {
+            let mut options = PlanOptions {
+                selection_policy: policy,
+                ..PlanOptions::default()
+            };
+            options
+                .stages
+                .iter_mut()
+                .find(|stage| stage.stage == WorkStage::Checks)
+                .unwrap()
+                .mode = StageMode::Assisted;
+            let plan = self.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN","unitIds":[self.unit],"options":options})).unwrap();
+            let effects = match policy {
+                tsumugi_core::application::SelectionPolicy::MissingOnly => {
+                    json!(["save-candidate", "run-checks", "select-missing"])
+                }
+                tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection => {
+                    json!(["save-candidate", "run-checks", "replace-captured-selection"])
+                }
+                _ => unreachable!(),
+            };
+            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"effects":effects,"expiresAt":expiry()})).unwrap();
+            assert_eq!(self.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap(), plan["attemptId"]);
+            plan
+        }
+        fn wait_effect(&self, plan: &Value) -> Value {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let view = self
+                    .call(
+                        "read_ai_translation",
+                        json!({"attemptId":plan["attemptId"]}),
+                    )
+                    .unwrap();
+                match view["rows"][0]["automation"]["phase"].as_str() {
+                    Some("selected" | "blocked" | "failed" | "cancelled") => return view,
+                    _ => {
+                        assert!(Instant::now() < deadline, "{view}");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn checked_worker_selects_ordinary_candidate_and_reopen_only_reads_receipt() {
+        let mut fixture = Fixture::create();
+        let (config, provider) = local_provider("你好");
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::MissingOnly,
+        );
+        let view = fixture.wait_effect(&plan);
+        let row = &view["rows"][0];
+        let receipt = &row["automation"]["receipt"];
+        assert_eq!(row["automation"]["phase"], "selected", "{view}");
+        assert_eq!(receipt["request"]["revisionId"], row["savedRevisionId"]);
+        assert_eq!(receipt["request"]["lease"]["planId"], plan["planId"]);
+        assert_eq!(receipt["policyVersion"], "checked-selection-1");
+        assert!(receipt["checkRunId"].is_string());
+        assert_eq!(receipt["rules"].as_array().unwrap().len(), 4);
+        assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+        let original = row["automation"].clone();
+        let expected_revision = row["savedRevisionId"].as_str().unwrap().to_owned();
+        let unit = fixture.unit;
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let store = &sessions.active.as_ref().unwrap().store;
+                let history = store
+                    .translation_history(
+                        ExecutionId::parse(&store.metadata().unwrap().project_id().to_string())
+                            .unwrap(),
+                        unit,
+                        "zh-CN",
+                        0,
+                        100,
+                    )
+                    .unwrap();
+                assert_eq!(history.rows.len(), 1);
+                assert_eq!(
+                    history.current.as_ref().unwrap().revision_id.to_string(),
+                    expected_revision
+                );
+            });
+        fixture.reopen();
+        let before = fixture.bytes();
+        let reopened = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":plan["attemptId"]}),
+            )
+            .unwrap();
+        assert_eq!(reopened["rows"][0]["automation"], original);
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        assert_eq!(status["state"], "paused");
+        assert!(
+            fixture
+                .call(
+                    "retry_work_plan_effect",
+                    json!({"attemptId":plan["attemptId"],"itemId":row["itemId"]})
+                )
+                .is_err()
+        );
+        assert_eq!(fixture.bytes(), before);
+    }
+
+    #[test]
+    fn checked_worker_keeps_protected_candidate_with_mechanical_evidence() {
+        let fixture = Fixture::create();
+        fixture.call("set_work_protection", json!({"actionId":ExecutionId::new(),"unitId":fixture.unit,"locale":"zh-CN","sourceRevisionId":fixture.source_revision,"selectionId":null,"expectedRevision":"0","protected":true,"confirmedRelease":false})).unwrap();
+        let (config, provider) = local_provider("你好");
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
+        );
+        let view = fixture.wait_effect(&plan);
+        let row = &view["rows"][0];
+        assert_eq!(row["automation"]["phase"], "blocked", "{view}");
+        assert_eq!(row["automation"]["receipt"]["blocked"], "protected");
+        assert_eq!(
+            row["automation"]["receipt"]["rules"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert!(row["savedRevisionId"].is_string());
+        assert!(row["automation"]["receipt"]["selection"].is_null());
+        let unit = fixture.unit;
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let store = &sessions.active.as_ref().unwrap().store;
+                let history = store
+                    .translation_history(
+                        ExecutionId::parse(&store.metadata().unwrap().project_id().to_string())
+                            .unwrap(),
+                        unit,
+                        "zh-CN",
+                        0,
+                        100,
+                    )
+                    .unwrap();
+                assert_eq!(history.rows.len(), 1);
+                assert!(history.current.is_none());
+            });
+        provider.join().unwrap();
+    }
+
+    #[test]
+    fn checked_worker_preserves_failed_checks_without_selecting_candidate() {
+        let fixture = Fixture::create();
+        let (config, provider) = local_provider("");
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::MissingOnly,
+        );
+        let view = fixture.wait_effect(&plan);
+        let receipt = &view["rows"][0]["automation"]["receipt"];
+        assert_eq!(view["rows"][0]["automation"]["phase"], "blocked", "{view}");
+        assert_eq!(receipt["blocked"], "checks");
+        assert!(receipt["selection"].is_null());
+        assert!(
+            receipt["rules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|rule| !rule["findings"].as_array().unwrap().is_empty())
+        );
+        provider.join().unwrap();
+    }
+
+    #[test]
+    fn checked_worker_retries_same_action_after_known_storage_failure() {
+        let fixture = Fixture::create();
+        let connection =
+            rusqlite::Connection::open(fixture.directory.path().join("project/project.sqlite3"))
+                .unwrap();
+        connection.execute_batch("CREATE TRIGGER fail_policy BEFORE INSERT ON application_selection_actions BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;").unwrap();
+        let (config, provider) = local_provider("你好");
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::MissingOnly,
+        );
+        let failed = fixture.wait_effect(&plan);
+        let row = &failed["rows"][0];
+        assert_eq!(row["automation"]["phase"], "failed", "{failed}");
+        assert_eq!(row["automation"]["retryable"], true);
+        let action = row["automation"]["actionId"].clone();
+        let revision = row["savedRevisionId"].clone();
+        assert!(action.is_string() && revision.is_string());
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM translation_selections", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        connection
+            .execute_batch("DROP TRIGGER fail_policy")
+            .unwrap();
+        let request = json!({"attemptId":plan["attemptId"],"itemId":row["itemId"]});
+        assert_eq!(
+            fixture
+                .call("retry_work_plan_effect", request.clone())
+                .unwrap(),
+            true
+        );
+        let selected = fixture.wait_effect(&plan);
+        let current = &selected["rows"][0];
+        assert_eq!(current["automation"]["phase"], "selected", "{selected}");
+        assert_eq!(current["automation"]["actionId"], action);
+        assert_eq!(current["savedRevisionId"], revision);
+        assert!(fixture.call("retry_work_plan_effect", request).is_err());
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(selected["budget"]["dispatched"], 1);
+        provider.join().unwrap();
+    }
+
+    #[test]
+    fn checked_worker_pause_revokes_saving_and_retry_during_provider_wait() {
+        let fixture = Fixture::create();
+        let (started, waiting) = mpsc::channel();
+        let (release, hold) = mpsc::channel();
+        let (config, provider) = local_provider_gate("你好", Some((started, hold)));
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::MissingOnly,
+        );
+        waiting.recv_timeout(Duration::from_secs(3)).unwrap();
+        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"expiresAt":null})).unwrap();
+        release.send(()).unwrap();
+        provider.join().unwrap();
+        let view = fixture.wait_effect(&plan);
+        assert_eq!(view["rows"][0]["automation"]["retryable"], false);
+        assert!(view["rows"][0]["savedRevisionId"].is_null());
+        assert!(view["rows"][0]["automation"]["receipt"].is_null());
+        assert!(
+            fixture
+                .call(
+                    "retry_work_plan_effect",
+                    json!({"attemptId":plan["attemptId"],"itemId":view["rows"][0]["itemId"]})
+                )
+                .is_err()
+        );
+        let connection = rusqlite::Connection::open_with_flags(
+            fixture.directory.path().join("project/project.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(view["budget"]["dispatched"], 1);
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        assert_eq!(status["state"], "paused");
+        assert_eq!(status["lease"]["generation"], "2");
+    }
+
+    #[test]
+    fn checked_worker_fresh_host_pauses_crash_surviving_grant_without_replaying_effects() {
+        let mut fixture = Fixture::create();
+        let (config, provider) = local_provider("你好");
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::MissingOnly,
+        );
+        let selected = fixture.wait_effect(&plan);
+        provider.join().unwrap();
+        // Simulate losing the host without the orderly close/quiesce command.
+        fixture.app.state::<AppState>().sessions.with(|sessions| {
+            sessions.active.take();
+        });
+        let reopened = call(
+            &fixture.webview,
+            "open_project",
+            json!({"locator":fixture.directory.path().join("project")}),
+        )
+        .unwrap();
+        fixture.context = json!({"sessionToken":reopened["sessionToken"],"projectId":reopened["metadata"]["projectId"]});
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        assert_eq!(status["state"], "paused");
+        assert_eq!(status["lease"]["generation"], "2");
+        let before = fixture.bytes();
+        let view = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":plan["attemptId"]}),
+            )
+            .unwrap();
+        assert_eq!(
+            view["rows"][0]["automation"],
+            selected["rows"][0]["automation"]
+        );
+        assert_eq!(
+            view["rows"][0]["savedRevisionId"],
+            selected["rows"][0]["savedRevisionId"]
+        );
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(view["budget"]["dispatched"], 1);
+    }
+
+    #[test]
+    fn checked_worker_reconciles_a_concurrent_candidate_save_without_bypassing_pause() {
+        let fixture = Fixture::create();
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let store = &mut sessions.active.as_mut().unwrap().store;
+                let mut options = PlanOptions {
+                    selection_policy: tsumugi_core::application::SelectionPolicy::MissingOnly,
+                    ..PlanOptions::default()
+                };
+                options
+                    .stages
+                    .iter_mut()
+                    .find(|stage| stage.stage == WorkStage::Checks)
+                    .unwrap()
+                    .mode = StageMode::Assisted;
+                let plan = store
+                    .prepare_work_plan(
+                        Some(AiConfig {
+                            endpoint: "http://127.0.0.1:9".into(),
+                            model: "synthetic".into(),
+                            credential_env: String::new(),
+                            ..AiConfig::default()
+                        }),
+                        "zh-CN",
+                        &[fixture.unit],
+                        options,
+                    )
+                    .unwrap();
+                let grant = store
+                    .authorize_work_plan(
+                        &plan,
+                        &AuthorizeWorkPlan {
+                            action_id: ExecutionId::new(),
+                            plan_digest: plan.digest.clone(),
+                            confirmed: true,
+                            effects: vec![
+                                AutomationEffect::SaveCandidate,
+                                AutomationEffect::RunChecks,
+                                AutomationEffect::SelectMissing,
+                            ],
+                            expires_at: expiry().parse().unwrap(),
+                        },
+                    )
+                    .unwrap();
+                let input = FixedInput::capture(grant.input.unwrap()).unwrap();
+                store.enqueue_execution(&input).unwrap();
+                let attempt = input.envelope().attempt_id;
+                let item = input.envelope().items[0].item_id;
+                let dispatch = store.dispatch_execution_item(attempt, item).unwrap();
+                let result = FixedResult::capture(
+                    ResultEnvelope {
+                        project_id: input.envelope().project_id,
+                        attempt_id: attempt,
+                        item_id: item,
+                        result_id: ExecutionId::new(),
+                        supersedes: None,
+                        dispatch_token: dispatch.dispatch_token,
+                        capability_id: tsumugi_core::ai::CAPABILITY.into(),
+                        capability_version: "1".into(),
+                        outcome: ExecutionState::Succeeded,
+                        output: Some(
+                            serde_json::to_value(tsumugi_core::ai::AiOutput {
+                                unit_id: fixture.unit,
+                                target_locale: "zh-CN".into(),
+                                text: "Synthetic candidate".into(),
+                                usage: None,
+                                requests: 1,
+                                usage_incomplete: true,
+                            })
+                            .unwrap(),
+                        ),
+                        diagnostic: None,
+                    },
+                    &input,
+                    dispatch.dispatch_token,
+                )
+                .unwrap();
+                store.save_execution_result(&result).unwrap();
+                store
+                    .validate_execution_result(attempt, result.envelope().result_id)
+                    .unwrap();
+                let recovery_unit = input.envelope().units[0].unit_id;
+                let mut captures = Vec::new();
+                for _ in 0..2 {
+                    let action = store
+                        .prepare_adoption_with_id(
+                            ExecutionId::new(),
+                            attempt,
+                            recovery_unit,
+                            vec![result.envelope().result_id],
+                            Value::Null,
+                        )
+                        .unwrap();
+                    captures.push(
+                        store
+                            .capture_execution_adoption(&action)
+                            .unwrap()
+                            .prepare(&tsumugi_core::AiAdoptionHandler)
+                            .unwrap(),
+                    );
+                }
+                let manual = store
+                    .prepare_adoption_with_id(
+                        ExecutionId::new(),
+                        attempt,
+                        recovery_unit,
+                        vec![result.envelope().result_id],
+                        Value::Null,
+                    )
+                    .unwrap();
+                store
+                    .adopt_execution(&manual, &tsumugi_core::AiAdoptionHandler)
+                    .unwrap();
+                let revision = store.saved_ai_candidate(attempt, item).unwrap().unwrap();
+                assert_eq!(
+                    super::super::ai::commit_candidate(store, captures.remove(0), attempt, item)
+                        .unwrap(),
+                    revision
+                );
+                store
+                    .control_work_plan(&ControlWorkPlan {
+                        action_id: ExecutionId::new(),
+                        plan_id: plan.plan_id,
+                        expected_generation: grant.lease.generation,
+                        command: WorkPlanCommand::Pause,
+                        confirmed: false,
+                        expires_at: None,
+                    })
+                    .unwrap();
+                assert!(
+                    super::super::ai::commit_candidate(store, captures.remove(0), attempt, item)
+                        .is_err()
+                );
+                assert_eq!(
+                    store.saved_ai_candidate(attempt, item).unwrap(),
+                    Some(revision)
+                );
+                let history = store
+                    .translation_history(input.envelope().project_id, fixture.unit, "zh-CN", 0, 100)
+                    .unwrap();
+                assert_eq!(history.rows.len(), 1);
+                assert!(history.current.is_none());
+            });
     }
 
     fn manual_options() -> PlanOptions {

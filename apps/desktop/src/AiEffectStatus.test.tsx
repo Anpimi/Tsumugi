@@ -1,0 +1,41 @@
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { AiEffectStatus } from "./AiEffectStatus";
+import fixture from "../test/fixtures/aiCommands.contract.json";
+import type { EffectView } from "./generated/ai.responses";
+import { i18n } from "./i18n";
+import { validateResponseView } from "./generated/ai.validators";
+afterEach(cleanup);
+beforeEach(async () => { await i18n.changeLanguage("en-US"); });
+function recorded(): EffectView {
+  const view: unknown = structuredClone(fixture.responses.automaticView);
+  if (!validateResponseView(view) || !view.rows[0].automation) throw new Error("Invalid recorded fixture");
+  return view.rows[0].automation;
+}
+it("presents a historical policy selection without claiming current translation or approval", async () => {
+  const effect = recorded(); render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText("This candidate was selected by policy")).toBeInTheDocument();
+  expect(screen.getByText(/review the editor for the current translation/)).toBeInTheDocument();
+  expect(screen.getByText(/Human approval remains separate/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText("Mechanical check evidence"));
+  expect(screen.getByText(/Required translation/)).toBeVisible();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+});
+it("explains protection while retaining mechanical evidence in both languages", async () => {
+  const effect = recorded(); effect.phase = "blocked"; effect.receipt!.blocked = "protected";
+  effect.receipt!.selection = null; effect.receipt!.checkRunId = null;
+  const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText(/mechanical checks still ran/)).toBeInTheDocument();
+  await i18n.changeLanguage("zh-CN"); rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText(/机械检查仍已执行/)).toBeInTheDocument();
+});
+it("offers only an explicit allowed retry and prevents it under revoked authority", async () => {
+  const effect = recorded(); effect.phase = "failed"; effect.receipt = null; effect.retryable = true;
+  effect.error = { code: "storage-failed", stage: "execution-adopt", outcome: "rejected", reason: "execution-storage", recoveryRequired: false, diagnosticId: fixture.requests.read.attemptId };
+  const retry = vi.fn(); const { rerender } = render(<AiEffectStatus effect={effect} disabled={true} onRetry={retry} />);
+  const button = screen.getByRole("button", { name: "Check saved result and retry original action" });
+  expect(button).toBeDisabled(); await userEvent.click(button); expect(retry).not.toHaveBeenCalled();
+  rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={retry} />);
+  await userEvent.click(button); expect(retry).toHaveBeenCalledTimes(1);
+});

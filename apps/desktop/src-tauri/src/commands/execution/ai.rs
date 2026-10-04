@@ -1,9 +1,32 @@
 use super::ai_wire::{AiItemView, AiOutputView, AiPreviewView};
 use super::*;
 use tsumugi_core::ai::{AiConfig, AiPreview};
+mod automation;
+#[cfg(test)]
+pub(super) use automation::commit_candidate;
+pub use automation::{EffectPhase, EffectView};
 #[derive(Default)]
 pub(super) struct AiSession {
     preview: Option<(AiPreview, FixedInput)>,
+    automation: automation::Automation,
+}
+impl AiSession {
+    pub(super) fn track(
+        &mut self,
+        store: &ProjectStore,
+        input: &FixedInput,
+    ) -> Result<(), ExecutionError> {
+        self.automation.track(store, input)
+    }
+    pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &ExecutionRuntime) {
+        self.automation.tick(store, runtime);
+    }
+    pub(super) fn active(&self) -> bool {
+        self.automation.active()
+    }
+    pub(super) fn stop(&mut self) {
+        self.automation.stop();
+    }
 }
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] AiPreviewRequest {config:AiConfig,locale:String,unit_ids:Vec<ExecutionId>});
 request!(
@@ -18,6 +41,13 @@ request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     AiReadRequest {
         attempt_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    AiEffectRetryRequest {
+        attempt_id: ExecutionId,
+        item_id: ExecutionId
     }
 );
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -35,6 +65,8 @@ pub struct AiRow {
     item_id: ExecutionId,
     result_id: Option<ExecutionId>,
     output: Option<AiOutputView>,
+    saved_revision_id: Option<ExecutionId>,
+    automation: Option<EffectView>,
 }
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize)]
@@ -75,9 +107,13 @@ mod wire_tests {
         round_trip!("requests", "preview", AiPreviewRequest);
         round_trip!("requests", "start", AiStartRequest);
         round_trip!("requests", "read", AiReadRequest);
+        round_trip!("requests", "effectRetry", AiEffectRetryRequest);
         round_trip!("responses", "prepared", AiPrepared);
         round_trip!("responses", "identity", ExecutionId);
         round_trip!("responses", "view", AiView);
+        round_trip!("responses", "automaticView", AiView);
+        round_trip!("requests", "automaticRead", AiReadRequest);
+        round_trip!("responses", "effectRetry", bool);
         let mut value = fixture["responses"]["view"].clone();
         value["rows"][0]["output"]["usage"]["promptTokens"] = serde_json::json!(1);
         assert!(serde_json::from_value::<AiView>(value).is_err());
@@ -251,11 +287,53 @@ pub async fn read_ai_translation(
                         } else {
                             None
                         };
+                        let saved_revision_id =
+                            store.saved_ai_candidate(request.attempt_id, row.status.item_id)?;
+                        let receipt = match (input.envelope().automation, saved_revision_id) {
+                            (Some(lease), Some(revision)) => {
+                                store.automatic_selection_for_candidate(lease, revision)?
+                            }
+                            _ => None,
+                        };
+                        let automation = if let Some(receipt) = receipt {
+                            Some(EffectView {
+                                phase: if receipt.blocked.is_some() {
+                                    EffectPhase::Blocked
+                                } else {
+                                    EffectPhase::Selected
+                                },
+                                action_id: Some(receipt.request.action_id),
+                                receipt: Some(receipt),
+                                error: None,
+                                retryable: false,
+                            })
+                        } else if let Some(view) = host
+                            .ai
+                            .automation
+                            .view(request.attempt_id, row.status.item_id)
+                        {
+                            Some(view)
+                        } else if let Some(lease) = input.envelope().automation {
+                            let plan = store.work_plan(lease.plan_id)?;
+                            (plan.options.selection_policy
+                                != tsumugi_core::application::SelectionPolicy::CandidatesOnly)
+                                .then_some(EffectView {
+                                    phase: EffectPhase::Cancelled,
+                                    action_id: None,
+                                    receipt: None,
+                                    error: None,
+                                    retryable: false,
+                                })
+                        } else {
+                            None
+                        };
                         Ok(AiRow {
                             item: item.into(),
                             item_id: row.status.item_id,
                             result_id: row.result_id,
                             output: output.map(Into::into),
+                            saved_revision_id,
+                            automation,
                         })
                     })
                     .collect::<Result<Vec<_>, ExecutionError>>()
@@ -271,6 +349,35 @@ pub async fn read_ai_translation(
                     detail,
                     rows,
                 })
+            },
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn retry_work_plan_effect(
+    state: State<'_, AppState>,
+    request: AiEffectRetryRequest,
+) -> Result<bool, CommandError> {
+    state
+        .sessions
+        .run(
+            "retry_work_plan_effect",
+            CommandStage::ExecutionAdopt,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionAdopt,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.ai
+                    .automation
+                    .retry(store, request.attempt_id, request.item_id)
+                    .map_err(map_adopt)?;
+                Ok(true)
             },
         )
         .await
