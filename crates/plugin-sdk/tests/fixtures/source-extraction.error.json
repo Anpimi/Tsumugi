@@ -1,0 +1,5 @@
+{
+  "code": "unsupported-structure",
+  "artifactId": "source-artifact",
+  "detail": "This profile requires an explicit cue identity."
+}

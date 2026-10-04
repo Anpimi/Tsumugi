@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SourceExtractionError",
+  "description": "A bounded public diagnostic. Producers must use public descriptions and\ncaptured artifact IDs, never local paths, raw source text or secrets. Data\nvalidation cannot establish that arbitrary diagnostic text is safe to share.",
+  "type": "object",
+  "properties": {
+    "artifactId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "code": {
+      "$ref": "#/$defs/SourceExtractionErrorCode"
+    },
+    "detail": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "detail"
+  ],
+  "$defs": {
+    "SourceExtractionErrorCode": {
+      "description": "Finite public failure classifications; details never determine permissions.",
+      "type": "string",
+      "enum": [
+        "invalid-input",
+        "unsupported-profile",
+        "invalid-source",
+        "unsupported-structure",
+        "limit-exceeded",
+        "cancelled"
+      ]
+    }
+  }
+}

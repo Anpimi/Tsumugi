@@ -31,6 +31,13 @@ layout, native identity policy and other domain meanings remain profile-owned.
 The host's existing locale owner validates supported canonical language values;
 the SDK only bounds their wire labels.
 
+Native identity `value` is the domain-provided canonical matching value, not
+necessarily the original literal. Literal identity and semantic revision basis
+remain in versioned domain blocks. Core must not normalize that value again or
+accept operation-local extraction revision references as authoritative project
+revisions. The [source extraction contract](source-extraction.md) fixes raw
+material separately from a proposed `ContentExchange`.
+
 Domain payloads are strings intentionally preserved without parsing and
 reserializing their members. `required` blocks need the exact interpreter for an
 operation that uses them; `require_supported_extensions` checks that requirement.

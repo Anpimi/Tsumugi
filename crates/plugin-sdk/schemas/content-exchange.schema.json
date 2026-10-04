@@ -449,6 +449,7 @@
           }
         },
         "sourceRevisionId": {
+          "description": "During extraction this is an operation-local proposal reference. Only\nCore may map it to an authoritative project source revision.",
           "type": "string"
         },
         "text": {
@@ -852,6 +853,7 @@
           "$ref": "#/$defs/ContractRef"
         },
         "value": {
+          "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Literal identity and semantic revision evidence belong\nin versioned domain blocks; Core does not normalize this value again.",
           "type": "string"
         }
       },

@@ -7,20 +7,46 @@ import standaloneCode from 'ajv/dist/standalone/index.js';
 
 const root = new URL('../../../', import.meta.url);
 const schemaURL = new URL('crates/plugin-sdk/schemas/process-frame.schema.json', root);
+const exchangeSchemaURL = new URL('crates/plugin-sdk/schemas/content-exchange.schema.json', root);
+const contentTypesURL = new URL('crates/plugin-sdk/schemas/content-types.schema.json', root);
+const sourceInputURL = new URL('crates/plugin-sdk/schemas/source-extraction-input.schema.json', root);
 const cargo = (...args) => execFileSync('cargo', [
   'run', '--quiet', '--locked', '--offline', '-p', 'tsumugi-plugin-sdk',
   '--features', 'schema', '--bin', 'tsumugi-plugin-contract', '--', ...args,
 ], { cwd: fileURLToPath(root), encoding: 'utf8' });
 cargo('check-process-schema', fileURLToPath(schemaURL));
+cargo('check-exchange-schema', fileURLToPath(exchangeSchemaURL));
+cargo('check-content-types-schema', fileURLToPath(contentTypesURL));
+for (const kind of ['input', 'error']) {
+  cargo(`check-source-extraction-${kind}-schema`, fileURLToPath(
+    new URL(`crates/plugin-sdk/schemas/source-extraction-${kind}.schema.json`, root),
+  ));
+}
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
+const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
+const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
 const profile = JSON.parse(cargo('profile-process'));
 const banner = '// Generated from the Rust SDK. Run pnpm generate:contracts; do not edit.\n';
+const ajvPackageURL = new URL(import.meta.resolve('ajv/package.json'));
+const ajvPackage = JSON.parse(await readFile(ajvPackageURL, 'utf8'));
+const ajvLicense = await readFile(new URL('LICENSE', ajvPackageURL), 'utf8');
+const sourceValidatorAttribution = `// Standalone generator: ${ajvPackage.name} ${ajvPackage.version} (${ajvPackage.license}).\n`
+  + ajvLicense.trimEnd().split('\n').map(line => line ? `// ${line}` : '//').join('\n') + '\n';
 const ajv = new Ajv({ strict: true, code: { source: true, esm: true, lines: true } });
+const processValidator = standaloneCode(ajv, ajv.compile(schema));
+const sourceInputValidator = standaloneCode(ajv, ajv.compile(sourceInput));
+if (/^\s*import\s/m.test(sourceInputValidator) || /\brequire\s*\(/.test(sourceInputValidator)) {
+  throw new Error('The generated source-input validator requires a runtime dependency.');
+}
 const outputs = [
   [new URL('crates/plugin-sdk/javascript/process.d.ts', root), await compile(schema, 'ProcessFrame', {
     bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
   })],
-  [new URL('../src/generated/validate-process.mjs', import.meta.url), banner + standaloneCode(ajv, ajv.compile(schema))],
+  [new URL('crates/plugin-sdk/javascript/content.d.ts', root), await compile(contentTypes, 'SourceExtractionTypes', {
+    bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+  })],
+  [new URL('crates/plugin-sdk/javascript/validate-source-extraction-input.mjs', root), banner + sourceValidatorAttribution + sourceInputValidator],
+  [new URL('../src/generated/validate-process.mjs', import.meta.url), banner + processValidator],
   [new URL('../src/generated/protocol.ts', import.meta.url), `${banner}export const PROCESS_PROFILE = ${JSON.stringify(profile, null, 2)} as const;\n`],
 ];
 for (const [url, source] of outputs) {
@@ -28,4 +54,4 @@ for (const [url, source] of outputs) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);
   } else await writeFile(url, source);
 }
-console.log(process.argv.includes('--check') ? 'Generated contracts are current.' : 'Generated SDK types and process validator.');
+console.log(process.argv.includes('--check') ? 'Generated contracts are current.' : 'Generated SDK types and validators.');

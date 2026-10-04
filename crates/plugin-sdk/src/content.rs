@@ -31,6 +31,9 @@ pub struct SourceReference {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NativeIdentityEvidence {
     pub namespace: String,
+    /// The domain's canonical matching value, not necessarily its original
+    /// literal spelling. Literal identity and semantic revision evidence belong
+    /// in versioned domain blocks; Core does not normalize this value again.
     pub value: String,
     pub policy: ContractRef,
 }
@@ -60,6 +63,8 @@ pub struct ContentUnit {
     /// Operation-local reference or a captured project identity, as specified by
     /// the capability. A plugin cannot allocate authoritative project revisions.
     pub id: String,
+    /// During extraction this is an operation-local proposal reference. Only
+    /// Core may map it to an authoritative project source revision.
     pub source_revision_id: String,
     pub text: String,
     pub occurrences: Vec<ContentOccurrence>,
@@ -131,24 +136,13 @@ fn count(len: usize, field: &str) -> Result<(), ContractError> {
 }
 impl ContentExchange {
     pub fn validate(&self) -> Result<(), ContractError> {
-        reference(&self.profile, "content.profile")?;
-        opaque_id(&self.source_set_id, "content.sourceSetId")?;
-        if self.source_language.is_empty()
-            || self.source_language.len() > 128
-            || !self
-                .source_language
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-        {
-            return Err(ContractError::at(
-                ContractErrorCode::InvalidDeclaration,
-                "content.sourceLanguage",
-            ));
-        }
-        // This checks a bounded language label, not BCP47 canonicalization. The
-        // host's existing locale owner validates the actual supported language.
+        validate_source_material(
+            &self.profile,
+            &self.source_set_id,
+            &self.source_language,
+            &self.artifacts,
+        )?;
         for (len, field) in [
-            (self.artifacts.len(), "content.artifacts"),
             (self.units.len(), "content.units"),
             (self.order.len(), "content.order"),
             (self.relations.len(), "content.relations"),
@@ -156,38 +150,7 @@ impl ContentExchange {
         ] {
             count(len, field)?;
         }
-        if self.artifacts.is_empty() {
-            return Err(ContractError::at(
-                ContractErrorCode::InvalidDeclaration,
-                "content.artifacts",
-            ));
-        }
-        unique(self.artifacts.iter().map(|a| &a.id), "content.artifacts.id")?;
-        unique(
-            self.artifacts.iter().map(|a| &a.logical_path),
-            "content.artifacts.logicalPath",
-        )?;
         unique(self.units.iter().map(|u| &u.id), "content.units.id")?;
-        let mut total_bytes = 0usize;
-        for artifact in &self.artifacts {
-            opaque_id(&artifact.id, "content.artifacts.id")?;
-            path(&artifact.logical_path, "content.artifacts.logicalPath")?;
-            name(&artifact.role, "content.artifacts.role")?;
-            digest(&artifact.sha256, "content.artifacts.sha256")?;
-            total_bytes = total_bytes.saturating_add(artifact.utf8.len());
-            if total_bytes > MAX_EXCHANGE_BYTES {
-                return Err(ContractError::at(
-                    ContractErrorCode::LimitExceeded,
-                    "content.artifacts",
-                ));
-            }
-            if payload_digest(&artifact.utf8) != artifact.sha256 {
-                return Err(ContractError::at(
-                    ContractErrorCode::ResultMismatch,
-                    "content.artifacts.sha256",
-                ));
-            }
-        }
         let mut occurrences = BTreeSet::new();
         for unit in &self.units {
             opaque_id(&unit.id, "content.units.id")?;
@@ -319,6 +282,63 @@ impl ContentExchange {
         }
         Ok(())
     }
+}
+
+/// One source-material validator shared by captured input and extracted content.
+/// It checks wire labels and exact UTF-8 bytes, never a domain grammar or locale.
+pub(crate) fn validate_source_material(
+    profile: &ContractRef,
+    source_set_id: &str,
+    source_language: &str,
+    artifacts: &[CapturedTextArtifact],
+) -> Result<(), ContractError> {
+    reference(profile, "content.profile")?;
+    opaque_id(source_set_id, "content.sourceSetId")?;
+    if source_language.is_empty()
+        || source_language.len() > 128
+        || !source_language
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            "content.sourceLanguage",
+        ));
+    }
+    // Canonical supported locales remain the host's existing locale owner's job.
+    count(artifacts.len(), "content.artifacts")?;
+    if artifacts.is_empty() {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            "content.artifacts",
+        ));
+    }
+    unique(artifacts.iter().map(|a| &a.id), "content.artifacts.id")?;
+    unique(
+        artifacts.iter().map(|a| &a.logical_path),
+        "content.artifacts.logicalPath",
+    )?;
+    let mut total_bytes = 0usize;
+    for artifact in artifacts {
+        opaque_id(&artifact.id, "content.artifacts.id")?;
+        path(&artifact.logical_path, "content.artifacts.logicalPath")?;
+        name(&artifact.role, "content.artifacts.role")?;
+        digest(&artifact.sha256, "content.artifacts.sha256")?;
+        total_bytes = total_bytes.saturating_add(artifact.utf8.len());
+        if total_bytes > MAX_EXCHANGE_BYTES {
+            return Err(ContractError::at(
+                ContractErrorCode::LimitExceeded,
+                "content.artifacts",
+            ));
+        }
+        if payload_digest(&artifact.utf8) != artifact.sha256 {
+            return Err(ContractError::at(
+                ContractErrorCode::ResultMismatch,
+                "content.artifacts.sha256",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Verifies raw fidelity and opaque extension preservation, not domain meaning,

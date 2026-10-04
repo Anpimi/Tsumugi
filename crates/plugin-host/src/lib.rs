@@ -17,7 +17,7 @@ pub use package::installation::{
     MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, PackageStore, RuntimeApproval,
     RuntimeInstallReceipt,
 };
-pub use package::{PackageFile, PackageImage};
+pub use package::{PackageFile, PackageImage, PackageInspection};
 pub use runtime::CapturedRuntime;
 pub use session::*;
 

@@ -53,6 +53,12 @@ It stays in the same unreleased application/SDK batch and adds no development
 format migration or new distributed version.
 Exhaustive matches on the experimental installation error enum must now handle
 `MissingRuntime` separately from a missing plugin package.
+The public source-extraction data contract and generated JavaScript content types
+remain in the same experimental SDK alpha.1 development batch. Candidate package
+inspection shares the Host's existing capture and digest owner, without changing
+the package format, runtime profile, project schema or desktop assembly. Neither
+addition distributes an application/SDK release or requires a historical migration;
+the application and SDK version sources therefore remain unchanged.
 
 ## Choosing the next version
 

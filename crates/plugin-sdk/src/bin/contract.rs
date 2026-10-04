@@ -30,6 +30,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 1 && args[0] == "schema-process" {
         return print(&process_schema());
     }
+    if args.len() == 1 && args[0] == "schema-source-extraction-input" {
+        return print(&source_extraction_input_schema());
+    }
+    if args.len() == 1 && args[0] == "schema-source-extraction-error" {
+        return print(&source_extraction_error_schema());
+    }
+    if args.len() == 1 && args[0] == "schema-content-types" {
+        return print(&source_extraction_types_schema());
+    }
     if args.len() == 1 && args[0] == "profile-process" {
         return print(&process_profile());
     }
@@ -39,7 +48,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 2
         && (args[0] == "check-schema"
             || args[0] == "check-exchange-schema"
-            || args[0] == "check-process-schema")
+            || args[0] == "check-process-schema"
+            || args[0] == "check-source-extraction-input-schema"
+            || args[0] == "check-source-extraction-error-schema"
+            || args[0] == "check-content-types-schema")
     {
         let actual: serde_json::Value =
             serde_json::from_slice(&read(&args[1], MAX_EXCHANGE_BYTES)?)
@@ -48,6 +60,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             manifest_schema()
         } else if args[0] == "check-process-schema" {
             process_schema()
+        } else if args[0] == "check-source-extraction-input-schema" {
+            source_extraction_input_schema()
+        } else if args[0] == "check-source-extraction-error-schema" {
+            source_extraction_error_schema()
+        } else if args[0] == "check-content-types-schema" {
+            source_extraction_types_schema()
         } else {
             exchange_schema()
         };
@@ -62,6 +80,27 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.len() == 2 && args[0] == "validate-exchange" {
         return print(parse_exchange(&read(&args[1], MAX_EXCHANGE_BYTES)?)?.document());
+    }
+    if args.len() == 2 && args[0] == "validate-source-extraction-input" {
+        return print(&parse_source_extraction_input(&read(
+            &args[1],
+            MAX_EXCHANGE_BYTES,
+        )?)?);
+    }
+    if args.len() == 2 && args[0] == "validate-source-extraction-error" {
+        return print(&parse_source_extraction_error(&read(
+            &args[1],
+            MAX_SOURCE_EXTRACTION_ERROR_BYTES,
+        )?)?);
+    }
+    if args.len() == 3 && args[0] == "match-source-extraction" {
+        let input = parse_source_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
+        let exchange = parse_exchange(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
+        let ExchangeBody::Content(content) = &exchange.document().body else {
+            return Err("expected content exchange fixture".into());
+        };
+        validate_source_extraction(&input, content)?;
+        return print(exchange.document());
     }
     if args.len() == 4 && args[0] == "match-result" {
         let request = parse_exchange(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
@@ -97,7 +136,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &serde_json::json!({"coverageComplete": coverage.complete, "entries": coverage.entries.len()}),
         );
     }
-    Err("usage: tsumugi-plugin-contract schema | schema-exchange | schema-process | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
+    Err("usage: tsumugi-plugin-contract schema | schema-exchange | schema-process | schema-source-extraction-input | schema-source-extraction-error | schema-content-types | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | check-source-extraction-input-schema <file> | check-source-extraction-error-schema <file> | check-content-types-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | validate-source-extraction-input <file> | validate-source-extraction-error <file> | match-source-extraction <input> <content-exchange> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
 }
 fn main() {
     if let Err(error) = run() {

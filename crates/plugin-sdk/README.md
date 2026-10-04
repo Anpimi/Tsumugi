@@ -12,6 +12,11 @@ for invocation, fidelity, text offsets and check coverage. The manifest fixtures
 plugin packages. Their `example.*` schemas and capabilities are fixture names;
 the harness does not claim they are implemented domain APIs.
 
+[Source extraction](docs/source-extraction.md) defines bounded captured-material
+input, exact content-result association and finite public errors. Its JavaScript
+content/text declarations are generated from the Rust schemas alongside the
+existing process bindings.
+
 From the repository root:
 
 ```sh

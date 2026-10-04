@@ -1,7 +1,43 @@
 //! Capture an explicitly selected local package without executing its contents.
 use super::*;
 
+/// A fingerprint of a prebuilt candidate, without captured executable bytes,
+/// publisher authentication, approval, installation or execution authority.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageInspection {
+    pub plugin: PluginIdentity,
+    pub package_digest: String,
+    pub manifest_sha256: String,
+    /// Includes manifest.json, unlike the image's separate file collection.
+    pub file_count: u32,
+    pub byte_count: u64,
+}
+
 impl PackageImage {
+    /// Inspect a prebuilt candidate using the same bounded descriptor-relative
+    /// capture as approved loading. The resulting fingerprint must be verified
+    /// or explicitly approved separately; it is never an installation receipt.
+    /// No component or installation script is run.
+    pub fn inspect_directory(
+        root: &Path,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<PackageInspection> {
+        let image = Self::read_directory(root, None, authorized)?;
+        Ok(PackageInspection {
+            plugin: image.manifest().manifest().plugin.clone(),
+            package_digest: image.digest.clone(),
+            manifest_sha256: format!("{:x}", Sha256::digest(&image.manifest_bytes)),
+            file_count: (image.files.len() + 1) as u32,
+            byte_count: image.manifest_bytes.len() as u64
+                + image
+                    .files
+                    .values()
+                    .map(|file| file.bytes.len() as u64)
+                    .sum::<u64>(),
+        })
+    }
+
     /// Read a prebuilt local directory through held directory descriptors. The
     /// caller supplies the independently approved digest and a live read guard;
     /// source selection/trust and execution consent are separate decisions.
@@ -14,6 +50,14 @@ impl PackageImage {
     pub fn capture_directory(
         root: &Path,
         expected_digest: &str,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<Self> {
+        Self::read_directory(root, Some(expected_digest), authorized)
+    }
+
+    fn read_directory(
+        root: &Path,
+        expected_digest: Option<&str>,
         authorized: impl Fn() -> bool,
     ) -> HostResult<Self> {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -34,6 +78,14 @@ impl PackageImage {
             let manifest = files
                 .remove("manifest.json")
                 .ok_or(HostError::MissingArtifact)?;
+            let digest;
+            let expected_digest = match expected_digest {
+                Some(approved) => approved,
+                None => {
+                    digest = Self::digest(&manifest.bytes, &files)?;
+                    &digest
+                }
+            };
             let image = Self::capture(manifest.bytes, files, expected_digest)?;
             if !authorized() {
                 return Err(HostError::AuthorityRevoked);

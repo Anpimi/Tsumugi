@@ -12,6 +12,7 @@ mod environment;
 mod invocation;
 mod process;
 mod resolution;
+mod source_extraction;
 mod text;
 mod validation;
 
@@ -23,6 +24,7 @@ pub use environment::*;
 pub use invocation::*;
 pub use process::*;
 pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
+pub use source_extraction::*;
 pub use text::*;
 pub use validation::{ContractError, ContractErrorCode, ValidatedManifest, parse_manifest};
 

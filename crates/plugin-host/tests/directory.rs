@@ -64,6 +64,45 @@ fn captures_binary_bytes_executable_bits_and_independent_digest() {
 }
 
 #[test]
+fn inspection_uses_the_capture_owner_and_returns_only_a_candidate_fingerprint() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("candidate");
+    let expected = package(&root);
+    let inspection = PackageImage::inspect_directory(&root, || true).unwrap();
+    assert_eq!(inspection.package_digest, expected);
+    assert_eq!(inspection.plugin.id, "local-data");
+    assert_eq!(inspection.file_count, 3);
+    assert_eq!(inspection.manifest_sha256.len(), 64);
+    assert_eq!(
+        inspection.byte_count,
+        fs::metadata(root.join("manifest.json")).unwrap().len()
+            + fs::metadata(root.join("data/resource.bin")).unwrap().len()
+            + fs::metadata(root.join("bin/tool")).unwrap().len()
+    );
+    // Both entrypoints reject the same unsafe source and live read revocation.
+    std::os::unix::fs::symlink(&root, temporary.path().join("link")).unwrap();
+    assert_eq!(
+        PackageImage::inspect_directory(&temporary.path().join("link"), || true).unwrap_err(),
+        HostError::PackagePath
+    );
+    assert_eq!(
+        PackageImage::inspect_directory(&root, || false).unwrap_err(),
+        HostError::AuthorityRevoked
+    );
+    fs::write(root.join("data/resource.bin"), [42, 0]).unwrap();
+    assert_ne!(
+        PackageImage::inspect_directory(&root, || true)
+            .unwrap()
+            .package_digest,
+        inspection.package_digest
+    );
+    assert_eq!(
+        PackageImage::capture_directory(&root, &expected, || true).err(),
+        Some(HostError::PackageMismatch)
+    );
+}
+
+#[test]
 fn rejects_root_ancestor_and_file_links_hardlinks_and_special_files() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("package");

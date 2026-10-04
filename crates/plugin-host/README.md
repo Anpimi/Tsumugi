@@ -47,6 +47,23 @@ caller still owns source approval, and an installer must validate archive/source
 provenance before producing captured bytes. Network signature/update verification
 and desktop package controls remain separate work.
 
+Public package tooling uses `PackageImage::inspect_directory` to fingerprint a
+prebuilt candidate through that same bounded capture owner. It returns the claimed
+plugin identity, package digest, manifest SHA-256 and actual file/byte counts;
+it returns no image, installation receipt, publisher approval or grant. This
+read-only CLI accepts an absolute or relative selection without resolving away
+symbolic links:
+
+```sh
+cargo run -p tsumugi-plugin-host --bin tsumugi-plugin-package --locked -- inspect /path/to/prebuilt-package
+```
+
+Verify this candidate against trusted release metadata or explicitly approve its
+source before supplying its digest to installation. The inspection performs no
+component loading, download, build or installation script. Independent plugins
+can materialize their declared runtime files and use this public tool instead of
+copying the Host's package digest algorithm.
+
 ## Fixed runtime environment
 
 `CapturedRuntime::capture_directories` captures two prebuilt, link-free trees on a
