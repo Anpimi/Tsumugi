@@ -82,6 +82,12 @@ cancelled, incomplete or blocking checks cannot authorize adoption. Domain check
 execute outside project write transactions; the mutation boundary rechecks the
 captured evidence and current authorization.
 
+Source and proposal each fit their own 2 MiB encoded JSON ceiling. Their complete
+check request, including fixed requirements, fits 4 MiB; oversized combinations
+are refused, never truncated. These payload ceilings are distinct from the
+process frame's JSON quoting and metadata budget. Typed validation counts encoded
+bytes without allocating an unbounded intermediate buffer.
+
 `parse_content_exchange`, `parse_source_extraction_check_input`, and
 `parse_check_results` bound the complete raw JSON and reject duplicate or unknown
 typed fields. These are data receivers and perform no execution or project IO.

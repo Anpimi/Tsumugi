@@ -386,6 +386,31 @@ fn revision_policy_is_unique_versioned_capture_and_does_not_interpret_payloads()
     assert!(policy.validate().is_err());
 }
 
+#[test]
+fn combined_check_budget_is_distinct_from_each_captured_content_budget() {
+    let mut request = semantic_input();
+    request.source.artifacts[0].utf8 = "x".repeat(900_000);
+    request.source.artifacts[0].sha256 = payload_digest(&request.source.artifacts[0].utf8);
+    request.proposal.artifacts = request.source.artifacts.clone();
+    request.proposal.domain_blocks[0].payload_utf8 = "x".repeat(900_000);
+    let bytes = serde_json::to_vec(&request).unwrap();
+    assert!(bytes.len() > MAX_EXCHANGE_BYTES && bytes.len() < MAX_INVOCATION_PAYLOAD_BYTES);
+    parse_source_extraction_check_input(&bytes).unwrap();
+    request.proposal.domain_blocks[0]
+        .payload_utf8
+        .push_str(&"x".repeat(400_000));
+    assert_eq!(
+        request.validate().unwrap_err().code,
+        ContractErrorCode::LimitExceeded
+    );
+    assert_eq!(
+        parse_source_extraction_check_input(&vec![b' '; MAX_INVOCATION_PAYLOAD_BYTES + 1])
+            .unwrap_err()
+            .code,
+        ContractErrorCode::LimitExceeded
+    );
+}
+
 #[cfg(feature = "schema")]
 #[test]
 fn generated_type_catalog_includes_content_source_and_text_contracts() {

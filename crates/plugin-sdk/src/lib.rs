@@ -55,6 +55,11 @@ fn positive_u16_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars:
 /// The current experimental content/invocation/check wire protocol.
 pub const EXCHANGE_PROTOCOL: u32 = 1;
 pub const MAX_EXCHANGE_BYTES: usize = 2 * 1024 * 1024;
+/// Combined invocation data may contain both captured material and a proposal.
+pub const MAX_INVOCATION_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+/// Any UTF-8 payload byte can expand to six JSON bytes. Metadata is separately
+/// bounded by the typed context/provider/contracts and fits the reserved 64 KiB.
+pub const MAX_PROCESS_FRAME_BYTES: usize = 6 * MAX_INVOCATION_PAYLOAD_BYTES + 64 * 1024;
 pub const MAX_CONTENT_ITEMS: usize = 2000;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 
@@ -78,7 +83,8 @@ pub fn process_schema() -> schemars::Schema {
 pub fn process_profile() -> serde_json::Value {
     serde_json::json!({
         "protocolVersion": PROCESS_PROTOCOL,
-        "maxFrameBytes": MAX_EXCHANGE_BYTES,
+        "maxFrameBytes": MAX_PROCESS_FRAME_BYTES,
+        "maxInvocationPayloadBytes": MAX_INVOCATION_PAYLOAD_BYTES,
         "sdkVersion": env!("CARGO_PKG_VERSION")
     })
 }

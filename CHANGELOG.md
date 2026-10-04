@@ -12,7 +12,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
-- Experimental source checks capture required rules and the selected package before execution, using the existing check-result coverage contract. Content schema 2 retains original identity display evidence separately from canonical matching; a captured revision policy selects opaque domain evidence. Earlier experimental shapes are refused without conversion, within the same undistributed SDK alpha batch.
+- Experimental source checks capture required rules and the selected package before execution, using the existing check-result coverage contract. Content schema 2 retains original identity display evidence separately from canonical matching; a captured revision policy selects opaque domain evidence. Source and proposal each have a 2 MiB encoded limit; their combined check request has a separate 4 MiB limit. Process frames reserve space for worst-case JSON quoting and metadata, while raw payload and complete result-frame limits are enforced independently. Earlier experimental shapes are refused without conversion, within the same undistributed SDK alpha batch.
 
 - Public source-extraction SDK inputs bind the selected profile and original captured artifacts to generic content proposals. Generated JavaScript content types share the Rust definitions; structural association does not replace domain validation or project adoption. Public package inspection fingerprints a prebuilt candidate through the Host's bounded capture owner without running code or granting installation, publisher or execution approval.
 

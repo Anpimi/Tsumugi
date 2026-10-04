@@ -7,7 +7,14 @@ actual pipe/state handling; parsing a frame does not start a worker or grant
 authority.
 
 Each frame is a four-byte unsigned **big-endian** JSON byte length followed by
-exactly that many UTF-8 JSON bytes. A body must be nonempty and at most 2 MiB;
+exactly that many UTF-8 JSON bytes. A body must be nonempty and at most
+`MAX_PROCESS_FRAME_BYTES` (24 MiB + 64 KiB). An invocation payload separately
+fits `MAX_INVOCATION_PAYLOAD_BYTES` (4 MiB); JSON quoting can expand each arbitrary
+UTF-8 byte to six bytes, with 64 KiB reserved for bounded metadata.
+The SDK-generated process profile owns both limits. Domain source/content each
+retain their own 2 MiB ceiling; combined source-check data uses 4 MiB.
+`maxResultBytes` limits the complete encoded result frame, while a contribution's
+`maxInputBytes`/`maxOutputBytes` limit raw payload bytes. The receiver checks both;
 the Host additionally applies its narrower policy/capability and aggregate stream
 limits. Stdout contains frames only. Stderr is a separately bounded diagnostic
 stream, not a result channel. Partial headers/bodies, invalid JSON, unknown or
@@ -28,8 +35,8 @@ launched. A peer that echoes these values has not authenticated a publisher,
 obtained a grant or proven safe domain behavior.
 
 `invoke` and `result` reuse the existing invocation types and exact UTF-8 payload
-digests. Requests/results are also independently bounded by the content exchange
-contract when checked by `receive_invocation_result`. Opaque payloads still need
+digests. `receive_invocation_result` checks the complete result document against
+the request's `maxResultBytes` and validates its separately bounded payload. Opaque payloads still need
 their own schema/domain interpreter and Core adoption. `cancelled` acknowledges
 only the correlated dispatch; it cannot claim rollback, refund or the absence of
 an external effect. `closed` acknowledges only the captured provider's cleanup.

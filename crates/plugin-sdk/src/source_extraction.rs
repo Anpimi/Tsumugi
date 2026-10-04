@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     CapturedTextArtifact, CheckImplementation, CheckRequirement, CheckResult, ContentExchange,
     ContractError, ContractErrorCode, ContractRef, MAX_EXCHANGE_BYTES,
+    MAX_INVOCATION_PAYLOAD_BYTES,
     checks::validate_check_results,
     content::validate_source_material,
-    validation::{count, opaque_id, reference, unique},
+    validation::{count, encoded_limit, opaque_id, reference, unique},
 };
 
 pub const SOURCE_EXTRACTION_INPUT_SCHEMA_ID: &str = "tsumugi.source-extraction-input";
@@ -98,7 +99,8 @@ impl SourceExtractionInput {
             &self.source_set_id,
             &self.source_language,
             &self.artifacts,
-        )
+        )?;
+        encoded_limit(self, MAX_EXCHANGE_BYTES, "sourceExtractionInput")
     }
 }
 
@@ -146,7 +148,11 @@ impl SourceExtractionCheckInput {
                 ));
             }
         }
-        Ok(())
+        encoded_limit(
+            self,
+            MAX_INVOCATION_PAYLOAD_BYTES,
+            "sourceExtractionCheckInput",
+        )
     }
 }
 
@@ -166,7 +172,7 @@ pub fn parse_content_exchange(bytes: &[u8]) -> Result<ContentExchange, ContractE
 pub fn parse_source_extraction_check_input(
     bytes: &[u8],
 ) -> Result<SourceExtractionCheckInput, ContractError> {
-    if bytes.len() > MAX_EXCHANGE_BYTES {
+    if bytes.len() > MAX_INVOCATION_PAYLOAD_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "sourceExtractionCheckInput",

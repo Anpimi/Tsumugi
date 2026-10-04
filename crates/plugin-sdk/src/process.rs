@@ -83,7 +83,7 @@ impl ProcessFrame {
         self.validate()?;
         let bytes = serde_json::to_vec(self)
             .map_err(|_| ContractError::at(ContractErrorCode::InvalidSchema, "process"))?;
-        if bytes.len() > MAX_EXCHANGE_BYTES {
+        if bytes.len() > MAX_PROCESS_FRAME_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "process",
@@ -93,7 +93,7 @@ impl ProcessFrame {
     }
 }
 pub fn parse_process_frame(bytes: &[u8]) -> Result<ProcessFrame, ContractError> {
-    if bytes.is_empty() || bytes.len() > MAX_EXCHANGE_BYTES {
+    if bytes.is_empty() || bytes.len() > MAX_PROCESS_FRAME_BYTES {
         return Err(ContractError::at(
             ContractErrorCode::LimitExceeded,
             "process",

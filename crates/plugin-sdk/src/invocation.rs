@@ -115,7 +115,7 @@ impl EncodedPayload {
     fn validate(&self) -> Result<(), ContractError> {
         reference(&self.schema, "payload.schema")?;
         digest(&self.sha256, "payload.sha256")?;
-        if self.utf8.len() > MAX_EXCHANGE_BYTES {
+        if self.utf8.len() > MAX_INVOCATION_PAYLOAD_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "payload",
@@ -168,7 +168,7 @@ impl InvocationRequest {
                 "context.inputDigest",
             ));
         }
-        if self.max_result_bytes == 0 || self.max_result_bytes as usize > MAX_EXCHANGE_BYTES {
+        if self.max_result_bytes == 0 || self.max_result_bytes as usize > MAX_PROCESS_FRAME_BYTES {
             return Err(ContractError::at(
                 ContractErrorCode::LimitExceeded,
                 "request.maxResultBytes",

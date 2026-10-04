@@ -70,6 +70,11 @@ earlier development snapshots; there is no automatic conversion. The source,
 error and new check payload schemas and process frames retain their independent
 identities. SDK metadata therefore remains `0.1.0-alpha.1`; actual producer
 commits and artifact digests distinguish internal consumer snapshots.
+The SDK's bounded invocation payload now admits 4 MiB, with a separate
+24 MiB + 64 KiB process frame ceiling for worst-case JSON quoting and typed
+metadata. Source/content each retain their 2 MiB encoded ceiling. These limit
+changes retain the current process shape and protocol, within the same
+undistributed SDK batch; they do not create a new release boundary.
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
 

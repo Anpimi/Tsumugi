@@ -1,5 +1,5 @@
 use crate::{
-    validation::{digest, name, opaque_id, path, reference, unique},
+    validation::{digest, encoded_limit, name, opaque_id, path, reference, unique},
     *,
 };
 use serde::{Deserialize, Serialize};
@@ -274,7 +274,7 @@ impl ContentExchange {
                 ));
             }
         }
-        Ok(())
+        encoded_limit(self, MAX_EXCHANGE_BYTES, "contentExchange")
     }
 
     /// Use before an operation that needs domain interpretation. Reading stored

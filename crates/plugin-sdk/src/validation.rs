@@ -377,3 +377,44 @@ pub(crate) fn digest(value: &str, field: &str) -> Result<(), ContractError> {
     }
     Ok(())
 }
+
+/// Count canonical JSON without allocating an unbounded intermediate buffer.
+pub(crate) fn encoded_limit<T: serde::Serialize>(
+    value: &T,
+    limit: usize,
+    field: &str,
+) -> Result<(), ContractError> {
+    struct Counter {
+        bytes: usize,
+        limit: usize,
+        exceeded: bool,
+    }
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.bytes = self.bytes.saturating_add(bytes.len());
+            if self.bytes > self.limit {
+                self.exceeded = true;
+                return Err(std::io::Error::other("encoded data limit"));
+            }
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter {
+        bytes: 0,
+        limit,
+        exceeded: false,
+    };
+    serde_json::to_writer(&mut counter, value).map_err(|_| {
+        ContractError::at(
+            if counter.exceeded {
+                ContractErrorCode::LimitExceeded
+            } else {
+                ContractErrorCode::InvalidSchema
+            },
+            field,
+        )
+    })
+}

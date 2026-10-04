@@ -49,7 +49,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return print(&process_profile());
     }
     if args.len() == 2 && args[0] == "validate-process" {
-        return print(&parse_process_frame(&read(&args[1], MAX_EXCHANGE_BYTES)?)?);
+        return print(&parse_process_frame(&read(
+            &args[1],
+            MAX_PROCESS_FRAME_BYTES,
+        )?)?);
     }
     if args.len() == 2
         && (args[0] == "check-schema"
@@ -108,7 +111,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 2 && args[0] == "validate-source-extraction-check-input" {
         return print(&parse_source_extraction_check_input(&read(
             &args[1],
-            MAX_EXCHANGE_BYTES,
+            MAX_INVOCATION_PAYLOAD_BYTES,
         )?)?);
     }
     if args.len() == 2 && args[0] == "validate-check-results" {
@@ -133,8 +136,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let channel: ProviderBinding = serde_json::from_slice(&read(&args[3], MAX_MANIFEST_BYTES)?)
             .map_err(|_| "invalid channel binding fixture")?;
         return print(
-            receive_invocation_result(&read(&args[2], MAX_EXCHANGE_BYTES)?, request, &channel)?
-                .document(),
+            receive_invocation_result(
+                &read(&args[2], MAX_PROCESS_FRAME_BYTES)?,
+                request,
+                &channel,
+            )?
+            .document(),
         );
     }
     if args.len() == 3 && args[0] == "check-coverage" {
