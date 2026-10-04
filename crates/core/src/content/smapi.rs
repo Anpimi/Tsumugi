@@ -110,7 +110,7 @@ pub fn extract(
     bundle: &SourceBundle,
     cancel: &Cancellation,
 ) -> Result<SourceOutput, ExecutionError> {
-    bundle.validate()?;
+    bundle.validate_builtin_capture()?;
     let deadline = Instant::now() + Duration::from_secs(60);
     check(cancel, deadline)?;
     let (manifest, _) = parse(&bundle.files[0].utf8, cancel, deadline)?;
@@ -162,11 +162,12 @@ pub fn extract(
             jsonc_parser::ast::ObjectPropName::String(s) => s.range,
             _ => return Err(invalid("invalid-structure")),
         };
-        occurrences.push(SourceOccurrence {
+        occurrences.push(BuiltinOccurrence {
             ordinal: occurrences.len() as u32,
             artifact_id: source.artifact_id,
             namespace: namespace.into(),
             key: key.into(),
+            canonical_key: key.to_ascii_lowercase(),
             text: text.value.to_string(),
             key_byte_range: [
                 offset + key_range.start as u32,
@@ -176,38 +177,22 @@ pub fn extract(
                 offset + text.range.start as u32,
                 offset + text.range.end as u32,
             ],
-            identity_basis: IDENTITY_POLICY.into(),
+            policy: contract_ref("smapi-native-key"),
+            basis: None,
         });
     }
     if occurrences.is_empty() {
         return Err(invalid("empty-source"));
     }
-    let output = SourceOutput {
-        version: 1,
-        set_id: bundle.set_id,
-        manifest_digest: bundle.manifest_digest.clone(),
-        format_id: FORMAT.into(),
-        format_version: 1,
-        identity_policy: IDENTITY_POLICY.into(),
-        namespace: namespace.into(),
-        source_language: bundle.source_language.clone(),
-        coverage: bundle
-            .files
-            .iter()
-            .map(|f| FileCoverage {
-                artifact_id: f.artifact_id,
-                logical_path: f.logical_path.clone(),
-                role: f.role.clone(),
-                sha256: f.sha256.clone(),
-            })
-            .collect(),
+    let output = project_builtin(
+        bundle,
         occurrences,
-        diagnostics: if version.contains('%') {
+        if version.contains('%') {
             vec!["source-template".into()]
         } else {
             vec![]
         },
-    };
+    )?;
     codec::encode(&output, MAX_SOURCE_RESULT_BYTES)?;
     Ok(output)
 }
@@ -254,7 +239,17 @@ fn run_source(
     let input = &request.input;
     let outcome = SourceBundle::from_input(input)
         .and_then(|b| super::extract(&b, &cancellation))
-        .and_then(|o| value(&o));
+        .and_then(|o| {
+            let diagnostic = match o.diagnostics.as_slice() {
+                [] => None,
+                [code] => Some(Diagnostic {
+                    code: code.clone(),
+                    retry_safe: false,
+                }),
+                _ => return Err(invalid("builtin-source-diagnostics")),
+            };
+            Ok((value(&o.exchange)?, diagnostic))
+        });
     let mut envelope = ResultEnvelope {
         plugin: None,
         project_id: input.envelope().project_id,
@@ -270,7 +265,10 @@ fn run_source(
         diagnostic: None,
     };
     match outcome {
-        Ok(output) => envelope.output = Some(output),
+        Ok((output, diagnostic)) => {
+            envelope.output = Some(output);
+            envelope.diagnostic = diagnostic;
+        }
         Err(error) => {
             envelope.outcome =
                 if matches!(error.code, ErrorCode::Cancelled | ErrorCode::OutcomeUnknown) {

@@ -142,6 +142,21 @@ it("shows named failure details beside the item and focuses the readable result"
   await waitFor(() => expect(screen.queryByRole("region", { name: "Result for Sample A" })).not.toBeInTheDocument());
 });
 
+it("keeps a successful output's warning separate from failure retry guidance", async () => {
+  const value = detail();
+  value.items[0].status.execution = "succeeded";
+  value.items[0].status.validation = "valid";
+  value.items[0].resultId = fixture.prepare.resultIds[0];
+  const user = await openTasks(value);
+  invoke.mockResolvedValueOnce({ ...fixture.output, outcome: "succeeded", output: { complete: true }, diagnostic: { code: "source-template", retrySafe: false } });
+  await user.click(screen.getByRole("button", { name: "View saved output" }));
+  const result = await screen.findByRole("region", { name: "Result for Sample A" });
+  expect(within(result).getByText(/"complete": true/)).toBeInTheDocument();
+  expect(within(result).queryByText(i18n.t("execution.unsafeFailure"))).not.toBeInTheDocument();
+  await user.click(within(result).getByText("Technical details"));
+  expect(within(result).getByText("source-template")).toBeVisible();
+});
+
 it("confirms only the selected unknown item and describes checking without generation", async () => {
   const value = detail();
   value.recovery.units[0].itemIds.push(fixtureIdentity(4));

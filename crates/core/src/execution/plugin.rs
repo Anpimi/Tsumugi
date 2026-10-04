@@ -96,9 +96,24 @@ impl FixedInput {
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"))?,
         )
         .map_err(contract_error)?;
-        // Core stores the original SDK payload plus a checked JSON projection.
-        // Leave room for metadata and worst-case JSON escaping in both copies.
-        let max_result_bytes = envelope.limits.max_result_bytes.saturating_sub(16 * 1024) / 8;
+        let source_contract = matches!(
+            envelope.operation.as_str(),
+            crate::content::OPERATION | SOURCE_CHECK_OPERATION
+        );
+        // Source/check output is strict JSON with bounded integer/string fields.
+        // Quoting its original JSON costs at most twice the raw bytes; the
+        // checked canonical projection is no larger. Reserve metadata separately.
+        // Other contracts keep their conservative opaque-payload budget.
+        let max_result_bytes = if source_contract {
+            let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
+            let raw = raw
+                .min(declaration.limits.max_output_bytes)
+                .min(sdk::MAX_EXCHANGE_BYTES as u32);
+            if raw == 0 { 0 } else { raw * 2 + 32 * 1024 }
+        } else {
+            (envelope.limits.max_result_bytes.saturating_sub(16 * 1024) / 8)
+                .min(declaration.limits.max_output_bytes)
+        };
         if max_result_bytes == 0 {
             return Err(ExecutionError::new(
                 ErrorCode::LimitExceeded,
@@ -130,7 +145,7 @@ impl FixedInput {
             input,
             output_schema: declaration.output_schema.clone(),
             error_schema: declaration.error_schema.clone(),
-            max_result_bytes: max_result_bytes.min(declaration.limits.max_output_bytes),
+            max_result_bytes,
         };
         request.validate().map_err(contract_error)?;
         Ok(request)
@@ -148,7 +163,7 @@ impl PluginResultEvidence {
             protocol_version: sdk::EXCHANGE_PROTOCOL,
             body: sdk::ExchangeBody::Result(self.result.clone()),
         };
-        let bytes = codec::encode(&document, sdk::MAX_EXCHANGE_BYTES)?;
+        let bytes = codec::encode(&document, sdk::MAX_PROCESS_FRAME_BYTES)?;
         sdk::receive_invocation_result(&bytes, &request, &self.channel).map_err(contract_error)?;
         match &self.result.outcome {
             sdk::InvocationOutcome::Succeeded { output } => {

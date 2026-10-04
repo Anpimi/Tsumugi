@@ -219,8 +219,8 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         not_delegated(connection, record.task_id)
             .map_err(|_| failure(ErrorCode::CorruptLedger, "plugin-grant-delegation"))?;
         let captured: Option<(Vec<u8>, String)> = connection.query_row(
-            "SELECT CASE WHEN length(input)<=1048576 THEN input END,digest FROM execution_attempts WHERE attempt_id=?1",
-            [record.attempt_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?)),
+            "SELECT CASE WHEN length(input)<=?2 THEN input END,digest FROM execution_attempts WHERE attempt_id=?1",
+            params![record.attempt_id.to_string(), crate::execution::MAX_INPUT_BYTES as i64], |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional().map_err(sql)?;
         if let Some((bytes, digest)) = captured {
             let input = FixedInput::restore(&bytes, &digest)?;

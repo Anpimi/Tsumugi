@@ -718,7 +718,9 @@ fn oversized_multi_locale_build_is_rejected_before_execution() {
     )
     .unwrap();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
-    let entries = (0..70)
+    // Newlines occupy two bytes in the captured JSON. Exceed the current
+    // envelope ceiling independently of its configured size.
+    let entries = (0..(MAX_INPUT_BYTES / (8192 * 2) + 1) as u32)
         .map(|ordinal| BuildEntry {
             ordinal,
             unit_id: ExecutionId::new(),
@@ -784,6 +786,63 @@ fn oversized_multi_locale_build_is_rejected_before_execution() {
 }
 
 #[test]
+fn source_template_warning_survives_preview_adoption_and_reopening() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("project");
+    let mut store = create(&path);
+    let captured = SourceBundle::capture(
+        br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"%Version%","EntryDll":"Example.dll"}"#,
+        br#"{"hello":"Hello"}"#,
+        "en",
+    ).unwrap();
+    let (input, result) = generate(&mut store, captured);
+    for diagnostic in [
+        None,
+        Some(Diagnostic {
+            code: "forged-warning".into(),
+            retry_safe: false,
+        }),
+    ] {
+        let mut envelope = result.envelope().clone();
+        envelope.result_id = ExecutionId::new();
+        envelope.diagnostic = diagnostic;
+        let forged =
+            FixedResult::capture(envelope, &input, result.envelope().dispatch_token).unwrap();
+        assert_eq!(
+            validate_builtin_output(&input, &forged).unwrap_err().code,
+            ErrorCode::OutputInvalid
+        );
+    }
+    let preview = store
+        .source_preview(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            10,
+        )
+        .unwrap();
+    assert_eq!(preview.diagnostics, ["source-template"]);
+    let action = prepare(&mut store, &input, &result);
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    assert_eq!(
+        store.source_content(snapshot, 0, 10).unwrap().diagnostics,
+        preview.diagnostics
+    );
+    drop(store);
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .source_content(snapshot, 0, 10)
+            .unwrap()
+            .diagnostics,
+        ["source-template"]
+    );
+}
+
+#[test]
 fn real_source_matches_independent_oracle_and_keeps_byte_locations() {
     let bundle = bundle();
     let output = extract(&bundle, &Cancellation::default()).unwrap();
@@ -801,7 +860,7 @@ fn real_source_matches_independent_oracle_and_keeps_byte_locations() {
         assert_eq!(row.key, expected["key"].as_str().unwrap());
         assert_eq!(row.text, expected["text"].as_str().unwrap());
         for (range, expected) in [
-            (row.key_byte_range, &row.key),
+            (row.key_byte_range.unwrap(), &row.key),
             (row.value_byte_range, &row.text),
         ] {
             let decoded: String =
@@ -840,17 +899,39 @@ fn unicode_source_fixture_keeps_original_utf8_ranges_in_both_profiles() {
         let rows = case["rows"].as_array().unwrap();
         assert_eq!(output.occurrences.len(), rows.len());
         for (actual, expected) in output.occurrences.iter().zip(rows) {
-            let mut occurrence: SourceOccurrence =
-                serde_json::from_value(expected["occurrence"].clone()).unwrap();
+            let occurrence = &expected["occurrence"];
             assert_eq!(
-                serde_json::to_value(&occurrence).unwrap(),
-                expected["occurrence"]
+                actual.ordinal as u64,
+                occurrence["ordinal"].as_u64().unwrap()
             );
-            occurrence.artifact_id = source.artifact_id;
-            assert_eq!(*actual, occurrence);
+            assert_eq!(actual.artifact_id, source.artifact_id);
+            assert_eq!(actual.namespace, occurrence["namespace"].as_str().unwrap());
+            assert_eq!(actual.key, occurrence["key"].as_str().unwrap());
+            assert_eq!(actual.text, occurrence["text"].as_str().unwrap());
+            assert_eq!(
+                value(&actual.key_byte_range).unwrap(),
+                occurrence["keyByteRange"]
+            );
+            assert_eq!(
+                value(&actual.value_byte_range).unwrap(),
+                occurrence["valueByteRange"]
+            );
+            let native = actual.native_identity.as_ref().unwrap();
+            assert_eq!(native.display.value, actual.key);
+            assert_eq!(native.value, actual.key.to_ascii_lowercase());
+            if json_profile {
+                assert_eq!(native.policy, contract_ref("smapi-native-key"));
+            } else {
+                assert_eq!(native.policy, contract_ref("webvtt-cue"));
+                // The domain still owns the oracle's exact timing/layout basis.
+                assert_eq!(
+                    output.exchange.domain_blocks[0].payload_utf8,
+                    occurrence["identityBasis"].as_str().unwrap()
+                );
+            }
             for (range, text, utf16) in [
                 (
-                    actual.key_byte_range,
+                    actual.key_byte_range.unwrap(),
                     &actual.key,
                     &expected["keyUtf16Range"],
                 ),
@@ -999,7 +1080,7 @@ fn maximum_supported_source_result_fits_its_declared_byte_limit() {
     let tmp = tempfile::tempdir().unwrap();
     let mut store = create(&tmp.path().join("project"));
     let manifest = serde_json::to_vec(&json!({
-        "UniqueID": "\"".repeat(256),
+        "UniqueID": "N".repeat(256),
         "Name": "Example",
         "Version": "1.0.0",
         "EntryDll": "Example.dll"
@@ -1024,6 +1105,26 @@ fn maximum_supported_source_result_fits_its_declared_byte_limit() {
 }
 
 #[test]
+fn encoded_source_contract_limit_rejects_escaping_expansion_without_truncation() {
+    let manifest = serde_json::to_vec(&json!({
+        "UniqueID": "\"".repeat(256), "Name": "Example",
+        "Version": "1.0.0", "EntryDll": "Example.dll",
+    }))
+    .unwrap();
+    let entries: serde_json::Map<String, serde_json::Value> = (0..MAX_OCCURRENCES)
+        .map(|index| (format!("key-{index:04}"), json!("")))
+        .collect();
+    let source = serde_json::to_vec(&entries).unwrap();
+    let bundle = SourceBundle::capture(&manifest, &source, "en").unwrap();
+    // Count limits do not override the independently documented encoded
+    // ContentExchange ceiling. Return a typed limit, never partial coverage.
+    assert_eq!(
+        extract(&bundle, &Cancellation::default()).unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+}
+
+#[test]
 fn malformed_output_cannot_become_valid_or_adopted() {
     let tmp = tempfile::tempdir().unwrap();
     let mut store = create(&tmp.path().join("project"));
@@ -1042,7 +1143,8 @@ fn malformed_output_cannot_become_valid_or_adopted() {
         &Cancellation::default(),
     )
     .unwrap();
-    output.occurrences.remove(1);
+    output.exchange.units.remove(1);
+    output.exchange.order.remove(1);
     let result = FixedResult::capture(
         ResultEnvelope {
             plugin: None,
@@ -1055,7 +1157,7 @@ fn malformed_output_cannot_become_valid_or_adopted() {
             capability_id: CAPABILITY.into(),
             capability_version: CAPABILITY_VERSION.into(),
             outcome: ExecutionState::Succeeded,
-            output: Some(value(&output).unwrap()),
+            output: Some(value(&output.exchange).unwrap()),
             diagnostic: None,
         },
         &input,
@@ -1144,7 +1246,7 @@ fn stored_bytes_and_content_relations_are_checked_on_reopen() {
         "DELETE FROM source_identity",
         "UPDATE source_revisions SET text='changed'",
         "UPDATE content_scope SET revision=8",
-        "BEGIN; PRAGMA defer_foreign_keys=ON; UPDATE source_snapshots SET snapshot_id='00000000-0000-4000-8000-000000000099'; UPDATE content_scope SET current_snapshot='00000000-0000-4000-8000-000000000099'; UPDATE source_occurrences SET snapshot_id='00000000-0000-4000-8000-000000000099'; COMMIT",
+        "BEGIN; PRAGMA defer_foreign_keys=ON; UPDATE source_snapshots SET snapshot_id='00000000-0000-4000-8000-000000000099'; UPDATE content_scope SET current_snapshot='00000000-0000-4000-8000-000000000099'; UPDATE source_occurrences SET snapshot_id='00000000-0000-4000-8000-000000000099'; UPDATE source_unit_mappings SET snapshot_id='00000000-0000-4000-8000-000000000099'; COMMIT",
         "PRAGMA user_version=2",
     ] {
         let tmp = tempfile::tempdir().unwrap();
@@ -1216,25 +1318,27 @@ fn forged_coverage_locations_identity_and_required_fields_are_rejected() {
         let mut output = original.clone();
         match kind {
             0 => {
-                output["coverage"].as_array_mut().unwrap().pop();
+                output["artifacts"].as_array_mut().unwrap().pop();
             }
             1 => {
-                output["occurrences"][0]["artifactId"] = json!(ExecutionId::new());
+                output["units"][0]["occurrences"][0]["source"]["artifactId"] =
+                    json!(ExecutionId::new());
             }
             2 => {
-                output["occurrences"][1]["ordinal"] = json!(0);
+                output["order"][1] = output["order"][0].clone();
             }
             3 => {
-                output["occurrences"][0]["valueByteRange"] = json!([0, 1]);
+                output["units"][0]["occurrences"][0]["source"]["range"]["end"] = json!(999999);
             }
             4 => {
-                output["identityPolicy"] = json!("share-equal-text");
+                output["units"][0]["occurrences"][0]["nativeIdentity"]["policy"]["behaviorVersion"] =
+                    json!(2);
             }
             5 => {
                 output["requiredExtension"] = json!("future/v1");
             }
             6 => {
-                output["manifestDigest"] = json!("0".repeat(64));
+                output["artifacts"][0]["sha256"] = json!("0".repeat(64));
             }
             _ => unreachable!(),
         }
@@ -1242,7 +1346,10 @@ fn forged_coverage_locations_identity_and_required_fields_are_rejected() {
         envelope.output = Some(output);
         let forged =
             FixedResult::capture(envelope, &input, saved.envelope().dispatch_token).unwrap();
-        assert!(validate_output(&input, &forged).is_err(), "case {kind}");
+        assert!(
+            validate_builtin_output(&input, &forged).is_err(),
+            "case {kind}"
+        );
     }
     assert!(store.content_scope().unwrap().current_snapshot.is_none());
     assert!(
@@ -1254,6 +1361,688 @@ fn forged_coverage_locations_identity_and_required_fields_are_rejected() {
                 50
             )
             .is_ok()
+    );
+}
+
+fn generic_source_binding(checker: bool) -> PluginExecutionBinding {
+    PluginExecutionBinding {
+        capability: sdk::CapabilityBinding {
+            provider: sdk::ProviderSelectionBinding {
+                plugin: sdk::PluginIdentity {
+                    publisher: "example".into(),
+                    id: "example.source".into(),
+                    version: "0.1.0".into(),
+                },
+                component_id: "source".into(),
+                contribution_id: if checker { "check" } else { "extract" }.into(),
+                package_digest: "a".repeat(64),
+            },
+            declaration: sdk::CapabilityDeclaration {
+                contract: contract_ref(if checker {
+                    "example.source-check"
+                } else {
+                    "example.source-extract"
+                }),
+                input_schema: if checker {
+                    sdk::source_extraction_check_input_contract()
+                } else {
+                    sdk::source_extraction_input_contract()
+                },
+                output_schema: if checker {
+                    sdk::check_results_contract()
+                } else {
+                    sdk::content_exchange_contract()
+                },
+                error_schema: sdk::source_extraction_error_contract(),
+                profiles: vec![contract_ref("example.source-profile")],
+                effect: sdk::EffectKind::ReadOnly,
+                permissions: vec![sdk::PermissionRequest::CapturedInput],
+                limits: sdk::CapabilityLimits {
+                    max_input_bytes: MAX_INPUT_BYTES as u32,
+                    max_output_bytes: MAX_INPUT_BYTES as u32,
+                    concurrency: 1,
+                    timeout_ms: 10_000,
+                },
+            },
+        },
+        profile: Some(contract_ref("example.source-profile")),
+        environment: sdk::RuntimeEnvironmentDescriptor {
+            protocol_version: sdk::RUNTIME_ENVIRONMENT_PROTOCOL,
+            platform: sdk::RuntimePlatform {
+                operating_system: sdk::RuntimeOperatingSystem::Macos,
+                architecture: sdk::RuntimeArchitecture::Aarch64,
+            },
+            sdk_version: "0.1.0-alpha.1".into(),
+            process_protocol: sdk::PROCESS_PROTOCOL,
+            profile: sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1,
+            tool_version: "26.10.0".into(),
+            tool: sdk::RuntimeArtifactBinding {
+                tree_digest: "b".repeat(64),
+                entrypoint: "bin/node".into(),
+            },
+            host: sdk::RuntimeArtifactBinding {
+                tree_digest: "c".repeat(64),
+                entrypoint: "dist/main.js".into(),
+            },
+        },
+    }
+}
+
+fn generic_source_input(
+    store: &ProjectStore,
+    basis: u32,
+    metadata: u32,
+    canonical: &str,
+    reject: bool,
+) -> FixedInput {
+    // Synthetic domain material. Core captures it without interpreting these fields.
+    let bytes = serde_json::to_vec(&json!({ "basis": basis, "metadata": metadata,
+        "canonical": canonical, "reject": reject }))
+    .unwrap();
+    let mut capture = SourceBundle::capture_webvtt(&bytes, "en").unwrap();
+    capture.profile = contract_ref("example.source-profile");
+    capture.format_id = capture.profile.id.clone();
+    capture.manifest_digest = capture.calculate_digest().unwrap();
+    capture
+        .fixed_plugin_input(
+            store.metadata().unwrap().project_id(),
+            generic_source_binding(false),
+            SourceSettings {
+                revision_policy: sdk::SourceRevisionPolicy {
+                    profile: capture.profile.clone(),
+                    revision_basis: vec![contract_ref("example.semantic-basis")],
+                },
+                checker: Some(generic_source_binding(true)),
+                semantic_rules: vec![contract_ref("example.source-semantics")],
+            },
+        )
+        .unwrap()
+}
+
+fn generic_source_proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
+    let config: serde_json::Value = serde_json::from_str(&source.artifacts[0].utf8).unwrap();
+    let suffix = config["metadata"].as_u64().unwrap();
+    let reference = sdk::SourceReference {
+        artifact_id: source.artifacts[0].id.clone(),
+        range: sdk::TextRange {
+            encoding: sdk::TextEncoding::Utf8Byte,
+            start: 0,
+            end: source.artifacts[0].utf8.len() as u32,
+        },
+    };
+    let occurrence = |name: &str, canonical: &str, display: &str| sdk::ContentOccurrence {
+        id: format!("{name}-{suffix}"),
+        source: reference.clone(),
+        native_identity: Some(sdk::NativeIdentityEvidence {
+            namespace: "Fixture.Source".into(),
+            value: canonical.into(),
+            policy: contract_ref("example.case-sensitive-key"),
+            display: sdk::NativeIdentityDisplay {
+                value: display.into(),
+                source: None,
+            },
+        }),
+    };
+    let shared_id = format!("shared-{suffix}");
+    let first = occurrence("first", "Shared.A", "Original A");
+    let second = occurrence("second", "Shared.A", "Original B");
+    let case = occurrence(
+        "case",
+        config["canonical"].as_str().unwrap(),
+        "Original Case",
+    );
+    let order = vec![first.id.clone(), second.id.clone(), case.id.clone()];
+    sdk::ContentExchange {
+        profile: source.profile.clone(),
+        source_set_id: source.source_set_id.clone(),
+        source_language: source.source_language.clone(),
+        artifacts: source.artifacts.clone(),
+        units: vec![
+            sdk::ContentUnit {
+                id: shared_id.clone(),
+                source_revision_id: format!("proposal-shared-{suffix}"),
+                text: "Shared {{token}}".into(),
+                occurrences: vec![first, second],
+                protected_fragments: vec![sdk::ProtectedFragment {
+                    kind: contract_ref("example.token"),
+                    range: sdk::TextRange {
+                        encoding: sdk::TextEncoding::Utf8Byte,
+                        start: 7,
+                        end: 16,
+                    },
+                }],
+            },
+            sdk::ContentUnit {
+                id: format!("case-unit-{suffix}"),
+                source_revision_id: format!("proposal-case-{suffix}"),
+                text: "Case-sensitive".into(),
+                occurrences: vec![case],
+                protected_fragments: vec![],
+            },
+        ],
+        relations: vec![sdk::ContentRelation {
+            kind: contract_ref("example.shared-occurrences"),
+            from_occurrence: order[0].clone(),
+            to_occurrence: order[1].clone(),
+        }],
+        order,
+        domain_blocks: vec![
+            sdk::DomainBlock {
+                target: sdk::ContentTarget::Unit { id: shared_id },
+                schema: contract_ref("example.semantic-basis"),
+                handling: sdk::ExtensionHandling::Required,
+                payload_utf8: format!("{{\"basis\": {}}}", config["basis"]),
+            },
+            sdk::DomainBlock {
+                target: sdk::ContentTarget::Snapshot,
+                schema: contract_ref("example.opaque-metadata"),
+                handling: sdk::ExtensionHandling::Required,
+                payload_utf8: format!("{{\"metadata\": {suffix}, \"preserve\":\"\\u4e16\"}}"),
+            },
+        ],
+    }
+}
+
+/// A bounded in-process domain fixture, using the same grant/result/semantic
+/// check boundaries as an external adapter. This does not test a native Host.
+struct GenericSourcePlugin(PluginExecutionBinding);
+impl Runner for GenericSourcePlugin {
+    fn capability_id(&self) -> &str {
+        &self.0.capability.declaration.contract.id
+    }
+    fn capability_version(&self) -> &str {
+        "1:1"
+    }
+    fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
+        Some(&self.0.capability.provider)
+    }
+    fn plugin_environment(&self) -> Option<&sdk::RuntimeEnvironmentDescriptor> {
+        Some(&self.0.environment)
+    }
+    fn run(
+        &self,
+        request: DispatchRequest,
+        cancellation: Cancellation,
+        results: ResultSender,
+    ) -> Result<(), ExecutionError> {
+        if cancellation.is_requested() {
+            return Err(failure(ErrorCode::Cancelled, "fixture-cancelled"));
+        }
+        let permit = request.plugin_permit().unwrap();
+        assert!(permit.matches(&request.input) && permit.is_authorized());
+        let selection = &self.0.capability.provider;
+        let channel = sdk::ProviderBinding {
+            plugin: selection.plugin.clone(),
+            component_id: selection.component_id.clone(),
+            contribution_id: selection.contribution_id.clone(),
+            package_digest: selection.package_digest.clone(),
+            instance_id: ExecutionId::new().to_string(),
+            activation_generation: 1,
+        };
+        let invocation =
+            request
+                .input
+                .plugin_request(request.item_id, request.dispatch_token, &channel)?;
+        let output = if request.input.envelope().operation == OPERATION {
+            value(&generic_source_proposal(
+                &SourceBundle::from_input(&request.input)?.source_input(),
+            ))?
+        } else {
+            let check: sdk::SourceExtractionCheckInput =
+                from_value(&request.input.item(request.item_id)?.payload)?;
+            check.validate().unwrap();
+            let config: serde_json::Value =
+                serde_json::from_str(&check.source.artifacts[0].utf8).unwrap();
+            let matches = check.proposal == generic_source_proposal(&check.source)
+                && config["reject"] == false;
+            let checked: Vec<_> = check
+                .requirements
+                .into_iter()
+                .map(|required| sdk::CheckResult {
+                    key: required.key,
+                    input_digest: required.input_digest,
+                    scope_digest: required.scope_digest,
+                    covered_targets: required.targets.clone(),
+                    outcome: sdk::CheckOutcome::Completed {
+                        findings: if matches {
+                            vec![]
+                        } else {
+                            vec![sdk::CheckFinding {
+                                code: "fixture-source-invalid".into(),
+                                target: required.targets[0].clone(),
+                                severity: sdk::FindingSeverity::Error,
+                            }]
+                        },
+                    },
+                })
+                .collect();
+            value(&checked)?
+        };
+        let evidence = PluginResultEvidence {
+            authorization_id: permit.grant_id(),
+            channel: channel.clone(),
+            result: sdk::InvocationResult {
+                context: invocation.context,
+                provider: channel,
+                capability: invocation.capability,
+                profile: invocation.profile,
+                result_id: ExecutionId::new().to_string(),
+                outcome: sdk::InvocationOutcome::Succeeded {
+                    output: sdk::EncodedPayload::capture(
+                        invocation.output_schema,
+                        serde_json::to_string(&output).unwrap(),
+                    )
+                    .unwrap(),
+                },
+            },
+        };
+        results.send(FixedResult::capture_plugin(
+            &request.input,
+            request.item_id,
+            request.dispatch_token,
+            evidence,
+        )?)
+    }
+}
+
+fn run_generic_source(
+    runtime: &mut ExecutionRuntime,
+    store: &mut ProjectStore,
+    input: &FixedInput,
+) -> FixedResult {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    runtime
+        .authorize_plugin(
+            store,
+            ExecutionId::new(),
+            input,
+            now + 60_000,
+            PluginConsent {
+                unsandboxed_execution: true,
+            },
+        )
+        .unwrap();
+    runtime.submit(store, input).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        runtime.tick(store).unwrap();
+        let view = runtime.attempt(store, input.envelope().attempt_id).unwrap();
+        if view.items[0].execution == ExecutionState::Succeeded {
+            let result = store
+                .execution_current_result(
+                    input.envelope().attempt_id,
+                    input.envelope().items[0].item_id,
+                )
+                .unwrap()
+                .unwrap();
+            return store
+                .execution_result(input.envelope().attempt_id, result)
+                .unwrap();
+        }
+        assert!(
+            !matches!(
+                view.items[0].execution,
+                ExecutionState::Failed | ExecutionState::Unknown
+            ),
+            "{view:?}"
+        );
+        assert!(Instant::now() < deadline, "fixture did not complete");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn check_generic_source(
+    runtime: &mut ExecutionRuntime,
+    store: &mut ProjectStore,
+    input: &FixedInput,
+    result: &FixedResult,
+) {
+    let capture = store
+        .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let check_input = capture.check_input().clone();
+    assert!(
+        runtime.submit(store, &check_input).is_err(),
+        "checker needs its own consent"
+    );
+    let checked = run_generic_source(runtime, store, &check_input);
+    store
+        .commit_source_validation(capture.prepare(checked).unwrap())
+        .unwrap();
+}
+
+#[test]
+fn generic_source_adoption_maps_shared_units_and_preserves_fixed_revision_evidence_on_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+    for checker in [false, true] {
+        runtime
+            .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                checker,
+            ))))
+            .unwrap();
+    }
+    let initial = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let result = run_generic_source(&mut runtime, &mut store, &initial);
+    assert_eq!(
+        store
+            .execution_attempt(initial.envelope().attempt_id, false)
+            .unwrap()
+            .items[0]
+            .validation,
+        ValidationState::Pending
+    );
+    let proposal = validate_output(&initial, &result).unwrap();
+    assert_eq!(
+        proposal.exchange,
+        generic_source_proposal(&SourceBundle::from_input(&initial).unwrap().source_input())
+    );
+    let mut identity = proposal.occurrences[0].clone();
+    identity
+        .native_identity
+        .as_mut()
+        .unwrap()
+        .policy
+        .behavior_version = 2;
+    assert!(!identity.same_identity(&proposal.occurrences[0]));
+    let mut fragment_change = proposal.exchange.clone();
+    fragment_change.units[0].protected_fragments[0].range.end -= 1;
+    let projected = project_source_output(
+        &SourceBundle::from_input(&initial).unwrap(),
+        fragment_change,
+        proposal.revision_policy.clone(),
+    )
+    .unwrap();
+    assert_ne!(
+        projected.occurrences[0].identity_basis,
+        proposal.occurrences[0].identity_basis
+    );
+    let mut text_change = proposal.exchange.clone();
+    text_change.units[0].text = "Edited {{token}}".into();
+    let projected = project_source_output(
+        &SourceBundle::from_input(&initial).unwrap(),
+        text_change,
+        proposal.revision_policy.clone(),
+    )
+    .unwrap();
+    assert_ne!(
+        projected.occurrences[0].identity_basis,
+        proposal.occurrences[0].identity_basis
+    );
+    let action = prepare(&mut store, &initial, &result);
+    assert!(
+        store
+            .adopt_execution(&action, &SourceAdoptionHandler)
+            .is_err(),
+        "structure cannot authorize adoption"
+    );
+    check_generic_source(&mut runtime, &mut store, &initial, &result);
+    let action = prepare(&mut store, &initial, &result);
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let first = store
+        .source_content(
+            store.content_scope().unwrap().current_snapshot.unwrap(),
+            0,
+            50,
+        )
+        .unwrap();
+    assert_eq!(first.rows.len(), 3);
+    assert_eq!(first.rows[0].unit_id, first.rows[1].unit_id);
+    assert_eq!(
+        first.rows[0].source_revision_id,
+        first.rows[1].source_revision_id
+    );
+    assert_ne!(first.rows[0].unit_id, first.rows[2].unit_id);
+    assert_eq!(first.rows[0].occurrence.key, "Original A");
+    assert_eq!(
+        first.rows[0]
+            .occurrence
+            .native_identity
+            .as_ref()
+            .unwrap()
+            .value,
+        "Shared.A"
+    );
+    assert!(first.rows[0].occurrence.key_byte_range.is_none());
+    let review = store.review_page(project, "zh-CN", 0, 50).unwrap();
+    assert_eq!(review.total, 2);
+    assert_eq!(review.rows.len(), 2);
+    assert_eq!(
+        store
+            .review_page_filtered(project, "zh-CN", 0, 50, "Original B")
+            .unwrap()
+            .total,
+        1
+    );
+
+    // Both domain metadata and operation-local target IDs change. Neither is
+    // in the captured semantic revision basis.
+    let next = generic_source_input(&store, 1, 2, "CaseKey", false);
+    let next_result = run_generic_source(&mut runtime, &mut store, &next);
+    check_generic_source(&mut runtime, &mut store, &next, &next_result);
+    let action = prepare(&mut store, &next, &next_result);
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let second = store
+        .source_content(
+            store.content_scope().unwrap().current_snapshot.unwrap(),
+            0,
+            50,
+        )
+        .unwrap();
+    for (old, new) in first.rows.iter().zip(&second.rows) {
+        assert_eq!(old.unit_id, new.unit_id);
+        assert_eq!(old.source_revision_id, new.source_revision_id);
+        assert_ne!(
+            old.occurrence.operation_unit_id,
+            new.occurrence.operation_unit_id
+        );
+    }
+
+    // A selected opaque basis changes the shared unit revision only after an
+    // explicit lineage decision. Canonical case differences never auto-match.
+    let next = generic_source_input(&store, 2, 3, "caseKey", false);
+    let next_result = run_generic_source(&mut runtime, &mut store, &next);
+    check_generic_source(&mut runtime, &mut store, &next, &next_result);
+    let mut confirmation = store
+        .source_preview(
+            next.envelope().attempt_id,
+            next_result.envelope().result_id,
+            0,
+            50,
+        )
+        .unwrap()
+        .confirmation;
+    confirmation.actor = Some("Fixture reviewer".into());
+    confirmation.lineage.push(LineageChoice {
+        new_ordinal: 0,
+        old_occurrence_id: second.rows[0].occurrence_id.unwrap(),
+        decision: LineageDecision::Continue,
+        reason: "Same source unit with revised domain basis".into(),
+    });
+    let action = store
+        .prepare_adoption_with_id(
+            ExecutionId::new(),
+            next.envelope().attempt_id,
+            next.envelope().units[0].unit_id,
+            vec![next_result.envelope().result_id],
+            value(&confirmation).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let third = store.source_content(snapshot, 0, 50).unwrap();
+    assert_eq!(third.rows[0].unit_id, first.rows[0].unit_id);
+    assert_eq!(third.rows[0].unit_id, third.rows[1].unit_id);
+    assert_ne!(
+        third.rows[0].source_revision_id,
+        first.rows[0].source_revision_id
+    );
+    assert_eq!(
+        third.rows[0].source_revision_id,
+        third.rows[1].source_revision_id
+    );
+    assert_ne!(third.rows[2].unit_id, first.rows[2].unit_id);
+    let saved = store
+        .execution_result(next.envelope().attempt_id, next_result.envelope().result_id)
+        .unwrap();
+    let exchange = validate_output(&next, &saved).unwrap().exchange;
+    assert_eq!(
+        exchange.domain_blocks[1].payload_utf8,
+        "{\"metadata\": 3, \"preserve\":\"\\u4e16\"}"
+    );
+    assert_eq!(exchange.relations.len(), 1);
+    assert_eq!(exchange.units[0].protected_fragments.len(), 1);
+    drop(runtime);
+    drop(store);
+    let store = ProjectStore::open(&path).unwrap();
+    assert_eq!(store.source_content(snapshot, 0, 50).unwrap(), third);
+    let input = store.execution_input(next.envelope().attempt_id).unwrap();
+    let result = store
+        .execution_result(next.envelope().attempt_id, next_result.envelope().result_id)
+        .unwrap();
+    assert_eq!(result.bytes(), saved.bytes());
+    assert_eq!(validate_output(&input, &result).unwrap().exchange, exchange);
+}
+
+#[test]
+fn adopted_plugin_source_requires_its_saved_semantic_proof_for_reads_and_reopening() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = create(&path);
+    let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+    for checker in [false, true] {
+        runtime
+            .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                checker,
+            ))))
+            .unwrap();
+    }
+    let input = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let result = run_generic_source(&mut runtime, &mut store, &input);
+    check_generic_source(&mut runtime, &mut store, &input, &result);
+    let action = prepare(&mut store, &input, &result);
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    assert_eq!(store.source_content(snapshot, 0, 50).unwrap().rows.len(), 3);
+    drop(runtime);
+    // Synthetic external damage satisfies the individual CHECK/FK constraints,
+    // but must not downgrade the mandatory proof of an adopted source snapshot.
+    let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET validation='pending' WHERE attempt_id=?1",
+            [input.envelope().attempt_id.to_string()],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "DELETE FROM source_validation_links WHERE source_result_id=?1",
+            [result.envelope().result_id.to_string()],
+        )
+        .unwrap();
+    drop(connection);
+    let bytes = std::fs::read(path.join("project.sqlite3")).unwrap();
+    assert!(store.source_content(snapshot, 0, 50).is_err());
+    assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), bytes);
+    drop(store);
+    assert!(ProjectStore::open(&path).is_err());
+    assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), bytes);
+}
+
+#[test]
+fn generic_source_requires_fixed_checker_rules_and_a_nonblocking_semantic_result() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = create(&temp.path().join("project"));
+    let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+    for checker in [false, true] {
+        runtime
+            .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                checker,
+            ))))
+            .unwrap();
+    }
+    let input = generic_source_input(&store, 1, 1, "CaseKey", true);
+    for kind in 0..4 {
+        let mut envelope = input.envelope().clone();
+        match kind {
+            0 => {
+                envelope.settings["semanticRules"] = json!([]);
+            }
+            1 => {
+                envelope.settings["semanticRules"] = json!([
+                    contract_ref("example.source-semantics"),
+                    contract_ref("example.source-semantics")
+                ]);
+            }
+            2 => {
+                envelope.settings["checker"] = serde_json::Value::Null;
+            }
+            3 => {
+                envelope.settings["checker"]["capability"]["declaration"]["inputSchema"] =
+                    json!(contract_ref("example.wrong-input"));
+            }
+            _ => unreachable!(),
+        }
+        let forged = FixedInput::capture(envelope).unwrap();
+        assert!(
+            SourceBundle::from_input(&forged).is_err(),
+            "settings {kind}"
+        );
+    }
+    let result = run_generic_source(&mut runtime, &mut store, &input);
+    check_generic_source(&mut runtime, &mut store, &input, &result);
+    assert_eq!(
+        store
+            .execution_attempt(input.envelope().attempt_id, false)
+            .unwrap()
+            .items[0]
+            .validation,
+        ValidationState::Invalid
+    );
+    assert!(
+        store
+            .source_preview(
+                input.envelope().attempt_id,
+                result.envelope().result_id,
+                0,
+                50
+            )
+            .is_err()
+    );
+    assert!(store.content_scope().unwrap().current_snapshot.is_none());
+}
+
+#[test]
+fn generic_captured_source_rejects_its_serialized_store_budget_before_enqueue() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = create(&temp.path().join("project"));
+    let input = generic_source_input(&store, 1, 1, "CaseKey", false);
+    let mut capture = SourceBundle::from_input(&input).unwrap();
+    let file = &mut capture.files[0];
+    // The raw material is within the SDK budget; JSON quoting pushes the
+    // immutable Core capture over its separate one MiB storage boundary.
+    file.utf8 = "\"".repeat(600_000);
+    file.byte_length = file.utf8.len() as u32;
+    file.sha256 = codec::digest(file.utf8.as_bytes());
+    capture.manifest_digest = capture.calculate_digest().unwrap();
+    capture.source_input().validate().unwrap();
+    assert_eq!(
+        capture.validate().unwrap_err().code,
+        ErrorCode::LimitExceeded
     );
 }
 

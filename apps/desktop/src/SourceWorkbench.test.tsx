@@ -9,11 +9,11 @@ import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourcePageFixture, sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
+import { sourcePageFixture, sourceRowFixture, sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
-const preview: ContentPage = { snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: "hash" }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [{ occurrenceId: null, unitId: null, sourceRevisionId: null, occurrence: { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", keyByteRange: [1, 8], valueByteRange: [9, 30], identityBasis: "native-key" } }] };
+const preview: ContentPage = sourcePageFixture({ snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: "hash" }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [sourceRowFixture({}, { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", source: { artifactId: fixtureIdentity(101), range: { encoding: "utf8-byte", start: 9, end: 30 } } })] });
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); invoke.mockReset();
   invoke.mockImplementation(async (command: string) => {
@@ -130,6 +130,47 @@ async function prepare() {
   await screen.findByRole("heading", { name: "Review imported strings" });
   return user;
 }
+it.each([
+  ["utf8-byte", "UTF-8 bytes"], ["utf16", "UTF-16 code units"], ["grapheme", "Grapheme clusters"],
+] as const)("shows the captured path and original %s range without interpreting domain metadata", async (encoding, label) => {
+  const original = invoke.getMockImplementation()!;
+  const page = sourcePageFixture({ ...preview, nextOrdinal: null, total: 1,
+    coverage: [{ ...preview.coverage[0], logicalPath: "captions/episode-01.vtt" }],
+    rows: [sourceRowFixture({}, { ...preview.rows[0].occurrence,
+      key: "operation-label-123", identityBasis: JSON.stringify({ policy: "webvtt-cue/1", timing: "hidden-domain-timing" }),
+      source: { artifactId: fixtureIdentity(101), range: { encoding, start: 8, end: 27 } },
+      nativeIdentity: { namespace: "captions", value: "canonical-cue",
+        policy: { id: "fixture-identity", schemaVersion: 1, behaviorVersion: 1 }, display: { value: "Original Cue", source: null } },
+    })] });
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_source_preview" ? Promise.resolve(page) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  expect(screen.getByText("Original Cue")).toBeInTheDocument();
+  expect(screen.queryByText("canonical-cue")).not.toBeInTheDocument();
+  expect(screen.queryByText("operation-label-123")).not.toBeInTheDocument();
+  expect(screen.queryByText("hidden-domain-timing")).not.toBeInTheDocument();
+  await user.click(screen.getByText("Source location and identity"));
+  expect(screen.getByText(`Original text · captions/episode-01.vtt · ${label} range [8, 27)`)).toBeVisible();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_source_history_content")).toHaveLength(0);
+});
+
+it("labels an unnamed occurrence without displaying operation-local IDs or an invented file path", async () => {
+  const original = invoke.getMockImplementation()!;
+  const page = sourcePageFixture({ ...preview, nextOrdinal: null, total: 1, coverage: [],
+    rows: [sourceRowFixture({}, { ...preview.rows[0].occurrence, ordinal: 1, key: "operation-label-123",
+      operationOccurrenceId: "operation-occurrence-123", nativeIdentity: null,
+      source: { artifactId: fixtureIdentity(101), range: { encoding: "utf16", start: 2, end: 11 } } })] });
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_source_preview" ? Promise.resolve(page) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  expect(screen.getByText("Source entry 2")).toBeInTheDocument();
+  expect(screen.queryByText("operation-label-123")).not.toBeInTheDocument();
+  expect(screen.queryByText("operation-occurrence-123")).not.toBeInTheDocument();
+  await user.click(screen.getByText("Source location and identity"));
+  expect(screen.getByText(/Source file details are unavailable\./)).toBeVisible();
+  expect(screen.queryByText(/i18n\/default\.json/)).not.toBeInTheDocument();
+});
+
 it("requires a language declaration and full-range confirmation, retaining literal source text", async () => {
   render(<SourceWorkbench project={project} disabled={false} />);
   const user = await prepare();

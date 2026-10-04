@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::review::CHECK_VERSION;
 mod checks;
-pub use checks::{ComputedReviewCheck, PreparedReviewCheck};
 pub(super) use checks::record_check_in;
+pub use checks::{ComputedReviewCheck, PreparedReviewCheck};
 const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
@@ -776,7 +776,7 @@ pub(super) fn target_in(
          LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?3
            AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t WHERE t.unit_id=o.unit_id AND t.locale=?3)
          LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
-         WHERE u.project_id=?1 AND o.unit_id=?2",
+         WHERE u.project_id=?1 AND o.unit_id=?2 ORDER BY o.ordinal LIMIT 1",
         params![project_id.to_string(), unit_id.to_string(), locale],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
     ).optional().map_err(sql)?;
@@ -959,7 +959,7 @@ impl ProjectStore {
         };
         let total: i64 = connection
             .query_row(
-                "SELECT COUNT(*) FROM source_occurrences WHERE snapshot_id=?1",
+                "SELECT COUNT(DISTINCT unit_id) FROM source_occurrences WHERE snapshot_id=?1",
                 [&snapshot],
                 |row| row.get(0),
             )
@@ -971,7 +971,7 @@ impl ProjectStore {
             // The usual list view only needs the requested page. Searching reads
             // text across the scope, but must not make every unfiltered page do so.
             let mut statement = connection
-                .prepare("SELECT unit_id,ordinal FROM source_occurrences WHERE snapshot_id=?1 AND ordinal>=?2 ORDER BY ordinal LIMIT ?3")
+                .prepare("SELECT unit_id,MIN(ordinal) FROM source_occurrences WHERE snapshot_id=?1 GROUP BY unit_id HAVING MIN(ordinal)>=?2 ORDER BY MIN(ordinal) LIMIT ?3")
                 .map_err(sql)?;
             let items = statement
                 .query_map(params![snapshot, after_ordinal, limit + 1], |row| {
@@ -984,13 +984,14 @@ impl ProjectStore {
         } else {
             let query = query.to_lowercase();
             let mut statement = connection.prepare(
-            "SELECT o.unit_id,o.ordinal,o.native_key,r.text,tr.text
+            "SELECT o.unit_id,MIN(o.ordinal) OVER(PARTITION BY o.unit_id),o.native_key,r.text,tr.text
              FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
              LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?2
                AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t WHERE t.unit_id=o.unit_id AND t.locale=?2)
              LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
              WHERE o.snapshot_id=?1 ORDER BY o.ordinal"
         ).map_err(sql)?;
+            let mut matched_units = BTreeSet::new();
             let matches = statement
                 .query_map(params![snapshot, locale], |row| {
                     Ok((
@@ -1013,6 +1014,7 @@ impl ProjectStore {
                             .as_ref()
                             .is_some_and(|text| text.to_lowercase().contains(&query))
                 })
+                .filter(|(unit, _, _, _, _)| matched_units.insert(unit.clone()))
                 .collect::<Vec<_>>();
             let total = matches.len() as u32;
             let items = matches
@@ -1583,7 +1585,7 @@ fn all_units(
     let mut statement = connection
         .prepare(
             "SELECT o.unit_id FROM source_occurrences o JOIN source_units u ON u.unit_id=o.unit_id
-         WHERE o.snapshot_id=?1 AND u.project_id=?2 ORDER BY o.ordinal LIMIT 10001",
+         WHERE o.snapshot_id=?1 AND u.project_id=?2 GROUP BY o.unit_id ORDER BY MIN(o.ordinal) LIMIT 10001",
         )
         .map_err(sql)?;
     let units = statement
@@ -2469,10 +2471,10 @@ pub(super) mod tests {
             let new_occurrence = ExecutionId::new().to_string();
             transaction
                 .execute(
-                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
                      SELECT ?1,?2,ordinal,artifact_id,unit_id,
                             CASE WHEN unit_id=?3 THEN ?4 ELSE revision_id END,
-                            namespace,native_key,comparison_key,key_start,key_end,value_start,value_end
+                            namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection
                      FROM source_occurrences WHERE occurrence_id=?5",
                     params![new_occurrence, next_snapshot, units[0].to_string(), next_revision, old_occurrence],
                 )
@@ -3721,8 +3723,8 @@ pub(super) mod tests {
                 .unwrap();
             transaction
                 .execute(
-                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
-                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2)",
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
+                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2,?7,?7,?7,x'7b7d')",
                     params![occurrence, snapshot, ordinal as i64, artifact, unit, revision, key],
                 )
                 .unwrap();
@@ -3782,8 +3784,8 @@ pub(super) mod tests {
                 .unwrap();
             transaction
                 .execute(
-                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end)
-                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2)",
+                    "INSERT INTO source_occurrences(occurrence_id,snapshot_id,ordinal,artifact_id,unit_id,revision_id,namespace,native_key,comparison_key,key_start,key_end,value_start,value_end,local_unit_id,local_occurrence_id,local_revision_id,projection)
+                     VALUES (?1,?2,?3,?4,?5,?6,'default',?7,?7,0,1,1,2,?7,?7,?7,x'7b7d')",
                     params![ExecutionId::new().to_string(), snapshot, ordinal, artifact, unit, source_revision, key],
                 )
                 .unwrap();

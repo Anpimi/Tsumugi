@@ -9,7 +9,7 @@ fn read_frame() -> ProcessFrame {
     let mut header = [0u8; 4];
     std::io::stdin().read_exact(&mut header).unwrap();
     let length = u32::from_be_bytes(header) as usize;
-    assert!(length <= MAX_EXCHANGE_BYTES);
+    assert!(length <= MAX_PROCESS_FRAME_BYTES);
     let mut bytes = vec![0u8; length];
     std::io::stdin().read_exact(&mut bytes).unwrap();
     parse_process_frame(&bytes).unwrap()
@@ -99,6 +99,7 @@ fn main() {
                 if mode == "assert-env" {
                     assert!(std::env::vars_os().next().is_none());
                 }
+                let result_frame_limit = request.max_result_bytes as usize;
                 let output = EncodedPayload::capture(
                     request.output_schema.clone(),
                     format!("answer:{}", request.input.utf8),
@@ -118,6 +119,18 @@ fn main() {
                 }
                 if mode == "wrong-scope" {
                     result.context.scope_id = "other-scope".into();
+                }
+                if matches!(mode.as_str(), "padded-result" | "oversized-padded-result") {
+                    let mut bytes = ProcessFrame::new(ProcessBody::Result(result))
+                        .encode()
+                        .unwrap();
+                    assert!(bytes.len() < result_frame_limit);
+                    bytes.resize(
+                        result_frame_limit + usize::from(mode == "oversized-padded-result"),
+                        b' ',
+                    );
+                    raw(&bytes);
+                    continue;
                 }
                 write_frame(ProcessBody::Result(result.clone()));
                 if mode == "duplicate-result" {

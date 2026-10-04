@@ -703,6 +703,31 @@
         ],
         "type": "object"
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
@@ -885,6 +910,55 @@
           "actionId",
           "policy",
           "appliedRelation"
+        ],
+        "type": "object"
+      },
+      "NativeIdentityDisplay": {
+        "additionalProperties": false,
+        "description": "Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.",
+        "properties": {
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/SourceReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "source"
+        ],
+        "type": "object"
+      },
+      "NativeIdentityEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "display": {
+            "$ref": "#/definitions/NativeIdentityDisplay"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "policy": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "value": {
+            "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace",
+          "value",
+          "policy",
+          "display"
         ],
         "type": "object"
       },
@@ -1474,6 +1548,7 @@
             "$ref": "#/definitions/ExecutionId"
           },
           "identityBasis": {
+            "description": "Opaque digest of the exact captured revision policy, text, protected\nfragments and only the policy-selected domain blocks.",
             "type": "string"
           },
           "key": {
@@ -1489,9 +1564,31 @@
             },
             "maxItems": 2,
             "minItems": 2,
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "namespace": {
+            "type": "string"
+          },
+          "nativeIdentity": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/NativeIdentityEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operationOccurrenceId": {
+            "type": "string"
+          },
+          "operationSourceRevisionId": {
+            "type": "string"
+          },
+          "operationUnitId": {
             "type": "string"
           },
           "ordinal": {
@@ -1500,11 +1597,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "source": {
+            "$ref": "#/definitions/SourceReference"
+          },
           "text": {
             "type": "string"
           },
           "valueByteRange": {
-            "description": "Half-open UTF-8 byte offsets into the original artifact, not the decoded text.",
+            "description": "Derived UTF-8 coordinates for existing readers; original coordinates are\nretained in `source`, including their explicit encoding.",
             "items": {
               "format": "uint32",
               "maximum": 4294967295,
@@ -1524,7 +1624,28 @@
           "text",
           "keyByteRange",
           "valueByteRange",
-          "identityBasis"
+          "identityBasis",
+          "operationUnitId",
+          "operationOccurrenceId",
+          "operationSourceRevisionId",
+          "source",
+          "nativeIdentity"
+        ],
+        "type": "object"
+      },
+      "SourceReference": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "type": "string"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "artifactId",
+          "range"
         ],
         "type": "object"
       },
@@ -1541,6 +1662,39 @@
         "required": [
           "selectionId",
           "folderName"
+        ],
+        "type": "object"
+      },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
         ],
         "type": "object"
       }

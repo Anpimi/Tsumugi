@@ -223,6 +223,17 @@ deadlines even when stdin is blocked by a worker that stopped reading. Raw stder
 is counted and discarded rather than printed or stored as trusted diagnostics.
 Explicit heartbeats correlate a fresh nonce on the same channel.
 
+Payload and frame ceilings are separate. Manifest `maxInputBytes` and
+`maxOutputBytes` bound exact, unescaped payload UTF-8; `maxResultBytes` bounds the
+complete encoded SDK result frame, including JSON escaping and metadata. The
+Host checks the original received frame against the invocation budget before
+parsing, including JSON whitespace and escape overhead. It also checks the raw
+output limit for success, failure and unknown outcomes before returning evidence;
+the SDK correlates the complete result with its captured request.
+The default frame ceiling follows the SDK's finite process profile; the default
+aggregate stdout ceiling is 64 MiB. Callers can select narrower frame/stream
+limits. No limit permits truncation or partial result acceptance.
+
 Cancellation and current authority are polled while waiting and rechecked before
 returning output. Revocation poisons the channel, stops further dispatch, and
 terminates the owned process group. `close` waits for a bounded acknowledgement,
@@ -269,8 +280,10 @@ Checked results still require a separate explicit adoption action and trusted
 handler; the existing transaction rechecks current scope, result, cancellation
 and plugin authority. Existing committed receipts remain idempotently readable.
 
-The actual process budget is bounded by both fixed Core limits and transport
-limits. Failed and unknown SDK outcomes preserve their raw error evidence without
+The adapter clamps the fixed complete-result allowance to the Host's frame
+ceiling, while raw payload limits remain attached to the captured declaration.
+Core's ledger envelope has its own budget for original SDK bytes and the checked
+JSON projection. Failed and unknown SDK outcomes preserve their raw error evidence without
 claiming replay safety. A new process cannot authenticate an earlier instance's
 outcome, so this adapter's outcome query remains unavailable. A failed launch does
 not expose a Core-visible cleanup receipt; no result is accepted from that path.

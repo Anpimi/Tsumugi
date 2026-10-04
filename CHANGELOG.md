@@ -49,13 +49,15 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization; uncertain external requests retain their recorded budget exposure and do not replay automatically.
 
-- Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically.
+- Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically. Experimental plugin source adoption fixes mandatory semantic checks to the original source, proposal and selected checker, stores their exact result link and rechecks both permissions at commit. Core maps generic SDK units to project identities and derives revisions from the captured policy's opaque evidence. Source history displays original names and encoded references, with local retry when file details are unavailable.
 - Manual translation saves and selections now persist unit protection. The translation editor confirms persistent protection before enabling draft input, keeps uncertain actions for reconciliation, and releases protection only after confirming the current entry, language, source, selection and protection revision. Dirty or pending saves block release; old acknowledgements cannot clear newer protection.
-- Project storage now uses schema 17 for durable work-plan authorization, human control, checked-selection policy receipts, plugin execution grants and complete captured runtime-environment bindings. This development build opens schema 17 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
+- Project storage now uses schema 18 for durable work-plan authorization, human control, checked-selection policy receipts, plugin execution grants, complete captured runtime-environment bindings, generic source-unit mappings and mandatory source-check provenance. This development build opens schema 18 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
 ### Fixed
+
+- Saved source warnings remain available after preview, adoption and reopening; successful task outputs no longer display failure retry guidance. Adopted plugin snapshots refuse missing mandatory check evidence even when stored validation flags are downgraded. Invocation result budgets count original JSON frame bytes, including whitespace and escaping.
 
 - Continued AI work plans display the original shared budget, including prior requests and unresolved exposure, rather than only the new child attempt.
 

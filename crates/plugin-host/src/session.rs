@@ -48,8 +48,8 @@ pub struct HostLimits {
 impl Default for HostLimits {
     fn default() -> Self {
         Self {
-            max_frame_bytes: MAX_EXCHANGE_BYTES,
-            max_session_output_bytes: 16 * 1024 * 1024,
+            max_frame_bytes: MAX_PROCESS_FRAME_BYTES,
+            max_session_output_bytes: 64 * 1024 * 1024,
             max_stderr_bytes: 16 * 1024,
             max_invocations: 128,
             handshake_timeout_ms: 3000,
@@ -62,7 +62,7 @@ impl Default for HostLimits {
 impl HostLimits {
     fn validate(&self) -> HostResult<()> {
         if self.max_frame_bytes == 0
-            || self.max_frame_bytes > MAX_EXCHANGE_BYTES
+            || self.max_frame_bytes > MAX_PROCESS_FRAME_BYTES
             || self.max_session_output_bytes < self.max_frame_bytes
             || self.max_session_output_bytes > 64 * 1024 * 1024
             || self.max_stderr_bytes > 64 * 1024
@@ -315,6 +315,7 @@ impl ProcessSession {
                 let ready = session
                     .receive(
                         session.options.limits.handshake_timeout_ms,
+                        session.options.limits.max_frame_bytes,
                         || false,
                         || authorized(),
                     )
@@ -368,6 +369,7 @@ impl ProcessSession {
     async fn receive(
         &mut self,
         timeout_ms: u32,
+        frame_limit: usize,
         cancelled: impl Fn() -> bool,
         authorized: impl Fn() -> bool,
     ) -> HostResult<ProcessFrame> {
@@ -391,6 +393,9 @@ impl ProcessSession {
                     if !authorized() { return Err(HostError::AuthorityRevoked); }
                     if self.pipes.overflow.load(Ordering::Acquire) { return Err(HostError::OutputLimit); }
                     return match event {
+                        // Preserve the original encoded size: parsing and then
+                        // re-encoding would discard whitespace/escape overhead.
+                        Some(Event::Frame(bytes)) if bytes.len() > frame_limit=>Err(HostError::OutputLimit),
                         Some(Event::Frame(bytes))=>parse_process_frame(&bytes).map_err(|_| HostError::InvalidFrame),
                         Some(Event::Fault(error))=>Err(error),
                         None=>Err(HostError::ChannelFailed),
@@ -420,7 +425,6 @@ impl ProcessSession {
                 .is_some_and(|p| !c.profiles.contains(p))
             || (request.profile.is_none() && !c.profiles.is_empty())
             || request.input.utf8.len() > c.limits.max_input_bytes as usize
-            || request.max_result_bytes > c.limits.max_output_bytes
             || request.max_result_bytes as usize > self.options.limits.max_frame_bytes
         {
             return Err(HostError::RequestMismatch);
@@ -472,6 +476,7 @@ impl ProcessSession {
                     .limits
                     .timeout_ms
                     .min(self.options.limits.invocation_timeout_ms),
+                request.max_result_bytes as usize,
                 &cancelled,
                 &authorized,
             )
@@ -481,6 +486,7 @@ impl ProcessSession {
             let ProcessBody::Result(result) = frame.body else {
                 return Err(HostError::UnexpectedFrame);
             };
+            check_result_payload(&result, self.activation.capability.limits.max_output_bytes)?;
             let bytes = serde_json::to_vec(&ExchangeDocument {
                 protocol_version: EXCHANGE_PROTOCOL,
                 body: ExchangeBody::Result(result.clone()),
@@ -523,7 +529,12 @@ impl ProcessSession {
                 nonce: nonce.clone(),
             })?;
             match self
-                .receive(self.options.limits.handshake_timeout_ms, || false, || true)
+                .receive(
+                    self.options.limits.handshake_timeout_ms,
+                    self.options.limits.max_frame_bytes,
+                    || false,
+                    || true,
+                )
                 .await?
                 .body
             {
@@ -550,7 +561,16 @@ impl ProcessSession {
             self.send(ProcessBody::Close {
                 provider: self.activation.provider.clone(),
             })?;
-            match self.receive(self.stop_ms, || false, || true).await?.body {
+            match self
+                .receive(
+                    self.stop_ms,
+                    self.options.limits.max_frame_bytes,
+                    || false,
+                    || true,
+                )
+                .await?
+                .body
+            {
                 ProcessBody::Closed { provider } if provider == self.activation.provider => Ok(()),
                 _ => Err(HostError::UnexpectedFrame),
             }
@@ -750,6 +770,87 @@ mod lifetime_tests {
         });
     }
 }
+fn check_result_payload(result: &InvocationResult, raw_limit: u32) -> HostResult<()> {
+    let payload = match &result.outcome {
+        InvocationOutcome::Succeeded { output } => output,
+        InvocationOutcome::Failed { error } | InvocationOutcome::Unknown { error } => error,
+    };
+    if payload.utf8.len() > raw_limit as usize {
+        return Err(HostError::OutputLimit);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn process_and_aggregate_limits_have_independent_finite_bounds() {
+        let limits = HostLimits::default();
+        assert_eq!(limits.max_frame_bytes, MAX_PROCESS_FRAME_BYTES);
+        assert_eq!(limits.max_session_output_bytes, 64 * 1024 * 1024);
+        limits.validate().unwrap();
+        let narrower = HostLimits {
+            max_frame_bytes: 16 * 1024,
+            ..limits.clone()
+        };
+        narrower.validate().unwrap();
+        for invalid in [
+            HostLimits {
+                max_frame_bytes: MAX_PROCESS_FRAME_BYTES + 1,
+                ..limits.clone()
+            },
+            HostLimits {
+                max_session_output_bytes: MAX_PROCESS_FRAME_BYTES - 1,
+                ..limits.clone()
+            },
+            HostLimits {
+                max_session_output_bytes: 64 * 1024 * 1024 + 1,
+                ..limits.clone()
+            },
+        ] {
+            assert!(matches!(invalid.validate(), Err(HostError::InvalidLimits)));
+        }
+    }
+
+    #[test]
+    fn raw_output_limit_counts_utf8_for_every_outcome_independently_of_framing() {
+        let document: ExchangeDocument = serde_json::from_str(include_str!(
+            "../../plugin-sdk/tests/fixtures/invocation.result.json"
+        ))
+        .unwrap();
+        let ExchangeBody::Result(mut result) = document.body else {
+            panic!("Expected result fixture");
+        };
+        let schema = match &result.outcome {
+            InvocationOutcome::Succeeded { output } => output.schema.clone(),
+            _ => panic!("Expected successful result fixture"),
+        };
+        for kind in 0..3 {
+            for (utf8, allowed) in [("éé", true), ("ééx", false)] {
+                let payload = EncodedPayload::capture(schema.clone(), utf8.into()).unwrap();
+                result.outcome = match kind {
+                    0 => InvocationOutcome::Succeeded { output: payload },
+                    1 => InvocationOutcome::Failed { error: payload },
+                    _ => InvocationOutcome::Unknown { error: payload },
+                };
+                let frame = ProcessFrame::new(ProcessBody::Result(result.clone()))
+                    .encode()
+                    .unwrap();
+                assert!(frame.len() > 4);
+                assert!(frame.len() < 64 * 1024);
+                let checked = check_result_payload(&result, 4);
+                if allowed {
+                    checked.unwrap();
+                } else {
+                    assert!(matches!(checked, Err(HostError::OutputLimit)));
+                }
+            }
+        }
+    }
+}
+
 fn publish(sender: &mpsc::Sender<Event>, overflow: &AtomicBool, event: Event) {
     if sender.try_send(event).is_err() {
         overflow.store(true, Ordering::Release);

@@ -640,6 +640,10 @@ ai: {
       }
     },
     source: {
+      referenceRange: "{{encoding}}范围 [{{start}}, {{end}})",
+      referenceEncoding: { utf8: "UTF-8 字节", utf16: "UTF-16 码元", grapheme: "字素簇" },
+      referenceUnavailable: "原文文件详情暂不可用。",
+      entryLabel: "原文条目 {{number}}",
   "integration": "源格式",
   "webvttSelect": "选择字幕目录",
   "webvttCompareHelp": "比较 cue ID、文字、时间和布局。即使文字未变，时间或布局变化仍须重新审阅。不同 ID 的相同文字只算线索；应用完整字幕前请确认是否延续原身份。",
@@ -724,7 +728,7 @@ ai: {
   "imported": "已导入源内容",
   "range": "{{namespace}} · {{count}} 条原文 · {{language}}",
   "fingerprint": "文件摘要",
-  "identityHelp": "每个原生键保留独立的内容身份，即使文本相同也不会合并。",
+  "identityHelp": "原文身份遵循所选格式；原始名称会保留用于显示。",
   "pageRange": "显示第 {{first}}–{{last}} 条，共 {{total}} 条",
   "key": "原生键",
   "text": "原文",

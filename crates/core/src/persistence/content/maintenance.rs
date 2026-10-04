@@ -215,7 +215,7 @@ impl ProjectStore {
                 preserved: 0,
                 reassess: 0,
                 unresolved: 0,
-                total: output.occurrences.len() as u32,
+                total: output.exchange.units.len() as u32,
             };
             let mut pending = std::collections::BTreeSet::new();
             let mut offset = 0;
@@ -232,26 +232,51 @@ impl ProjectStore {
                     None => break,
                 }
             }
-            for new in &output.occurrences {
-                let explicit = confirmation
-                    .lineage
+            for unit in &output.exchange.units {
+                let occurrences: Vec<_> = output
+                    .occurrences
                     .iter()
-                    .find(|choice| choice.new_ordinal == new.ordinal);
-                let old = if let Some(choice) = explicit {
-                    if choice.decision == LineageDecision::Continue {
-                        base_rows
-                            .iter()
-                            .find(|row| row.occurrence_id == Some(choice.old_occurrence_id))
+                    .filter(|row| row.operation_unit_id == unit.id)
+                    .collect();
+                let new = *occurrences
+                    .first()
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "source-unit"))?;
+                let mut candidates = std::collections::BTreeMap::new();
+                for occurrence in occurrences {
+                    let explicit = confirmation
+                        .lineage
+                        .iter()
+                        .find(|choice| choice.new_ordinal == occurrence.ordinal);
+                    let old = if let Some(choice) = explicit {
+                        (choice.decision == LineageDecision::Continue)
+                            .then(|| {
+                                base_rows
+                                    .iter()
+                                    .find(|row| row.occurrence_id == Some(choice.old_occurrence_id))
+                            })
+                            .flatten()
                     } else {
-                        None
+                        let matches: Vec<_> = current_rows
+                            .iter()
+                            .filter(|row| {
+                                row.occurrence.same_identity(occurrence)
+                                    && row.occurrence.text == occurrence.text
+                                    && row.occurrence.identity_basis == occurrence.identity_basis
+                            })
+                            .collect();
+                        (matches
+                            .iter()
+                            .map(|row| row.unit_id)
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                            == 1)
+                            .then(|| matches[0])
+                    };
+                    if let Some(old) = old {
+                        candidates.insert(old.unit_id, old);
                     }
-                } else {
-                    current_rows.iter().find(|row| {
-                        row.occurrence.key.eq_ignore_ascii_case(&new.key)
-                            && row.occurrence.text == new.text
-                            && row.occurrence.identity_basis == new.identity_basis
-                    })
-                };
+                }
+                let old = (candidates.len() == 1).then(|| *candidates.values().next().unwrap());
                 let Some(old) = old else {
                     summary.unresolved += 1;
                     continue;

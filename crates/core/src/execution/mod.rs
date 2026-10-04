@@ -9,6 +9,7 @@ mod plugin;
 pub(crate) mod plugin_authority;
 mod runner;
 mod runtime;
+mod source_validation;
 #[cfg(feature = "execution-test-host")]
 pub mod test_support;
 mod validation;
@@ -24,12 +25,15 @@ pub use plugin::*;
 pub use plugin_authority::{PluginConsent, PluginPermit};
 pub use runner::*;
 pub use runtime::{ExecutionRuntime, OutcomeQuery};
+pub use source_validation::{
+    PreparedSourceValidation, SOURCE_CHECK_OPERATION, SourceValidationCapture,
+};
 pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
 
 pub const MAX_ITEMS: usize = 2000;
-pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
 pub const DEFAULT_RESULT_BYTES: usize = 256 * 1024;
-pub const MAX_RESULT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_ATTEMPT_RESULT_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 pub const MAX_DEPTH: usize = 32;

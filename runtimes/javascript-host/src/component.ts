@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import type { ComponentAPI, CapabilityHandler, ComponentModule } from '../../../crates/plugin-sdk/javascript/component.js';
 import type { InvocationRequest, ProcessActivation, ProcessBody, ProcessFrame } from '../../../crates/plugin-sdk/javascript/process.js';
 import { PROCESS_PROFILE } from './generated/protocol.js';
-import { scalarString } from './codec.js';
+import { encodeFrame, scalarString } from './codec.js';
 
 function immutable<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -35,8 +35,12 @@ export class ComponentSession {
     private fail: () => void,
     private finish: () => void,
   ) {}
-  private emit(body: ProcessBody): Promise<void> {
-    return this.send({ protocolVersion: PROCESS_PROFILE.protocolVersion, body });
+  private emit(body: ProcessBody, maxResultBytes?: number): Promise<void> {
+    const frame: ProcessFrame = { protocolVersion: PROCESS_PROFILE.protocolVersion, body };
+    if (maxResultBytes !== undefined && encodeFrame(frame).byteLength - 4 > maxResultBytes) {
+      throw new Error('Output limit');
+    }
+    return this.send(frame);
   }
   receive(frame: ProcessFrame): void {
     const body = frame.body;
@@ -57,7 +61,9 @@ export class ComponentSession {
         || request.input.sha256 !== digest(request.input.utf8)
         || request.context.inputDigest !== request.input.sha256
         || Buffer.byteLength(request.input.utf8) > declaration.limits.maxInputBytes
-        || request.maxResultBytes > declaration.limits.maxOutputBytes
+        || Buffer.byteLength(request.input.utf8) > PROCESS_PROFILE.maxInvocationPayloadBytes
+        || !Number.isSafeInteger(request.maxResultBytes) || request.maxResultBytes <= 0
+        || request.maxResultBytes > PROCESS_PROFILE.maxFrameBytes
         || this.dispatches.has(request.context.dispatchId) || this.dispatches.size >= 128) {
         throw new Error('Request mismatch');
       }
@@ -133,7 +139,8 @@ export class ComponentSession {
     const { kind, utf8 } = output;
     if (!['succeeded', 'failed', 'unknown'].includes(kind) || typeof utf8 !== 'string') throw new Error('Invalid output');
     scalarString(utf8);
-    if (Buffer.byteLength(utf8) > request.maxResultBytes) throw new Error('Output limit');
+    if (Buffer.byteLength(utf8) > this.activation!.capability.limits.maxOutputBytes
+      || Buffer.byteLength(utf8) > PROCESS_PROFILE.maxInvocationPayloadBytes) throw new Error('Output limit');
     const payload = { schema: kind === 'succeeded' ? request.outputSchema : request.errorSchema, utf8, sha256: digest(utf8) };
     // The peer can read Result before the stdout callback runs. Release the
     // completed handler slot before writing so its next serial call is valid.
@@ -142,7 +149,7 @@ export class ComponentSession {
       context: request.context, provider: this.activation!.provider, capability: request.capability,
       profile: request.profile ?? null, resultId: randomUUID(),
       outcome: kind === 'succeeded' ? { kind: 'succeeded', output: payload } : { kind, error: payload },
-    } });
+    } }, request.maxResultBytes);
   }
   private async close(): Promise<void> {
     await this.starting;

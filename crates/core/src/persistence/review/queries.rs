@@ -61,11 +61,16 @@ pub(in crate::persistence) fn targets_in(
     let terms = resources::current_terms_in(connection, project_id, locale)?;
     let mut statement = connection
         .prepare(
-            "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2))
+            "WITH wanted AS MATERIALIZED (SELECT value AS unit_id FROM json_each(?2)),
+         first_occurrences AS MATERIALIZED (
+           SELECT o.snapshot_id,o.unit_id,MIN(o.ordinal) AS ordinal
+           FROM source_occurrences o JOIN content_scope c ON c.current_snapshot=o.snapshot_id
+           JOIN wanted ON wanted.unit_id=o.unit_id GROUP BY o.snapshot_id,o.unit_id)
          SELECT o.unit_id,o.snapshot_id,o.revision_id,o.native_key,r.text,
                 s.event_id,s.revision_id,tr.text,cc.revision_id
-         FROM wanted
-         JOIN source_occurrences o ON o.unit_id=wanted.unit_id
+         FROM first_occurrences first
+         JOIN source_occurrences o ON o.snapshot_id=first.snapshot_id
+           AND o.unit_id=first.unit_id AND o.ordinal=first.ordinal
          JOIN source_units u ON u.unit_id=o.unit_id AND u.project_id=?1
          JOIN source_revisions r ON r.revision_id=o.revision_id
          JOIN content_scope c ON c.current_snapshot=o.snapshot_id

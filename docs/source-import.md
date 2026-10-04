@@ -19,7 +19,9 @@ Search and paging change only the displayed comparison. The confirmation always 
 - `$schema` is retained as editor metadata, not a string to translate. Original files are kept byte-for-byte, including comments and fields not extracted.
 - Split `i18n/default/` layouts, archives, inline Content Patcher text, linked paths and other resource formats are unsupported. Build-time manifest version placeholders produce a warning; importing does not establish game compatibility.
 
-Limits are cumulative: 16 KiB manifest, 128 KiB combined input, at most 256 direct entries in each inspected directory, 2,000 strings, 1,024-byte native keys, 256-byte namespace and 16 KiB per string. The encoded input also must fit 1 MiB and the complete encoded result 2 MiB; these limits may be reached before the string-count limit. Oversized input fails as a whole. Preview pages contain at most 100 rows and 256 KiB without truncating text.
+Limits are cumulative: 16 KiB manifest, 128 KiB combined input, at most 256 direct entries in each inspected directory, 2,000 strings, 1,024-byte native keys, 256-byte namespace and 16 KiB per string. The saved source capture must fit 1 MiB, the SDK source and content proposal each 2 MiB, the complete fixed check input 4 MiB and the complete persisted execution result 8 MiB. Encoded limits include references and evidence and may be reached before the string-count limit. Oversized input fails as a whole. Preview pages contain at most 100 rows and 256 KiB without truncating text.
+
+Source details display the original identity label, captured file and half-open range with its explicit UTF-8-byte, UTF-16 or grapheme encoding. Canonical matching values do not replace the original label. Historical details load on demand and offer **Refresh** when unavailable; switching snapshots discards a late response for the earlier source.
 
 Files are read through authorized native directory handles. Windows denies ordinary writes, renames and deletion while both input files are captured. macOS opens each path component relative to a directory descriptor without following symlinks, then checks file identities, timestamps, directory entries and repeated bytes before accepting the capture. Detected concurrent changes reject the capture; POSIX advisory locks are not treated as write exclusion. The system `/var` and `/tmp` aliases are mapped to their `/private` locations. Reparse points, user-controlled symlinks and duplicate physical inputs are rejected. This is not a sandbox against privileged software. The trusted in-process extractor receives only captured bytes, not project write access.
 
@@ -31,7 +33,7 @@ If a start acknowledgement is lost, check or resume that same import. If applyin
 
 After capture, the external Mod can be moved or removed: preview, adoption and reopening use project-owned bytes. Moving the closed project keeps content identities and receipts intact. Corrupt stored evidence and unsupported database schemas are rejected rather than repaired or shown as empty content.
 
-See the [README](../README.md#development) for the current database schema and supported upgrades. Supported older databases receive a SQLite backup in their project directory before automatic upgrade. Other schema versions are rejected without resetting the project. Application release versions follow the [versioning policy](versioning.md).
+See the [README](../README.md#development) for the current database schema. This development build opens its current format only; earlier experimental projects are preserved and refused without conversion or reset. Application release versions and future upgrade support follow the [versioning policy](versioning.md).
 
 ## Native fault checks
 

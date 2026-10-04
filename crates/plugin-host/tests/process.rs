@@ -187,6 +187,70 @@ fn actual_process_channel_and_heartbeat_keep_exact_utf8_and_empty_environment() 
     });
 }
 #[test]
+fn actual_result_frame_budget_does_not_replace_the_declared_raw_output_limit() {
+    runtime().block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        for (index, (text, allowed)) in [
+            ("small".to_owned(), true),
+            ("x".repeat(65536 - "answer:".len()), true),
+            ("x".repeat(65537 - "answer:".len()), false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut session = launch("normal", dir.path()).await;
+            let mut input = request(&session, &format!("budget-{index}"), &text);
+            input.max_result_bytes = 128 * 1024;
+            let received = session.invoke(&input, || false, || true).await;
+            if allowed {
+                let received = received.unwrap();
+                let InvocationOutcome::Succeeded { output } = &received.result().outcome else {
+                    panic!("Expected successful result");
+                };
+                assert_eq!(output.utf8, format!("answer:{text}"));
+                assert!(output.utf8.len() <= 65536);
+                let encoded = ProcessFrame::new(ProcessBody::Result(received.result().clone()))
+                    .encode()
+                    .unwrap();
+                assert!(encoded.len() <= input.max_result_bytes as usize);
+            } else {
+                assert_eq!(received.unwrap_err(), HostError::OutputLimit);
+                assert!(!session.is_accepting());
+                assert!(session.termination_receipt().unwrap().direct_child_reaped);
+            }
+            assert!(session.close().await.direct_child_reaped);
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+    });
+}
+
+#[test]
+fn original_result_frame_bytes_include_json_whitespace_in_the_invocation_budget() {
+    runtime().block_on(async {
+        let dir = tempfile::tempdir().unwrap();
+        for (mode, allowed) in [("padded-result", true), ("oversized-padded-result", false)] {
+            let mut session = launch(mode, dir.path()).await;
+            let input = request(&session, mode, "small");
+            let received = session.invoke(&input, || false, || true).await;
+            if allowed {
+                let received = received.unwrap();
+                let InvocationOutcome::Succeeded { output } = &received.result().outcome else {
+                    panic!("Expected successful result");
+                };
+                assert_eq!(output.utf8, "answer:small");
+                assert!(session.is_accepting());
+            } else {
+                assert_eq!(received.unwrap_err(), HostError::OutputLimit);
+                assert!(!session.is_accepting());
+                assert!(session.termination_receipt().unwrap().direct_child_reaped);
+            }
+            assert!(session.close().await.direct_child_reaped);
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+    });
+}
+
+#[test]
 fn separate_instances_and_old_cleanup_do_not_remove_another_process() {
     runtime().block_on(async {
         let dir = tempfile::tempdir().unwrap();

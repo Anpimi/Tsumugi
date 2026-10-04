@@ -10,9 +10,9 @@ pub trait ResultValidator: Send + Sync + 'static {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ValidationProof {
-    input_digest: String,
-    result_digest: String,
-    operation: String,
+    pub(crate) input_digest: String,
+    pub(crate) result_digest: String,
+    pub(crate) operation: String,
     pub(crate) valid: bool,
 }
 impl ValidationProof {
@@ -37,6 +37,14 @@ impl ResultValidationCapture {
         self,
         validator: &dyn ResultValidator,
     ) -> Result<PreparedResultValidation, ExecutionError> {
+        if self.input.envelope().plugin.is_some()
+            && self.input.envelope().operation == crate::content::OPERATION
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "source-semantic-check-required",
+            ));
+        }
         if validator.operation() != self.input.envelope().operation
             || self.result.envelope().outcome != ExecutionState::Succeeded
         {

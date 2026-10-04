@@ -75,6 +75,15 @@ The SDK's bounded invocation payload now admits 4 MiB, with a separate
 metadata. Source/content each retain their 2 MiB encoded ceiling. These limit
 changes retain the current process shape and protocol, within the same
 undistributed SDK batch; they do not create a new release boundary.
+Generic SDK source-unit mappings and persisted mandatory checker links now
+advance the current-only project format to schema 18. Core fixed inputs admit
+4 MiB and complete stored results admit 8 MiB, while source/content payload
+ceilings remain independent. The experimental source-read DTO now requires
+original identity and explicitly encoded source references. These incompatible
+development contracts remain within the same undistributed application
+`0.2.0-alpha.1` batch; schema 17 and earlier directories are preserved and
+refused without migration. Stable upgrade support follows the completed
+refactor rather than converting earlier experimental snapshots.
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
 

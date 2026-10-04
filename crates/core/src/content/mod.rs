@@ -14,14 +14,18 @@ pub fn extract(
     bundle: &SourceBundle,
     cancel: &Cancellation,
 ) -> Result<SourceOutput, ExecutionError> {
-    if bundle.plugin_id == webvtt::PLUGIN {
+    if bundle.profile == contract_ref(webvtt::PROFILE) {
         webvtt::extract(bundle, cancel)
     } else {
         smapi::extract(bundle, cancel)
     }
 }
 pub fn supported_identity_policy(policy: &str) -> bool {
-    matches!(policy, IDENTITY_POLICY | webvtt::POLICY)
+    // This is the captured generic revision-policy digest, not a domain allowlist.
+    policy.len() == 64
+        && policy
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 pub use translation::{
     TRANSLATION_OPERATION, TranslationBundle, TranslationEntry, TranslationOutput,
@@ -33,6 +37,7 @@ use crate::{
     execution::{codec, *},
 };
 use serde::{Deserialize, Serialize};
+use tsumugi_plugin_sdk as sdk;
 
 pub const OPERATION: &str = "source-import";
 pub const CAPABILITY: &str = "stardew-smapi.extract";
@@ -41,6 +46,9 @@ pub const FORMAT: &str = "smapi-i18n-flat";
 pub const IDENTITY_POLICY: &str = "smapi-native-key/1";
 pub const MAX_SOURCE_BYTES: usize = 128 * 1024;
 pub const MAX_MANIFEST_BYTES: usize = 16 * 1024;
+/// Complete serialized captured source material retained by the project store.
+/// Execution inputs and combined semantic-check inputs have separate budgets.
+pub const MAX_CAPTURED_SOURCE_INPUT_BYTES: usize = 1024 * 1024;
 pub const MAX_OCCURRENCES: usize = 2000;
 pub const MAX_SOURCE_RESULT_BYTES: usize = MAX_RESULT_BYTES;
 pub const MAX_CONTENT_PAGE_BYTES: usize = 256 * 1024;
@@ -150,6 +158,7 @@ pub struct SourceBundle {
     pub language_evidence: String,
     pub format_id: String,
     pub format_version: u32,
+    pub profile: sdk::ContractRef,
     pub files: Vec<CapturedFile>,
 }
 impl SourceBundle {
@@ -168,6 +177,7 @@ impl SourceBundle {
             language_evidence: "user-declared".into(),
             format_id: webvtt::PROFILE.into(),
             format_version: 1,
+            profile: contract_ref(webvtt::PROFILE),
             files: vec![CapturedFile::new(webvtt::PATH, "source", source)?],
         };
         bundle.manifest_digest = bundle.calculate_digest()?;
@@ -199,6 +209,7 @@ impl SourceBundle {
             language_evidence: "user-declared".into(),
             format_id: FORMAT.into(),
             format_version: 1,
+            profile: contract_ref(FORMAT),
             files: vec![
                 CapturedFile::new(MANIFEST_PATH, "companion", manifest)?,
                 CapturedFile::new(SOURCE_PATH, "source", source)?,
@@ -233,119 +244,312 @@ impl SourceBundle {
                 &self.language_evidence,
                 &self.format_id,
                 self.format_version,
+                &self.profile,
                 refs,
             ),
             MAX_INPUT_BYTES,
         )?))
     }
+    /// Generic captured-material validation. Domain file requirements belong to
+    /// the selected extractor, not to this project capture projection.
     pub fn validate(&self) -> Result<(), ExecutionError> {
-        if self.version != 1
-            || !matches!(self.plugin_id.as_str(), PLUGIN_ID | webvtt::PLUGIN)
-            || self.plugin_version != PLUGIN_VERSION
-            || self.format_id
-                != if self.plugin_id == webvtt::PLUGIN {
-                    webvtt::PROFILE
-                } else {
-                    FORMAT
-                }
-            || self.format_version != 1
-            || self.files.len()
-                != if self.plugin_id == webvtt::PLUGIN {
-                    1
-                } else {
-                    2
-                }
-            || self.language_evidence != "user-declared"
-        {
-            return Err(invalid("unsupported-format"));
-        }
+        let source = self.source_input();
+        source.validate().map_err(source_contract_error)?;
+        let _ = codec::encode(&source, MAX_CAPTURED_SOURCE_INPUT_BYTES)?;
         let locale =
             Locale::parse(&self.source_language).map_err(|_| invalid("language-required"))?;
-        if locale.as_str() != self.source_language {
-            return Err(invalid("language-conflict"));
-        }
-        let mut total = 0usize;
-        let expected = if self.plugin_id == webvtt::PLUGIN {
-            vec![(webvtt::PATH, "source", MAX_SOURCE_BYTES)]
-        } else {
-            vec![
-                (MANIFEST_PATH, "companion", MAX_MANIFEST_BYTES),
-                (SOURCE_PATH, "source", MAX_SOURCE_BYTES),
-            ]
-        };
-        for (f, (path, role, max)) in self.files.iter().zip(expected) {
-            if f.logical_path != path
-                || f.role != role
-                || f.byte_length as usize != f.utf8.len()
-                || f.sha256 != codec::digest(f.utf8.as_bytes())
-            {
-                return Err(invalid("invalid-structure"));
-            }
-            if f.utf8.len() > max {
-                return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
-            }
-            total += f.utf8.len();
-        }
-        if total > MAX_SOURCE_BYTES {
-            return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
-        }
-        if (self.files.len() == 2 && self.files[0].artifact_id == self.files[1].artifact_id)
+        if locale.as_str() != self.source_language
+            || self.version != 1
+            || self.format_id != self.profile.id
+            || self.format_version != self.profile.schema_version
+            || self.language_evidence != "user-declared"
             || self.calculate_digest()? != self.manifest_digest
+            || self
+                .files
+                .iter()
+                .any(|file| file.byte_length as usize != file.utf8.len())
         {
             return Err(invalid("invalid-structure"));
         }
         Ok(())
     }
+    /// File shape required only by the explicitly transitional interpreters.
+    pub(crate) fn validate_builtin_capture(&self) -> Result<(), ExecutionError> {
+        self.validate()?;
+        let expected = if self.profile == contract_ref(webvtt::PROFILE) {
+            vec![(webvtt::PATH, "source", MAX_SOURCE_BYTES)]
+        } else if self.profile == contract_ref(FORMAT) {
+            vec![
+                (MANIFEST_PATH, "companion", MAX_MANIFEST_BYTES),
+                (SOURCE_PATH, "source", MAX_SOURCE_BYTES),
+            ]
+        } else {
+            return Err(invalid("builtin-source-profile"));
+        };
+        if self.files.len() != expected.len()
+            || self
+                .files
+                .iter()
+                .zip(expected)
+                .any(|(file, (path, role, limit))| {
+                    file.logical_path != path || file.role != role || file.utf8.len() > limit
+                })
+            || self.files.iter().map(|file| file.utf8.len()).sum::<usize>() > MAX_SOURCE_BYTES
+        {
+            return Err(invalid("builtin-source-files"));
+        }
+        Ok(())
+    }
+    pub fn source_input(&self) -> sdk::SourceExtractionInput {
+        sdk::SourceExtractionInput {
+            profile: self.profile.clone(),
+            source_set_id: self.set_id.to_string(),
+            source_language: self.source_language.clone(),
+            artifacts: self
+                .files
+                .iter()
+                .map(|file| sdk::CapturedTextArtifact {
+                    id: file.artifact_id.to_string(),
+                    logical_path: file.logical_path.clone(),
+                    role: file.role.clone(),
+                    sha256: file.sha256.clone(),
+                    utf8: file.utf8.clone(),
+                })
+                .collect(),
+        }
+    }
+    /// Explicit transitional built-in assembly. It never supplies a checker
+    /// selection or a plugin binding and must receive real domain validation.
     pub fn fixed_input(&self, project: ProjectId) -> Result<FixedInput, ExecutionError> {
         self.validate()?;
+        let policy = builtin_revision_policy(&self.profile)?;
+        let settings = SourceSettings {
+            revision_policy: policy,
+            checker: None,
+            semantic_rules: vec![],
+        };
+        self.capture_input(
+            project,
+            self.capability(),
+            CAPABILITY_VERSION,
+            None,
+            settings,
+        )
+    }
+    /// Capture a source operation from independently selected producer/checker
+    /// declarations. Neither the input data nor a later result may select them.
+    pub fn fixed_plugin_input(
+        &self,
+        project: ProjectId,
+        binding: PluginExecutionBinding,
+        settings: SourceSettings,
+    ) -> Result<FixedInput, ExecutionError> {
+        self.validate()?;
+        let capability = binding.capability.declaration.contract.id.clone();
+        let version = binding.capability_version();
+        self.capture_input(project, &capability, &version, Some(binding), settings)
+    }
+    fn capture_input(
+        &self,
+        project: ProjectId,
+        capability: &str,
+        version: &str,
+        plugin: Option<PluginExecutionBinding>,
+        settings: SourceSettings,
+    ) -> Result<FixedInput, ExecutionError> {
         let item = InputItem::new(
             Scope {
                 kind: "source".into(),
                 id: self.set_id.to_string(),
                 locale: None,
             },
-            value(self)?,
+            value(&self.source_input())?,
             vec![],
         );
-        let mut envelope = InputEnvelope::new(
-            project,
-            OPERATION,
-            self.capability(),
-            CAPABILITY_VERSION,
-            vec![item],
-        )?;
+        let mut envelope = InputEnvelope::new(project, OPERATION, capability, version, vec![item])?;
+        envelope.settings = value(&settings)?;
+        envelope.plugin = plugin;
         envelope.limits.max_result_bytes = MAX_SOURCE_RESULT_BYTES as u32;
-        FixedInput::capture(envelope)
+        let input = FixedInput::capture(envelope)?;
+        let _ = Self::from_input(&input)?;
+        Ok(input)
     }
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let e = input.envelope();
         if e.operation != OPERATION
-            || !matches!(e.capability_id.as_str(), CAPABILITY | webvtt::EXTRACT)
-            || e.capability_version != CAPABILITY_VERSION
             || e.items.len() != 1
             || e.units.len() != 1
             || e.units[0].item_ids != vec![e.items[0].item_id]
-            || !e.settings.is_null()
             || !e.items[0].dependencies.is_empty()
         {
-            return Err(invalid("unsupported-format"));
+            return Err(invalid("source-input"));
         }
-        let b: Self = from_value(&e.items[0].payload)?;
-        b.validate()?;
-        if e.capability_id != b.capability() {
-            return Err(invalid("unsupported-format"));
-        }
+        let source: sdk::SourceExtractionInput = from_value(&e.items[0].payload)?;
+        source.validate().map_err(source_contract_error)?;
+        let settings = SourceSettings::from_input(input)?;
+        let (plugin_id, plugin_version) = if let Some(binding) = &e.plugin {
+            binding.validate()?;
+            let declaration = &binding.capability.declaration;
+            if binding.profile.as_ref() != Some(&source.profile)
+                || declaration.input_schema != sdk::source_extraction_input_contract()
+                || declaration.output_schema != sdk::content_exchange_contract()
+                || declaration.error_schema != sdk::source_extraction_error_contract()
+                || settings.checker.is_none()
+            {
+                return Err(invalid("source-binding"));
+            }
+            (
+                binding.capability.provider.plugin.id.clone(),
+                binding.capability.provider.plugin.version.clone(),
+            )
+        } else {
+            if settings.checker.is_some() || e.capability_version != CAPABILITY_VERSION {
+                return Err(invalid("builtin-source-binding"));
+            }
+            let plugin = match e.capability_id.as_str() {
+                CAPABILITY if source.profile == contract_ref(FORMAT) => PLUGIN_ID,
+                webvtt::EXTRACT if source.profile == contract_ref(webvtt::PROFILE) => {
+                    webvtt::PLUGIN
+                }
+                _ => return Err(invalid("builtin-source-binding")),
+            };
+            if settings.revision_policy != builtin_revision_policy(&source.profile)? {
+                return Err(invalid("builtin-source-policy"));
+            }
+            (plugin.into(), PLUGIN_VERSION.into())
+        };
+        // IDs here were allocated by Core's capture owner. SDK transport IDs
+        // remain opaque; this project capture boundary requires its UUIDs.
+        let set_id = ExecutionId::parse(&source.source_set_id)?;
         if e.items[0].scope
             != (Scope {
                 kind: "source".into(),
-                id: b.set_id.to_string(),
+                id: set_id.to_string(),
                 locale: None,
             })
         {
-            return Err(invalid("invalid-structure"));
+            return Err(invalid("source-scope"));
         }
-        Ok(b)
+        let files = source
+            .artifacts
+            .iter()
+            .map(|artifact| {
+                Ok(CapturedFile {
+                    artifact_id: ExecutionId::parse(&artifact.id)?,
+                    logical_path: artifact.logical_path.clone(),
+                    role: artifact.role.clone(),
+                    byte_length: u32::try_from(artifact.utf8.len())
+                        .map_err(|_| invalid("source-bytes"))?,
+                    sha256: artifact.sha256.clone(),
+                    utf8: artifact.utf8.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, ExecutionError>>()?;
+        let mut bundle = Self {
+            version: 1,
+            plugin_id,
+            plugin_version,
+            set_id,
+            manifest_digest: String::new(),
+            source_language: source.source_language,
+            language_evidence: "user-declared".into(),
+            format_id: source.profile.id.clone(),
+            format_version: source.profile.schema_version,
+            profile: source.profile,
+            files,
+        };
+        bundle.manifest_digest = bundle.calculate_digest()?;
+        bundle.validate()?;
+        Ok(bundle)
     }
+}
+
+pub(crate) fn contract_ref(id: &str) -> sdk::ContractRef {
+    sdk::ContractRef {
+        id: id.into(),
+        schema_version: 1,
+        behavior_version: 1,
+    }
+}
+fn source_contract_error(error: sdk::ContractError) -> ExecutionError {
+    if error.code == sdk::ContractErrorCode::LimitExceeded {
+        failure(ErrorCode::LimitExceeded, "source-contract-limit")
+    } else {
+        invalid("source-contract")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceSettings {
+    pub revision_policy: sdk::SourceRevisionPolicy,
+    pub checker: Option<PluginExecutionBinding>,
+    pub semantic_rules: Vec<sdk::ContractRef>,
+}
+impl SourceSettings {
+    pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
+        let settings: Self = from_value(&input.envelope().settings)?;
+        settings
+            .revision_policy
+            .validate()
+            .map_err(source_contract_error)?;
+        let source: sdk::SourceExtractionInput = from_value(
+            &input
+                .envelope()
+                .items
+                .first()
+                .ok_or_else(|| invalid("source-input"))?
+                .payload,
+        )?;
+        if settings.revision_policy.profile != source.profile {
+            return Err(invalid("source-policy"));
+        }
+        if let Some(checker) = &settings.checker {
+            checker.validate()?;
+            let declaration = &checker.capability.declaration;
+            if checker.profile.as_ref() != Some(&source.profile)
+                || declaration.input_schema != sdk::source_extraction_check_input_contract()
+                || declaration.output_schema != sdk::check_results_contract()
+                || declaration.error_schema != sdk::source_extraction_error_contract()
+                || settings.semantic_rules.is_empty()
+                || settings.semantic_rules.len() > 32
+                || settings
+                    .semantic_rules
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != settings.semantic_rules.len()
+                || settings.semantic_rules.iter().any(|rule| {
+                    sdk::SourceRevisionPolicy {
+                        profile: source.profile.clone(),
+                        revision_basis: vec![rule.clone()],
+                    }
+                    .validate()
+                    .is_err()
+                })
+            {
+                return Err(invalid("source-checker"));
+            }
+        } else if !settings.semantic_rules.is_empty() {
+            return Err(invalid("builtin-source-rules"));
+        }
+        Ok(settings)
+    }
+}
+fn builtin_revision_policy(
+    profile: &sdk::ContractRef,
+) -> Result<sdk::SourceRevisionPolicy, ExecutionError> {
+    let revision_basis = if *profile == contract_ref(webvtt::PROFILE) {
+        vec![contract_ref("webvtt.cue-basis")]
+    } else if *profile == contract_ref(FORMAT) {
+        vec![]
+    } else {
+        return Err(invalid("builtin-source-profile"));
+    };
+    Ok(sdk::SourceRevisionPolicy {
+        profile: profile.clone(),
+        revision_basis,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,10 +562,18 @@ pub struct SourceOccurrence {
     pub key: String,
     pub text: String,
     /// Half-open UTF-8 byte offsets into the captured artifact, using its format profile.
-    pub key_byte_range: [u32; 2],
-    /// Half-open UTF-8 byte offsets into the original artifact, not the decoded text.
+    pub key_byte_range: Option<[u32; 2]>,
+    /// Derived UTF-8 coordinates for existing readers; original coordinates are
+    /// retained in `source`, including their explicit encoding.
     pub value_byte_range: [u32; 2],
+    /// Opaque digest of the exact captured revision policy, text, protected
+    /// fragments and only the policy-selected domain blocks.
     pub identity_basis: String,
+    pub operation_unit_id: String,
+    pub operation_occurrence_id: String,
+    pub operation_source_revision_id: String,
+    pub source: sdk::SourceReference,
+    pub native_identity: Option<sdk::NativeIdentityEvidence>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -386,9 +598,43 @@ pub struct SourceOutput {
     pub coverage: Vec<FileCoverage>,
     pub occurrences: Vec<SourceOccurrence>,
     pub diagnostics: Vec<String>,
+    /// Complete proposal reconstructed from the immutable result owner.
+    pub exchange: sdk::ContentExchange,
+    pub revision_policy: sdk::SourceRevisionPolicy,
 }
 
-/// Typed output validation is shared by the ledger, preview and adoption boundary.
+impl SourceOccurrence {
+    /// Canonical matching values were already interpreted by the domain. Core
+    /// compares their entire namespace/policy/value tuple without case folding.
+    pub fn matching_identity(&self) -> Option<(&str, &sdk::ContractRef, &str)> {
+        self.native_identity.as_ref().map(|identity| {
+            (
+                identity.namespace.as_str(),
+                &identity.policy,
+                identity.value.as_str(),
+            )
+        })
+    }
+    pub(crate) fn comparison_key(&self) -> Result<Option<String>, ExecutionError> {
+        self.native_identity
+            .as_ref()
+            .map(|identity| {
+                String::from_utf8(codec::encode(
+                    &(&identity.namespace, &identity.policy, &identity.value),
+                    MAX_INPUT_BYTES,
+                )?)
+                .map_err(|_| invalid("source-identity"))
+            })
+            .transpose()
+    }
+    pub(crate) fn same_identity(&self, other: &Self) -> bool {
+        self.matching_identity().is_some() && self.matching_identity() == other.matching_identity()
+    }
+}
+
+/// Decode and associate a captured proposal without invoking a domain parser.
+/// This is deliberately insufficient to mark an execution result semantically
+/// Valid; the store-owned validation proof remains a separate requirement.
 pub fn validate_output(
     input: &FixedInput,
     result: &FixedResult,
@@ -397,22 +643,296 @@ pub fn validate_output(
     if result.envelope().item_id != input.envelope().items[0].item_id
         || result.envelope().outcome != ExecutionState::Succeeded
     {
-        return Err(invalid("invalid-structure"));
+        return Err(invalid("source-result"));
     }
-    let output: SourceOutput = from_value(
-        result
-            .envelope()
-            .output
-            .as_ref()
-            .ok_or_else(|| invalid("invalid-structure"))?,
+    let exchange: sdk::ContentExchange = if let Some(evidence) = &result.envelope().plugin {
+        let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
+            return Err(invalid("source-result"));
+        };
+        if output.schema != sdk::content_exchange_contract() {
+            return Err(invalid("source-result-schema"));
+        }
+        // Typed Serde sees the original bytes; Value is only an independently
+        // checked result projection and cannot conceal duplicate typed fields.
+        sdk::parse_content_exchange(output.utf8.as_bytes()).map_err(source_contract_error)?
+    } else {
+        from_value(
+            result
+                .envelope()
+                .output
+                .as_ref()
+                .ok_or_else(|| invalid("source-result"))?,
+        )?
+    };
+    let mut output = project_source_output(
+        &bundle,
+        exchange,
+        SourceSettings::from_input(input)?.revision_policy,
     )?;
-    // Reinterpret captured bytes using the fixed internal profile, never external files.
-    // This rejects omitted entries as well as plausible but forged text/ranges.
-    let expected = extract(&bundle, &Cancellation::default())?;
-    if output != expected {
-        return Err(invalid("invalid-structure"));
+    if input.envelope().plugin.is_none() {
+        output.diagnostics = result
+            .envelope()
+            .diagnostic
+            .iter()
+            .map(|diagnostic| diagnostic.code.clone())
+            .collect();
     }
     Ok(output)
+}
+
+pub(crate) fn project_source_output(
+    bundle: &SourceBundle,
+    exchange: sdk::ContentExchange,
+    policy: sdk::SourceRevisionPolicy,
+) -> Result<SourceOutput, ExecutionError> {
+    sdk::validate_source_extraction(&bundle.source_input(), &exchange)
+        .map_err(source_contract_error)?;
+    policy.validate().map_err(source_contract_error)?;
+    if policy.profile != exchange.profile {
+        return Err(invalid("source-policy"));
+    }
+    let indexed_occurrences: std::collections::BTreeMap<_, _> = exchange
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.occurrences
+                .iter()
+                .map(move |occurrence| (&occurrence.id, (unit, occurrence)))
+        })
+        .collect();
+    let mut snapshot_blocks = Vec::new();
+    let mut unit_blocks = std::collections::BTreeMap::<&str, Vec<_>>::new();
+    for block in &exchange.domain_blocks {
+        if !policy.revision_basis.contains(&block.schema) {
+            continue;
+        }
+        let basis = (&block.schema, &block.payload_utf8);
+        match &block.target {
+            sdk::ContentTarget::Snapshot => snapshot_blocks.push(basis),
+            sdk::ContentTarget::Unit { id } => {
+                unit_blocks.entry(id.as_str()).or_default().push(basis)
+            }
+            sdk::ContentTarget::Occurrence { id } => {
+                let (unit, _) = indexed_occurrences
+                    .get(id)
+                    .ok_or_else(|| invalid("source-order"))?;
+                unit_blocks.entry(unit.id.as_str()).or_default().push(basis);
+            }
+        }
+    }
+    let mut unit_bases = std::collections::BTreeMap::new();
+    for unit in &exchange.units {
+        let mut blocks = snapshot_blocks.clone();
+        blocks.extend(unit_blocks.remove(unit.id.as_str()).unwrap_or_default());
+        // Preserve the previous exact multiset and ordering of schema/payload
+        // pairs. Operation-local target IDs never enter the revision basis.
+        blocks.sort();
+        unit_bases.insert(
+            unit.id.as_str(),
+            codec::digest(&codec::encode(
+                &(&policy, &unit.text, &unit.protected_fragments, blocks),
+                MAX_SOURCE_RESULT_BYTES,
+            )?),
+        );
+    }
+    let mut occurrences = Vec::new();
+    for (ordinal, occurrence_id) in exchange.order.iter().enumerate() {
+        let (unit, occurrence) = indexed_occurrences
+            .get(occurrence_id)
+            .ok_or_else(|| invalid("source-order"))?;
+        let artifact = exchange
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.id == occurrence.source.artifact_id)
+            .ok_or_else(|| invalid("source-artifact"))?;
+        let source_range = sdk::convert_text_range(
+            &artifact.utf8,
+            occurrence.source.range,
+            sdk::TextEncoding::Utf8Byte,
+        )
+        .map_err(source_contract_error)?;
+        let key_byte_range = occurrence
+            .native_identity
+            .as_ref()
+            .and_then(|identity| identity.display.source.as_ref())
+            .map(|reference| {
+                let artifact = exchange
+                    .artifacts
+                    .iter()
+                    .find(|artifact| artifact.id == reference.artifact_id)
+                    .ok_or_else(|| invalid("source-display"))?;
+                let range = sdk::convert_text_range(
+                    &artifact.utf8,
+                    reference.range,
+                    sdk::TextEncoding::Utf8Byte,
+                )
+                .map_err(source_contract_error)?;
+                // The legacy reader's key range has one artifact column. Keep
+                // absence explicit when the display evidence is in another one.
+                Ok::<Option<[u32; 2]>, ExecutionError>(
+                    (reference.artifact_id == occurrence.source.artifact_id)
+                        .then_some([range.start, range.end]),
+                )
+            })
+            .transpose()?
+            .flatten();
+        let identity_basis = unit_bases[unit.id.as_str()].clone();
+        let namespace = occurrence
+            .native_identity
+            .as_ref()
+            .map(|identity| identity.namespace.clone())
+            .unwrap_or_default();
+        let key = occurrence
+            .native_identity
+            .as_ref()
+            .map(|identity| identity.display.value.clone())
+            .unwrap_or_else(|| occurrence.id.clone());
+        occurrences.push(SourceOccurrence {
+            ordinal: ordinal as u32,
+            artifact_id: ExecutionId::parse(&occurrence.source.artifact_id)?,
+            namespace,
+            key,
+            text: unit.text.clone(),
+            key_byte_range,
+            value_byte_range: [source_range.start, source_range.end],
+            identity_basis,
+            operation_unit_id: unit.id.clone(),
+            operation_occurrence_id: occurrence.id.clone(),
+            operation_source_revision_id: unit.source_revision_id.clone(),
+            source: occurrence.source.clone(),
+            native_identity: occurrence.native_identity.clone(),
+        });
+    }
+    Ok(SourceOutput {
+        version: 1,
+        set_id: bundle.set_id,
+        manifest_digest: bundle.manifest_digest.clone(),
+        format_id: bundle.format_id.clone(),
+        format_version: bundle.format_version,
+        identity_policy: codec::digest(&codec::encode(&policy, MAX_INPUT_BYTES)?),
+        namespace: occurrences
+            .first()
+            .map(|row| row.namespace.clone())
+            .unwrap_or_default(),
+        source_language: bundle.source_language.clone(),
+        coverage: bundle
+            .files
+            .iter()
+            .map(|file| FileCoverage {
+                artifact_id: file.artifact_id,
+                logical_path: file.logical_path.clone(),
+                role: file.role.clone(),
+                sha256: file.sha256.clone(),
+            })
+            .collect(),
+        occurrences,
+        diagnostics: vec![],
+        exchange,
+        revision_policy: policy,
+    })
+}
+
+// Only the transitional built-in interpreters construct this private data.
+// These domain ranges are not the generic adoption or persistence contract.
+pub(crate) struct BuiltinOccurrence {
+    pub ordinal: u32,
+    pub artifact_id: ExecutionId,
+    pub namespace: String,
+    pub key: String,
+    pub canonical_key: String,
+    pub text: String,
+    pub key_byte_range: [u32; 2],
+    pub value_byte_range: [u32; 2],
+    pub policy: sdk::ContractRef,
+    pub basis: Option<(sdk::ContractRef, String)>,
+}
+pub(crate) fn project_builtin(
+    bundle: &SourceBundle,
+    rows: Vec<BuiltinOccurrence>,
+    diagnostics: Vec<String>,
+) -> Result<SourceOutput, ExecutionError> {
+    let mut exchange = sdk::ContentExchange {
+        profile: bundle.profile.clone(),
+        source_set_id: bundle.set_id.to_string(),
+        source_language: bundle.source_language.clone(),
+        artifacts: bundle.source_input().artifacts,
+        units: vec![],
+        order: vec![],
+        relations: vec![],
+        domain_blocks: vec![],
+    };
+    for row in rows {
+        let unit_id = format!("unit-{}", row.ordinal);
+        let occurrence_id = format!("occurrence-{}", row.ordinal);
+        let source = sdk::SourceReference {
+            artifact_id: row.artifact_id.to_string(),
+            range: sdk::TextRange {
+                encoding: sdk::TextEncoding::Utf8Byte,
+                start: row.value_byte_range[0],
+                end: row.value_byte_range[1],
+            },
+        };
+        let identity_source = sdk::SourceReference {
+            artifact_id: row.artifact_id.to_string(),
+            range: sdk::TextRange {
+                encoding: sdk::TextEncoding::Utf8Byte,
+                start: row.key_byte_range[0],
+                end: row.key_byte_range[1],
+            },
+        };
+        exchange.units.push(sdk::ContentUnit {
+            id: unit_id,
+            source_revision_id: format!("source-{}", row.ordinal),
+            text: row.text,
+            occurrences: vec![sdk::ContentOccurrence {
+                id: occurrence_id.clone(),
+                source,
+                native_identity: Some(sdk::NativeIdentityEvidence {
+                    namespace: row.namespace,
+                    value: row.canonical_key,
+                    policy: row.policy,
+                    display: sdk::NativeIdentityDisplay {
+                        value: row.key,
+                        source: Some(identity_source),
+                    },
+                }),
+            }],
+            protected_fragments: vec![],
+        });
+        exchange.order.push(occurrence_id.clone());
+        if let Some((schema, payload_utf8)) = row.basis {
+            exchange.domain_blocks.push(sdk::DomainBlock {
+                target: sdk::ContentTarget::Occurrence { id: occurrence_id },
+                schema,
+                handling: sdk::ExtensionHandling::Required,
+                payload_utf8,
+            });
+        }
+    }
+    let mut output =
+        project_source_output(bundle, exchange, builtin_revision_policy(&bundle.profile)?)?;
+    output.diagnostics = diagnostics;
+    Ok(output)
+}
+
+/// The explicit built-in transitional channel still requires its actual domain
+/// interpreter. Plugin inputs can never fall back to this validator.
+pub fn validate_builtin_output(
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<SourceOutput, ExecutionError> {
+    if input.envelope().plugin.is_some() || SourceSettings::from_input(input)?.checker.is_some() {
+        return Err(failure(
+            ErrorCode::Unauthorized,
+            "builtin-source-validation",
+        ));
+    }
+    let actual = validate_output(input, result)?;
+    let expected = extract(&SourceBundle::from_input(input)?, &Cancellation::default())?;
+    if actual.exchange != expected.exchange || actual.diagnostics != expected.diagnostics {
+        return Err(invalid("invalid-structure"));
+    }
+    Ok(actual)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -86,12 +86,16 @@ async fn launch(
     .unwrap()
 }
 
-async fn invoke(
+async fn invoke_received(
     session: &mut ProcessSession,
     binding: &CapabilityBinding,
     dispatch: &str,
     value: &Value,
-) -> InvocationOutcome {
+) -> ReceivedResult {
+    // Actual child identity comes from the Host, independently of request data.
+    let channel = session.channel();
+    assert_eq!(channel.provider.selection(), binding.provider);
+    assert!(channel.child_pid > 0);
     let input =
         EncodedPayload::capture(binding.declaration.input_schema.clone(), value.to_string())
             .unwrap();
@@ -108,7 +112,7 @@ async fn invoke(
             environment_digest: session.environment_digest().unwrap().into(),
             configuration_digest: payload_digest("captured-configuration"),
         },
-        provider: session.channel().provider.clone(),
+        provider: channel.provider.clone(),
         capability: binding.declaration.contract.clone(),
         profile: Some(contract("webvtt-captions")),
         input,
@@ -117,16 +121,49 @@ async fn invoke(
         max_result_bytes: MAX_EXCHANGE_BYTES as u32,
     };
     let received = session.invoke(&request, || false, || true).await.unwrap();
-    assert_eq!(received.channel().provider, request.provider);
+    assert_eq!(received.channel().provider, channel.provider);
+    assert_eq!(received.channel().child_pid, channel.child_pid);
+    assert_eq!(
+        received.channel().scope.project_id,
+        channel.scope.project_id
+    );
+    assert_eq!(received.channel().scope.scope_id, channel.scope.scope_id);
+    assert_eq!(received.result().provider, channel.provider);
     assert_eq!(received.result().context, request.context);
-    received.result().outcome.clone()
+    received
 }
 
-fn success(outcome: InvocationOutcome) -> Value {
+async fn invoke(
+    session: &mut ProcessSession,
+    binding: &CapabilityBinding,
+    dispatch: &str,
+    value: &Value,
+) -> InvocationOutcome {
+    invoke_received(session, binding, dispatch, value)
+        .await
+        .result()
+        .outcome
+        .clone()
+}
+
+fn success_payload(outcome: InvocationOutcome) -> EncodedPayload {
     let InvocationOutcome::Succeeded { output } = outcome else {
         panic!("expected real plugin success: {outcome:?}");
     };
+    assert_eq!(output.sha256, payload_digest(&output.utf8));
+    output
+}
+
+fn success(outcome: InvocationOutcome) -> Value {
+    let output = success_payload(outcome);
     serde_json::from_str(&output.utf8).unwrap()
+}
+
+async fn close_and_reap(session: &mut ProcessSession) {
+    let closed = session.close().await;
+    assert!(closed.cooperative_acknowledgement && closed.direct_child_reaped);
+    assert_eq!(session.termination_receipt(), Some(&closed));
+    assert!(!session.is_accepting());
 }
 
 #[test]
@@ -150,14 +187,28 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
         let extraction = bind_capability(image.manifest(), "extract-source", image.package_digest()).unwrap();
         assert_eq!(extraction.declaration.input_schema, source_extraction_input_contract());
         assert_eq!(extraction.declaration.output_schema, content_exchange_contract());
+        assert_eq!(extraction.declaration.output_schema.schema_version, 2);
+        assert_eq!(extraction.declaration.output_schema.behavior_version, 1);
         let mut session = launch(&image, "extract-source", temporary.path()).await;
-        let value = success(invoke(&mut session, &extraction, "extract-good", &serde_json::to_value(&input).unwrap()).await);
-        let exchange: ContentExchange = serde_json::from_value(value).unwrap();
+        let extraction_channel = session.channel();
+        let extraction_payload = success_payload(invoke(&mut session, &extraction, "extract-good", &serde_json::to_value(&input).unwrap()).await);
+        assert_eq!(extraction_payload.schema, content_exchange_contract());
+        // Parse the original payload bytes, retaining strict SDK unknown-field
+        // and duplicate-field rejection instead of first normalizing to Value.
+        let exchange = parse_content_exchange(extraction_payload.utf8.as_bytes()).unwrap();
         validate_source_extraction(&input, &exchange).unwrap();
         assert_eq!(exchange.units.len(), 2);
         assert_eq!(exchange.units[0].text, "中文 👩🏽‍💻 é\nsecond line");
         assert_eq!(exchange.units[1].text, "Last 😀");
         assert_eq!(exchange.units[0].occurrences[0].native_identity.as_ref().unwrap().value, "cue-a");
+        for (ordinal, unit) in exchange.units.iter().enumerate() {
+            let identity = unit.occurrences[0].native_identity.as_ref().unwrap();
+            assert_eq!(identity.display.value, ["Cue-A", "Cue-B"][ordinal]);
+            let display = identity.display.source.as_ref().unwrap();
+            assert_eq!(display.artifact_id, input.artifacts[0].id);
+            assert_eq!(display.range.encoding, TextEncoding::Utf8Byte);
+            assert_eq!(&source[display.range.start as usize..display.range.end as usize], identity.display.value);
+        }
         let range = exchange.units[0].occurrences[0].source.range;
         assert_eq!(range.encoding, TextEncoding::Utf8Byte);
         assert_eq!(&source[range.start as usize..range.end as usize], "中文 👩🏽‍💻 é\r\nsecond line");
@@ -168,8 +219,104 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
         let InvocationOutcome::Failed { error } = failed else { panic!("anonymous cue must fail"); };
         assert_eq!(error.schema, source_extraction_error_contract());
         parse_source_extraction_error(error.utf8.as_bytes()).unwrap();
-        assert!(session.close().await.direct_child_reaped);
+        close_and_reap(&mut session).await;
         assert_eq!(image.package_digest(), extraction.provider.package_digest);
+
+        let semantic = bind_capability(image.manifest(), "source-semantic-check", image.package_digest()).unwrap();
+        assert_eq!(semantic.declaration.contract, contract("webvtt.source-check"));
+        assert_eq!(semantic.declaration.input_schema, source_extraction_check_input_contract());
+        assert_eq!(semantic.declaration.output_schema, check_results_contract());
+        assert_eq!(semantic.declaration.error_schema, source_extraction_error_contract());
+        // Fix source and original proposal bases before dispatching any check.
+        // The package selection is independent of the active process identity.
+        let source_digest = payload_digest(&serde_json::to_value(&input).unwrap().to_string());
+        let proposal_digest = payload_digest(&extraction_payload.utf8);
+        let domain_requirement = CheckRequirement {
+            key: CheckKey {
+                rule: contract("webvtt.source-semantics"),
+                implementation: CheckImplementation::Plugin { provider: semantic.provider.clone() },
+            },
+            input_digest: source_digest.clone(), scope_digest: proposal_digest.clone(),
+            targets: vec![input.source_set_id.clone()], mandatory: true, waivable: false,
+            not_applicable: None,
+        };
+        let core_requirement = CheckRequirement {
+            key: CheckKey {
+                rule: contract("core.sdk-source-association"),
+                implementation: CheckImplementation::Core { validator: contract("core.sdk-source-association") },
+            },
+            input_digest: source_digest, scope_digest: proposal_digest,
+            targets: vec![input.source_set_id.clone()], mandatory: true, waivable: false,
+            not_applicable: None,
+        };
+        let fixed = capture_required_checks(contract("official.source-check-policy"),
+            vec![core_requirement.clone()], vec![domain_requirement.clone()]).unwrap();
+        let semantic_input = SourceExtractionCheckInput {
+            source: input.clone(), proposal: exchange.clone(), requirements: vec![domain_requirement.clone()],
+        };
+        let mut session = launch(&image, "source-semantic-check", temporary.path()).await;
+        let semantic_channel = session.channel();
+        assert_eq!(semantic_channel.provider.selection(), semantic.provider);
+        assert_ne!(semantic_channel.provider.instance_id, extraction_channel.provider.instance_id);
+        for (dispatch, mutation) in [("source-check-good", 0), ("source-check-text", 1), ("source-check-basis", 2)] {
+            let mut captured = semantic_input.clone();
+            match mutation {
+                1 => captured.proposal.units[0].text = "Structurally valid forged source text".into(),
+                2 => {
+                    let block = &mut captured.proposal.domain_blocks[0];
+                    let changed = block.payload_utf8.replacen("00:02.000", "00:02.100", 1);
+                    assert_ne!(changed, block.payload_utf8);
+                    block.payload_utf8 = changed;
+                }
+                _ => {}
+            }
+            assert_eq!(captured.source, input);
+            assert_eq!(captured.requirements, semantic_input.requirements);
+            let value = serde_json::to_value(&captured).unwrap();
+            let raw_input = value.to_string();
+            assert_eq!(parse_source_extraction_check_input(raw_input.as_bytes()).unwrap(), captured);
+            // This trusted generic association actually executes on each
+            // candidate. It supplies no domain conclusion or adoption proof.
+            validate_source_extraction(&captured.source, &captured.proposal).unwrap();
+            let core_result = CheckResult {
+                key: core_requirement.key.clone(), input_digest: core_requirement.input_digest.clone(),
+                scope_digest: core_requirement.scope_digest.clone(), covered_targets: core_requirement.targets.clone(),
+                outcome: CheckOutcome::Completed { findings: vec![] },
+            };
+            let received = invoke_received(&mut session, &semantic, dispatch, &value).await;
+            assert_eq!(received.channel().provider, semantic_channel.provider);
+            assert_eq!(received.channel().child_pid, semantic_channel.child_pid);
+            let output = success_payload(received.result().outcome.clone());
+            assert_eq!(output.schema, check_results_contract());
+            let results = parse_check_results(output.utf8.as_bytes()).unwrap();
+            assert_eq!(results.len(), 1);
+            let result = &results[0];
+            // A plugin key is a claim until compared to the independent actual
+            // Host channel, as well as the fixed policy's package selection.
+            let CheckImplementation::Plugin { provider } = &result.key.implementation else { panic!("plugin checker required"); };
+            assert_eq!(provider, &semantic.provider);
+            assert_eq!(*provider, received.channel().provider.selection());
+            assert_eq!(result.key, domain_requirement.key);
+            assert_eq!(result.input_digest, domain_requirement.input_digest);
+            assert_eq!(result.scope_digest, domain_requirement.scope_digest);
+            assert_eq!(result.covered_targets, domain_requirement.targets);
+            let CheckOutcome::Completed { findings } = &result.outcome else { panic!("semantic coverage must complete"); };
+            if mutation == 0 {
+                assert!(findings.is_empty());
+            } else {
+                assert_eq!(findings, &vec![CheckFinding {
+                    code: "source-mismatch".into(), target: input.source_set_id.clone(), severity: FindingSeverity::Error,
+                }]);
+            }
+            let coverage = fixed.evaluate(&[vec![core_result], results].concat()).unwrap();
+            assert!(coverage.complete);
+            let blocking = coverage.entries.iter().any(|(_, state)| matches!(state,
+                CoverageState::Completed { findings } if findings.iter().any(|finding| finding.severity == FindingSeverity::Error)));
+            assert_eq!(blocking, mutation != 0);
+        }
+        close_and_reap(&mut session).await;
+        assert_eq!(exchange, semantic_input.proposal);
+
         let targets = ["第一行 😀\n新しい二行 é", "译文"];
         let cues: Vec<_> = exchange.units.iter().enumerate().map(|(ordinal, unit)| {
             let occurrence = &unit.occurrences[0];
@@ -198,7 +345,7 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
         unsafe_target["cues"][0]["targetText"] = json!("<b>markup</b>");
         assert!(matches!(invoke(&mut session, &builder, "build-markup", &unsafe_target).await,
             InvocationOutcome::Failed { .. }));
-        assert!(session.close().await.direct_child_reaped);
+        close_and_reap(&mut session).await;
 
         let checker = bind_capability(image.manifest(), "validate-artifact", image.package_digest()).unwrap();
         let mut session = launch(&image, "validate-artifact", temporary.path()).await;
@@ -218,7 +365,7 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
                 &json!({"version":1,"input":build_input,"output":altered})).await,
                 InvocationOutcome::Failed { .. }));
         }
-        assert!(session.close().await.direct_child_reaped);
+        close_and_reap(&mut session).await;
         let remaining: Vec<_> = std::fs::read_dir(temporary.path()).unwrap()
             .map(|entry| entry.unwrap().file_name()).collect();
         assert_eq!(remaining, vec![std::ffi::OsString::from("packages")]);

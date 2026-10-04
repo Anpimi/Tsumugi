@@ -2,3 +2,4 @@
 export const LineageDecisionValues = ["continue","reject"] as const;
 export const SourceChangeKindValues = ["unchanged","moved","changed","added","rename-candidate","ambiguous","removed"] as const;
 export const SourceImpactStatusValues = ["preserved","reassess","unresolved"] as const;
+export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;

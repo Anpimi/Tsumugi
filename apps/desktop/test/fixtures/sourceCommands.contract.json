@@ -101,7 +101,38 @@
             9,
             34
           ],
-          "identityBasis": "smapi-native-key/1"
+          "identityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "operationUnitId": "fixture-unit-0",
+          "operationOccurrenceId": "fixture-occurrence-0",
+          "operationSourceRevisionId": "fixture-source-revision-0",
+          "source": {
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "range": {
+              "encoding": "utf8-byte",
+              "start": 9,
+              "end": 34
+            }
+          },
+          "nativeIdentity": {
+            "namespace": "Fixture.Mod",
+            "value": "hello",
+            "policy": {
+              "id": "smapi-native-key",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "display": {
+              "value": "hello",
+              "source": {
+                "artifactId": "00000000-0000-4000-8000-000000000007",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 1,
+                  "end": 8
+                }
+              }
+            }
+          }
         }
       }
     ]
@@ -245,7 +276,38 @@
             9,
             34
           ],
-          "identityBasis": "smapi-native-key/1"
+          "identityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "operationUnitId": "fixture-unit-0",
+          "operationOccurrenceId": "fixture-occurrence-0",
+          "operationSourceRevisionId": "fixture-source-revision-0",
+          "source": {
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "range": {
+              "encoding": "utf8-byte",
+              "start": 9,
+              "end": 34
+            }
+          },
+          "nativeIdentity": {
+            "namespace": "Fixture.Mod",
+            "value": "hello",
+            "policy": {
+              "id": "smapi-native-key",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "display": {
+              "value": "hello",
+              "source": {
+                "artifactId": "00000000-0000-4000-8000-000000000007",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 1,
+                  "end": 8
+                }
+              }
+            }
+          }
         },
         "candidates": []
       }
@@ -290,7 +352,38 @@
               9,
               34
             ],
-            "identityBasis": "smapi-native-key/1"
+            "identityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "operationUnitId": "fixture-unit-0",
+            "operationOccurrenceId": "fixture-occurrence-0",
+            "operationSourceRevisionId": "fixture-source-revision-0",
+            "source": {
+              "artifactId": "00000000-0000-4000-8000-000000000007",
+              "range": {
+                "encoding": "utf8-byte",
+                "start": 9,
+                "end": 34
+              }
+            },
+            "nativeIdentity": {
+              "namespace": "Fixture.Mod",
+              "value": "hello",
+              "policy": {
+                "id": "smapi-native-key",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "display": {
+                "value": "hello",
+                "source": {
+                  "artifactId": "00000000-0000-4000-8000-000000000007",
+                  "range": {
+                    "encoding": "utf8-byte",
+                    "start": 1,
+                    "end": 8
+                  }
+                }
+              }
+            }
           }
         },
         "locale": "zh-CN",
@@ -323,7 +416,38 @@
                   9,
                   34
                 ],
-                "identityBasis": "smapi-native-key/1"
+                "identityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "operationUnitId": "fixture-unit-0",
+                "operationOccurrenceId": "fixture-occurrence-0",
+                "operationSourceRevisionId": "fixture-source-revision-0",
+                "source": {
+                  "artifactId": "00000000-0000-4000-8000-000000000007",
+                  "range": {
+                    "encoding": "utf8-byte",
+                    "start": 9,
+                    "end": 34
+                  }
+                },
+                "nativeIdentity": {
+                  "namespace": "Fixture.Mod",
+                  "value": "hello",
+                  "policy": {
+                    "id": "smapi-native-key",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "display": {
+                    "value": "hello",
+                    "source": {
+                      "artifactId": "00000000-0000-4000-8000-000000000007",
+                      "range": {
+                        "encoding": "utf8-byte",
+                        "start": 1,
+                        "end": 8
+                      }
+                    }
+                  }
+                }
               }
             },
             "policy": "smapi-native-key/1",
@@ -375,7 +499,38 @@
             9,
             34
           ],
-          "identityBasis": "smapi-native-key/1"
+          "identityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "operationUnitId": "fixture-unit-0",
+          "operationOccurrenceId": "fixture-occurrence-0",
+          "operationSourceRevisionId": "fixture-source-revision-0",
+          "source": {
+            "artifactId": "00000000-0000-4000-8000-000000000007",
+            "range": {
+              "encoding": "utf8-byte",
+              "start": 9,
+              "end": 34
+            }
+          },
+          "nativeIdentity": {
+            "namespace": "Fixture.Mod",
+            "value": "hello",
+            "policy": {
+              "id": "smapi-native-key",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "display": {
+              "value": "hello",
+              "source": {
+                "artifactId": "00000000-0000-4000-8000-000000000007",
+                "range": {
+                  "encoding": "utf8-byte",
+                  "start": 1,
+                  "end": 8
+                }
+              }
+            }
+          }
         }
       },
       "policy": "smapi-native-key/1",

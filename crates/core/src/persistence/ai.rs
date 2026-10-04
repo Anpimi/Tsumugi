@@ -70,7 +70,7 @@ impl ProjectStore {
             .map_err(super::ledger::sql_error)?;
         let mut items = Vec::new();
         for unit in units {
-            let (revision,key,text):(String,String,String)=connection.query_row("SELECT o.revision_id,o.native_key,r.text FROM source_occurrences o JOIN source_revisions r ON r.unit_id=o.unit_id AND r.revision_id=o.revision_id WHERE o.snapshot_id=?1 AND o.unit_id=?2",params![snapshot.to_string(),unit.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(super::ledger::sql_error)?;
+            let (revision,key,text):(String,String,String)=connection.query_row("SELECT o.revision_id,o.native_key,r.text FROM source_occurrences o JOIN source_revisions r ON r.unit_id=o.unit_id AND r.revision_id=o.revision_id WHERE o.snapshot_id=?1 AND o.unit_id=?2 ORDER BY o.ordinal LIMIT 1",params![snapshot.to_string(),unit.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(super::ledger::sql_error)?;
             let mut terms = Vec::new();
             let mut omissions = Vec::new();
             if config.share_terms {

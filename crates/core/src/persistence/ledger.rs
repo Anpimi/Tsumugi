@@ -7,7 +7,7 @@ pub use provider::ProviderBudget;
 
 const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
-        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 2097152), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 8388608), digest TEXT NOT NULL CHECK(length(digest) = 64),
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
 
 pub(super) const TABLES: &[(&str, &str)] = &[
@@ -17,7 +17,7 @@ pub(super) const TABLES: &[(&str, &str)] = &[
     ("execution_attempts", "CREATE TABLE execution_attempts (
         attempt_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, project_id TEXT NOT NULL,
         previous_attempt_id TEXT REFERENCES execution_attempts(attempt_id),
-        input BLOB NOT NULL CHECK(length(input) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        input BLOB NOT NULL CHECK(length(input) BETWEEN 1 AND 4194304), digest TEXT NOT NULL CHECK(length(digest) = 64),
         cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision >= 0),
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0),
         FOREIGN KEY(task_id, project_id) REFERENCES execution_tasks(task_id, project_id))"),
@@ -30,6 +30,10 @@ pub(super) const TABLES: &[(&str, &str)] = &[
         retry_safe INTEGER NOT NULL CHECK(retry_safe IN (0,1)), diagnostic TEXT CHECK(length(diagnostic) <= 4096),
         PRIMARY KEY(attempt_id,item_id), UNIQUE(attempt_id,item_id,dispatch_token))"),
     ("execution_results", EXECUTION_RESULTS_TABLE),
+    ("source_validation_links", "CREATE TABLE source_validation_links (
+        source_result_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_results(result_id),
+        checker_result_id TEXT NOT NULL REFERENCES execution_results(result_id),
+        valid INTEGER NOT NULL CHECK(valid IN (0,1)))"),
     ("execution_cancellations", "CREATE TABLE execution_cancellations (
         request_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL REFERENCES execution_tasks(task_id),
         revision INTEGER NOT NULL CHECK(revision > 0), UNIQUE(task_id,revision))"),
@@ -127,6 +131,25 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
         let _ = read_attempt(connection, id, false)?;
+    }
+    let mut links = connection
+        .prepare("SELECT source_result_id,valid FROM source_validation_links")
+        .map_err(sql_error)?;
+    let rows = links
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))
+        .map_err(sql_error)?;
+    for row in rows {
+        let (result_id, valid) = row.map_err(sql_error)?;
+        let attempt: String = connection
+            .query_row(
+                "SELECT attempt_id FROM execution_results WHERE result_id=?1",
+                [&result_id],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        let input = load_input(connection, parse_id(attempt)?)?;
+        let result = load_result(connection, &input, parse_id(result_id)?)?;
+        validate_source_link(connection, &input, &result, valid)?;
     }
     let mut actions = connection
         .prepare("SELECT action_id,attempt_id,unit_id,request,digest FROM execution_actions")
@@ -257,7 +280,7 @@ pub(super) fn load_input(
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
     let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
-        "SELECT CASE WHEN length(input)<=1048576 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", [attempt.to_string()],
+        "SELECT CASE WHEN length(input)<=?2 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", params![attempt.to_string(), MAX_INPUT_BYTES as i64],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
     let input = FixedInput::restore(&bytes, &digest)?;
     check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
@@ -432,13 +455,24 @@ fn read_attempt(
                             .diagnostic
                             .as_ref()
                             .is_some_and(|value| value.retry_safe)
-                            == retry_safe => {}
+                            == retry_safe =>
+                {
+                    if validation == ValidationState::Valid
+                        && input.envelope().plugin.is_some()
+                        && input.envelope().operation == crate::content::OPERATION
+                    {
+                        validate_source_link(connection, &input, &output, true)?;
+                    }
+                }
                 _ => validation = ValidationState::Invalid,
             }
         } else if validation != ValidationState::Absent || state == ExecutionState::Succeeded {
             return Err(error(ErrorCode::CorruptLedger, "result-missing"));
         }
         if adoption == AdoptionState::Committed {
+            if state != ExecutionState::Succeeded || validation != ValidationState::Valid {
+                return Err(error(ErrorCode::CorruptLedger, "committed-result-state"));
+            }
             let unit = envelope
                 .units
                 .iter()
@@ -471,6 +505,42 @@ fn read_attempt(
         items,
         progress,
     })
+}
+
+pub(super) fn validate_source_link(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+) -> Result<(), ExecutionError> {
+    let (checker_id, saved_valid): (String, bool) = connection
+        .query_row(
+            "SELECT checker_result_id,valid FROM source_validation_links WHERE source_result_id=?1",
+            [result.envelope().result_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| error(ErrorCode::CorruptLedger, "source-validation-link"))?;
+    let checker_attempt: String = connection
+        .query_row(
+            "SELECT attempt_id FROM execution_results WHERE result_id=?1",
+            [&checker_id],
+            |r| r.get(0),
+        )
+        .map_err(sql_error)?;
+    let check_input = load_input(connection, parse_id(checker_attempt)?)?;
+    let check_result = load_result(connection, &check_input, parse_id(checker_id)?)?;
+    let prepared = SourceValidationCapture::restore(
+        ResultValidationCapture {
+            input: input.clone(),
+            result: result.clone(),
+        },
+        check_input,
+    )?
+    .prepare(check_result)?;
+    if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "source-validation-proof"));
+    }
+    Ok(())
 }
 
 impl ProjectStore {
@@ -1298,7 +1368,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::OutputInvalid, "validation"));
         }
         if input.envelope().operation == crate::content::OPERATION {
-            if let Err(failure) = crate::content::validate_output(&input, &output) {
+            if let Err(failure) = crate::content::validate_builtin_output(&input, &output) {
                 tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
                 return Err(failure);
@@ -1339,6 +1409,14 @@ impl ProjectStore {
         let expected = &prepared.capture.result;
         let input = load_input_cached(&tx, expected.envelope().attempt_id)?;
         let output = load_result(&tx, &input, expected.envelope().result_id)?;
+        if input.envelope().plugin.is_some()
+            && input.envelope().operation == crate::content::OPERATION
+        {
+            return Err(error(
+                ErrorCode::Unauthorized,
+                "source-semantic-check-required",
+            ));
+        }
         super::plugin_execution::check_input_in(&tx, &input, &authority)?;
         if !prepared.proof.matches(&input, &output)
             || input.digest() != prepared.capture.input.digest()
@@ -1352,6 +1430,73 @@ impl ProjectStore {
                 "validation-current-result",
             ));
         }
+        commit(tx)
+    }
+    /// Capture outside any write transaction. Running the returned checker input
+    /// uses the ordinary runtime, independent permission and exact Host binding.
+    pub fn capture_source_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<SourceValidationCapture, ExecutionError> {
+        SourceValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+    }
+    pub fn commit_source_validation(
+        &mut self,
+        prepared: PreparedSourceValidation,
+    ) -> Result<(), ExecutionError> {
+        let authority = self.plugin_authority.clone();
+        let tx = self.execution_write()?;
+        let captured = &prepared.capture;
+        let source_input = load_input_cached(&tx, captured.source.input.envelope().attempt_id)?;
+        let source_result = load_result(
+            &tx,
+            &source_input,
+            captured.source.result.envelope().result_id,
+        )?;
+        let check_input = load_input_cached(&tx, captured.check_input.envelope().attempt_id)?;
+        let check_result = load_result(
+            &tx,
+            &check_input,
+            prepared.check_result.envelope().result_id,
+        )?;
+        for input in [&source_input, &check_input] {
+            super::plugin_execution::check_input_in(&tx, input, &authority)?;
+        }
+        if !prepared.proof.matches(&source_input, &source_result)
+            || source_input.digest() != captured.source.input.digest()
+            || check_input.digest() != captured.check_input.digest()
+            || check_result.digest() != prepared.check_result.digest()
+        {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "source-validation-preparation",
+            ));
+        }
+        let current_check: Option<String> = tx
+            .query_row(
+                "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![
+                    check_input.envelope().attempt_id.to_string(),
+                    check_result.envelope().item_id.to_string()
+                ],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        if current_check.as_deref() != Some(&check_result.envelope().result_id.to_string()) {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "source-check-current-result",
+            ));
+        }
+        let changed = tx.execute("UPDATE execution_items SET validation=?4 WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3 AND execution='succeeded' AND adoption<>'committed'",params![source_input.envelope().attempt_id.to_string(),source_result.envelope().item_id.to_string(),source_result.envelope().result_id.to_string(),if prepared.proof.valid { "valid" } else { "invalid" }]).map_err(sql_error)?;
+        if changed != 1 {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "source-validation-current-result",
+            ));
+        }
+        tx.execute("INSERT INTO source_validation_links VALUES (?1,?2,?3) ON CONFLICT(source_result_id) DO UPDATE SET checker_result_id=excluded.checker_result_id,valid=excluded.valid",params![source_result.envelope().result_id.to_string(),check_result.envelope().result_id.to_string(),prepared.proof.valid]).map_err(sql_error)?;
         commit(tx)
     }
     pub fn execution_result(

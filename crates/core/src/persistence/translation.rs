@@ -493,7 +493,7 @@ fn source_basis(
              FROM source_occurrences o
              JOIN source_units u ON u.unit_id=o.unit_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-             WHERE o.unit_id=?1",
+             WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
             [unit.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -747,29 +747,36 @@ impl AdoptionHandler for TranslationAdoptionHandler {
             {
                 return Err(error(ErrorCode::DependencyConflict, "translation-source"));
             }
-            let (unit, revision, native_key, namespace): (String, String, String, String) = tx
-                .query_row(
-                    "SELECT unit_id,revision_id,native_key,namespace FROM source_occurrences
+            let (unit, revision, projection): (String, String, Vec<u8>) = tx.query_row(
+                "SELECT unit_id,revision_id,projection FROM source_occurrences
                  WHERE occurrence_id=?1 AND snapshot_id=?2",
-                    rusqlite::params![
-                        confirmation.occurrence_id.to_string(),
-                        bundle.source_snapshot_id.to_string()
-                    ],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-                )?;
+                rusqlite::params![
+                    confirmation.occurrence_id.to_string(),
+                    bundle.source_snapshot_id.to_string()
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            let occurrence: crate::content::SourceOccurrence =
+                codec::decode(&projection, MAX_INPUT_BYTES)?;
+            // This legacy importer only understands SMAPI's canonical-key policy.
+            // Other domain policies cannot be inferred from their display labels.
+            let identity = occurrence
+                .native_identity
+                .as_ref()
+                .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-match"))?;
             if unit != confirmation.target_unit_id.to_string()
                 || revision != confirmation.source_revision_id.to_string()
-                || !native_key.eq_ignore_ascii_case(&entry.native_key)
+                || identity.policy != crate::content::contract_ref("smapi-native-key")
+                || identity.value != entry.native_key.to_ascii_lowercase()
             {
                 return Err(error(ErrorCode::DependencyConflict, "translation-match"));
             }
             let matches: i64 = tx.query_row(
                 "SELECT COUNT(*) FROM source_occurrences
-             WHERE snapshot_id=?1 AND namespace=?2 AND comparison_key=?3",
+             WHERE snapshot_id=?1 AND comparison_key=?2",
                 rusqlite::params![
                     bundle.source_snapshot_id.to_string(),
-                    namespace,
-                    entry.native_key.to_ascii_lowercase()
+                    occurrence.comparison_key()?
                 ],
                 |row| row.get(0),
             )?;
@@ -929,7 +936,7 @@ impl ProjectStore {
             BTreeMap::new();
         let mut statement = connection
             .prepare(
-                "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.comparison_key,r.text
+                "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.projection,r.text
                  FROM source_occurrences o JOIN source_revisions r ON r.revision_id=o.revision_id
                  WHERE o.snapshot_id=?1 AND o.namespace=?2 ORDER BY o.ordinal",
             )
@@ -940,13 +947,22 @@ impl ProjectStore {
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, Vec<u8>>(3)?,
                     row.get::<_, String>(4)?,
                 ))
             })
             .map_err(super::ledger::sql_error)?;
         for row in source_rows {
-            let (occurrence, unit, revision, key, text) = row.map_err(super::ledger::sql_error)?;
+            let (occurrence, unit, revision, projection, text) =
+                row.map_err(super::ledger::sql_error)?;
+            let source: crate::content::SourceOccurrence =
+                codec::decode(&projection, MAX_INPUT_BYTES)?;
+            let Some(identity) = source.native_identity.as_ref().filter(|identity| {
+                identity.policy == crate::content::contract_ref("smapi-native-key")
+            }) else {
+                continue;
+            };
+            let key = identity.value.clone();
             matches
                 .entry(key)
                 .or_default()

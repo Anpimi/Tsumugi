@@ -742,7 +742,7 @@ fn unit_for_native_key(
 ) -> Result<ExecutionId, ExecutionError> {
     let mut statement = connection
         .prepare(
-            "SELECT o.unit_id FROM source_occurrences o
+            "SELECT DISTINCT o.unit_id FROM source_occurrences o
              JOIN source_units u ON u.unit_id=o.unit_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
              WHERE o.native_key=?1 AND u.project_id=?2 LIMIT 2",
@@ -1048,7 +1048,7 @@ fn source_fact(
              FROM source_occurrences o
              JOIN source_revisions r ON r.revision_id=o.revision_id
              JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-             WHERE o.unit_id=?1",
+             WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
             [unit_id.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
@@ -1175,6 +1175,8 @@ impl ProjectStore {
                  WHERE u.project_id=?1 AND s.locale=?2
                    AND s.sequence=(SELECT MAX(x.sequence) FROM translation_selections x
                                    WHERE x.unit_id=s.unit_id AND x.locale=s.locale)
+                   AND o.ordinal=(SELECT MIN(first.ordinal) FROM source_occurrences first
+                                  WHERE first.snapshot_id=o.snapshot_id AND first.unit_id=o.unit_id)
                  ORDER BY o.unit_id LIMIT 2001",
             )
             .map_err(sql)?;
@@ -2356,7 +2358,7 @@ pub(super) fn resolve_terms_in(
             "SELECT o.revision_id,r.text FROM source_occurrences o
                  JOIN source_revisions r ON r.revision_id=o.revision_id
                  JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-                 WHERE o.unit_id=?1",
+                 WHERE o.unit_id=?1 ORDER BY o.ordinal LIMIT 1",
             [unit_id.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )

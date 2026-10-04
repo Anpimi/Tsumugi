@@ -201,7 +201,13 @@ fn result_limits_keep_the_small_default_and_allow_the_bounded_cap() {
     let mut envelope = fixed.envelope().clone();
     envelope.limits.max_result_bytes = MAX_RESULT_BYTES as u32;
     assert!(FixedInput::capture(envelope).is_ok());
-    assert_eq!(MAX_RESULT_BYTES, 2 * 1024 * 1024);
+    assert_eq!(MAX_RESULT_BYTES, 8 * 1024 * 1024);
+    let mut oversized = fixed.envelope().clone();
+    oversized.limits.max_result_bytes = MAX_RESULT_BYTES as u32 + 1;
+    assert_eq!(
+        FixedInput::capture(oversized).unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
 }
 
 #[test]

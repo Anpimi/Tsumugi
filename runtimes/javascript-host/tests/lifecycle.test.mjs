@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FrameDecoder, encodeFrame } from '../dist/codec.js';
+import { PROCESS_PROFILE } from '../dist/generated/protocol.js';
 
 const fixture = JSON.parse(await readFile(new URL('../../../crates/plugin-sdk/tests/fixtures/invocation.request.json', import.meta.url), 'utf8')).body.data;
 const activation = {
@@ -141,4 +143,91 @@ test('a completed result permits the next call before transport flush acknowledg
   session.receive({ protocolVersion: 1, body: { kind: 'close', data: { provider: activation.provider } } });
   await until(() => finished);
   assert.equal(failed, false);
+});
+
+test('complete result budgets can exceed raw declaration limits without rejecting bounded output', { timeout: 10000 }, async t => {
+  for (const kind of ['succeeded', 'failed', 'unknown']) {
+    const h = await harness(t, `export default {activate(api){api.register(() => ({kind:${JSON.stringify(kind)},utf8:'éé'}));}};`);
+    const captured = structuredClone(activation);
+    captured.capability.limits.maxOutputBytes = 4;
+    const request = structuredClone(fixture);
+    request.maxResultBytes = 65536;
+    h.send({ kind: 'activate', data: captured });
+    await h.waitFor(() => h.frames.length === 1);
+    h.send({ kind: 'invoke', data: request });
+    await h.waitFor(() => h.frames.length === 2);
+    const result = h.frames[1];
+    assert.equal(result.kind, 'result');
+    assert.equal(result.data.outcome.kind, kind);
+    const payload = result.data.outcome[kind === 'succeeded' ? 'output' : 'error'];
+    assert.equal(payload.utf8, 'éé');
+    assert.equal(Buffer.byteLength(payload.utf8), captured.capability.limits.maxOutputBytes);
+    const framed = encodeFrame({ protocolVersion: 1, body: result });
+    assert.ok(framed.length - 4 > captured.capability.limits.maxOutputBytes);
+    assert.ok(framed.length - 4 <= request.maxResultBytes);
+    h.send({ kind: 'close', data: { provider: captured.provider } });
+    assert.deepEqual(await h.ended, [0, null]);
+  }
+});
+
+test('raw output exceeding the captured declaration is rejected for every outcome', { timeout: 10000 }, async t => {
+  for (const kind of ['succeeded', 'failed', 'unknown']) {
+    const h = await harness(t, `export default {activate(api){api.register(() => ({kind:${JSON.stringify(kind)},utf8:'ééx'}));}};`);
+    const captured = structuredClone(activation);
+    captured.capability.limits.maxOutputBytes = 4;
+    h.send({ kind: 'activate', data: captured });
+    await h.waitFor(() => h.frames.length === 1);
+    h.send({ kind: 'invoke', data: fixture });
+    assert.deepEqual(await h.ended, [1, null]);
+    assert.deepEqual(h.frames.map(frame => frame.kind), ['ready']);
+  }
+});
+
+test('result frame budget includes opaque payload escaping and metadata', { timeout: 5000 }, async t => {
+  const utf8 = '\u0001'.repeat(128);
+  const h = await harness(t, `export default {activate(api){api.register(() => ({kind:'succeeded',utf8:${JSON.stringify(utf8)}}));}};`);
+  const captured = structuredClone(activation);
+  captured.capability.limits.maxOutputBytes = 1024;
+  const request = structuredClone(fixture);
+  const result = { context: request.context, provider: captured.provider, capability: request.capability,
+    profile: request.profile, resultId: '11111111-1111-4111-8111-111111111111',
+    outcome: { kind: 'succeeded', output: { schema: request.outputSchema, utf8,
+      sha256: createHash('sha256').update(utf8, 'utf8').digest('hex') } } };
+  request.maxResultBytes = encodeFrame({ protocolVersion: 1, body: { kind: 'result', data: result } }).length - 5;
+  assert.ok(Buffer.byteLength(utf8) < captured.capability.limits.maxOutputBytes);
+  assert.ok(Buffer.byteLength(utf8) < request.maxResultBytes);
+  h.send({ kind: 'activate', data: captured });
+  await h.waitFor(() => h.frames.length === 1);
+  h.send({ kind: 'invoke', data: request });
+  assert.deepEqual(await h.ended, [1, null]);
+  assert.deepEqual(h.frames.map(frame => frame.kind), ['ready']);
+});
+
+test('a larger raw declaration cannot enlarge the generated SDK payload ceiling', { timeout: 10000 }, async t => {
+  const limit = PROCESS_PROFILE.maxInvocationPayloadBytes;
+  const captured = structuredClone(activation);
+  captured.capability.limits.maxInputBytes = limit + 1;
+  captured.capability.limits.maxOutputBytes = limit + 1;
+  const outgoing = await harness(t, `export default {activate(api){api.register(() => ({kind:'succeeded',utf8:'x'.repeat(${limit + 1})}));}};`);
+  outgoing.send({ kind: 'activate', data: captured });
+  await outgoing.waitFor(() => outgoing.frames.length === 1);
+  const request = structuredClone(fixture);
+  request.maxResultBytes = PROCESS_PROFILE.maxFrameBytes;
+  outgoing.send({ kind: 'invoke', data: request });
+  assert.deepEqual(await outgoing.ended, [1, null]);
+  assert.deepEqual(outgoing.frames.map(frame => frame.kind), ['ready']);
+
+  const incoming = await harness(t, `${imports} export default {activate(api){api.register(async () => {
+    await writeFile('entered','yes'); return {kind:'succeeded',utf8:'unexpected'};
+  });}};`);
+  incoming.send({ kind: 'activate', data: captured });
+  await incoming.waitFor(() => incoming.frames.length === 1);
+  const oversized = structuredClone(request);
+  oversized.input.utf8 = 'x'.repeat(limit + 1);
+  oversized.input.sha256 = createHash('sha256').update(oversized.input.utf8, 'utf8').digest('hex');
+  oversized.context.inputDigest = oversized.input.sha256;
+  incoming.send({ kind: 'invoke', data: oversized });
+  assert.deepEqual(await incoming.ended, [1, null]);
+  assert.deepEqual(incoming.frames.map(frame => frame.kind), ['ready']);
+  assert.equal(await incoming.marker('entered'), '');
 });

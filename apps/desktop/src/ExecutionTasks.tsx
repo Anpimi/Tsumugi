@@ -201,7 +201,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
               count: (output.output as { entryCount: number }).entryCount,
               digest: (output.output as { sha256: string }).sha256,
             })}</p> : <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
-            {output.diagnostic ? <><p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p>
+            {output.diagnostic ? <>{output.outcome !== "succeeded" ? <p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p> : null}
               <details><summary>{t("execution.diagnostic")}</summary><code>{output.diagnostic.code}</code></details></> : null}
           </div> : null}
         </li>)}</ul>

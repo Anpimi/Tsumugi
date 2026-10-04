@@ -195,9 +195,9 @@ impl RunnerProxy {
             request.dispatch_token,
             &channel.provider,
         )?;
-        // SDK max_result_bytes bounds the complete encoded result envelope,
-        // including payload escaping and metadata. The transport can be narrower
-        // than Core's fixed upper bound without rejecting every small result.
+        // Clamp the complete result-frame allowance to this Host's policy.
+        // The captured declaration separately bounds unescaped payload bytes;
+        // comparing that raw limit to this frame allowance would mix budgets.
         invocation.max_result_bytes = invocation
             .max_result_bytes
             .min(self.limits.max_frame_bytes as u32);

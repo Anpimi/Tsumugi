@@ -639,6 +639,10 @@ ai: {
       }
     },
     source: {
+      referenceRange: "{{encoding}} range [{{start}}, {{end}})",
+      referenceEncoding: { utf8: "UTF-8 bytes", utf16: "UTF-16 code units", grapheme: "Grapheme clusters" },
+      referenceUnavailable: "Source file details are unavailable.",
+      entryLabel: "Source entry {{number}}",
   "integration": "Source format",
   "webvttSelect": "Choose subtitle folder",
   "webvttCompareHelp": "Compare cue IDs, text, timing and layout. Timing or layout changes require review even when the text is unchanged. Matching text under another ID is only a suggestion; confirm any continuation before applying the complete subtitle.",
@@ -723,7 +727,7 @@ ai: {
   "imported": "Imported source content",
   "range": "{{namespace}} · {{count}} strings · {{language}}",
   "fingerprint": "File fingerprint",
-  "identityHelp": "Each native key keeps a separate content identity, even when its text matches another key.",
+  "identityHelp": "Source identities follow the selected format. Original names are preserved for display.",
   "pageRange": "Showing {{first}}–{{last}} of {{total}}",
   "key": "Native key",
   "text": "Original text",

@@ -58,14 +58,15 @@ pub(super) fn record_input(
         return Ok(());
     }
     let manifest = BuildManifest::from_input(input)?;
-    let (set, project): (String, String) = connection
+    let (attempt, project): (String, String) = connection
         .query_row(
-            "SELECT set_id,project_id FROM source_snapshots WHERE snapshot_id=?1",
+            "SELECT attempt_id,project_id FROM source_snapshots WHERE snapshot_id=?1",
             [manifest.source_snapshot_id.to_string()],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(sql)?;
-    let bundle = super::content::read_bundle(connection, ExecutionId::parse(&set)?)?;
+    let source_input = super::ledger::load_input(connection, ExecutionId::parse(&attempt)?)?;
+    let bundle = crate::content::SourceBundle::from_input(&source_input)?;
     if project != manifest.project_id.to_string()
         || bundle.plugin_id != manifest.plugin_id
         || bundle.plugin_version != manifest.plugin_version

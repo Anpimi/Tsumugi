@@ -137,12 +137,22 @@ deployment's linked tree as that captured Host artifact.
 
 ## Limits and actual isolation
 
-Frames use the SDK protocol, bounded before allocation, with a 64 MiB input / 16 MiB
+Frames use the SDK protocol, bounded before allocation, with a 64 MiB input / 64 MiB
 output session ceiling and at most two pending writes. The parent enforces its own
 narrower limits, live authority and captured identity. The JavaScript profile uses
 safe integers and a 64-level JSON nesting limit; it rejects malformed UTF-8,
 unpaired surrogates and duplicate fields. Raw stdout is protocol-only. Host errors
 use a fixed diagnostic without embedding plugin input or exceptions.
+
+Manifest input/output limits count the exact payload's UTF-8 bytes before
+framing, within the generated SDK invocation-payload ceiling. A request's
+`maxResultBytes` instead limits the complete JSON result
+frame, excluding the four-byte length prefix. Before sending success, failure
+or unknown output, the component Host checks the raw declaration limit and uses
+the existing SDK frame encoder to check actual escaping and metadata against
+the request. Oversized output terminates the channel without truncation. Frame
+ceilings come from the Rust SDK's generated process profile; a larger frame
+ceiling does not enlarge a domain's payload limits.
 
 Node runs with the user's OS access. The parent clears inherited environment;
 platform-created variables may still appear after startup (for example macOS text

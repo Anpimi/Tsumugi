@@ -3,6 +3,7 @@
 export type ExecutionId = string;
 export type Revision = string;
 export type LineageDecision = "continue" | "reject";
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type SourceChangeKind =
   "unchanged" | "moved" | "changed" | "added" | "rename-candidate" | "ambiguous" | "removed";
 export type SourceImpactStatus = "preserved" | "reassess" | "unresolved";
@@ -79,6 +80,10 @@ export interface ContentRow {
 }
 export interface SourceOccurrence {
   artifactId: ExecutionId;
+  /**
+   * Opaque digest of the exact captured revision policy, text, protected
+   * fragments and only the policy-selected domain blocks.
+   */
   identityBasis: string;
   key: string;
   /**
@@ -87,17 +92,62 @@ export interface SourceOccurrence {
    * @minItems 2
    * @maxItems 2
    */
-  keyByteRange: [number, number];
+  keyByteRange: [number, number] | null;
   namespace: string;
+  nativeIdentity: NativeIdentityEvidence | null;
+  operationOccurrenceId: string;
+  operationSourceRevisionId: string;
+  operationUnitId: string;
   ordinal: number;
+  source: SourceReference;
   text: string;
   /**
-   * Half-open UTF-8 byte offsets into the original artifact, not the decoded text.
+   * Derived UTF-8 coordinates for existing readers; original coordinates are
+   * retained in `source`, including their explicit encoding.
    *
    * @minItems 2
    * @maxItems 2
    */
   valueByteRange: [number, number];
+}
+export interface NativeIdentityEvidence {
+  display: NativeIdentityDisplay;
+  namespace: string;
+  policy: ContractRef;
+  /**
+   * The domain's canonical matching value, not necessarily its original
+   * literal spelling. Core does not normalize this value again.
+   */
+  value: string;
+}
+/**
+ * Domain-confirmed spelling for presentation, separate from canonical
+ * matching. A source reference is optional when the identity is derived.
+ */
+export interface NativeIdentityDisplay {
+  source: SourceReference | null;
+  value: string;
+}
+export interface SourceReference {
+  artifactId: string;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
 }
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;

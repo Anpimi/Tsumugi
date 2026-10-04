@@ -16,7 +16,7 @@ let total = 0;
 const session = new ComponentSession(entry!, frame => {
   const bytes = encodeFrame(frame);
   total += bytes.length;
-  if (pending >= 2 || total > 16 * 1024 * 1024) throw new Error('Output limit');
+  if (pending >= 2 || total > 64 * 1024 * 1024) throw new Error('Output limit');
   pending++;
   return new Promise<void>((resolve, reject) => process.stdout.write(bytes, error => {
     pending--;
