@@ -488,14 +488,20 @@ through the shared Store harness:
 cargo test -p tsumugi-plugin-host --features javascript-conformance --test smapi --locked -- --test-threads=1
 ```
 
-It binds the captured source/build Resource declarations and executes four
-separate contributions through the real JavaScript Host. Independent literals
+It binds the captured source/translation/build Resource declarations and executes
+six separate contributions through the real JavaScript Host. Independent literals
 cover JSONC/BOM/UTF-8 quoted ranges, native key identity, distinct equal-text units
 and canonical Unicode locale output. Duplicate native keys and stale revisions
 return typed failures; structurally valid forged source text and rehashed output
 text/formatting produce complete blocking check results bound to the fixed
 package and actual channel. Owned children close/reap and staging is cleaned.
-This pairing does not prove translation import/matching, project adoption,
+The separate translation pairing test retains the fixed source snapshot, explicit
+target and original whole-file evidence, including a zero-entry object. Its
+independent checker blocks forged values/native identities, missing entries and
+changed order even when generic data association succeeds. These tests establish
+package/process behavior; current-project matching, per-entry adoption and native
+desktop confirmation still require their own application integration evidence.
+These pairings do not prove current-project matching, per-entry adoption,
 installed Mod compatibility or the complete desktop domain cutover. The shared
 harness changes no runtime grants or package approvals for other attempts.
 

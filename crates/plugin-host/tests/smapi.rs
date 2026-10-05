@@ -203,3 +203,95 @@ fn official_smapi_package_extracts_builds_and_checks_through_the_captured_host()
         assert_eq!(remaining, vec![std::ffi::OsString::from("packages")]);
     });
 }
+
+#[test]
+fn official_smapi_translation_proposals_and_independent_checks_use_the_captured_host() {
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let image = installed(temporary.path(), "stardew-smapi");
+        let binding = image.translation_import("translation-profile").unwrap();
+        assert_eq!(binding.declaration.profile, contract("smapi-i18n-flat"));
+        assert_eq!(binding.declaration.material.logical_directory, "i18n");
+        assert_eq!(binding.declaration.material.extension, "json");
+        assert_eq!(binding.declaration.material.max_bytes, 131072);
+        assert_eq!(binding.declaration.semantic_rules, vec![contract("smapi.translation-semantics")]);
+        let raw = "\u{feff}{\r\n // 原始 中文 😀\r\n \"MiX\\u0041\": \"译文 👩🏽‍💻 é\",\r\n \"same-a\": \"同文\",\r\n \"same-b\": \"同文\",\r\n \"empty\": \"\",\r\n \"$schema\": \"schema.json\",\r\n}\r\n";
+        let input = TranslationExtractionInput {
+            profile: binding.declaration.profile.clone(), import_id: "synthetic-translation-import".into(),
+            source_set_id: "synthetic-source-set".into(), source_snapshot_id: "synthetic-source-snapshot".into(),
+            target_language: "zh-CN".into(), language_evidence: TranslationLanguageEvidence::UserConfirmed,
+            native_scope: TranslationNativeScope { namespace: "Example.Mod".into(), policy: contract("smapi-native-key") },
+            artifacts: vec![CapturedTextArtifact { id: "translated-file".into(), logical_path: "i18n/zh.json".into(),
+                role: "translation".into(), sha256: payload_digest(raw), utf8: raw.into() }],
+        };
+        binding.validate_input(&input).unwrap();
+        let mut extractor = launch(&image, "import-translations", temporary.path()).await;
+        let extraction_channel = extractor.channel();
+        let extracted = success_payload(invoke(&mut extractor, &binding.extractor, "translation-good", &serde_json::to_value(&input).unwrap()).await);
+        assert_eq!(extracted.schema, translation_exchange_contract());
+        let proposal = parse_translation_exchange(extracted.utf8.as_bytes()).unwrap();
+        validate_translation_extraction(&input, &proposal).unwrap();
+        assert_eq!(proposal.source_snapshot_id, input.source_snapshot_id);
+        assert_eq!(proposal.target_language, "zh-CN");
+        assert_eq!(proposal.declared_language, "zh");
+        assert_eq!(proposal.artifacts, input.artifacts);
+        assert_eq!(proposal.entries.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(), vec!["译文 👩🏽‍💻 é", "同文", "同文", ""]);
+        assert_eq!(proposal.order, proposal.entries.iter().map(|entry| entry.id.clone()).collect::<Vec<_>>());
+        for (index, entry) in proposal.entries.iter().enumerate() {
+            assert_eq!(entry.native_identity.namespace, "Example.Mod");
+            assert_eq!(entry.native_identity.policy, contract("smapi-native-key"));
+            assert_eq!(entry.native_identity.value, ["mixa", "same-a", "same-b", "empty"][index]);
+            assert_eq!(entry.native_identity.display.value, ["MiXA", "same-a", "same-b", "empty"][index]);
+            for (source, expected) in [(&entry.source, entry.text.as_str()), (entry.native_identity.display.source.as_ref().unwrap(), entry.native_identity.display.value.as_str())] {
+                assert_eq!(source.artifact_id, "translated-file");
+                assert_eq!(source.range.encoding, TextEncoding::Utf8Byte);
+                assert_eq!(serde_json::from_slice::<String>(&raw.as_bytes()[source.range.start as usize..source.range.end as usize]).unwrap(), expected);
+            }
+        }
+        for (dispatch, path, text, expected) in [
+            ("translation-default", "i18n/default.json", raw, SourceExtractionErrorCode::InvalidInput),
+            ("translation-case-conflict", "i18n/zh.json", "{\"A\":\"first\",\"a\":\"second\"}", SourceExtractionErrorCode::UnsupportedStructure),
+        ] {
+            let mut invalid = input.clone(); invalid.artifacts[0].logical_path = path.into();
+            invalid.artifacts[0].utf8 = text.into(); invalid.artifacts[0].sha256 = payload_digest(text);
+            let InvocationOutcome::Failed { error } = invoke(&mut extractor, &binding.extractor, dispatch, &serde_json::to_value(invalid).unwrap()).await else { panic!("unsupported complete translation input must fail"); };
+            assert_eq!(error.schema, source_extraction_error_contract());
+            let error = parse_source_extraction_error(error.utf8.as_bytes()).unwrap();
+            assert_eq!(error.code, expected); assert_eq!(error.artifact_id.as_deref(), Some("translated-file"));
+        }
+        let mut empty = input.clone(); empty.artifacts[0].utf8 = "\u{feff}{}\r\n".into(); empty.artifacts[0].sha256 = payload_digest(&empty.artifacts[0].utf8);
+        let empty_result = success_payload(invoke(&mut extractor, &binding.extractor, "translation-empty", &serde_json::to_value(&empty).unwrap()).await);
+        let empty_proposal = parse_translation_exchange(empty_result.utf8.as_bytes()).unwrap();
+        validate_translation_extraction(&empty, &empty_proposal).unwrap();
+        assert!(empty_proposal.entries.is_empty() && empty_proposal.order.is_empty());
+        assert_eq!(empty_proposal.artifacts, empty.artifacts);
+        close_and_reap(&mut extractor).await;
+
+        let fixed = requirement("smapi.translation-semantics", &binding.checker, &serde_json::to_value(&input).unwrap().to_string(), &extracted.utf8, &input.import_id);
+        let original = TranslationExtractionCheckInput { input: input.clone(), proposal: proposal.clone(), requirements: vec![fixed.clone()] };
+        let mut checker = launch(&image, "translation-semantic-check", temporary.path()).await;
+        assert_ne!(checker.channel().provider.instance_id, extraction_channel.provider.instance_id);
+        for (dispatch, mutation) in [("translation-check-good", 0), ("translation-check-forged", 1), ("translation-check-missing", 2), ("translation-check-order", 3), ("translation-check-native", 4)] {
+            let mut request = original.clone();
+            match mutation {
+                1 => request.proposal.entries[0].text = "Structurally valid forged translation".into(),
+                2 => { request.proposal.entries.pop(); request.proposal.order.pop(); },
+                3 => request.proposal.order.reverse(),
+                4 => request.proposal.entries[0].native_identity.value = "other".into(),
+                _ => (),
+            }
+            validate_translation_extraction(&request.input, &request.proposal).unwrap();
+            let value = serde_json::to_value(request).unwrap();
+            parse_translation_extraction_check_input(value.to_string().as_bytes()).unwrap();
+            let received = invoke_received(&mut checker, &binding.checker, dispatch, &value).await;
+            assert_check(received, &fixed, (mutation != 0).then_some("translation-mismatch"), "core.sdk-translation-association");
+        }
+        let empty_fixed = requirement("smapi.translation-semantics", &binding.checker, &serde_json::to_value(&empty).unwrap().to_string(), &empty_result.utf8, &empty.import_id);
+        let request = TranslationExtractionCheckInput { input: empty, proposal: empty_proposal, requirements: vec![empty_fixed.clone()] };
+        let received = invoke_received(&mut checker, &binding.checker, "translation-check-empty", &serde_json::to_value(request).unwrap()).await;
+        assert_check(received, &empty_fixed, None, "core.sdk-translation-association");
+        close_and_reap(&mut checker).await;
+        let remaining: Vec<_> = std::fs::read_dir(temporary.path()).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+        assert_eq!(remaining, vec![std::ffi::OsString::from("packages")]);
+    });
+}
