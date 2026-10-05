@@ -98,7 +98,10 @@ impl FixedInput {
         .map_err(contract_error)?;
         let bounded_json_contract = matches!(
             envelope.operation.as_str(),
-            crate::content::OPERATION | SOURCE_CHECK_OPERATION | crate::content::BUILD_OPERATION
+            crate::content::OPERATION
+                | SOURCE_CHECK_OPERATION
+                | crate::content::BUILD_OPERATION
+                | ARTIFACT_CHECK_OPERATION
         );
         // Source/check/build output is strict JSON with bounded integer/string fields.
         // Quoting its original JSON costs at most twice the raw bytes; the

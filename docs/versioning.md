@@ -81,6 +81,18 @@ build assembly changes in this unit. Application `0.2.0-alpha.1`, SDK
 `0.1.0-alpha.1` and schema 18 remain in the same unreleased batch, with no
 additional bump, release or historical migration.
 
+Core now extends its existing source-check provenance table into a single
+plugin-check provenance owner for both sources and actual build artifacts. This
+advances the current-only project format to schema 19. Schema 18 and other earlier
+development directories are refused without writes or migration; preserve them
+and use a new current-format project. Experimental Core consumers must use the
+independent artifact-check capture/preparation/commit APIs for plugin builds;
+generic validators cannot grant their mandatory proof. SDK contracts, process
+frames and installed Store formats are unchanged. This remains the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with no
+additional SemVer bump, publication or historical migration. Actual desktop
+plugin build execution and Release adoption remain separate requirements.
+
 The read-only runtime inspector and fixed macOS arm64 preparation command use
 the existing capture/SDK hash owners. They add build tooling and a source-owned
 Node distribution pin, not new wire fields, Store formats, project migrations or

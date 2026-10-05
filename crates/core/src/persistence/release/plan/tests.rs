@@ -2,6 +2,8 @@ use super::*;
 use crate::persistence::review::tests::{adopt_source, approve, check, fixture, translate};
 use crate::{FallbackWrite, ProjectMetadata, execution::PluginConsent};
 
+mod artifact;
+
 #[test]
 fn generic_shared_source_units_project_one_decided_target_for_all_occurrences() {
     let directory = tempfile::tempdir().unwrap();

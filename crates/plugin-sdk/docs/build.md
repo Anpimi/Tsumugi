@@ -114,6 +114,35 @@ explicit fallback decision.
 `find_plugin_build` reconciles the original attempt and exact request after later
 edits or reopening; it does not recapture newer choices or restore execution
 authority. These APIs have not yet replaced the desktop's built-in build runners.
-Actual plugin execution, independent artifact proof, release adoption and delivery
-are separate integration requirements. The existing release store remains the
+Actual plugin execution, release adoption and delivery
+are separate integration requirements; Core artifact proof is described below. The existing release store remains the
 owner; this capture adds no parallel database, planner or authorization mechanism.
+
+## Current Core artifact-proof boundary
+
+`ResultValidationCapture::prepare_artifact_check` derives one independent check
+input per immutable builder result. Core validates the actual ArtifactSet against
+the original ReleasePlan and exact output scope, then captures a mandatory union
+of generic structural checks and every selected domain artifact rule. Each rule
+covers every actual artifact ID and binds the original full input/result digests.
+The checker receives only ArtifactCheckInput. BOMs, Unicode, line endings, opaque
+source evidence, configuration and actual returned bytes remain fixed.
+
+The checker uses the normal plugin execution port with its own captured provider,
+runtime, input and current consent. Producer permission cannot authorize it.
+Preparation evaluates exact rule/target/basis coverage and blocking findings;
+missing, unavailable, failed, cancelled or not-applicable mandatory checks remain
+invalid. A checker cannot assert Core findings or another provider's results.
+A generic ResultValidator cannot bypass this independent proof.
+
+`ProjectStore::commit_artifact_validation` uses the same short mutation boundary
+and provenance owner as source validation, rechecking both current grants, exact
+saved inputs/results and current result pointers. All locales retain separate
+proofs within one release adoption unit. Reopening reconstructs the captured
+policy and checker input, detects missing/substituted proof and does not restore
+execution authority. Historical result bytes remain fixed after later edits.
+The current-only project format is schema 19; earlier development directories
+are preserved and refused without migration. These Core APIs do not publish a
+Release or replace desktop built-in build runners. Production Host execution,
+final release-eligibility checks, persistent Release adoption and delivery still
+require their own integration and acceptance evidence.

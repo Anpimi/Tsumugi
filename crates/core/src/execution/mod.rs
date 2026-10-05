@@ -4,6 +4,7 @@
 //! active project session must check these associations again at every mutation.
 
 mod adoption;
+mod artifact_validation;
 pub(crate) mod codec;
 mod plugin;
 pub(crate) mod plugin_authority;
@@ -21,6 +22,9 @@ use uuid::Uuid;
 
 use crate::{Locale, ProjectId};
 pub use adoption::{AdoptionCapture, PreparedAdoption};
+pub use artifact_validation::{
+    ARTIFACT_CHECK_OPERATION, ArtifactValidationCapture, PreparedArtifactValidation,
+};
 pub use plugin::*;
 pub use plugin_authority::{PluginConsent, PluginPermit};
 pub use runner::*;
@@ -29,6 +33,7 @@ pub use source_validation::{
     PreparedSourceValidation, SOURCE_CHECK_OPERATION, SourceValidationCapture,
 };
 pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
+pub(crate) use validation::{ValidationProof, requires_semantic_check};
 
 pub const MAX_ITEMS: usize = 2000;
 pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;

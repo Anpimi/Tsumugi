@@ -2170,7 +2170,7 @@ fn adopted_plugin_source_requires_its_saved_semantic_proof_for_reads_and_reopeni
         .unwrap();
     connection
         .execute(
-            "DELETE FROM source_validation_links WHERE source_result_id=?1",
+            "DELETE FROM plugin_validation_links WHERE producer_result_id=?1",
             [result.envelope().result_id.to_string()],
         )
         .unwrap();

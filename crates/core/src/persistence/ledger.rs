@@ -30,8 +30,8 @@ pub(super) const TABLES: &[(&str, &str)] = &[
         retry_safe INTEGER NOT NULL CHECK(retry_safe IN (0,1)), diagnostic TEXT CHECK(length(diagnostic) <= 4096),
         PRIMARY KEY(attempt_id,item_id), UNIQUE(attempt_id,item_id,dispatch_token))"),
     ("execution_results", EXECUTION_RESULTS_TABLE),
-    ("source_validation_links", "CREATE TABLE source_validation_links (
-        source_result_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_results(result_id),
+    ("plugin_validation_links", "CREATE TABLE plugin_validation_links (
+        producer_result_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_results(result_id),
         checker_result_id TEXT NOT NULL REFERENCES execution_results(result_id),
         valid INTEGER NOT NULL CHECK(valid IN (0,1)))"),
     ("execution_cancellations", "CREATE TABLE execution_cancellations (
@@ -133,7 +133,7 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
         let _ = read_attempt(connection, id, false)?;
     }
     let mut links = connection
-        .prepare("SELECT source_result_id,valid FROM source_validation_links")
+        .prepare("SELECT producer_result_id,valid FROM plugin_validation_links")
         .map_err(sql_error)?;
     let rows = links
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?)))
@@ -149,7 +149,7 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
             .map_err(sql_error)?;
         let input = load_input(connection, parse_id(attempt)?)?;
         let result = load_result(connection, &input, parse_id(result_id)?)?;
-        validate_source_link(connection, &input, &result, valid)?;
+        validate_plugin_link(connection, &input, &result, valid)?;
     }
     let mut actions = connection
         .prepare("SELECT action_id,attempt_id,unit_id,request,digest FROM execution_actions")
@@ -457,11 +457,8 @@ fn read_attempt(
                             .is_some_and(|value| value.retry_safe)
                             == retry_safe =>
                 {
-                    if validation == ValidationState::Valid
-                        && input.envelope().plugin.is_some()
-                        && input.envelope().operation == crate::content::OPERATION
-                    {
-                        validate_source_link(connection, &input, &output, true)?;
+                    if validation == ValidationState::Valid && requires_semantic_check(&input) {
+                        validate_plugin_link(connection, &input, &output, true)?;
                     }
                 }
                 _ => validation = ValidationState::Invalid,
@@ -507,19 +504,14 @@ fn read_attempt(
     })
 }
 
-pub(super) fn validate_source_link(
+fn load_check_link(
     connection: &Connection,
-    input: &FixedInput,
     result: &FixedResult,
-    expected_valid: bool,
-) -> Result<PreparedSourceValidation, ExecutionError> {
-    let (checker_id, saved_valid): (String, bool) = connection
-        .query_row(
-            "SELECT checker_result_id,valid FROM source_validation_links WHERE source_result_id=?1",
-            [result.envelope().result_id.to_string()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .map_err(|_| error(ErrorCode::CorruptLedger, "source-validation-link"))?;
+) -> Result<(FixedInput, FixedResult, bool), ExecutionError> {
+    let (checker_id, saved_valid): (String, bool) = connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
     let checker_attempt: String = connection
         .query_row(
             "SELECT attempt_id FROM execution_results WHERE result_id=?1",
@@ -529,6 +521,16 @@ pub(super) fn validate_source_link(
         .map_err(sql_error)?;
     let check_input = load_input(connection, parse_id(checker_attempt)?)?;
     let check_result = load_result(connection, &check_input, parse_id(checker_id)?)?;
+    Ok((check_input, check_result, saved_valid))
+}
+
+pub(super) fn validate_source_link(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+) -> Result<PreparedSourceValidation, ExecutionError> {
+    let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
     let prepared = SourceValidationCapture::restore(
         ResultValidationCapture {
             input: input.clone(),
@@ -538,9 +540,42 @@ pub(super) fn validate_source_link(
     )?
     .prepare(check_result)?;
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
-        return Err(error(ErrorCode::CorruptLedger, "source-validation-proof"));
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
     Ok(prepared)
+}
+
+fn validate_plugin_link(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::content::OPERATION {
+        validate_source_link(connection, input, result, expected_valid)?;
+        return Ok(());
+    }
+    if input.envelope().plugin.is_none()
+        || input.envelope().operation != crate::content::BUILD_OPERATION
+    {
+        return Err(error(
+            ErrorCode::CorruptLedger,
+            "semantic-validation-operation",
+        ));
+    }
+    let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
+    let prepared = ArtifactValidationCapture::restore(
+        ResultValidationCapture {
+            input: input.clone(),
+            result: result.clone(),
+        },
+        check_input,
+    )?
+    .prepare(check_result)?;
+    if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    Ok(())
 }
 
 impl ProjectStore {
@@ -954,7 +989,8 @@ impl ProjectStore {
         let prepared_build = super::release::prepare_input(self, input)?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
-        let verified_build = super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        let verified_build =
+            super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
         if input.envelope().plugin.is_some() && parent.is_some() {
             return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
         }
@@ -1322,7 +1358,9 @@ impl ProjectStore {
         {
             return Err(error(ErrorCode::LimitExceeded, "attempt-output"));
         }
-        let validation = if envelope.output.is_some() {
+        let validation = if envelope.output.is_some() && requires_semantic_check(&input) {
+            "pending"
+        } else if envelope.output.is_some() {
             match result.semantic_validation.as_ref() {
                 Some(proof) if proof.matches(&input, &checked) => {
                     if proof.valid {
@@ -1411,12 +1449,10 @@ impl ProjectStore {
         let expected = &prepared.capture.result;
         let input = load_input_cached(&tx, expected.envelope().attempt_id)?;
         let output = load_result(&tx, &input, expected.envelope().result_id)?;
-        if input.envelope().plugin.is_some()
-            && input.envelope().operation == crate::content::OPERATION
-        {
+        if requires_semantic_check(&input) {
             return Err(error(
                 ErrorCode::Unauthorized,
-                "source-semantic-check-required",
+                "independent-semantic-check-required",
             ));
         }
         super::plugin_execution::check_input_in(&tx, &input, &authority)?;
@@ -1447,32 +1483,58 @@ impl ProjectStore {
         &mut self,
         prepared: PreparedSourceValidation,
     ) -> Result<(), ExecutionError> {
+        self.commit_semantic_validation(
+            prepared.capture.source,
+            prepared.capture.check_input,
+            prepared.check_result,
+            prepared.proof,
+        )
+    }
+    pub fn capture_artifact_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<ArtifactValidationCapture, ExecutionError> {
+        ArtifactValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+    }
+    pub fn commit_artifact_validation(
+        &mut self,
+        prepared: PreparedArtifactValidation,
+    ) -> Result<(), ExecutionError> {
+        self.commit_semantic_validation(
+            prepared.capture.build,
+            prepared.capture.check_input,
+            prepared.check_result,
+            prepared.proof,
+        )
+    }
+    /// Both producer/checker flows use one durable link and the same mutation
+    /// boundary. Expensive reconstruction runs before this short write phase.
+    fn commit_semantic_validation(
+        &mut self,
+        captured: ResultValidationCapture,
+        captured_check: FixedInput,
+        expected_check: FixedResult,
+        proof: ValidationProof,
+    ) -> Result<(), ExecutionError> {
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
-        let captured = &prepared.capture;
-        let source_input = load_input_cached(&tx, captured.source.input.envelope().attempt_id)?;
-        let source_result = load_result(
-            &tx,
-            &source_input,
-            captured.source.result.envelope().result_id,
-        )?;
-        let check_input = load_input_cached(&tx, captured.check_input.envelope().attempt_id)?;
-        let check_result = load_result(
-            &tx,
-            &check_input,
-            prepared.check_result.envelope().result_id,
-        )?;
-        for input in [&source_input, &check_input] {
+        let producer_input = load_input_cached(&tx, captured.input.envelope().attempt_id)?;
+        let producer_result =
+            load_result(&tx, &producer_input, captured.result.envelope().result_id)?;
+        let check_input = load_input_cached(&tx, captured_check.envelope().attempt_id)?;
+        let check_result = load_result(&tx, &check_input, expected_check.envelope().result_id)?;
+        for input in [&producer_input, &check_input] {
             super::plugin_execution::check_input_in(&tx, input, &authority)?;
         }
-        if !prepared.proof.matches(&source_input, &source_result)
-            || source_input.digest() != captured.source.input.digest()
-            || check_input.digest() != captured.check_input.digest()
-            || check_result.digest() != prepared.check_result.digest()
+        if !proof.matches(&producer_input, &producer_result)
+            || producer_input.digest() != captured.input.digest()
+            || check_input.digest() != captured_check.digest()
+            || check_result.digest() != expected_check.digest()
         {
             return Err(error(
                 ErrorCode::ResultMismatch,
-                "source-validation-preparation",
+                "semantic-validation-preparation",
             ));
         }
         let current_check: Option<String> = tx
@@ -1488,17 +1550,17 @@ impl ProjectStore {
         if current_check.as_deref() != Some(&check_result.envelope().result_id.to_string()) {
             return Err(error(
                 ErrorCode::ResultMismatch,
-                "source-check-current-result",
+                "semantic-check-current-result",
             ));
         }
-        let changed = tx.execute("UPDATE execution_items SET validation=?4 WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3 AND execution='succeeded' AND adoption<>'committed'",params![source_input.envelope().attempt_id.to_string(),source_result.envelope().item_id.to_string(),source_result.envelope().result_id.to_string(),if prepared.proof.valid { "valid" } else { "invalid" }]).map_err(sql_error)?;
+        let changed = tx.execute("UPDATE execution_items SET validation=?4 WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3 AND execution='succeeded' AND adoption<>'committed'", params![producer_input.envelope().attempt_id.to_string(), producer_result.envelope().item_id.to_string(), producer_result.envelope().result_id.to_string(), if proof.valid { "valid" } else { "invalid" }]).map_err(sql_error)?;
         if changed != 1 {
             return Err(error(
                 ErrorCode::ResultMismatch,
-                "source-validation-current-result",
+                "semantic-validation-current-result",
             ));
         }
-        tx.execute("INSERT INTO source_validation_links VALUES (?1,?2,?3) ON CONFLICT(source_result_id) DO UPDATE SET checker_result_id=excluded.checker_result_id,valid=excluded.valid",params![source_result.envelope().result_id.to_string(),check_result.envelope().result_id.to_string(),prepared.proof.valid]).map_err(sql_error)?;
+        tx.execute("INSERT INTO plugin_validation_links VALUES (?1,?2,?3) ON CONFLICT(producer_result_id) DO UPDATE SET checker_result_id=excluded.checker_result_id,valid=excluded.valid", params![producer_result.envelope().result_id.to_string(), check_result.envelope().result_id.to_string(), proof.valid]).map_err(sql_error)?;
         commit(tx)
     }
     pub fn execution_result(

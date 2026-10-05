@@ -143,19 +143,7 @@ impl SourceValidationCapture {
         check_input: FixedInput,
     ) -> Result<Self, ExecutionError> {
         let mut capture = Self::capture(source)?;
-        let actual = check_input.envelope();
-        if actual.items.len() != 1 || actual.units.len() != 1 {
-            return Err(invalid());
-        }
-        let mut expected = capture.check_input.envelope().clone();
-        expected.task_id = actual.task_id;
-        expected.attempt_id = actual.attempt_id;
-        expected.items[0].item_id = actual.items[0].item_id;
-        expected.units[0].unit_id = actual.units[0].unit_id;
-        expected.units[0].item_ids = vec![actual.items[0].item_id];
-        if FixedInput::capture(expected)?.digest() != check_input.digest() {
-            return Err(invalid());
-        }
+        validation::restore_check_input(&capture.check_input, &check_input)?;
         capture.check_input = check_input;
         Ok(capture)
     }
@@ -186,45 +174,6 @@ impl SourceValidationCapture {
         })
     }
     fn validate_check_result(&self, result: &FixedResult) -> Result<(), ExecutionError> {
-        let evidence = result.envelope().plugin.as_ref().ok_or_else(invalid)?;
-        let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
-            return Err(invalid());
-        };
-        if output.schema != sdk::check_results_contract() {
-            return Err(invalid());
-        }
-        let mut results =
-            sdk::parse_check_results(output.utf8.as_bytes()).map_err(|_| invalid())?;
-        if results
-            .iter()
-            .any(|result| match &result.key.implementation {
-                sdk::CheckImplementation::Plugin { provider } => {
-                    *provider != evidence.channel.selection()
-                }
-                sdk::CheckImplementation::Core { .. } => true,
-            })
-        {
-            return Err(invalid());
-        }
-        let core = &self.checks.set().requirements[0];
-        results.push(sdk::CheckResult {
-            key: core.key.clone(),
-            input_digest: core.input_digest.clone(),
-            scope_digest: core.scope_digest.clone(),
-            covered_targets: core.targets.clone(),
-            outcome: sdk::CheckOutcome::Completed { findings: vec![] },
-        });
-        let coverage = self.checks.evaluate(&results).map_err(|_| invalid())?;
-        if !coverage.complete
-            || results.iter().any(|result| match &result.outcome {
-                sdk::CheckOutcome::Completed { findings } => findings
-                    .iter()
-                    .any(|f| f.severity == sdk::FindingSeverity::Error),
-                _ => true,
-            })
-        {
-            return Err(invalid());
-        }
-        Ok(())
+        validation::validate_required_check_result(&self.checks, result)
     }
 }
