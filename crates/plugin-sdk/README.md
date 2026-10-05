@@ -27,6 +27,12 @@ The SDK and Host metadata APIs are available; the production desktop ReleasePlan
 path is still being integrated. These contracts grant no execution or publication
 permission.
 
+[Existing translation data](docs/translation-import.md) adds complete captured
+translation proposals, original native evidence and independent mandatory checks.
+A captured Resource selects one file and exact extractor/checker contributions.
+These helpers grant no execution or adoption authority; domain execution, current
+project matching and desktop integration remain required consumers.
+
 From the repository root:
 
 ```sh

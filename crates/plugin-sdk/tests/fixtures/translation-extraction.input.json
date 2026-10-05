@@ -1,0 +1,29 @@
+{
+  "profile": {
+    "id": "sample-translations",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "importId": "import-1",
+  "sourceSetId": "source-set",
+  "sourceSnapshotId": "snapshot-1",
+  "targetLanguage": "zh-CN",
+  "languageEvidence": "user-confirmed",
+  "nativeScope": {
+    "namespace": "Example.Mod",
+    "policy": {
+      "id": "sample-native-key",
+      "schemaVersion": 1,
+      "behaviorVersion": 1
+    }
+  },
+  "artifacts": [
+    {
+      "id": "translations",
+      "logicalPath": "i18n/zh.json",
+      "role": "translation",
+      "sha256": "5d8c9f1a1fc8d2bb291588dfb4a69382a6531b92606050c5c0ee21bd5d7fd191",
+      "utf8": "﻿{\r\n // fixed 中文 😀\r\n \"Key\": \"译文 👩🏽‍💻 é\",\r\n \"Other\": \"\",\r\n}\r\n"
+    }
+  ]
+}

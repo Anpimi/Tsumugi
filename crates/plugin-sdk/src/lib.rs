@@ -16,6 +16,7 @@ mod resolution;
 mod source_extraction;
 mod source_import;
 mod text;
+mod translation;
 mod validation;
 
 pub use binding::{CapabilityBinding, ProviderSelectionBinding, bind_capability};
@@ -30,6 +31,7 @@ pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
 pub use source_extraction::*;
 pub use source_import::*;
 pub use text::*;
+pub use translation::*;
 pub use validation::{ContractError, ContractErrorCode, ValidatedManifest, parse_manifest};
 
 /// Version of the SDK that owns the current contracts, from its package metadata.

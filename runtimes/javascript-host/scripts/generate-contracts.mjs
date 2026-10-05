@@ -30,6 +30,12 @@ for (const kind of ['build-input', 'artifact-set', 'artifact-check-input', 'buil
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   buildSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
+const translationSchemas = new Map();
+for (const kind of ['translation-extraction-input', 'translation-exchange', 'translation-extraction-check-input', 'translation-import-declaration', 'translation-types']) {
+  const url = new URL(`crates/plugin-sdk/schemas/${kind}.schema.json`, root);
+  cargo(`check-${kind}-schema`, fileURLToPath(url));
+  translationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
+}
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
 const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
 const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
@@ -69,6 +75,16 @@ for (const kind of ['build-input', 'artifact-set', 'artifact-check-input']) {
   const validator = standaloneCode(ajv, ajv.compile(buildSchemas.get(kind)));
   if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
     throw new Error('The generated build validator requires a runtime dependency.');
+  }
+  outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
+}
+outputs.push([new URL('crates/plugin-sdk/javascript/translation.d.ts', root), await compile(translationSchemas.get('translation-types'), 'TranslationTypes', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+for (const kind of ['translation-extraction-input', 'translation-exchange', 'translation-extraction-check-input']) {
+  const validator = standaloneCode(ajv, ajv.compile(translationSchemas.get(kind)));
+  if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
+    throw new Error('The generated translation validator requires a runtime dependency.');
   }
   outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
 }

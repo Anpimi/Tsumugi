@@ -254,6 +254,15 @@ WebVTT development candidate, not acceptance of a complete two-domain release.
 
 ## Maintaining each change
 
+The SDK's existing-translation input/proposal/check/Resource data contracts use
+their own schema/behavior 1/1 identities within the same undistributed SDK
+`0.1.0-alpha.1` batch. They reuse captured material/native reference and required
+check owners, and add Host metadata inspection without starting a component or
+changing Desktop, process frames, Store layout or current schema 20. Application
+`0.2.0-alpha.1` therefore remains unchanged. Public consumers must select the
+actual immutable SDK source artifact containing these additions; no compatibility
+conversion, production translation cutover or release is claimed.
+
 1. Assess user-visible behavior, compatibility, project migrations and the application's release impact before completing a change. Check the existing unreleased entries and version target.
 2. Describe user-relevant additions, changes and fixes under `Unreleased` in [CHANGELOG.md](../CHANGELOG.md), using the appropriate Keep a Changelog category. State incompatible behavior and concrete migration steps. Consolidate related entries instead of copying commit subjects or listing merge commits.
 3. Update [CHANGELOG.zh-CN.md](../CHANGELOG.zh-CN.md) in the same change. English is authoritative; version headings, dates, categories, scope and migration facts must agree. A change without release impact needs no artificial entry or bump; record that assessment in its review or delivery notes.

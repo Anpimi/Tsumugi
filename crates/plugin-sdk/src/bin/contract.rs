@@ -21,15 +21,29 @@ fn print<T: serde::Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let build_schemas: [(&str, fn() -> schemars::Schema); 6] = [
+    let data_schemas: [(&str, fn() -> schemars::Schema); 11] = [
         ("build-input", build_input_schema),
         ("artifact-set", artifact_set_schema),
         ("artifact-check-input", artifact_check_input_schema),
         ("build-declaration", build_declaration_schema),
         ("build-error", build_error_schema),
         ("build-types", build_types_schema),
+        (
+            "translation-extraction-input",
+            translation_extraction_input_schema,
+        ),
+        ("translation-exchange", translation_exchange_schema),
+        (
+            "translation-extraction-check-input",
+            translation_extraction_check_input_schema,
+        ),
+        (
+            "translation-import-declaration",
+            translation_import_declaration_schema,
+        ),
+        ("translation-types", translation_types_schema),
     ];
-    for (kind, schema) in build_schemas {
+    for (kind, schema) in data_schemas {
         if args.len() == 1 && args[0] == format!("schema-{kind}").as_str() {
             return print(&schema());
         }
@@ -47,6 +61,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         let bytes = |limit| read(&args[1], limit);
         if args[0] == "validate-build-input" {
             return print(&parse_build_input(&bytes(MAX_INVOCATION_PAYLOAD_BYTES)?)?);
+        }
+        if args[0] == "validate-translation-extraction-input" {
+            return print(&parse_translation_extraction_input(&bytes(
+                MAX_EXCHANGE_BYTES,
+            )?)?);
+        }
+        if args[0] == "validate-translation-exchange" {
+            return print(&parse_translation_exchange(&bytes(MAX_EXCHANGE_BYTES)?)?);
+        }
+        if args[0] == "validate-translation-extraction-check-input" {
+            return print(&parse_translation_extraction_check_input(&bytes(
+                MAX_INVOCATION_PAYLOAD_BYTES,
+            )?)?);
+        }
+        if args[0] == "validate-translation-import-declaration" {
+            return print(&parse_translation_import_declaration(&bytes(
+                MAX_TRANSLATION_IMPORT_DECLARATION_BYTES,
+            )?)?);
         }
         if args[0] == "validate-artifact-set" {
             return print(&parse_artifact_set(&bytes(MAX_EXCHANGE_BYTES)?)?);
@@ -173,6 +205,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 2 && args[0] == "validate-check-results" {
         return print(&parse_check_results(&read(&args[1], MAX_EXCHANGE_BYTES)?)?);
     }
+    if args.len() == 3 && args[0] == "match-translation-extraction" {
+        let input = parse_translation_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
+        let proposal = parse_translation_exchange(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
+        validate_translation_extraction(&input, &proposal)?;
+        return print(&proposal);
+    }
     if args.len() == 3 && args[0] == "match-source-extraction" {
         let input = parse_source_extraction_input(&read(&args[1], MAX_EXCHANGE_BYTES)?)?;
         let exchange = parse_exchange(&read(&args[2], MAX_EXCHANGE_BYTES)?)?;
@@ -220,7 +258,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &serde_json::json!({"coverageComplete": coverage.complete, "entries": coverage.entries.len()}),
         );
     }
-    Err("usage: tsumugi-plugin-contract schema-build-input | schema-artifact-set | schema-artifact-check-input | schema-build-declaration | schema-build-error | schema-build-types | validate-build-input <file> | validate-artifact-set <file> | validate-artifact-check-input <file> | validate-build-declaration <file> | validate-build-error <file> | check-<build-kind>-schema <file> | schema | schema-exchange | schema-process | schema-source-extraction-input | schema-source-import-declaration | schema-source-extraction-error | schema-source-extraction-check-input | schema-check-results | schema-content-types | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | check-source-extraction-input-schema <file> | check-source-import-declaration-schema <file> | check-source-extraction-error-schema <file> | check-source-extraction-check-input-schema <file> | check-check-results-schema <file> | check-content-types-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | validate-source-extraction-input <file> | validate-source-import-declaration <file> | validate-source-extraction-error <file> | validate-source-extraction-check-input <file> | validate-check-results <file> | match-source-extraction <input> <content-exchange> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
+    Err("usage: tsumugi-plugin-contract schema-build-input | schema-artifact-set | schema-artifact-check-input | schema-build-declaration | schema-build-error | schema-build-types | validate-build-input <file> | validate-artifact-set <file> | validate-artifact-check-input <file> | validate-build-declaration <file> | validate-build-error <file> | schema-translation-extraction-input | schema-translation-exchange | schema-translation-extraction-check-input | schema-translation-import-declaration | schema-translation-types | validate-translation-extraction-input <file> | validate-translation-exchange <file> | validate-translation-extraction-check-input <file> | validate-translation-import-declaration <file> | match-translation-extraction <input> <proposal> | check-<build-or-translation-kind>-schema <file> | schema | schema-exchange | schema-process | schema-source-extraction-input | schema-source-import-declaration | schema-source-extraction-error | schema-source-extraction-check-input | schema-check-results | schema-content-types | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | check-source-extraction-input-schema <file> | check-source-import-declaration-schema <file> | check-source-extraction-error-schema <file> | check-source-extraction-check-input-schema <file> | check-check-results-schema <file> | check-content-types-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | validate-source-extraction-input <file> | validate-source-import-declaration <file> | validate-source-extraction-error <file> | validate-source-extraction-check-input <file> | validate-check-results <file> | match-source-extraction <input> <content-exchange> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
 }
 fn main() {
     if let Err(error) = run() {

@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslationExchange",
+  "description": "Complete captured file evidence is retained once, including an empty file.\nDeclared language is domain evidence, not an inferred project locale.",
+  "type": "object",
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CapturedTextArtifact"
+      }
+    },
+    "declaredLanguage": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ImportedTranslation"
+      }
+    },
+    "importId": {
+      "type": "string"
+    },
+    "languageEvidence": {
+      "$ref": "#/$defs/TranslationLanguageEvidence"
+    },
+    "nativeScope": {
+      "$ref": "#/$defs/TranslationNativeScope"
+    },
+    "order": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "sourceSetId": {
+      "type": "string"
+    },
+    "sourceSnapshotId": {
+      "type": "string"
+    },
+    "targetLanguage": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "importId",
+    "sourceSetId",
+    "sourceSnapshotId",
+    "targetLanguage",
+    "declaredLanguage",
+    "languageEvidence",
+    "nativeScope",
+    "artifacts",
+    "entries",
+    "order"
+  ],
+  "$defs": {
+    "CapturedTextArtifact": {
+      "description": "Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "utf8": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "utf8"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "ImportedTranslation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "nativeIdentity": {
+          "$ref": "#/$defs/NativeIdentityEvidence"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "source",
+        "nativeIdentity"
+      ]
+    },
+    "NativeIdentityDisplay": {
+      "description": "Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "source"
+      ]
+    },
+    "NativeIdentityEvidence": {
+      "type": "object",
+      "properties": {
+        "display": {
+          "$ref": "#/$defs/NativeIdentityDisplay"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "value": {
+          "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "value",
+        "policy",
+        "display"
+      ]
+    },
+    "SourceReference": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/TextRange"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "range"
+      ]
+    },
+    "TextEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8-byte",
+        "utf16",
+        "grapheme"
+      ]
+    },
+    "TextRange": {
+      "description": "Half-open offsets into one exact string, never between different strings.",
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/TextEncoding"
+        },
+        "end": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "start",
+        "end"
+      ]
+    },
+    "TranslationLanguageEvidence": {
+      "description": "Describes the caller's recorded explicit choice, not an execution/adoption\ngrant. Only the trusted application can establish that consent actually ran.",
+      "type": "string",
+      "enum": [
+        "user-confirmed"
+      ]
+    },
+    "TranslationNativeScope": {
+      "description": "Captured from the current adopted source. The plugin supplies canonical\nnative values under this exact policy; Core must never normalize them again.",
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "policy"
+      ]
+    }
+  }
+}

@@ -1,0 +1,579 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TranslationTypes",
+  "type": "object",
+  "properties": {
+    "check_input": {
+      "$ref": "#/$defs/TranslationExtractionCheckInput"
+    },
+    "declaration": {
+      "$ref": "#/$defs/TranslationImportDeclaration"
+    },
+    "exchange": {
+      "$ref": "#/$defs/TranslationExchange"
+    },
+    "input": {
+      "$ref": "#/$defs/TranslationExtractionInput"
+    }
+  },
+  "required": [
+    "input",
+    "exchange",
+    "check_input",
+    "declaration"
+  ],
+  "$defs": {
+    "CapturedTextArtifact": {
+      "description": "Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "utf8": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "utf8"
+      ]
+    },
+    "CheckImplementation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "core"
+            },
+            "validator": {
+              "$ref": "#/$defs/ContractRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "validator"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plugin"
+            },
+            "provider": {
+              "$ref": "#/$defs/ProviderSelectionBinding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "provider"
+          ]
+        }
+      ]
+    },
+    "CheckKey": {
+      "type": "object",
+      "properties": {
+        "implementation": {
+          "$ref": "#/$defs/CheckImplementation"
+        },
+        "rule": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "implementation"
+      ]
+    },
+    "CheckRequirement": {
+      "type": "object",
+      "properties": {
+        "inputDigest": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/CheckKey"
+        },
+        "mandatory": {
+          "type": "boolean"
+        },
+        "notApplicable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NotApplicableBasis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scopeDigest": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waivable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "inputDigest",
+        "scopeDigest",
+        "targets",
+        "mandatory",
+        "waivable"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "ImportedTranslation": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "nativeIdentity": {
+          "$ref": "#/$defs/NativeIdentityEvidence"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceReference"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "source",
+        "nativeIdentity"
+      ]
+    },
+    "NativeIdentityDisplay": {
+      "description": "Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "source"
+      ]
+    },
+    "NativeIdentityEvidence": {
+      "type": "object",
+      "properties": {
+        "display": {
+          "$ref": "#/$defs/NativeIdentityDisplay"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "value": {
+          "description": "The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "value",
+        "policy",
+        "display"
+      ]
+    },
+    "NotApplicableBasis": {
+      "description": "A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.",
+      "type": "object",
+      "properties": {
+        "basisDigest": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "basisDigest"
+      ]
+    },
+    "PluginIdentity": {
+      "description": "Claimed package identity; a host must authenticate the actual package source.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "publisher",
+        "id",
+        "version"
+      ]
+    },
+    "ProviderSelectionBinding": {
+      "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+      "type": "object",
+      "properties": {
+        "componentId": {
+          "type": "string"
+        },
+        "contributionId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "contributionId",
+        "packageDigest"
+      ]
+    },
+    "SourceReference": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/TextRange"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "range"
+      ]
+    },
+    "TextEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8-byte",
+        "utf16",
+        "grapheme"
+      ]
+    },
+    "TextRange": {
+      "description": "Half-open offsets into one exact string, never between different strings.",
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/TextEncoding"
+        },
+        "end": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "start",
+        "end"
+      ]
+    },
+    "TranslationExchange": {
+      "description": "Complete captured file evidence is retained once, including an empty file.\nDeclared language is domain evidence, not an inferred project locale.",
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapturedTextArtifact"
+          }
+        },
+        "declaredLanguage": {
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ImportedTranslation"
+          }
+        },
+        "importId": {
+          "type": "string"
+        },
+        "languageEvidence": {
+          "$ref": "#/$defs/TranslationLanguageEvidence"
+        },
+        "nativeScope": {
+          "$ref": "#/$defs/TranslationNativeScope"
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "profile": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "sourceSetId": {
+          "type": "string"
+        },
+        "sourceSnapshotId": {
+          "type": "string"
+        },
+        "targetLanguage": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "importId",
+        "sourceSetId",
+        "sourceSnapshotId",
+        "targetLanguage",
+        "declaredLanguage",
+        "languageEvidence",
+        "nativeScope",
+        "artifacts",
+        "entries",
+        "order"
+      ]
+    },
+    "TranslationExtractionCheckInput": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/TranslationExtractionInput"
+        },
+        "proposal": {
+          "$ref": "#/$defs/TranslationExchange"
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckRequirement"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "proposal",
+        "requirements"
+      ]
+    },
+    "TranslationExtractionInput": {
+      "type": "object",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapturedTextArtifact"
+          }
+        },
+        "importId": {
+          "type": "string"
+        },
+        "languageEvidence": {
+          "$ref": "#/$defs/TranslationLanguageEvidence"
+        },
+        "nativeScope": {
+          "$ref": "#/$defs/TranslationNativeScope"
+        },
+        "profile": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "sourceSetId": {
+          "type": "string"
+        },
+        "sourceSnapshotId": {
+          "type": "string"
+        },
+        "targetLanguage": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "importId",
+        "sourceSetId",
+        "sourceSnapshotId",
+        "targetLanguage",
+        "languageEvidence",
+        "nativeScope",
+        "artifacts"
+      ]
+    },
+    "TranslationImportDeclaration": {
+      "type": "object",
+      "properties": {
+        "checker": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "extractor": {
+          "type": "string"
+        },
+        "material": {
+          "$ref": "#/$defs/TranslationMaterialDeclaration"
+        },
+        "profile": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "semanticRules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "displayName",
+        "profile",
+        "material",
+        "extractor",
+        "checker",
+        "semanticRules"
+      ]
+    },
+    "TranslationLanguageEvidence": {
+      "description": "Describes the caller's recorded explicit choice, not an execution/adoption\ngrant. Only the trusted application can establish that consent actually ran.",
+      "type": "string",
+      "enum": [
+        "user-confirmed"
+      ]
+    },
+    "TranslationMaterialDeclaration": {
+      "description": "Metadata describing one selected file relative to an explicitly granted\ndirectory. No glob, executable discovery or filesystem authority is implied.",
+      "type": "object",
+      "properties": {
+        "extension": {
+          "type": "string"
+        },
+        "logicalDirectory": {
+          "type": "string"
+        },
+        "maxBytes": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "logicalDirectory",
+        "extension",
+        "role",
+        "maxBytes"
+      ]
+    },
+    "TranslationNativeScope": {
+      "description": "Captured from the current adopted source. The plugin supplies canonical\nnative values under this exact policy; Core must never normalize them again.",
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "namespace",
+        "policy"
+      ]
+    }
+  }
+}

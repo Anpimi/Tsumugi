@@ -129,6 +129,18 @@ impl PackageImage {
         .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
         .map_err(|_| HostError::InvalidContract)
     }
+    /// Select immutable translation metadata; interpretation and current project
+    /// adoption are separate from resource inspection and execution consent.
+    pub fn translation_import(
+        &self,
+        contribution_id: &str,
+    ) -> HostResult<TranslationImportBinding> {
+        parse_translation_import_declaration(
+            self.resource_bytes(contribution_id, &translation_import_declaration_contract())?,
+        )
+        .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+        .map_err(|_| HostError::InvalidContract)
+    }
     fn resource_bytes(&self, contribution_id: &str, expected: &ContractRef) -> HostResult<&[u8]> {
         let contribution = self
             .manifest

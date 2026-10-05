@@ -148,7 +148,7 @@ pub struct ContentExchange {
     pub domain_blocks: Vec<DomainBlock>,
 }
 
-fn count(len: usize, field: &str) -> Result<(), ContractError> {
+pub(crate) fn count(len: usize, field: &str) -> Result<(), ContractError> {
     if len > MAX_CONTENT_ITEMS {
         return Err(ContractError::at(ContractErrorCode::LimitExceeded, field));
     }
@@ -200,25 +200,7 @@ impl ContentExchange {
                 count(occurrences.len(), "content.occurrences")?;
                 validate_source_reference(&self.artifacts, &occurrence.source)?;
                 if let Some(identity) = &occurrence.native_identity {
-                    if identity.namespace.is_empty()
-                        || identity.namespace.len() > 256
-                        || identity.namespace.contains('\0')
-                        || identity.value.is_empty()
-                        || identity.value.len() > 1024
-                        || identity.value.contains('\0')
-                        || identity.display.value.is_empty()
-                        || identity.display.value.len() > 1024
-                        || identity.display.value.contains('\0')
-                    {
-                        return Err(ContractError::at(
-                            ContractErrorCode::InvalidDeclaration,
-                            "content.nativeIdentity",
-                        ));
-                    }
-                    reference(&identity.policy, "content.nativeIdentity.policy")?;
-                    if let Some(source) = &identity.display.source {
-                        validate_source_reference(&self.artifacts, source)?;
-                    }
+                    validate_native_identity(&self.artifacts, identity)?;
                 }
             }
             for fragment in &unit.protected_fragments {
@@ -298,7 +280,7 @@ impl ContentExchange {
     }
 }
 
-fn validate_source_reference(
+pub(crate) fn validate_source_reference(
     artifacts: &[CapturedTextArtifact],
     source: &SourceReference,
 ) -> Result<(), ContractError> {
@@ -312,6 +294,42 @@ fn validate_source_reference(
             )
         })?;
     convert_text_range(&artifact.utf8, source.range, TextEncoding::Utf8Byte)?;
+    Ok(())
+}
+
+pub(crate) fn validate_native_scope(
+    namespace: &str,
+    policy: &ContractRef,
+) -> Result<(), ContractError> {
+    if namespace.is_empty() || namespace.len() > 256 || namespace.contains('\0') {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            "content.nativeIdentity",
+        ));
+    }
+    reference(policy, "content.nativeIdentity.policy")
+}
+
+pub(crate) fn validate_native_identity(
+    artifacts: &[CapturedTextArtifact],
+    identity: &NativeIdentityEvidence,
+) -> Result<(), ContractError> {
+    validate_native_scope(&identity.namespace, &identity.policy)?;
+    if identity.value.is_empty()
+        || identity.value.len() > 1024
+        || identity.value.contains('\0')
+        || identity.display.value.is_empty()
+        || identity.display.value.len() > 1024
+        || identity.display.value.contains('\0')
+    {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            "content.nativeIdentity",
+        ));
+    }
+    if let Some(source) = &identity.display.source {
+        validate_source_reference(artifacts, source)?;
+    }
     Ok(())
 }
 

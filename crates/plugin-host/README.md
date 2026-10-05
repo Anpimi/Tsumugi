@@ -437,6 +437,14 @@ do not prove a production plugin catalog, domain migration or desktop workflow.
 
 ## Real-process conformance
 
+`PackageImage::translation_import` reads the SDK's translation Resource from
+captured bytes and binds its exact extractor/checker selections. The SDK binding
+checks single-file path/extension, role, raw bound and profile data without
+executing domain code or approving filesystem access. See the
+[public translation data contract](../plugin-sdk/docs/translation-import.md).
+This metadata API does not complete translation matching/adoption or desktop
+migration.
+
 The `official` pairing tests consume an explicitly selected prebuilt WebVTT
 candidate from the independent
 [official plugin repository](https://github.com/Anpimi/tsumugi-plugins). They install
