@@ -19,13 +19,6 @@ use tsumugi_plugin_sdk as sdk;
 #[path = "support/runtime.rs"]
 mod runtime_fixture;
 
-fn contract(id: &str) -> sdk::ContractRef {
-    sdk::ContractRef {
-        id: id.into(),
-        schema_version: 1,
-        behavior_version: 1,
-    }
-}
 fn authorize(
     runtime: &ExecutionRuntime,
     store: &mut ProjectStore,
@@ -83,23 +76,26 @@ fn execute(
 }
 fn fixed(
     store: &ProjectStore,
+    resource: &sdk::SourceImportBinding,
     producer: &RunnerProxy,
     checker: &RunnerProxy,
     text: &str,
 ) -> FixedInput {
-    let bundle = SourceBundle::capture_webvtt(text.as_bytes(), "en-US").unwrap();
-    let profile = contract("webvtt-captions");
+    let bundle =
+        SourceBundle::capture_declared(resource, vec![text.as_bytes().to_vec()], "en-US").unwrap();
+    let profile = resource.declaration.profile.clone();
+    let producer = producer.execution_binding(Some(profile.clone())).unwrap();
+    let checker = checker.execution_binding(Some(profile)).unwrap();
+    assert_eq!(producer.capability, resource.extractor);
+    assert_eq!(checker.capability, resource.checker);
     bundle
         .fixed_plugin_input(
             store.metadata().unwrap().project_id(),
-            producer.execution_binding(Some(profile.clone())).unwrap(),
+            producer,
             SourceSettings {
-                revision_policy: sdk::SourceRevisionPolicy {
-                    profile: profile.clone(),
-                    revision_basis: vec![contract("webvtt.cue-basis")],
-                },
-                checker: Some(checker.execution_binding(Some(profile)).unwrap()),
-                semantic_rules: vec![contract("webvtt.source-semantics")],
+                revision_policy: resource.declaration.revision_policy.clone(),
+                checker: Some(checker),
+                semantic_rules: resource.declaration.semantic_rules.clone(),
             },
         )
         .unwrap()
@@ -222,8 +218,9 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
             .unwrap(),
         )
     };
-    let producer = proxy("extract-source");
-    let checker = proxy("source-semantic-check");
+    let resource = image.source_import("source-profile").unwrap();
+    let producer = proxy(resource.declaration.extractor.as_str());
+    let checker = proxy(resource.declaration.checker.as_str());
     let path = temporary.path().join("project");
     let mut store = ProjectStore::create(
         &path,
@@ -234,7 +231,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
     runtime.register(producer.clone()).unwrap();
     runtime.register(checker.clone()).unwrap();
     let original = "\u{feff}WEBVTT\r\n\r\nNOTE preserved\r\nRaw note\r\n\r\nKeep\r\n00:00:01.000 --> 00:00:02.000\r\n中文 👩🏽‍💻 é\r\n\r\n";
-    let input = fixed(&store, &producer, &checker, original);
+    let input = fixed(&store, &resource, &producer, &checker, original);
     authorize(&runtime, &mut store, &input);
     let source = execute(&mut runtime, &mut store, &input);
     let preview = store
@@ -290,7 +287,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
 
     // A note-only raw change preserves the Core semantic source revision.
     let note = original.replace("Raw note", "Changed note");
-    let input2 = fixed(&store, &producer, &checker, &note);
+    let input2 = fixed(&store, &resource, &producer, &checker, &note);
     authorize(&runtime, &mut store, &input2);
     let source2 = execute(&mut runtime, &mut store, &input2);
     let prepared = validate(&mut runtime, &mut store, &input2, &source2);
@@ -315,7 +312,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
 
     // Same text with changed timing changes the policy-selected opaque basis.
     let timing = note.replace("00:00:02.000", "00:00:03.000");
-    let input3 = fixed(&store, &producer, &checker, &timing);
+    let input3 = fixed(&store, &resource, &producer, &checker, &timing);
     authorize(&runtime, &mut store, &input3);
     let source3 = execute(&mut runtime, &mut store, &input3);
     let prepared = validate(&mut runtime, &mut store, &input3, &source3);
@@ -338,7 +335,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
     assert_eq!(page3.rows[0].unit_id, unit);
     assert_ne!(page3.rows[0].source_revision_id, revision);
 
-    let input4 = fixed(&store, &producer, &checker, &timing);
+    let input4 = fixed(&store, &resource, &producer, &checker, &timing);
     let grant = authorize(&runtime, &mut store, &input4);
     let source4 = execute(&mut runtime, &mut store, &input4);
     let prepared = validate(&mut runtime, &mut store, &input4, &source4);
@@ -350,7 +347,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
     assert_eq!(store.content_scope().unwrap().current_snapshot, Some(third));
 
     for after_prepare in [false, true] {
-        let input = fixed(&store, &producer, &checker, &timing);
+        let input = fixed(&store, &resource, &producer, &checker, &timing);
         authorize(&runtime, &mut store, &input);
         let source = execute(&mut runtime, &mut store, &input);
         let (checked, checker_grant) =
@@ -412,7 +409,7 @@ fn official_source_checks_gate_atomic_adoption_revision_updates_and_reopening() 
     let mut large_runtime = ExecutionRuntime::new(&large_store).unwrap();
     large_runtime.register(producer.clone()).unwrap();
     large_runtime.register(checker.clone()).unwrap();
-    let large_input = fixed(&large_store, &producer, &checker, &large_source);
+    let large_input = fixed(&large_store, &resource, &producer, &checker, &large_source);
     authorize(&large_runtime, &mut large_store, &large_input);
     let large_result = execute(&mut large_runtime, &mut large_store, &large_input);
     assert!(large_result.bytes().len() > 2 * 1024 * 1024);
