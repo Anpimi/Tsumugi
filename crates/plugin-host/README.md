@@ -437,14 +437,24 @@ do not prove a production plugin catalog, domain migration or desktop workflow.
 
 ## Real-process conformance
 
-The `official` pairing test consumes an explicitly selected prebuilt WebVTT
+The `official` pairing tests consume an explicitly selected prebuilt WebVTT
 candidate from the independent
-[official plugin repository](https://github.com/Anpimi/tsumugi-plugins). It installs
-and reopens the approved package, then runs its extraction, locale builder and
-artifact checker through the actual captured JavaScript Host. Literal expected
-bytes cover Unicode, BOM/CRLF, notes and layout; malformed source/target and
-rehashed timing/note changes are refused. It does not link domain source or
-establish Core adoption, desktop selection or a complete migration.
+[official plugin repository](https://github.com/Anpimi/tsumugi-plugins). They install
+and reopen approved bytes and use the actual captured JavaScript Host. The full
+pairing covers extraction/source semantics followed by build/check. The isolated
+`official_webvtt_generic_build_and_check_use_the_captured_package` test uses a
+fixed public content oracle and executes only the builder and artifact checker.
+It binds the package's SDK BuildDeclaration Resource, validates BuildInput and
+actual ArtifactSet with the SDK, and compares required CheckResults to the fixed
+rule/provider and real Host channel. Literal Unicode/BOM/CRLF bytes are independent
+of the builder; stale target revisions and markup fail, while rehashed timing,
+text and non-payload changes produce blocking semantic findings. All owned child
+processes close/reap and their staging directories are checked for cleanup.
+
+These tests do not link domain source or establish Core adoption, desktop
+selection, execution permission for another attempt, or complete migration. The
+fixed build-source fixture derives from the MIT-licensed independent package's
+literal source-check oracle; no extractor output defines its expected semantics.
 
 Provide reviewed package bytes/digest and the same independently approved runtime
 trees described above; missing selections fail instead of skipping:
@@ -457,6 +467,10 @@ TSUMUGI_TEST_RUNTIME_HOST=/absolute/path/to/clean-host-tree \
 TSUMUGI_TEST_RUNTIME_APPROVAL=/absolute/path/to/approved-descriptor.json \
 cargo test -p tsumugi-plugin-host --features javascript-conformance --test official --locked -- --test-threads=1
 ```
+
+To run only the build/check pairing with those same explicit selections, filter
+with `official_webvtt_generic_build_and_check_use_the_captured_package --exact`.
+The two pairing tests are separate; a filtered run does not cover source checking.
 
 ```sh
 cargo test -p tsumugi-plugin-host --features conformance-worker --locked

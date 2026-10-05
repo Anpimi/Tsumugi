@@ -154,11 +154,6 @@ fn success_payload(outcome: InvocationOutcome) -> EncodedPayload {
     output
 }
 
-fn success(outcome: InvocationOutcome) -> Value {
-    let output = success_payload(outcome);
-    serde_json::from_str(&output.utf8).unwrap()
-}
-
 async fn close_and_reap(session: &mut ProcessSession) {
     let closed = session.close().await;
     assert!(closed.cooperative_acknowledgement && closed.direct_child_reaped);
@@ -317,57 +312,228 @@ fn official_webvtt_package_extracts_builds_and_checks_through_the_captured_host(
         close_and_reap(&mut session).await;
         assert_eq!(exchange, semantic_input.proposal);
 
-        let targets = ["第一行 😀\n新しい二行 é", "译文"];
-        let cues: Vec<_> = exchange.units.iter().enumerate().map(|(ordinal, unit)| {
-            let occurrence = &unit.occurrences[0];
-            let basis = exchange.domain_blocks.iter().find(|block|
-                block.target == ContentTarget::Occurrence { id: occurrence.id.clone() }
-                    && block.schema == contract("webvtt.cue-basis")).unwrap();
-            assert_eq!(basis.handling, ExtensionHandling::Required);
-            let basis: Value = serde_json::from_str(&basis.payload_utf8).unwrap();
-            assert_eq!(basis["nativeId"], ["Cue-A", "Cue-B"][ordinal]);
-            json!({"ordinal":ordinal,"nativeId":basis["nativeId"],
-                "canonicalId":occurrence.native_identity.as_ref().unwrap().value,
-                "sourceText":unit.text,"targetText":targets[ordinal],"basis":basis})
-        }).collect();
-        let build_input = json!({"version":1,"template":{"utf8":source,"sha256":payload_digest(source)},
-            "locale":"zh-CN","logicalPath":"zh-CN.vtt","cues":cues});
-        let builder = bind_capability(image.manifest(), "build", image.package_digest()).unwrap();
-        let mut session = launch(&image, "build", temporary.path()).await;
-        let artifact = success(invoke(&mut session, &builder, "build-good", &build_input).await);
-        // Literal oracle authored independently of the plugin parser/builder.
         let expected = "\u{feff}WEBVTT preserved\r\n\r\nNOTE before\r\nkept\r\n\r\nSTYLE\r\n::cue { color: lime; }\r\n\r\nREGION\r\nid:bottom\r\nwidth:80%\r\n\r\nCue-A\r\n00:01.000 --> 00:02.000 region:bottom align:center\r\n第一行 😀\r\n新しい二行 é\r\n\r\nNOTE between\r\nkept too\r\n\r\nCue-B\r\n00:01.500 --> 00:03.000\r\n译文\r\n";
-        assert_eq!(artifact["utf8"], expected);
-        assert_eq!(artifact["sha256"], payload_digest(expected));
-        assert_eq!(artifact["logicalPath"], "zh-CN.vtt");
-        assert_eq!(artifact["cueCount"], 2);
-        let mut unsafe_target = build_input.clone();
-        unsafe_target["cues"][0]["targetText"] = json!("<b>markup</b>");
-        assert!(matches!(invoke(&mut session, &builder, "build-markup", &unsafe_target).await,
-            InvocationOutcome::Failed { .. }));
-        close_and_reap(&mut session).await;
-
-        let checker = bind_capability(image.manifest(), "validate-artifact", image.package_digest()).unwrap();
-        let mut session = launch(&image, "validate-artifact", temporary.path()).await;
-        let checked = success(invoke(&mut session, &checker, "check-good",
-            &json!({"version":1,"input":build_input,"output":artifact})).await);
-        assert_eq!(checked["sha256"], payload_digest(expected));
-        assert_eq!(checked["checkerVersion"], "webvtt-locale-artifact-1");
-        for (dispatch, from, to) in [
-            ("check-timing", "00:02.000", "00:04.000"),
-            ("check-note", "NOTE before", "NOTE edited"),
-        ] {
-            let changed = expected.replacen(from, to, 1);
-            let mut altered = artifact.clone();
-            altered["utf8"] = json!(changed);
-            altered["sha256"] = json!(payload_digest(&changed));
-            assert!(matches!(invoke(&mut session, &checker, dispatch,
-                &json!({"version":1,"input":build_input,"output":altered})).await,
-                InvocationOutcome::Failed { .. }));
-        }
-        close_and_reap(&mut session).await;
+        assert_build_and_check(&image, temporary.path(), exchange, &["第一行 😀\n新しい二行 é", "译文"], expected).await;
         let remaining: Vec<_> = std::fs::read_dir(temporary.path()).unwrap()
             .map(|entry| entry.unwrap().file_name()).collect();
         assert_eq!(remaining, vec![std::ffi::OsString::from("packages")]);
     });
+}
+
+/// A fixed public content oracle permits isolated build/check pairing without
+/// executing source extraction or its separate semantic-check contribution.
+#[test]
+fn official_webvtt_generic_build_and_check_use_the_captured_package() {
+    let executor = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    executor.block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let image = installed(temporary.path());
+        let source = parse_content_exchange(include_bytes!("fixtures/webvtt-build-source.json")).unwrap();
+        let expected = "\u{feff}WEBVTT\r\n\r\nKeep\r\n00:00.000 --> 00:01.000 align:center\r\n你好\r\n世界\r\n\r\nSecond\r\n00:01.000 --> 00:02.000\r\n等待\r\n";
+        assert_build_and_check(&image, temporary.path(), source, &["你好\n世界", "等待"], expected).await;
+        let remaining: Vec<_> = std::fs::read_dir(temporary.path()).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+        assert_eq!(remaining, vec![std::ffi::OsString::from("packages")]);
+    });
+}
+
+async fn assert_build_and_check(
+    image: &PackageImage,
+    temporary: &std::path::Path,
+    source: ContentExchange,
+    texts: &[&str],
+    expected: &str,
+) {
+    let binding = image.build_declaration("build-profile").unwrap();
+    assert_eq!(binding.declaration.profile, contract("webvtt-captions"));
+    assert_eq!(
+        binding.declaration.output_limits,
+        BuildOutputLimits {
+            max_artifacts: 1,
+            max_total_bytes: 131072
+        }
+    );
+    assert_eq!(
+        binding.declaration.artifact_rules,
+        vec![contract("webvtt.artifact-conformance")]
+    );
+    assert_eq!(texts.len(), source.units.len());
+    let input = BuildInput {
+        targets: source
+            .units
+            .iter()
+            .zip(texts)
+            .map(|(unit, text)| BuildTarget {
+                unit_id: unit.id.clone(),
+                source_revision_id: unit.source_revision_id.clone(),
+                text: (*text).into(),
+            })
+            .collect(),
+        source,
+        target_language: "zh-CN".into(),
+        configuration: vec![],
+        output_paths: vec!["zh-CN.vtt".into()],
+        output_limits: binding.declaration.output_limits.clone(),
+    };
+    binding.validate_input(&input).unwrap();
+    let mut builder = launch(image, "build", temporary).await;
+    let payload = success_payload(
+        invoke(
+            &mut builder,
+            &binding.builder,
+            "build-good",
+            &serde_json::to_value(&input).unwrap(),
+        )
+        .await,
+    );
+    assert_eq!(payload.schema, artifact_set_contract());
+    let artifacts = parse_artifact_set(payload.utf8.as_bytes()).unwrap();
+    binding.validate_artifacts(&input, &artifacts).unwrap();
+    assert_eq!(artifacts.artifacts.len(), 1);
+    assert_eq!(artifacts.artifacts[0].utf8.as_bytes(), expected.as_bytes());
+    assert_eq!(artifacts.artifacts[0].sha256, payload_digest(expected));
+    assert_eq!(artifacts.artifacts[0].logical_path, "zh-CN.vtt");
+    let mut unsafe_target = input.clone();
+    unsafe_target.targets[0].text = "<b>markup</b>".into();
+    let InvocationOutcome::Failed { error } = invoke(
+        &mut builder,
+        &binding.builder,
+        "build-markup",
+        &serde_json::to_value(unsafe_target).unwrap(),
+    )
+    .await
+    else {
+        panic!("markup target must fail");
+    };
+    assert_eq!(error.schema, build_error_contract());
+    assert_eq!(
+        parse_build_error(error.utf8.as_bytes()).unwrap().code,
+        BuildErrorCode::InvalidTarget
+    );
+    let mut stale = input.clone();
+    stale.targets[0].source_revision_id = "different-revision".into();
+    let InvocationOutcome::Failed { error } = invoke(
+        &mut builder,
+        &binding.builder,
+        "build-stale",
+        &serde_json::to_value(stale).unwrap(),
+    )
+    .await
+    else {
+        panic!("stale target must fail");
+    };
+    assert_eq!(
+        parse_build_error(error.utf8.as_bytes()).unwrap().code,
+        BuildErrorCode::InvalidInput
+    );
+    let InvocationOutcome::Failed { error } = invoke(
+        &mut builder,
+        &binding.builder,
+        "build-legacy-wire",
+        &json!({"version":1,"template":{}}),
+    )
+    .await
+    else {
+        panic!("earlier dedicated wire shape must fail");
+    };
+    assert_eq!(
+        parse_build_error(error.utf8.as_bytes()).unwrap().code,
+        BuildErrorCode::InvalidInput
+    );
+    close_and_reap(&mut builder).await;
+
+    let requirement = CheckRequirement {
+        key: CheckKey {
+            rule: binding.declaration.artifact_rules[0].clone(),
+            implementation: CheckImplementation::Plugin {
+                provider: binding.checker.provider.clone(),
+            },
+        },
+        input_digest: payload_digest(&serde_json::to_value(&input).unwrap().to_string()),
+        scope_digest: payload_digest(&payload.utf8),
+        targets: vec![artifacts.artifacts[0].id.clone()],
+        mandatory: true,
+        waivable: false,
+        not_applicable: None,
+    };
+    let original = ArtifactCheckInput {
+        input,
+        output: artifacts,
+        requirements: vec![requirement.clone()],
+    };
+    binding.validate_check_input(&original).unwrap();
+    let mut checker = launch(image, "validate-artifact", temporary).await;
+    for (dispatch, from, to) in [
+        ("check-good", "", ""),
+        ("check-timing", "00:01.000", "00:01.100"),
+        (
+            "check-text",
+            texts[0].split('\n').next().unwrap(),
+            "wrong decided text",
+        ),
+        ("check-non-payload", "WEBVTT", "WEBVTT altered"),
+    ] {
+        let mut captured = original.clone();
+        if !from.is_empty() {
+            let output = &mut captured.output.artifacts[0];
+            output.utf8 = output.utf8.replacen(from, to, 1);
+            assert_ne!(output.utf8, expected);
+            output.sha256 = payload_digest(&output.utf8);
+        }
+        binding.validate_check_input(&captured).unwrap();
+        let received = invoke_received(
+            &mut checker,
+            &binding.checker,
+            dispatch,
+            &serde_json::to_value(captured).unwrap(),
+        )
+        .await;
+        let payload = success_payload(received.result().outcome.clone());
+        assert_eq!(payload.schema, check_results_contract());
+        let results = parse_check_results(payload.utf8.as_bytes()).unwrap();
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+        assert_eq!(result.key, requirement.key);
+        assert_eq!(
+            received.channel().provider.selection(),
+            binding.checker.provider
+        );
+        assert_eq!(result.input_digest, requirement.input_digest);
+        assert_eq!(result.scope_digest, requirement.scope_digest);
+        assert_eq!(result.covered_targets, requirement.targets);
+        let CheckOutcome::Completed { findings } = &result.outcome else {
+            panic!("artifact conformance must complete");
+        };
+        if from.is_empty() {
+            assert!(findings.is_empty());
+        } else {
+            assert_eq!(
+                findings,
+                &vec![CheckFinding {
+                    code: "artifact-mismatch".into(),
+                    target: requirement.targets[0].clone(),
+                    severity: FindingSeverity::Error
+                }]
+            );
+        }
+    }
+    let mut incomplete = original;
+    incomplete.requirements[0].targets.clear();
+    let InvocationOutcome::Failed { error } = invoke(
+        &mut checker,
+        &binding.checker,
+        "check-incomplete",
+        &serde_json::to_value(incomplete).unwrap(),
+    )
+    .await
+    else {
+        panic!("incomplete rule coverage must fail");
+    };
+    assert_eq!(
+        parse_build_error(error.utf8.as_bytes()).unwrap().code,
+        BuildErrorCode::InvalidInput
+    );
+    close_and_reap(&mut checker).await;
 }
