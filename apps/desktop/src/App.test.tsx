@@ -7,6 +7,8 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
+import pluginInventory from "../test/fixtures/pluginInventory.contract.json";
+import pluginCandidate from "../test/fixtures/pluginPackage.contract.json";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -449,6 +451,42 @@ describe("project lifecycle workbench", () => {
     expect(screen.queryByRole("textbox", { name: /Project name/ })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
     expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
+  });
+
+  it("isolates extension shortcuts and preserves a project draft during an unknown package change", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const draft = screen.getByRole("textbox", { name: /Project name/ });
+    await user.type(draft, " draft");
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "read_plugin_inventory") return pluginInventory.empty;
+      if (command === "select_plugin_package") return pluginCandidate;
+      if (command === "install_plugin_package") throw { code: "outcome-unknown", stage: "plugin-install", outcome: "unknown", recoveryRequired: true, reason: "plugin-result-unconfirmed" };
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Extensions" }));
+    await screen.findByRole("button", { name: "Choose plugin folder" });
+    await user.keyboard("{Control>}s{/Control}");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(draft).toHaveValue("Demo draft");
+    await user.click(screen.getByRole("button", { name: "Extensions" }));
+    await user.click(await screen.findByRole("button", { name: "Choose plugin folder" }));
+    await user.click(await screen.findByRole("checkbox", { name: /I trust this exact/ }));
+    await user.click(screen.getByRole("button", { name: "Approve and install" }));
+    await screen.findByRole("button", { name: "Retry original operation" });
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.keyboard("{Control>}s{/Control}");
+    expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
+    expect(draft).toHaveValue("Demo draft");
+    const preventDefault = vi.fn();
+    await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault });
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(mocks.destroy).not.toHaveBeenCalled();
   });
 
   it("optionally synchronizes the project folder when saving a rename", async () => {

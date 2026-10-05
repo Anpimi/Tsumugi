@@ -1,0 +1,7 @@
+.plugin-manager .plugin-section { padding-block: 16px; border-top: 1px solid var(--border); }
+.plugin-manager .plugin-section h3, .plugin-manager .plugin-section h4 { margin-block: 8px; }
+.plugin-manager .plugin-list { list-style: none; padding: 0; }
+.plugin-manager .plugin-list > li { padding-block: 14px; border-bottom: 1px solid var(--border); }
+.plugin-manager code { overflow-wrap: anywhere; }
+.plugin-manager .plugin-consent { display: flex; gap: 10px; align-items: flex-start; max-width: 70ch; }
+.plugin-manager .plugin-consent input { margin-top: 4px; flex: none; }

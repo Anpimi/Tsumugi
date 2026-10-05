@@ -31,12 +31,19 @@ struct Responses {
 #[allow(dead_code)]
 struct PluginRequests {
     inventory: plugins::PluginInventoryRequest,
+    install: plugins::PluginInstallRequest,
+    enable: plugins::PluginEnableRequest,
+    package: plugins::PluginPackageRequest,
+    lookup: plugins::PluginLookupRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct PluginResponses {
     inventory: plugins::PluginInventoryView,
+    candidate: Option<plugins::PluginCandidateView>,
+    package: plugins::PluginPackageDetailsView,
+    binding: tsumugi_plugin_sdk::CapabilityBinding,
     error: CommandError,
 }
 #[derive(JsonSchema)]

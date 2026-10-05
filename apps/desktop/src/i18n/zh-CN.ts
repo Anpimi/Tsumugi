@@ -1,6 +1,30 @@
 import type { UiMessages } from "./types";
 
 export const zhCN = {
+plugins: {
+  open: "扩展", title: "已安装扩展", description: "审阅本地插件包，并决定是否允许在新任务中选择它们。",
+  close: "关闭", choose: "选择插件目录", refresh: "读取当前状态", loading: "正在核对本地插件状态…",
+  readFailed: "无法读取插件状态。保留当前选择，并重试读取。", saved: "请求的变更已保存。执行仍需要已批准的运行环境及独立授权。",
+  stale: "这些包来自最后一次成功读取。核验当前状态前，不能作出新的决定。",
+  unknown: "操作可能已部分保存。先读取当前状态，再重试原操作进行确认。确认前请保留此请求。",
+  conflict: "插件设置已变化。作出新的决定前，请读取并审阅当前状态。",
+  failed: "无法确认操作结果。批准设置与已安装文件分别保存，请核对各自状态后继续。",
+  retryOriginal: "重试原操作", reviewCurrent: "审阅当前状态", candidate: "待安装包", declaredPublisher: "声明的发布者：{{publisher}}",
+  manualTrust: "此本地包没有经过认证的发布者证明。人工批准记录你对所审阅准确字节的信任。",
+  runtime: "运行类型", permissionsTitle: "请求的权限", noPermissions: "此处未请求权限。", capability: "能力：{{name}}",
+  fingerprint: "准确包指纹", files: "{{count}} 个文件 · {{bytes}} 字节", installEffect: "先保存批准，再独立安装。新包初始停用；不会运行安装脚本或 Worker。已有启用决定会保留。",
+  consent: "我信任此准确本地包，并批准保存该决定及安装它。", install: "批准并安装", discard: "放弃选择",
+  installed: "已安装包", empty: "尚未安装插件包。", recovery: "请重试原操作，或选择准确匹配的包并明确批准恢复。", unapproved: "已安装；尚无独立的使用批准。",
+  selectionExpired: "此选择已过期。请重新选择插件目录，审阅后再批准。", candidateChanged: "包在检查后发生了变化。请重新选择，并在批准前审阅新的指纹。",
+  settingsInvalid: "无法核验保存的插件决定，原文件已保留。请修复或恢复该设置文件后继续。", directoryUnavailable: "应用插件目录不安全或不可用。请检查位置与权限；程序没有修改权限。",
+  busy: "另一操作正在占用插件存储。请等待其完成，再读取当前状态。", pending: "原操作仍待确认。开始另一操作前，请重试原操作。", approvalMismatch: "此准确包尚无匹配的独立批准。请选择并审阅匹配的包后批准。",
+  enabled: "允许在新任务中选择能力；运行环境与执行授权仍需单独批准。", disabled: "已停用，不能在新任务中选择能力。",
+  enable: "启用", disable: "停用", details: "检查已批准包", origin: "记录的批准来源：{{source}} · {{publisher}}",
+  approvedMissing: "{{name}} {{version}} 已批准，但尚未安装。请选择与其匹配的目录进行安装。",
+  permissions: { "captured-input": "读取已捕获输入", "staged-output": "生成暂存输出", "project-service": "请求项目服务", network: "访问网络目标", process: "启动程序" },
+  runtimes: { data: "仅数据", javascript: "JavaScript Worker", "native-worker": "原生 Worker" },
+  contributions: { capability: "能力", resource: "资源", skill: "技能", ui: "用户界面" },
+},
 commandError: {
   diagnosticId: "诊断关联编号：", classification: "{{code}} · {{stage}} · {{outcome}}",
   currentRevision: "当前工程修订：{{revision}}", expected: "提交时的依据：", current: "拒绝时的依据：", none: "无",

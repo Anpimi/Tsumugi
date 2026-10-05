@@ -1,0 +1,77 @@
+{
+  "ticket": "00000000-0000-4000-8000-000000000010",
+  "manifest": {
+    "protocolVersion": 1,
+    "plugin": {
+      "publisher": "example",
+      "id": "local-tools",
+      "version": "0.1.0"
+    },
+    "permissions": [
+      {
+        "kind": "captured-input"
+      }
+    ],
+    "components": [
+      {
+        "id": "worker",
+        "scope": "project",
+        "runtime": "javascript",
+        "entrypoint": "worker.mjs",
+        "dependencies": [],
+        "exit": {
+          "stopTimeoutMs": 100,
+          "cleanupTimeoutMs": 100
+        }
+      }
+    ],
+    "contributions": [
+      {
+        "id": "query",
+        "componentId": "worker",
+        "contribution": {
+          "kind": "capability",
+          "declaration": {
+            "contract": {
+              "id": "example.query",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "inputSchema": {
+              "id": "example.input",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "outputSchema": {
+              "id": "example.output",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "errorSchema": {
+              "id": "example.error",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "profiles": [],
+            "effect": "read-only",
+            "permissions": [
+              {
+                "kind": "captured-input"
+              }
+            ],
+            "limits": {
+              "maxInputBytes": 1024,
+              "maxOutputBytes": 4096,
+              "concurrency": 1,
+              "timeoutMs": 1000
+            }
+          }
+        }
+      }
+    ]
+  },
+  "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "manifestSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "fileCount": 2,
+  "byteCount": "1024"
+}

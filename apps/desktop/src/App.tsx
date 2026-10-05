@@ -2,6 +2,7 @@ import { SessionReadProvider, SessionReadStatus } from "./SessionReadProvider";
 import { CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
 import { sourceCommands } from "./sourceCommands";
+import { PluginManager } from "./PluginManager";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
@@ -338,6 +339,7 @@ function App() {
   const releaseWorkbench = useRef<ReleaseHandle>(null);
   const tasksWorkbench = useRef<TasksHandle>(null);
   const [operation, setOperation] = useState<Operation>("idle");
+  const [pluginsBusy, setPluginsBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [closedPanel, setClosedPanel] = useState<ClosedPanel>("empty");
   const [openPanel, setOpenPanel] = useState(false);
@@ -383,7 +385,7 @@ function App() {
       ? "displayName"
       : "targetLocales";
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
-  const busy = operation !== "idle" || stopping || stopIntent !== null;
+  const busy = operation !== "idle" || stopping || stopIntent !== null || pluginsBusy;
   const status = statusFor(t, operation, dirty || createDraftDirty);
 
   useEffect(() => {
@@ -1027,6 +1029,7 @@ function App() {
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
+      if (event.target instanceof Element && event.target.closest(".plugin-manager")) return;
       if (area !== "overview") return;
       if (event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
         event.preventDefault();
@@ -1048,7 +1051,7 @@ function App() {
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area]);
+  }, [activeForm, dirty, operation, busy, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1179,6 +1182,7 @@ function App() {
             <span>{project?.metadata.displayName ?? t("nav.workspace")}</span>
           </div>
            <div className="topbar-actions">
+            <PluginManager disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
             <label className="language-control">
               <span>{t("language")}</span>
               <select
@@ -1366,7 +1370,7 @@ function App() {
                       </button>
                       <button className="primary-button" type="submit" disabled={busy}>
                         <Icon name="folder-open" size={18} />
-                        {busy ? t("status.opening") : t("create.submit")}
+                        {operation === "opening" ? t("status.opening") : t("create.submit")}
                       </button>
                     </div>
                     </fieldset>
@@ -1401,7 +1405,7 @@ function App() {
                       </button>
                       <button className="primary-button" type="submit" disabled={busy}>
                         <Icon name="folder-open" size={18} />
-                        {busy ? t("status.opening") : t("open.submit")}
+                        {operation === "opening" ? t("status.opening") : t("open.submit")}
                       </button>
                     </div>
                   </form>
@@ -1562,7 +1566,7 @@ function App() {
                       <button className="secondary-button" type="button" onClick={cancelEditor} disabled={busy}>{t("editor.cancel")}</button>
                       <button className="primary-button" type="submit" disabled={busy || !dirty}>
                         <Icon name="save" size={17} />
-                        {busy ? t("status.saving") : t("editor.save")}
+                        {operation === "saving" ? t("status.saving") : t("editor.save")}
                       </button>
                     </div>
                     </fieldset>

@@ -108,6 +108,8 @@ export type CommandStage =
   | "add-target-locale"
   | "set-target-locales"
   | "close"
+  | "plugin-install"
+  | "plugin-settings"
   | "execution-read"
   | "execution-cancel"
   | "execution-recover"

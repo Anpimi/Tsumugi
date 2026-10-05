@@ -2,18 +2,159 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "ExecutionId": {
+        "type": "string"
+      },
+      "PluginEnableRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "enabled",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "PluginInventoryRequest": {
         "additionalProperties": false,
         "type": "object"
+      },
+      "PluginLookupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
       }
     },
     "properties": {
+      "enable": {
+        "$ref": "#/definitions/PluginEnableRequest"
+      },
+      "install": {
+        "$ref": "#/definitions/PluginInstallRequest"
+      },
       "inventory": {
         "$ref": "#/definitions/PluginInventoryRequest"
+      },
+      "lookup": {
+        "$ref": "#/definitions/PluginLookupRequest"
+      },
+      "package": {
+        "$ref": "#/definitions/PluginPackageRequest"
       }
     },
     "required": [
-      "inventory"
+      "inventory",
+      "install",
+      "enable",
+      "package",
+      "lookup"
     ],
     "title": "Requests",
     "type": "object",
@@ -23,6 +164,122 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityDependency": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "selection": {
+            "$ref": "#/definitions/ProviderSelection"
+          }
+        },
+        "required": [
+          "contract",
+          "required",
+          "selection"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
+        ],
+        "type": "object"
+      },
       "CommandError": {
         "properties": {
           "code": {
@@ -136,11 +393,60 @@
           "add-target-locale",
           "set-target-locales",
           "close",
+          "plugin-install",
+          "plugin-settings",
           "execution-read",
           "execution-cancel",
           "execution-recover",
           "execution-adopt",
           "execution-quiesce"
+        ],
+        "type": "string"
+      },
+      "ComponentDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "dependencies": {
+            "items": {
+              "$ref": "#/definitions/CapabilityDependency"
+            },
+            "type": "array"
+          },
+          "entrypoint": {
+            "description": "Package-relative file. Actual opening and isolation are host responsibilities.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit": {
+            "$ref": "#/definitions/ExitRequirements"
+          },
+          "id": {
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/definitions/RuntimeKind"
+          },
+          "scope": {
+            "$ref": "#/definitions/ComponentScope"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "runtime",
+          "entrypoint",
+          "dependencies",
+          "exit"
+        ],
+        "type": "object"
+      },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
         ],
         "type": "string"
       },
@@ -534,9 +840,281 @@
           }
         ]
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
+      "ContributionDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "componentId": {
+            "description": "Exactly one component owns activation and cleanup of this contribution.",
+            "type": "string"
+          },
+          "contribution": {
+            "$ref": "#/definitions/ContributionKind"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "componentId",
+          "contribution"
+        ],
+        "type": "object"
+      },
+      "ContributionKind": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "declaration": {
+                "$ref": "#/definitions/CapabilityDeclaration"
+              },
+              "kind": {
+                "const": "capability",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "declaration"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "resource",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "schema": {
+                "$ref": "#/definitions/ContractRef"
+              }
+            },
+            "required": [
+              "kind",
+              "schema",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "skill",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "ui",
+                "type": "string"
+              },
+              "schema": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "slot": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "slot",
+              "schema"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "ExitRequirements": {
+        "additionalProperties": false,
+        "properties": {
+          "cleanupTimeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "stopTimeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stopTimeoutMs",
+          "cleanupTimeoutMs"
+        ],
+        "type": "object"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginCandidateView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "manifestSha256": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "ticket": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "ticket",
+          "manifest",
+          "packageDigest",
+          "manifestSha256",
+          "fileCount",
+          "byteCount"
+        ],
+        "type": "object"
       },
       "PluginIdentity": {
         "additionalProperties": false,
@@ -611,6 +1189,44 @@
         ],
         "type": "object"
       },
+      "PluginManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/definitions/ComponentDeclaration"
+            },
+            "type": "array"
+          },
+          "contributions": {
+            "items": {
+              "$ref": "#/definitions/ContributionDeclaration"
+            },
+            "type": "array"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          },
+          "protocolVersion": {
+            "const": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "plugin",
+          "permissions",
+          "components",
+          "contributions"
+        ],
+        "type": "object"
+      },
       "PluginObjectState": {
         "enum": [
           "sealed",
@@ -654,6 +1270,26 @@
           "plugin",
           "packageDigest",
           "origin",
+          "enabled"
+        ],
+        "type": "object"
+      },
+      "PluginPackageDetailsView": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "manifest": {
+            "$ref": "#/definitions/PluginManifest"
+          },
+          "packageDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest",
+          "packageDigest",
           "enabled"
         ],
         "type": "object"
@@ -719,6 +1355,39 @@
           "environmentDigest",
           "origin",
           "state"
+        ],
+        "type": "object"
+      },
+      "ProviderSelection": {
+        "description": "Multiple providers retain separate provenance. A later merge is another\nexplicitly selected capability, not registration-order precedence.",
+        "enum": [
+          "single",
+          "collect-independent"
+        ],
+        "type": "string"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
         ],
         "type": "object"
       },
@@ -824,6 +1493,14 @@
         ],
         "type": "string"
       },
+      "RuntimeKind": {
+        "enum": [
+          "data",
+          "native-worker",
+          "javascript"
+        ],
+        "type": "string"
+      },
       "RuntimeOperatingSystem": {
         "enum": [
           "macos",
@@ -853,15 +1530,34 @@
       }
     },
     "properties": {
+      "binding": {
+        "$ref": "#/definitions/CapabilityBinding"
+      },
+      "candidate": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/PluginCandidateView"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
       "error": {
         "$ref": "#/definitions/CommandError"
       },
       "inventory": {
         "$ref": "#/definitions/PluginInventoryView"
+      },
+      "package": {
+        "$ref": "#/definitions/PluginPackageDetailsView"
       }
     },
     "required": [
       "inventory",
+      "candidate",
+      "package",
+      "binding",
       "error"
     ],
     "title": "Responses",

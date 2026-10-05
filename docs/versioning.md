@@ -44,7 +44,7 @@ other earlier development formats are refused unchanged, without migration. The
 experimental launcher and RunnerProxy APIs are incompatible with the earlier
 free-digest/path API. This remains the same undistributed application
 `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; it is not a production runtime release.
-Authenticated network updates and desktop package controls remain pending. Exhaustive
+Authenticated network updates and desktop runtime controls remain pending. Exhaustive
 matches on the experimental Host error enum must handle its added capture errors.
 The same managed local store now retains approved runtime artifact trees and
 reopens them only after checking the independent complete descriptor and origin.
@@ -101,12 +101,16 @@ callers must handle those classifications. These APIs remain in the same
 undistributed application/SDK alpha.1 batch, with no further bump or historical
 format migration. They do not establish production Desktop controls or a new
 runtime distribution.
-The desktop now owns that Store at its Tauri application-data location and exposes
-a generated read-only metadata projection, with installation records and trusted
-decisions kept distinct. This changes internal desktop IPC and dependency assembly
-within the same unreleased batch, without changing schema 18, Store formats,
-SDK contracts or version sources. It does not ship executable package selection,
-installation controls, bundled runtime artifacts or a new release boundary.
+The desktop now owns that Store at its Tauri application-data location. Its global
+Extensions panel reviews a locally selected package, records explicit manual trust,
+installs fixed bytes with new packages disabled, and separately changes exact
+enablement. Installation records and trusted decisions remain distinct. Backend
+selection verifies installed bytes and the complete requested capability binding;
+uncertain changes retain the original request for reconciliation. The generated
+desktop IPC adds package operations and installation/settings error stages within
+the same unreleased batch, without changing schema 18, Store formats, SDK contracts
+or version sources. This does not ship bundled runtime artifacts, production plugin
+execution, authenticated network updates or a new release boundary.
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
 

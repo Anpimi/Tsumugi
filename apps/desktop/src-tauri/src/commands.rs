@@ -53,6 +53,8 @@ pub enum CommandStage {
     AddTargetLocale,
     SetTargetLocales,
     Close,
+    PluginInstall,
+    PluginSettings,
     ExecutionRead,
     ExecutionCancel,
     ExecutionRecover,

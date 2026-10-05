@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
-import { validateRequestInventory, validateResponseInventory } from "./generated/plugins.validators";
+import candidate from "../test/fixtures/pluginPackage.contract.json";
+import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable } from "./generated/plugins.validators";
 import { pluginCommands } from "./pluginCommands";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -40,4 +41,20 @@ it("reads through the shared adapter with an empty application request", async (
   expect(invoke).toHaveBeenLastCalledWith("read_plugin_inventory", { request: {} });
   invoke.mockResolvedValueOnce({ ...fixture.empty, settingsRevision: 0 });
   await expect(pluginCommands.inventory()).rejects.toThrow("Invalid IPC response: read_plugin_inventory");
+});
+
+it("uses strict local selection and mutation contracts without caller trust or launcher paths", async () => {
+  expect(validateResponseCandidate(candidate)).toBe(true);
+  expect(validateResponseCandidate(null)).toBe(true);
+  const request = { ticket: candidate.ticket, expectedRevision: "0", actionId: "00000000-0000-4000-8000-000000000011" };
+  expect(validateRequestInstall(request)).toBe(true);
+  expect(validateRequestInstall({ ...request, directory: "/untrusted" })).toBe(false);
+  expect(validateRequestInstall({ ...request, origin: { sourceId: "forged" } })).toBe(false);
+  expect(validateRequestEnable({ package: { plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest }, enabled: true, expectedRevision: "0", actionId: request.actionId })).toBe(true);
+  invoke.mockResolvedValueOnce(candidate);
+  await expect(pluginCommands.select()).resolves.toEqual(candidate);
+  expect(invoke).toHaveBeenLastCalledWith("select_plugin_package", { request: {} });
+  invoke.mockResolvedValueOnce(fixture.empty);
+  await expect(pluginCommands.install(request)).resolves.toEqual(fixture.empty);
+  expect(invoke).toHaveBeenLastCalledWith("install_plugin_package", { request });
 });

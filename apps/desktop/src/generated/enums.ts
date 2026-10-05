@@ -2,7 +2,7 @@
 export const ChangeScopeValues = ["project","source","translation","resources","review","arena","release","execution"] as const;
 export const CommandErrorCodeValues = ["invalid-input","destination-conflict","missing-project","permission-denied","unsupported-schema","corrupt-project","stale-revision","session-invalid","project-in-use","busy","storage-failed","outcome-unknown","limit-exceeded","result-mismatch","output-invalid","dependency-conflict","cancelled"] as const;
 export const CommandOutcomeValues = ["rejected","unknown"] as const;
-export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
+export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","plugin-install","plugin-settings","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
 export const MetadataChangeOutcomeValues = ["changed","unchanged"] as const;
 export const NotificationKindValues = ["change","progress","resync"] as const;
 export const ReconciliationStateValues = ["settled","committed","previous"] as const;

@@ -44,8 +44,9 @@ on macOS; the Linux implementation has not been exercised here.
 Captured bytes remain fixed after source edits. Capturing does not execute the
 entrypoint, unpack an archive, fetch metadata or prove publisher identity. The
 caller still owns source approval, and an installer must validate archive/source
-provenance before producing captured bytes. Network signature/update verification
-and desktop package controls remain separate work.
+provenance before producing captured bytes. The desktop's [local package
+controls](../../README.md) use explicit manual trust; authenticated network updates
+remain separate work.
 
 Public package tooling uses `PackageImage::inspect_directory` to fingerprint a
 prebuilt candidate through that same bounded capture owner. It returns the claimed
@@ -193,8 +194,9 @@ and retain their bindings. A failure after namespace replacement is
 reconcile the same intended update rather than issuing a fresh action blindly.
 Pre-promotion failure preserves the old snapshot and its private candidate;
 unknown candidates are not deleted. This cooperative CAS is not protection
-against malicious software running as the same user. Desktop decision controls
-and execution consent remain separate integration work.
+against malicious software running as the same user. The desktop uses these
+decisions in its [local package controls](../../README.md). Runtime and execution
+consent remain separate integration work.
 
 Installation accepts an already approved `RegisteredPackage` and a canonical
 non-nil UUID action. It writes captured bytes into a private candidate, synchronizes
@@ -224,7 +226,7 @@ Use a blocking IO worker and a live application guard. Each install/load has a
 blocking system calls are not preempted. The existing package capture limits
 remain in effect. Linux is implemented but has not been exercised in the macOS
 validation environment. Network acquisition/signatures, complete project
-environment selection, uninstall/garbage collection and desktop controls remain
+environment selection, uninstall/garbage collection and desktop runtime controls remain
 separate work.
 
 ### Reopening an approved runtime

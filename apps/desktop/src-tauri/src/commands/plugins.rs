@@ -15,6 +15,11 @@ use tsumugi_plugin_host::{
     HostError, InstallError, InstalledObjectState, PackageStore, catalog::PackageOrigin,
 };
 use tsumugi_plugin_sdk as sdk;
+pub(super) mod packages;
+pub use packages::{
+    PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
+    PluginPackageDetailsView, PluginPackageRequest,
+};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -156,6 +161,12 @@ impl PluginDirectory {
 struct PluginManager {
     directory: Option<PluginDirectory>,
     store: Option<PackageStore>,
+    picker: Option<(
+        tsumugi_core::execution::ExecutionId,
+        std::sync::Arc<AtomicBool>,
+    )>,
+    candidate: Option<packages::Candidate>,
+    pending: Option<packages::PendingMutation>,
 }
 
 /// The mutex serializes application operations; the Store retains its existing
@@ -199,8 +210,7 @@ impl ApplicationPlugins {
         self.open.store(false, Ordering::Release);
     }
 
-    fn inventory(&self) -> Result<PluginInventoryView, CommandError> {
-        let mut manager = self.try_manager()?;
+    fn provision(&self, manager: &mut PluginManager) -> Result<(), CommandError> {
         let allowed = || self.open.load(Ordering::Acquire);
         if manager.store.is_none() {
             let directory = manager
@@ -210,6 +220,20 @@ impl ApplicationPlugins {
             // Provision through the Host's existing filesystem and lock owner.
             manager.store = Some(directory.provision(allowed).map_err(map_store_error)?);
         }
+        Ok(())
+    }
+
+    fn inventory(&self) -> Result<PluginInventoryView, CommandError> {
+        let mut manager = self.try_manager()?;
+        self.inventory_locked(&mut manager)
+    }
+
+    fn inventory_locked(
+        &self,
+        manager: &mut PluginManager,
+    ) -> Result<PluginInventoryView, CommandError> {
+        self.provision(manager)?;
+        let allowed = || self.open.load(Ordering::Acquire);
         let store = manager.store.as_ref().expect("store provisioned");
         let settings = store.settings(allowed).map_err(map_store_error)?;
         let inventory = store.inventory(allowed).map_err(map_store_error)?;
@@ -291,18 +315,49 @@ fn map_store_error(error: InstallError) -> CommandError {
             CommandErrorCode::OutcomeUnknown,
             "plugin-store-outcome-unknown",
         ),
-        InstallError::InvalidAction
-        | InstallError::RevisionConflict
-        | InstallError::MissingPackage
-        | InstallError::MissingRuntime
-        | InstallError::RecoveryRequired
-        | InstallError::ApprovalMismatch
-        | InstallError::ActionConflict
-        | InstallError::IdentityConflict
-        | InstallError::SourceConflict
-        | InstallError::PublisherConflict
-        | InstallError::Host(_)
-        | InstallError::Catalog(_) => (CommandErrorCode::OutputInvalid, "plugin-metadata-invalid"),
+        InstallError::InvalidAction => (CommandErrorCode::InvalidInput, "plugin-action-invalid"),
+        InstallError::RevisionConflict => {
+            (CommandErrorCode::StaleRevision, "plugin-settings-changed")
+        }
+        InstallError::MissingPackage => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-package-missing",
+        ),
+        InstallError::MissingRuntime => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-runtime-missing",
+        ),
+        InstallError::RecoveryRequired => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-recovery-required",
+        ),
+        InstallError::ApprovalMismatch => (
+            CommandErrorCode::PermissionDenied,
+            "plugin-approval-mismatch",
+        ),
+        InstallError::ActionConflict => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-action-conflict",
+        ),
+        InstallError::IdentityConflict => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-identity-conflict",
+        ),
+        InstallError::SourceConflict => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-source-conflict",
+        ),
+        InstallError::PublisherConflict => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-publisher-conflict",
+        ),
+        InstallError::Host(HostError::PackageMismatch) => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-candidate-changed",
+        ),
+        InstallError::Host(_) | InstallError::Catalog(_) => {
+            (CommandErrorCode::OutputInvalid, "plugin-metadata-invalid")
+        }
     };
     let mut error = CommandError::simple(code, CommandStage::Read);
     error.reason = Some(reason.into());
