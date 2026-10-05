@@ -4,13 +4,15 @@ import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, Dial
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
 import { isCommandError } from "./projectCommands";
-import { pluginCommands, type PluginCandidateView, type PluginInstallRequest, type PluginEnableRequest, type PluginRuntimeInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
+import { pluginCommands, type PluginCandidateView, type PluginInstallRequest, type PluginEnableRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
 import "./PluginManager.css";
 import type { TranslationKey } from "./i18n/types";
 
 const inventoryKey = ["application", "plugins", "inventory"] as const;
-type Intent = { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
+type Intent = { kind: "defaults"; request: PluginDefaultsInstallRequest } | { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
 const reasonMessages: Partial<Record<string, TranslationKey>> = {
+  "plugin-defaults-unavailable": "plugins.defaultsUnavailable",
+  "plugin-defaults-changed": "plugins.defaultsChanged",
   "plugin-selection-expired": "plugins.selectionExpired",
   "plugin-candidate-changed": "plugins.candidateChanged",
   "plugin-recovery-required": "plugins.recovery",
@@ -58,6 +60,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
   const [consent, setConsent] = useState(false);
   // Bind consent to the complete environment, rather than an old checkbox.
   const [runtimeConsent, setRuntimeConsent] = useState<string | null>(null);
+  const [defaultsConsent, setDefaultsConsent] = useState<string | null>(null);
   const [verifiedRuntime, setVerifiedRuntime] = useState<string | null>(null);
   const [details, setDetails] = useState<PluginPackageDetailsView | null>(null);
   const [failure, setFailure] = useState<CommandFailure | null>(null);
@@ -88,7 +91,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
       setIntent(next);
       await client.cancelQueries({ queryKey: inventoryKey });
       try {
-        const result = next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : await pluginCommands.enable(next.request);
+        const result = next.kind === "defaults" ? await pluginCommands.installDefaults(next.request) : next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : await pluginCommands.enable(next.request);
         if (!mounted.current) return;
         client.setQueryData(inventoryKey, result);
         setIntent(null);
@@ -96,6 +99,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
         setCandidate(null);
         setConsent(false);
         setRuntimeConsent(null);
+        setDefaultsConsent(null);
         setVerifiedRuntime(null);
         setDetails(null);
         setSaved(true);
@@ -126,6 +130,24 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
         <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
         {!unknown && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCandidate(null); setConsent(false); setRuntimeConsent(null); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
       </div> : null}
+      {inventory?.defaultsOffer ? <section className="plugin-section" aria-label={t("plugins.defaultsTitle")}>
+        <h3>{t("plugins.defaultsTitle")}</h3><p>{t("plugins.defaultsDescription")}</p>
+        <ul className="plugin-list">{inventory.defaultsOffer.packages.map(package_ => <li key={package_.packageDigest}>
+          <strong>{package_.displayName}</strong> · {package_.plugin.version}
+          <details><summary>{t("plugins.fingerprint")}</summary><code>{package_.packageDigest}</code></details>
+        </li>)}</ul>
+        <p>{t("plugins.defaultsEffect")}</p>
+        {inventory.defaultsOffer.availability !== "available" ? <p>{t(inventory.defaultsOffer.availability === "resources-unavailable" ? "plugins.defaultsUnavailable" : "plugins.runtimeUnavailable")}</p> : <>
+          <label className="plugin-consent"><input type="checkbox" disabled={blocked || intent !== null}
+            checked={defaultsConsent === inventory.defaultsOffer.selectionDigest}
+            onChange={event => setDefaultsConsent(event.target.checked ? inventory.defaultsOffer?.selectionDigest ?? null : null)}/>{t("plugins.defaultsConsent")}</label>
+          <button type="button" className="primary-button" disabled={blocked || intent !== null || defaultsConsent !== inventory.defaultsOffer.selectionDigest}
+            onClick={() => { if (inventory.defaultsOffer) void submit({ kind: "defaults", request: {
+              id: inventory.defaultsOffer.id, selectionDigest: inventory.defaultsOffer.selectionDigest,
+              expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID(),
+            } }); }}>{t("plugins.installDefaults")}</button>
+        </>}
+      </section> : null}
       {candidate ? <section className="plugin-section" aria-label={t("plugins.candidate")}><h3>{t("plugins.candidate")}</h3>
         <p><strong>{candidate.manifest.plugin.id}</strong> · {candidate.manifest.plugin.version}</p>
         <p>{t("plugins.declaredPublisher", { publisher: candidate.manifest.plugin.publisher })}</p>

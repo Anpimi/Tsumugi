@@ -241,6 +241,17 @@ Assess the whole unreleased batch, including earlier commits. A new feature in a
 
 The first managed target is `0.2.0-alpha.1`. It consolidates development commits through `7febd7e`, including new workflows and storage incompatibilities, after the original `0.1.0` scaffold version. There are no historical release tags to reconstruct. These changes remain **Unreleased**; the version assignment does not assert publication or completed release acceptance.
 
+The desktop's optional included-extension setup adds a required nullable
+`defaultsOffer` to the experimental inventory DTO and a fixed-selection setup
+request. Earlier DTO consumers must regenerate their contracts. The opt-in
+runtime bundle configuration now selects `bundled-plugins` and requires the
+independently prepared, source-pinned package trees alongside the runtime.
+These incompatible development changes stay in the same undistributed
+application `0.2.0-alpha.1` batch. They change no SDK wire identity, Store layout,
+current project schema or independent plugin version; there is no additional
+version bump or historical conversion. The current bundle catalog is a single
+WebVTT development candidate, not acceptance of a complete two-domain release.
+
 ## Maintaining each change
 
 1. Assess user-visible behavior, compatibility, project migrations and the application's release impact before completing a change. Check the existing unreleased entries and version target.

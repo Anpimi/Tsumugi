@@ -3,6 +3,8 @@
 mod commands;
 #[path = "../runtime_bundle.rs"]
 mod runtime_bundle;
+#[path = "../plugin_bundle.rs"]
+mod plugin_bundle;
 
 #[cfg(target_os = "macos")]
 use tauri::Manager;

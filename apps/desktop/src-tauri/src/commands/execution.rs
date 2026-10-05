@@ -12,6 +12,7 @@ macro_rules! handlers {
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
         super::plugins::read_plugin_inventory,
+        super::plugins::defaults::install_plugin_defaults,
         super::plugins::packages::select_plugin_package, super::plugins::packages::install_plugin_package,
         super::plugins::packages::set_plugin_enabled, super::plugins::packages::read_plugin_package,
         super::plugins::packages::lookup_plugin_capability,

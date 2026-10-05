@@ -11,6 +11,7 @@ description = "Tsumugi desktop shell"
 execution-test-host = ["tsumugi-core/execution-test-host"]
 wire-schema = ["dep:schemars", "tsumugi-core/wire-schema", "tsumugi-plugin-sdk/schema"]
 bundled-runtime = []
+bundled-plugins = ["bundled-runtime"]
 
 [build-dependencies]
 tauri-build = { version = "2.5.1", features = [] }

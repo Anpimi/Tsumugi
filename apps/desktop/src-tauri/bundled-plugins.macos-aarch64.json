@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "platform": { "operatingSystem": "macos", "architecture": "aarch64" },
+  "packages": [
+    {
+      "id": "webvtt",
+      "displayName": "WebVTT captions",
+      "plugin": { "publisher": "org.tsumugi", "id": "webvtt", "version": "0.1.0-alpha.1" },
+      "packageDigest": "4425e040784d3ada1ec3ee17e3f9404ae94f11a4453bd1da263a870db4cabb57",
+      "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
+      "sourceCommit": "6d4ceb05352f7a9bac50230113a66ff3e5d5da97",
+      "sdkVersion": "0.1.0-alpha.1"
+    }
+  ]
+}

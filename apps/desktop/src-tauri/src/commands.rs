@@ -1044,6 +1044,7 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
             app.state::<AppState>().plugins.configure(directory)?;
         }
         app.state::<AppState>().plugins.configure_bundle(app.path().resource_dir().ok())?;
+        app.state::<AppState>().plugins.configure_default_bundle(app.path().resource_dir().ok())?;
         #[cfg(feature = "execution-test-host")]
         execution::initialize_test_host(&app.state::<AppState>())?;
         Ok(())

@@ -289,7 +289,7 @@ fn unknown_install_retry_keeps_frozen_package_through_source_loss_and_read_failu
         let pending = manager.pending.as_mut().unwrap();
         pending.complete = false;
         pending.unknown = true;
-        pending.install_action = Some(request.action_id.to_string());
+        pending.packages[0].original = Some(request.action_id.to_string());
     }
     fs::remove_dir_all(&fixture.source).unwrap();
     let receipt = fixture

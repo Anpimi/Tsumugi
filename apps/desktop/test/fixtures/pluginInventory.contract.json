@@ -7,7 +7,8 @@
     "runtimes": [],
     "packageDecisions": [],
     "runtimeDecisions": [],
-    "runtimeOffers": []
+    "runtimeOffers": [],
+    "defaultsOffer": null
   },
   "rich": {
     "settingsRevision": "18446744073709551615",
@@ -99,6 +100,7 @@
         "environmentDigest": "2222222222222222222222222222222222222222222222222222222222222222"
       }
     ],
-    "runtimeOffers": []
+    "runtimeOffers": [],
+    "defaultsOffer": null
   }
 }

@@ -5,6 +5,7 @@ export type UnsignedDecimal = string;
 
 export interface Requests {
   build: PluginBuildRequest;
+  defaultsInstall: PluginDefaultsInstallRequest;
   enable: PluginEnableRequest;
   install: PluginInstallRequest;
   inventory: PluginInventoryRequest;
@@ -30,6 +31,12 @@ export interface PluginIdentity {
   id: string;
   publisher: string;
   version: string;
+}
+export interface PluginDefaultsInstallRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  id: string;
+  selectionDigest: string;
 }
 export interface PluginEnableRequest {
   actionId: ExecutionId;

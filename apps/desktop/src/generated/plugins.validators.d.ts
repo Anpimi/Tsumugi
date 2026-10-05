@@ -2,6 +2,7 @@
 import type { Requests } from "./plugins.requests";
 import type { Responses } from "./plugins.responses";
 export declare function validateRequestBuild(value: unknown): value is Requests["build"];
+export declare function validateRequestDefaultsInstall(value: unknown): value is Requests["defaultsInstall"];
 export declare function validateRequestEnable(value: unknown): value is Requests["enable"];
 export declare function validateRequestInstall(value: unknown): value is Requests["install"];
 export declare function validateRequestInventory(value: unknown): value is Requests["inventory"];

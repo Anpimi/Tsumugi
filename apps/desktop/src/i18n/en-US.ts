@@ -38,6 +38,14 @@ sourcePlugin: {
   failed: "The source operation could not complete. Captured input and saved results are preserved. Check installed choices and the recorded attempt. Expired or closed grants require a new reviewed attempt; they cannot be renewed.",
 },
 plugins: {
+  defaultsTitle: "Included extensions",
+  defaultsDescription: "Use the extensions and runtime included with this application. No development tools or downloads are needed.",
+  defaultsEffect: "New included extensions will be installed and enabled. Existing enable or disable choices stay as they are. Each execution still needs its own approval; setup starts no worker. If setup is interrupted, keep confirmed installations and retry the original operation.",
+  defaultsConsent: "I approve this included extension set and its runtime.",
+  installDefaults: "Use included extensions",
+  defaultsUnavailable: "Included extension files are unavailable. Reinstall the matching application build and retry.",
+  defaultsChanged: "Included files or the reviewed selection changed. Keep existing settings, refresh, and review the matching application build.",
+
   runtimeTitle: "JavaScript runtime", bundledRuntime: "Node {{version}} and bundled Host", runtimeSystem: "Requires macOS {{version}} or later on Apple silicon.",
   runtimeEffect: "Approve this exact application-provided environment and install its fixed files. This does not enable plugins, run code or authorize an execution. Each execution needs separate permission; a child process is not an OS sandbox.",
   runtimeNotBundled: "This application build does not include a JavaScript runtime. Use a build that includes the supported runtime.",

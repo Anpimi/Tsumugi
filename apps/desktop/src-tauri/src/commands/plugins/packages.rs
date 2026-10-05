@@ -89,20 +89,28 @@ pub(super) enum MutationRequest {
     Install(PluginInstallRequest),
     Enable(PluginEnableRequest),
     Runtime(PluginRuntimeInstallRequest),
+    Defaults(PluginDefaultsInstallRequest),
 }
 
 pub(super) struct PendingMutation {
     request: MutationRequest,
     desired: PluginSettingsUpdate,
-    package: Option<RegisteredPackage>,
-    runtime: Option<(
-        tsumugi_plugin_host::CapturedRuntime,
-        tsumugi_plugin_host::RuntimeApproval,
-    )>,
+    packages: Vec<PendingPackage>,
+    runtime: Option<PendingRuntime>,
     settings_confirmed: bool,
-    install_action: Option<String>,
     complete: bool,
     unknown: bool,
+}
+struct PendingPackage {
+    package: RegisteredPackage,
+    action: String,
+    original: Option<String>,
+}
+struct PendingRuntime {
+    runtime: tsumugi_plugin_host::CapturedRuntime,
+    approval: tsumugi_plugin_host::RuntimeApproval,
+    action: String,
+    original: Option<String>,
 }
 impl PendingMutation {
     fn action(&self) -> String {
@@ -110,6 +118,7 @@ impl PendingMutation {
             MutationRequest::Install(request) => request.action_id.to_string(),
             MutationRequest::Enable(request) => request.action_id.to_string(),
             MutationRequest::Runtime(request) => request.action_id.to_string(),
+            MutationRequest::Defaults(request) => request.action_id.to_string(),
         }
     }
     fn revision(&self) -> u64 {
@@ -117,6 +126,7 @@ impl PendingMutation {
             MutationRequest::Install(request) => request.expected_revision.get(),
             MutationRequest::Enable(request) => request.expected_revision.get(),
             MutationRequest::Runtime(request) => request.expected_revision.get(),
+            MutationRequest::Defaults(request) => request.expected_revision.get(),
         }
     }
 }
@@ -139,6 +149,50 @@ pub(super) fn catalog_error(error: CatalogError) -> CommandError {
             CommandStage::Read,
         ),
         _ => at_stage(InstallError::Catalog(error), CommandStage::Read),
+    }
+}
+
+/// Each artifact keeps its own original durability action, including partial
+/// defaults setup. One receipt cannot substitute another object's confirmation.
+fn install_package_pending(
+    store: &mut PackageStore,
+    package: &RegisteredPackage,
+    original: &mut Option<String>,
+    action: &str,
+    allowed: impl Fn() -> bool,
+) -> Result<(), InstallError> {
+    if let Some(original) = original {
+        store.install(original, package, allowed)?;
+        return Ok(());
+    }
+    let approval = PackageApproval {
+        plugin: package.plugin().clone(),
+        package_digest: package.package_digest().into(),
+        origin: package.origin().clone(),
+    };
+    match store.load(&approval, &allowed) {
+        Ok(_) => Ok(()),
+        Err(InstallError::MissingPackage) => {
+            *original = Some(action.into());
+            store.install(action, package, allowed).map(|_| ())
+        }
+        Err(InstallError::RecoveryRequired) => {
+            let inventory = store.inventory(&allowed)?;
+            let record = inventory
+                .packages
+                .iter()
+                .find(|record| {
+                    record.state == InstalledObjectState::RecoveryRequired
+                        && record.receipt.plugin() == &approval.plugin
+                        && record.receipt.package_digest() == approval.package_digest
+                        && record.receipt.origin() == &approval.origin
+                })
+                .ok_or(InstallError::ApprovalMismatch)?;
+            let action = record.receipt.action_id().to_owned();
+            *original = Some(action.clone());
+            store.install(&action, package, allowed).map(|_| ())
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -240,7 +294,9 @@ impl ApplicationPlugins {
     ) -> Result<PluginInventoryView, CommandError> {
         let stage = match &request {
             MutationRequest::Install(_) => CommandStage::PluginInstall,
-            MutationRequest::Runtime(_) => CommandStage::PluginInstall,
+            MutationRequest::Runtime(_) | MutationRequest::Defaults(_) => {
+                CommandStage::PluginInstall
+            }
             MutationRequest::Enable(_) => CommandStage::PluginSettings,
         };
         let mut manager = self.try_manager().map_err(|mut error| {
@@ -290,6 +346,7 @@ impl ApplicationPlugins {
                 MutationRequest::Install(request) => request.expected_revision.get(),
                 MutationRequest::Enable(request) => request.expected_revision.get(),
                 MutationRequest::Runtime(request) => request.expected_revision.get(),
+                MutationRequest::Defaults(request) => request.expected_revision.get(),
             };
             if expected != settings.revision() {
                 return Err(at_stage(InstallError::RevisionConflict, stage));
@@ -299,6 +356,7 @@ impl ApplicationPlugins {
                 runtimes: settings.runtimes().to_vec(),
             };
             let mut runtime = None;
+            let mut bundled_packages = Vec::new();
             let package = match &request {
                 MutationRequest::Install(request) => {
                     let candidate = manager
@@ -395,14 +453,82 @@ impl ApplicationPlugins {
                     runtime = Some(captured);
                     None
                 }
+                MutationRequest::Defaults(request) => {
+                    let captured = defaults::capture_offer(&manager, request, allowed)?;
+                    for package in &captured.0 {
+                        let approval = PackageApproval {
+                            plugin: package.plugin().clone(),
+                            package_digest: package.package_digest().into(),
+                            origin: package.origin().clone(),
+                        };
+                        if let Some(prior) = desired
+                            .packages
+                            .iter()
+                            .find(|prior| prior.approval.plugin == approval.plugin)
+                        {
+                            if prior.approval != approval {
+                                return Err(at_stage(InstallError::ApprovalMismatch, stage));
+                            }
+                            // Keep an existing explicit disable decision.
+                        } else {
+                            desired.packages.push(ApprovedPackageSetting {
+                                approval,
+                                enabled: true,
+                            });
+                        }
+                    }
+                    if let Some(prior) = desired
+                        .runtimes
+                        .iter()
+                        .find(|prior| prior.environment == captured.2.environment)
+                    {
+                        if prior != &captured.2 {
+                            return Err(at_stage(InstallError::ApprovalMismatch, stage));
+                        }
+                    } else {
+                        desired.runtimes.push(captured.2.clone());
+                    }
+                    bundled_packages = captured.0;
+                    runtime = Some((captured.1, captured.2));
+                    None
+                }
             };
+            let is_defaults = matches!(&request, MutationRequest::Defaults(_));
+            let action = match &request {
+                MutationRequest::Install(r) => r.action_id.to_string(),
+                MutationRequest::Enable(r) => r.action_id.to_string(),
+                MutationRequest::Runtime(r) => r.action_id.to_string(),
+                MutationRequest::Defaults(r) => r.action_id.to_string(),
+            };
+            let mut package_steps = Vec::new();
+            if let Some(package) = package {
+                package_steps.push(PendingPackage {
+                    package,
+                    action: action.clone(),
+                    original: None,
+                });
+            }
+            package_steps.extend(bundled_packages.into_iter().map(|package| PendingPackage {
+                package,
+                action: ExecutionId::new().to_string(),
+                original: None,
+            }));
+            let runtime = runtime.map(|(runtime, approval)| PendingRuntime {
+                runtime,
+                approval,
+                action: if is_defaults {
+                    ExecutionId::new().to_string()
+                } else {
+                    action
+                },
+                original: None,
+            });
             manager.pending = Some(PendingMutation {
                 request,
                 desired,
-                package,
+                packages: package_steps,
                 runtime,
                 settings_confirmed: false,
-                install_action: None,
                 complete: false,
                 unknown: false,
             });
@@ -421,56 +547,22 @@ impl ApplicationPlugins {
                     )?;
                     pending.settings_confirmed = true;
                 }
-                if let Some(package) = &pending.package {
-                    let approval = PackageApproval {
-                        plugin: package.plugin().clone(),
-                        package_digest: package.package_digest().into(),
-                        origin: package.origin().clone(),
-                    };
-                    if let Some(action) = &pending.install_action {
-                        // Readability/visibility is insufficient after an unknown
-                        // promotion. The original action confirms durability.
-                        store.install(action, package, allowed)?;
-                    } else {
-                        match store.load(&approval, allowed) {
-                            Ok(_) => {} // An independently approved sealed object needs no reinstallation.
-                            Err(InstallError::MissingPackage) => {
-                                let action = pending.action();
-                                pending.install_action = Some(action.clone());
-                                store.install(&action, package, allowed)?;
-                            }
-                            Err(InstallError::RecoveryRequired) => {
-                                // Current human approval and recaptured bytes
-                                // are already fixed independently. The receipt
-                                // supplies only the original recovery action.
-                                let inventory = store.inventory(allowed)?;
-                                let record = inventory
-                                    .packages
-                                    .iter()
-                                    .find(|record| {
-                                        record.state == InstalledObjectState::RecoveryRequired
-                                            && record.receipt.plugin() == &approval.plugin
-                                            && record.receipt.package_digest()
-                                                == approval.package_digest
-                                            && record.receipt.origin() == &approval.origin
-                                    })
-                                    .ok_or(InstallError::ApprovalMismatch)?;
-                                let action = record.receipt.action_id().to_owned();
-                                pending.install_action = Some(action.clone());
-                                store.install(&action, package, allowed)?;
-                            }
-                            Err(error) => return Err(error),
-                        }
-                    }
+                for step in &mut pending.packages {
+                    install_package_pending(
+                        store,
+                        &step.package,
+                        &mut step.original,
+                        &step.action,
+                        allowed,
+                    )?;
                 }
-                if let Some((runtime, approval)) = &pending.runtime {
-                    let action = pending.action();
+                if let Some(step) = &mut pending.runtime {
                     runtimes::install_pending(
                         store,
-                        runtime,
-                        approval,
-                        &mut pending.install_action,
-                        &action,
+                        &step.runtime,
+                        &step.approval,
+                        &mut step.original,
+                        &step.action,
                         allowed,
                     )?;
                 }

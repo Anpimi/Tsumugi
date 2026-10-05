@@ -183,34 +183,52 @@ separate steps. No selected Node, Host or plugin code executes during preparatio
 An IO/tool failure after output creation leaves a partial preparation directory;
 review it and explicitly discard it before retrying with a new destination.
 
-## Opt into the desktop runtime bundle
+## Opt into the desktop extension bundle
 
 On an Apple silicon Mac, prepare the preceding output at the fixed path
 `apps/desktop/src-tauri/resources/javascript-runtime` in this checkout. Its
-parent must exist and the destination must be new. Build the desktop with:
+parent must exist and the destination must be new. Also materialize each complete,
+prebuilt package from the fixed selection in
+[`bundled-plugins.macos-aarch64.json`](../../apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json)
+at `apps/desktop/src-tauri/resources/bundled-plugins/<id>`. Use the public source
+repository and exact commit in that catalog; preserve all package files and
+executable flags. The current catalog selects the independent WebVTT package.
+The complete two-domain distribution is still under development.
+
+These are explicit build inputs. The desktop build neither fetches a latest
+package nor falls back to embedded domain code. Before bundling, it captures
+actual package files through the Host and checks the complete package digest,
+plugin identity and SDK version against the source-owned catalog. Missing or
+changed inputs fail the build. Build the desktop with:
 
 ```sh
 pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
 ```
 
-The `bundled-runtime` feature requires an Apple silicon macOS builder and target.
-The build captures both actual trees through the Host, compares the complete tool
-digest with the independent source pin, and embeds the actual complete SDK
-descriptor, public application-build origin and limits. Tauri preserves the two
-directory trees at logical resource paths. Preparation JSON is not copied into
-the bundle or used as approval. This opt-in bundle requires macOS 13.5; ordinary
-builds retain their base minimum and have no implicit Node/PATH fallback.
+The `bundled-plugins` feature includes `bundled-runtime` and requires an Apple
+silicon macOS builder and target. The build captures both runtime trees through
+the Host, compares the complete tool digest with the independent source pin,
+and embeds the actual complete SDK descriptor, package metadata, public
+application-build origin and limits. Tauri preserves the package, tool and Host
+trees at logical resource paths. Preparation JSON is not copied into the bundle
+or used as approval. This opt-in bundle requires macOS 13.5; ordinary builds
+retain their base minimum and offer no implicit development package or Node/PATH
+fallback.
 
-The global Extensions panel separately reviews and approves that exact environment.
-The backend queries the real macOS version and captures approved bytes before
-recording the full settings decision and independently installing them through
-the same Store. Retrying an uncertain operation retains its original action,
-revision and fixed intent. Existing installed environments can be selected after
-the bundle acquisition tree is gone, but current independent approval, supported
-tool policy, actual system availability and complete installed bytes are rechecked.
-The panel can verify an exact installation without launching it. Installation,
-plugin enablement and per-execution Core consent are separate; these controls do
-not run a worker, authenticate network updates or claim an OS sandbox.
+In the global Extensions panel, review the exact included set and select **Use
+included extensions**. The backend queries the real macOS version and captures
+all package and runtime bytes before recording a settings decision and installing
+through the existing Store. New included packages are enabled; existing
+activation choices are preserved. Uncertain or partial setup retains its original
+request, revision, fixed intent and separate installation actions for recovery.
+Manual package and runtime controls remain available independently.
+
+Existing installations can be selected after bundle acquisition trees are gone,
+but independent approval, supported tool policy, actual system availability and
+complete installed bytes are rechecked. Setup and verification launch no worker.
+Installation and enablement are separate from per-execution Core consent and
+release acceptance; these controls do not authenticate network updates or claim
+an OS sandbox.
 
 ## Limits and actual isolation
 

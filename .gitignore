@@ -17,3 +17,5 @@ apps/desktop/src-tauri/resources/javascript-runtime/
 
 # Local Git worktrees
 /.worktrees/
+
+apps/desktop/src-tauri/resources/bundled-plugins/

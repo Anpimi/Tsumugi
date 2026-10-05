@@ -1,4 +1,6 @@
 #[allow(dead_code)]
+mod plugin_bundle;
+#[allow(dead_code)]
 mod runtime_bundle;
 
 fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
@@ -63,7 +65,65 @@ fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn prepare_plugin_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    use std::{env, path::PathBuf};
+    use tsumugi_plugin_host::PackageImage;
+    println!("cargo:rerun-if-changed=plugin_bundle.rs");
+    println!("cargo:rerun-if-changed=bundled-plugins.macos-aarch64.json");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_BUNDLED_PLUGINS");
+    let metadata = if env::var_os("CARGO_FEATURE_BUNDLED_PLUGINS").is_some() {
+        if env::var("TARGET")? != "aarch64-apple-darwin"
+            || env::var("HOST")? != "aarch64-apple-darwin"
+        {
+            return Err(
+                "bundled plugin distribution requires its selected platform builder".into(),
+            );
+        }
+        let selection = plugin_bundle::selection()?;
+        let root =
+            PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("manifest directory missing")?)
+                .join("resources/bundled-plugins");
+        println!("cargo:rerun-if-changed=resources/bundled-plugins");
+        let mut packages = Vec::new();
+        for pin in selection.packages {
+            let directory = root.join(&pin.id);
+            let image = PackageImage::capture_directory(&directory, &pin.package_digest, || true)?;
+            if image.manifest().manifest().plugin != pin.plugin {
+                return Err("prepared plugin identity differs from source-owned pin".into());
+            }
+            let observed = PackageImage::inspect_directory(&directory, || true)?;
+            if observed.package_digest != pin.package_digest {
+                return Err("prepared plugin changed during verification".into());
+            }
+            packages.push(plugin_bundle::PackageMetadata {
+                pin,
+                manifest_sha256: observed.manifest_sha256,
+                file_count: observed.file_count,
+                byte_count: observed.byte_count,
+            });
+        }
+        let metadata = plugin_bundle::BundleMetadata {
+            format_version: 1,
+            platform: selection.platform,
+            packages,
+        };
+        metadata.validate()?;
+        Some(serde_json::to_string(&metadata)?)
+    } else {
+        None
+    };
+    let output = PathBuf::from(env::var_os("OUT_DIR").ok_or("build output missing")?)
+        .join("bundled-plugins.rs");
+    let value = metadata.map_or("None".into(), |json| format!("Some({json:?})"));
+    std::fs::write(
+        output,
+        format!("pub const BUILT_PLUGINS: Option<&str> = {value};\n"),
+    )?;
+    Ok(())
+}
+
 fn main() {
     prepare_metadata().expect("could not verify prepared runtime bundle");
+    prepare_plugin_metadata().expect("could not verify prepared plugin bundle");
     tauri_build::build()
 }

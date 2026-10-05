@@ -16,6 +16,7 @@ use tsumugi_plugin_host::{
 };
 use tsumugi_plugin_sdk as sdk;
 pub(super) mod builds;
+pub(super) mod defaults;
 mod environment;
 pub(super) mod packages;
 pub(super) mod runtimes;
@@ -29,6 +30,7 @@ pub use runtimes::{
 };
 pub use sources::{PluginSourceRequest, PluginSourceView};
 pub use builds::{PluginBuildRequest, PluginBuildView};
+pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -124,6 +126,7 @@ pub struct PluginInventoryView {
     pub runtime_decisions: Vec<PluginRuntimeDecisionView>,
     #[cfg_attr(feature = "wire-schema", schemars(length(max = 1)))]
     pub runtime_offers: Vec<PluginRuntimeOfferView>,
+    pub defaults_offer: Option<PluginDefaultsOfferView>,
 }
 
 struct PluginDirectory {
@@ -180,6 +183,7 @@ struct PluginManager {
     candidate: Option<packages::Candidate>,
     pending: Option<packages::PendingMutation>,
     bundle: Option<runtimes::Bundle>,
+    defaults: Option<defaults::Bundle>,
 }
 
 /// The mutex serializes application operations; the Store retains its existing
@@ -300,6 +304,7 @@ impl ApplicationPlugins {
                     })
                 })
                 .collect::<Result<Vec<_>, CommandError>>()?,
+            defaults_offer: manager.defaults.as_ref().map(|bundle| bundle.view(manager)).transpose()?,
             runtime_offers: manager
                 .bundle
                 .as_ref()

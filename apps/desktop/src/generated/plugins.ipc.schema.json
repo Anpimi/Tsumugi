@@ -25,6 +25,30 @@
         ],
         "type": "object"
       },
+      "PluginDefaultsInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "id": {
+            "type": "string"
+          },
+          "selectionDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "selectionDigest",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "PluginEnableRequest": {
         "additionalProperties": false,
         "properties": {
@@ -212,6 +236,9 @@
       "build": {
         "$ref": "#/definitions/PluginBuildRequest"
       },
+      "defaultsInstall": {
+        "$ref": "#/definitions/PluginDefaultsInstallRequest"
+      },
       "enable": {
         "$ref": "#/definitions/PluginEnableRequest"
       },
@@ -244,6 +271,7 @@
       "package",
       "lookup",
       "runtimeInstall",
+      "defaultsInstall",
       "runtimeLookup",
       "source",
       "build"
@@ -1113,6 +1141,14 @@
           }
         ]
       },
+      "DefaultsAvailability": {
+        "enum": [
+          "available",
+          "resources-unavailable",
+          "runtime-unavailable"
+        ],
+        "type": "string"
+      },
       "EffectKind": {
         "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
         "enum": [
@@ -1272,6 +1308,37 @@
         ],
         "type": "object"
       },
+      "PluginBundledPackageView": {
+        "additionalProperties": false,
+        "properties": {
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "displayName",
+          "plugin",
+          "packageDigest",
+          "fileCount",
+          "byteCount"
+        ],
+        "type": "object"
+      },
       "PluginCandidateView": {
         "additionalProperties": false,
         "properties": {
@@ -1307,6 +1374,38 @@
         ],
         "type": "object"
       },
+      "PluginDefaultsOfferView": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/definitions/DefaultsAvailability"
+          },
+          "id": {
+            "type": "string"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/definitions/PluginBundledPackageView"
+            },
+            "maxItems": 128,
+            "type": "array"
+          },
+          "runtimeEnvironmentDigest": {
+            "type": "string"
+          },
+          "selectionDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "selectionDigest",
+          "packages",
+          "runtimeEnvironmentDigest",
+          "availability"
+        ],
+        "type": "object"
+      },
       "PluginIdentity": {
         "additionalProperties": false,
         "description": "Claimed package identity; a host must authenticate the actual package source.",
@@ -1332,6 +1431,16 @@
         "additionalProperties": false,
         "description": "Installation and approval remain separate even when only one exists. These\nare metadata observations; Sealed and enabled are not runnable assertions.",
         "properties": {
+          "defaultsOffer": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/PluginDefaultsOfferView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lastSettingsAction": {
             "type": [
               "string",
@@ -1384,7 +1493,8 @@
           "runtimes",
           "packageDecisions",
           "runtimeDecisions",
-          "runtimeOffers"
+          "runtimeOffers",
+          "defaultsOffer"
         ],
         "type": "object"
       },

@@ -3,6 +3,7 @@ export const CommandErrorCodeValues = ["invalid-input","destination-conflict","m
 export const CommandOutcomeValues = ["rejected","unknown"] as const;
 export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","plugin-install","plugin-settings","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
 export const ComponentScopeValues = ["application","project","attempt"] as const;
+export const DefaultsAvailabilityValues = ["available","resources-unavailable","runtime-unavailable"] as const;
 export const EffectKindValues = ["read-only","proposal","external"] as const;
 export const PluginObjectStateValues = ["sealed","recovery-required"] as const;
 export const ProviderSelectionValues = ["single","collect-independent"] as const;

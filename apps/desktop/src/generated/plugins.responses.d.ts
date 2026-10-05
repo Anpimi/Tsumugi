@@ -174,6 +174,7 @@ export type CommandStage =
   | "execution-recover"
   | "execution-adopt"
   | "execution-quiesce";
+export type DefaultsAvailability = "available" | "resources-unavailable" | "runtime-unavailable";
 export type PluginObjectState = "sealed" | "recovery-required";
 export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
@@ -361,6 +362,7 @@ export interface CommandError {
  * are metadata observations; Sealed and enabled are not runnable assertions.
  */
 export interface PluginInventoryView {
+  defaultsOffer: PluginDefaultsOfferView | null;
   lastSettingsAction: string | null;
   /**
    * @maxItems 128
@@ -383,6 +385,23 @@ export interface PluginInventoryView {
    */
   runtimes: PluginRuntimeView[];
   settingsRevision: UnsignedDecimal;
+}
+export interface PluginDefaultsOfferView {
+  availability: DefaultsAvailability;
+  id: string;
+  /**
+   * @maxItems 128
+   */
+  packages: PluginBundledPackageView[];
+  runtimeEnvironmentDigest: string;
+  selectionDigest: string;
+}
+export interface PluginBundledPackageView {
+  byteCount: UnsignedDecimal;
+  displayName: string;
+  fileCount: number;
+  packageDigest: string;
+  plugin: PluginIdentity;
 }
 export interface PluginPackageDecisionView {
   enabled: boolean;

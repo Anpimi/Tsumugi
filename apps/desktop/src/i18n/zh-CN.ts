@@ -40,6 +40,14 @@ sourcePlugin: {
   failed: "源操作未能完成，固定输入与已保存结果仍保留。请核对已安装选项及原执行记录。过期或关闭的授权不能续期，需要核对新的尝试。",
 },
 plugins: {
+  defaultsTitle: "随附扩展",
+  defaultsDescription: "使用应用随附的扩展与运行环境，无需开发工具或下载。",
+  defaultsEffect: "将安装并启用新的随附扩展；已有启用或停用选择保持原样。每次执行仍须单独批准，设置不会启动 Worker。若设置中断，保留已确认的安装并重试原操作。",
+  defaultsConsent: "我批准此随附扩展集合及其运行环境。",
+  installDefaults: "使用随附扩展",
+  defaultsUnavailable: "随附扩展文件不可用。请重新安装匹配的应用版本后重试。",
+  defaultsChanged: "随附文件或已审阅的选择发生变化。现有设置已保留，请刷新并核对匹配的应用版本。",
+
   runtimeTitle: "JavaScript 运行环境", bundledRuntime: "Node {{version}} 与随附 Host", runtimeSystem: "需要 Apple 芯片及 macOS {{version}} 或更高版本。",
   runtimeEffect: "批准此应用随附的准确环境，并安装固定文件。此操作不会启用插件、运行代码或授予执行权限。每次执行需要独立授权；子进程不等于操作系统沙箱。",
   runtimeNotBundled: "此应用构建未随附 JavaScript 运行环境。请使用包含受支持运行环境的构建。",

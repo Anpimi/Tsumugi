@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "build": {
-    "features": ["bundled-runtime"]
+    "features": ["bundled-plugins"]
   },
   "bundle": {
     "resources": {
       "resources/javascript-runtime/tool/": "runtimes/javascript/tool/",
-      "resources/javascript-runtime/host/": "runtimes/javascript/host/"
+      "resources/javascript-runtime/host/": "runtimes/javascript/host/",
+      "resources/bundled-plugins/": "bundled-plugins/"
     },
     "macOS": {
       "minimumSystemVersion": "13.5"
