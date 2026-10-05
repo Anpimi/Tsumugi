@@ -123,7 +123,13 @@ source imports. It changes no project data, schema20, Store layout, SDK/process
 contract, dependency, distributed runtime or execution authority. Application
 `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` therefore remain unchanged in this same
 undistributed batch. Both Unreleased changelogs record the additive environment
-read; production plugin build dispatch and native delivery remain pending.
+read. Desktop installed builder/checker commands now connect fixed input,
+separate exact consent, RunnerProxy execution and artifact proof to the existing
+Release adoption owner. Their generated IPC is additive, and the Core locale
+choice merely derives its wire schema at its existing owner. This same
+undistributed batch keeps application/SDK versions, schema20, process/Store
+formats and dependency metadata unchanged. Native build controls, domain-package
+migration and generic destination delivery remain pending.
 
 ## Choosing the next version
 

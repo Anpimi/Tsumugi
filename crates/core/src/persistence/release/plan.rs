@@ -12,6 +12,7 @@ use tsumugi_plugin_sdk as sdk;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PluginBuildLocaleChoice {
     pub locale: String,
     pub output_paths: Vec<String>,

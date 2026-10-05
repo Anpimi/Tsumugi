@@ -13,14 +13,18 @@ use tsumugi_core::{
     BuildLocaleChoice, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, ReleaseView,
 };
 
+pub(in crate::commands) mod plugin;
+
 #[derive(Default)]
 pub(super) struct ReleaseSession {
     picker: Option<ExecutionId>,
     selection: Option<(ExecutionId, Arc<source::capture::Selection>)>,
     preview: Option<DeliveryPreview>,
+    pub(super) plugin: plugin::PluginBuildSession,
 }
 impl ReleaseSession {
     pub fn stop(&mut self) {
+        self.plugin.stop();
         self.picker = None;
         self.selection = None;
         self.preview = None;

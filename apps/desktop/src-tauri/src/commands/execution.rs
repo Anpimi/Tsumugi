@@ -43,6 +43,9 @@ macro_rules! handlers {
         release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
         release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::retry_work_plan_effect,
+        release::plugin::prepare_plugin_build,release::plugin::start_plugin_build,
+        release::plugin::prepare_artifact_check,release::plugin::start_artifact_check,
+        release::plugin::finish_artifact_check,release::plugin::cancel_plugin_build_preparation,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
         arena::reveal_arena_identity,arena::save_arena_merge,
@@ -55,11 +58,15 @@ pub(super) fn handler<R: tauri::Runtime>()
 -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     #[cfg(feature = "execution-test-host")]
     {
-        handlers!(seed_execution_fixture,source::preflight_source,source::start_source_import)
+        handlers!(
+            seed_execution_fixture,
+            source::preflight_source,
+            source::start_source_import
+        )
     }
     #[cfg(all(test, not(feature = "execution-test-host")))]
     {
-        handlers!(source::preflight_source,source::start_source_import)
+        handlers!(source::preflight_source, source::start_source_import)
     }
     #[cfg(not(any(test, feature = "execution-test-host")))]
     {
@@ -131,6 +138,7 @@ pub(super) struct ExecutionHost {
     ai: ai::AiSession,
     arena: arena::ArenaSession,
     work_plans: work_plans::WorkPlanSession,
+    plugin_registrations: Vec<PluginExecutionBinding>,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -154,6 +162,7 @@ impl ExecutionHost {
             ai: ai::AiSession::default(),
             arena: arena::ArenaSession::default(),
             work_plans: work_plans::WorkPlanSession::default(),
+            plugin_registrations: Vec::new(),
         };
         #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
@@ -224,6 +233,7 @@ impl ExecutionHost {
     fn active(&self, store: &ProjectStore) -> Result<bool, CommandError> {
         Ok(self.quiescing
             || self.source.is_active()
+            || self.release.plugin.is_active()
             || self.ai.active()
             || !self.queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
@@ -312,6 +322,28 @@ impl ExecutionHost {
         } else {
             Ok(())
         }
+    }
+    fn register_plugin(
+        &mut self,
+        runner: Arc<tsumugi_plugin_host::core::RunnerProxy>,
+        binding: PluginExecutionBinding,
+    ) -> Result<(), ExecutionError> {
+        // One capability/environment registration serves request profiles.
+        // Core validates each fixed request's profile independently.
+        if self.plugin_registrations.iter().any(|previous| {
+            previous.capability == binding.capability && previous.environment == binding.environment
+        }) {
+            return Ok(());
+        }
+        if self.plugin_registrations.len() >= 128 {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "plugin-registration-limit",
+            ));
+        }
+        self.runtime.register(runner)?;
+        self.plugin_registrations.push(binding);
+        Ok(())
     }
 }
 impl ActiveSession {
@@ -405,6 +437,17 @@ macro_rules! request {
         pub struct $name { pub session_token:String, pub project_id:ExecutionId, $($(#[$attribute])* pub $field:$kind,)* }
     }
 }
+request!(
+    #[derive(PartialEq, Eq)]
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    PluginStartRequest {
+        attempt_id: ExecutionId,
+        input_digest: String,
+        grant_id: ExecutionId,
+        expires_at_ms: UnsignedDecimal,
+        unsandboxed_execution: bool
+    }
+);
 pub(super) mod ai;
 pub(super) mod ai_wire;
 pub(super) mod arena;

@@ -12,7 +12,9 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
-- Desktop can read a build recipe with both exact providers from an enabled installed package and separately approved installed runtime. It shares the source environment capture and refuses changed settings; the read grants no execution or release permission. Production plugin build dispatch and native export integration remain pending.
+- Experimental desktop plugin builds now freeze eligible input and explicit output choices from an exact installed build environment. The builder and independent artifact checker each require consent for their own fixed input, grant and expiry. Saved check proof gates complete Release adoption through the existing Core owner; retries preserve original permission, while cancelled preparation and closed sessions reject late results. The native build workbench, domain-package migration and generic destination delivery remain under development.
+
+- Desktop can read a build recipe with both exact providers from an enabled installed package and separately approved installed runtime. It shares the source environment capture and refuses changed settings; the read grants no execution or release permission. The installed execution commands are available; the native build workbench and generic export integration remain pending.
 
 - Core release adoption now preserves every artifact for every requested locale in the existing release store. It rechecks producer and independent checker authority, cancellation and current results, preserves the frozen qualified plan after edits, and returns the original adoption receipt on replay. Reads compare saved bytes, paths, roles and identities with the original results and mandatory proof, without requiring live plugin permission. Exact-path reads and delivery records cover the complete output set, including empty files; desktop plugin build and file-export integration remain pending.
 

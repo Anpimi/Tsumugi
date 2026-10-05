@@ -234,6 +234,10 @@ struct ReviewResponses {
 struct ReleaseRequests {
     session: execution::SessionRequest,
     build: execution::release::BuildRequest,
+    plugin_build: execution::release::plugin::PluginBuildPrepareRequest,
+    plugin_start: execution::PluginStartRequest,
+    artifact_check: execution::release::plugin::ArtifactCheckPrepareRequest,
+    finish_artifact_check: execution::release::plugin::ArtifactCheckFinishRequest,
     release: execution::release::ReleaseRequest,
     preview: execution::release::PreviewRequest,
     export: execution::release::ExportRequest,
@@ -244,6 +248,10 @@ struct ReleaseRequests {
 #[allow(dead_code)]
 struct ReleaseResponses {
     build_attempt: Option<execution::AttemptDetail>,
+    plugin_build: execution::release::plugin::PluginBuildReview,
+    artifact_check: execution::release::plugin::ArtifactCheckReview,
+    finish_artifact_check: (),
+    cancel_plugin_build: bool,
     delivery_action: Option<tsumugi_core::DeliveryView>,
     identity: tsumugi_core::execution::ExecutionId,
     releases: Vec<tsumugi_core::ReleaseView>,

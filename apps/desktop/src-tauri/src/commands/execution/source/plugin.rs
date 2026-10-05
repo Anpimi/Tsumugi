@@ -1,5 +1,6 @@
 //! Generic source import: declared native capture, separately consented producer
 //! and semantic checker, and the existing Core adoption boundary.
+pub use super::super::PluginStartRequest;
 use super::*;
 use crate::commands::plugins::{PluginSourceRequest, PluginSourceView, sources::SourceEnvironment};
 use tsumugi_core::content::SourceSettings;
@@ -12,7 +13,6 @@ pub(super) struct PluginSourceSession {
     last_start: Option<PluginStartRequest>,
     check: Option<Arc<CheckReview>>,
     last_check_start: Option<PluginStartRequest>,
-    registered: Vec<PluginExecutionBinding>,
 }
 impl PluginSourceSession {
     pub(super) fn discard_capture(&mut self) {
@@ -86,17 +86,6 @@ request!(
 request!(
     #[derive(PartialEq, Eq)]
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-    PluginStartRequest {
-        attempt_id: ExecutionId,
-        input_digest: String,
-        grant_id: ExecutionId,
-        expires_at_ms: UnsignedDecimal,
-        unsandboxed_execution: bool
-    }
-);
-request!(
-    #[derive(PartialEq, Eq)]
-    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
     SourceCheckPrepareRequest {
         source_attempt_id: ExecutionId,
         source_result_id: ExecutionId,
@@ -159,22 +148,7 @@ fn register(
 ) -> Result<(), CommandError> {
     for (index, proxy) in proxies.into_iter().enumerate() {
         let selected = binding(environment, index == 1);
-        // Profiles select requests on one registered capability/environment;
-        // Core's runner key deliberately excludes the request's profile.
-        if host.source.plugin.registered.iter().any(|registered| {
-            registered.capability == selected.capability
-                && registered.environment == selected.environment
-        }) {
-            continue;
-        }
-        if host.source.plugin.registered.len() >= 128 {
-            return Err(map_source(ExecutionError::new(
-                ErrorCode::LimitExceeded,
-                "plugin-registration-limit",
-            )));
-        }
-        host.runtime.register(proxy).map_err(map_source)?;
-        host.source.plugin.registered.push(selected);
+        host.register_plugin(proxy, selected).map_err(map_source)?;
     }
     Ok(())
 }

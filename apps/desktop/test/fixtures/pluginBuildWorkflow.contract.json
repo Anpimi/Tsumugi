@@ -1,0 +1,467 @@
+{
+  "session": {
+    "sessionToken": "session-fixture",
+    "projectId": "11111111-1111-4111-8111-111111111111"
+  },
+  "prepare": {
+    "sessionToken": "session-fixture",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "attemptId": "22222222-2222-4222-8222-222222222222",
+    "choices": [
+      {
+        "locale": "zh-CN",
+        "outputPaths": [
+          "zh-CN/木桶 👩🏽‍💻.txt",
+          "zh-CN/metadata.txt"
+        ],
+        "configuration": []
+      }
+    ],
+    "expectedEligibilityBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "build": {
+      "package": {
+        "plugin": {
+          "publisher": "example",
+          "id": "plain-text",
+          "version": "0.1.0"
+        },
+        "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "resourceId": "build-profile",
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0"
+    }
+  },
+  "review": {
+    "attemptId": "22222222-2222-4222-8222-222222222222",
+    "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sourceSnapshotId": "55555555-5555-4555-8555-555555555555",
+    "eligibilityBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "choices": [
+      {
+        "locale": "zh-CN",
+        "outputPaths": [
+          "zh-CN/木桶 👩🏽‍💻.txt",
+          "zh-CN/metadata.txt"
+        ],
+        "configuration": []
+      }
+    ],
+    "build": {
+      "settingsRevision": "1",
+      "resourceId": "build-profile",
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 1,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+      "runtimeOrigin": {
+        "sourceId": "application-bundle",
+        "publisherId": "application-build"
+      },
+      "declaration": {
+        "displayName": "Example text artifact",
+        "profile": {
+          "id": "example.plain-text",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "builder": "build",
+        "checker": "check-artifact",
+        "outputLimits": {
+          "maxArtifacts": 2,
+          "maxTotalBytes": 131072
+        },
+        "artifactRules": [
+          {
+            "id": "example.artifact-conformance",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        ]
+      },
+      "builder": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "build"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.build",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.build-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.artifact-set",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.build-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "checker": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "check-artifact"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.artifact-check",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.artifact-check-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.check-results",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.build-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    }
+  },
+  "start": {
+    "sessionToken": "session-fixture",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "attemptId": "22222222-2222-4222-8222-222222222222",
+    "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "grantId": "66666666-6666-4666-8666-666666666666",
+    "expiresAtMs": "18446744073709551615",
+    "unsandboxedExecution": true
+  },
+  "prepareCheck": {
+    "sessionToken": "session-fixture",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "buildAttemptId": "22222222-2222-4222-8222-222222222222",
+    "buildResultId": "44444444-4444-4444-8444-444444444444",
+    "attemptId": "33333333-3333-4333-8333-333333333333",
+    "build": {
+      "package": {
+        "plugin": {
+          "publisher": "example",
+          "id": "plain-text",
+          "version": "0.1.0"
+        },
+        "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "resourceId": "build-profile",
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0"
+    }
+  },
+  "checkReview": {
+    "attemptId": "33333333-3333-4333-8333-333333333333",
+    "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "buildAttemptId": "22222222-2222-4222-8222-222222222222",
+    "buildResultId": "44444444-4444-4444-8444-444444444444",
+    "locale": "zh-CN",
+    "artifacts": [
+      {
+        "id": "artifact-a",
+        "role": "output",
+        "logicalPath": "zh-CN/木桶 👩🏽‍💻.txt",
+        "byteLength": 27,
+        "sha256": "0bf1cbebdde11df1d1e1c561228abd8b2a1891bf5834f69ef518325ee0221bba"
+      },
+      {
+        "id": "artifact-b",
+        "role": "metadata",
+        "logicalPath": "zh-CN/metadata.txt",
+        "byteLength": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "requirements": [
+      {
+        "key": {
+          "rule": {
+            "id": "example.artifact-conformance",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "implementation": {
+            "kind": "plugin",
+            "provider": {
+              "plugin": {
+                "publisher": "example",
+                "id": "plain-text",
+                "version": "0.1.0"
+              },
+              "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "componentId": "worker",
+              "contributionId": "check-artifact"
+            }
+          }
+        },
+        "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "scopeDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "targets": [
+          "artifact-a",
+          "artifact-b"
+        ],
+        "mandatory": true,
+        "waivable": false,
+        "notApplicable": null
+      }
+    ],
+    "build": {
+      "settingsRevision": "1",
+      "resourceId": "build-profile",
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 1,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+      "runtimeOrigin": {
+        "sourceId": "application-bundle",
+        "publisherId": "application-build"
+      },
+      "declaration": {
+        "displayName": "Example text artifact",
+        "profile": {
+          "id": "example.plain-text",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "builder": "build",
+        "checker": "check-artifact",
+        "outputLimits": {
+          "maxArtifacts": 2,
+          "maxTotalBytes": 131072
+        },
+        "artifactRules": [
+          {
+            "id": "example.artifact-conformance",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        ]
+      },
+      "builder": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "build"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.build",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.build-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.artifact-set",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.build-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "checker": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "check-artifact"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.artifact-check",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.artifact-check-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.check-results",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.build-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    }
+  },
+  "startCheck": {
+    "sessionToken": "session-fixture",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "attemptId": "33333333-3333-4333-8333-333333333333",
+    "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "grantId": "77777777-7777-4777-8777-777777777777",
+    "expiresAtMs": "18446744073709551615",
+    "unsandboxedExecution": true
+  },
+  "finishCheck": {
+    "sessionToken": "session-fixture",
+    "projectId": "11111111-1111-4111-8111-111111111111",
+    "attemptId": "33333333-3333-4333-8333-333333333333",
+    "resultId": "88888888-8888-4888-8888-888888888888"
+  }
+}

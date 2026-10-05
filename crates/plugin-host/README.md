@@ -114,7 +114,7 @@ SDK build Resource from its immutable captured bytes, then binds both exact
 builder/checker declarations from that same manifest. It grants no execution or
 publication authority. The [SDK build contract](../plugin-sdk/docs/build.md)
 defines decided input, actual UTF-8 artifacts and complete independent check data;
-production desktop build execution is still pending.
+domain-package build migration and the desktop workbench are still being integrated.
 
 Desktop `read_plugin_build` resolves that declaration from the exact enabled
 installed package and independently approved installed runtime in one current
@@ -124,8 +124,25 @@ and origins. Source and build resolution share the same package/runtime owner
 and recheck the entire settings snapshot before returning. It runs no component,
 captures no project data and grants no execution or release authority. Fresh
 resolution rejects disabled or changed package/runtime decisions; previously
-captured bytes remain an immutable observation. Actual builder/checker dispatch,
-Core proof/release adoption and filesystem delivery require their own integration.
+captured bytes remain an immutable observation.
+
+Desktop `prepare_plugin_build` freezes eligible project input with explicit
+locale/output/configuration choices and the exact installed environment. It
+grants no execution. `start_plugin_build` requires explicit acknowledgement of
+the unsandboxed process and a grant for that exact attempt/input/expiry. Preparing
+an artifact check captures a saved builder result and all its actual outputs;
+`start_artifact_check` requires its own consent and grant. Builder grants cannot
+authorize the checker. Both starts freshly resolve the approved package/runtime
+and use the existing RunnerProxy and Core execution ledger. Source and build
+requests share one bounded session registration owner.
+
+`finish_artifact_check` computes the fixed required-check proof outside the
+project queue, then commits through Core's existing validation owner. Only the
+complete proved locale set can be adopted by the existing Release handler.
+Original retries do not renew grants; cancelled preparation and closed sessions
+reject late continuations. Execution cancellation uses the existing task control.
+These backend commands and generated adapters do not complete the native build
+workbench, default domain bundles or generic filesystem delivery integration.
 
 `catalog::PackageCatalog` records at most 128 captured package versions. Its
 `PackageApproval` comes from independently verified metadata or explicit local
