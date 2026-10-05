@@ -16,6 +16,9 @@ pub const MAX_INSTALLED_PACKAGES: usize = 128;
 pub const MAX_INSTALLED_RUNTIMES: usize = 128;
 const RECEIPT_VERSION: u32 = 1;
 const MAX_RECEIPT_BYTES: usize = 4096;
+mod settings;
+use settings::MAX_SETTINGS_BYTES;
+pub use settings::{ApprovedPackageSetting, PluginSettings, PluginSettingsUpdate};
 
 /// Static classifications deliberately omit filesystem paths and OS messages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +30,8 @@ pub enum InstallError {
     StoreChanged,
     CorruptStore,
     CorruptReceipt,
+    CorruptSettings,
+    RevisionConflict,
     MissingPackage,
     MissingRuntime,
     /// A verified promoted object still has its private writable wrapper.
@@ -255,6 +260,45 @@ impl fmt::Debug for PackageStore {
 }
 
 impl PackageStore {
+    /// Read local trusted application decisions without loading or activating
+    /// code. Only a missing settings file produces empty revision-zero state;
+    /// invalid settings are refused and preserved.
+    pub fn settings(&self, authorized: impl Fn() -> bool) -> InstallResult<PluginSettings> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.settings(&authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = authorized;
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
+    /// Save a complete, independently trusted desired state with revision CAS.
+    /// Retain expected_revision, action_id and update after UnknownCommit; read
+    /// current settings before retrying that same intent. An exact last-action
+    /// retry confirms file/root durability without advancing the revision again.
+    /// This does not derive approval from receipts or issue execution grants.
+    pub fn update_settings(
+        &mut self,
+        expected_revision: u64,
+        action_id: &str,
+        update: &PluginSettingsUpdate,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<PluginSettings> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner
+                .update_settings(expected_revision, action_id, update, &authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (expected_revision, action_id, update, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
     /// Inspect at most 128 packages and 128 runtime environments on a blocking
     /// worker, with the existing sixty-second observed IO deadline. Strict
     /// receipts, package manifest identity and readonly tree metadata are
@@ -477,6 +521,10 @@ mod platform {
         Seal,
         ObjectsSync,
         RootSync,
+        SettingsCandidateSync,
+        SettingsFileSync,
+        SettingsRootSync,
+        SettingsConfirmation,
     }
 
     pub(super) struct Store {
@@ -491,6 +539,12 @@ mod platform {
         runtimes_id: (u64, u64),
         #[cfg(test)]
         fail_commit_checkpoint: Option<CommitCheckpoint>,
+    }
+
+    struct SettingsSnapshot {
+        settings: PluginSettings,
+        file: Option<File>,
+        stamp: Option<Stamp>,
     }
 
     struct Object {
@@ -653,29 +707,16 @@ mod platform {
     #[derive(Default)]
     struct PackageReceiptIndex {
         actions: BTreeSet<String>,
-        plugins: BTreeSet<PluginIdentity>,
-        origins: BTreeMap<String, (String, String, String)>,
+        approvals: crate::catalog::PackageApprovalIndex,
     }
     impl PackageReceiptIndex {
         fn insert(&mut self, receipt: &InstallReceipt) -> InstallResult<()> {
-            if !self.actions.insert(receipt.action_id.clone())
-                || !self.plugins.insert(receipt.plugin.clone())
-            {
+            if !self.actions.insert(receipt.action_id.clone()) {
                 return Err(InstallError::CorruptStore);
             }
-            let origin = (
-                receipt.origin.source_id.clone(),
-                receipt.origin.publisher_id.clone(),
-                receipt.plugin.publisher.clone(),
-            );
-            if self
-                .origins
-                .insert(receipt.plugin.id.clone(), origin.clone())
-                .is_some_and(|old| old != origin)
-            {
-                return Err(InstallError::CorruptStore);
-            }
-            Ok(())
+            self.approvals
+                .insert(&receipt.approval())
+                .map_err(|_| InstallError::CorruptStore)
         }
     }
 
@@ -737,6 +778,281 @@ mod platform {
     }
 
     impl Store {
+        const SETTINGS_FILE: &'static str = "settings.json";
+
+        fn optional_settings_file(&self) -> InstallResult<Option<File>> {
+            filesystem::open_optional_file(&self.root, OsStr::new(Self::SETTINGS_FILE)).map_err(
+                |error| match error.raw_os_error() {
+                    Some(libc::EIO) | Some(libc::EMFILE) | Some(libc::ENFILE) => InstallError::Io,
+                    _ => InstallError::CorruptSettings,
+                },
+            )
+        }
+
+        fn settings_snapshot(
+            &self,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<SettingsSnapshot> {
+            self.check(authorized)?;
+            let root_before = Stamp::from(&metadata(&self.root)?);
+            let file = self.optional_settings_file()?;
+            let (settings, stamp) = if let Some(file) = &file {
+                let stamp = Stamp::from(&metadata(file)?);
+                let bytes = read_immutable(file, MAX_SETTINGS_BYTES, InstallError::CorruptSettings)
+                    .map_err(|error| {
+                        if error == InstallError::CorruptStore {
+                            InstallError::CorruptSettings
+                        } else {
+                            error
+                        }
+                    })?;
+                let settings: PluginSettings =
+                    serde_json::from_slice(&bytes).map_err(|_| InstallError::CorruptSettings)?;
+                settings.validate_persisted()?;
+                (settings, Some(stamp))
+            } else {
+                (PluginSettings::default(), None)
+            };
+            let snapshot = SettingsSnapshot {
+                settings,
+                file,
+                stamp,
+            };
+            self.check_settings_snapshot(&snapshot, authorized)?;
+            unchanged(&self.root, &root_before)?;
+            Ok(snapshot)
+        }
+
+        fn check_settings_snapshot(
+            &self,
+            snapshot: &SettingsSnapshot,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.check(authorized)?;
+            same_root(&self.path, self.root_id)?;
+            match (&snapshot.file, &snapshot.stamp) {
+                (Some(file), Some(stamp)) => {
+                    same_file(
+                        &self.root,
+                        OsStr::new(Self::SETTINGS_FILE),
+                        false,
+                        filesystem::identity(file)?,
+                    )?;
+                    private(file, false, 0o400)?;
+                    unchanged(file, stamp)
+                }
+                (None, None) => {
+                    if self
+                        .optional_settings_file()
+                        .map_err(|_| InstallError::StoreChanged)?
+                        .is_some()
+                    {
+                        return Err(InstallError::StoreChanged);
+                    }
+                    Ok(())
+                }
+                _ => Err(InstallError::CorruptSettings),
+            }
+        }
+
+        pub(super) fn settings(
+            &self,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<PluginSettings> {
+            let guard = OperationGuard::new(authorized);
+            guard.finish(
+                self.settings_snapshot(&|| guard.allowed())
+                    .map(|snapshot| snapshot.settings),
+            )
+        }
+
+        fn confirm_settings_file(
+            &self,
+            file: &File,
+            stamp: &Stamp,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            let check = || -> InstallResult<()> {
+                self.check(authorized)?;
+                same_root(&self.path, self.root_id)?;
+                same_file(
+                    &self.root,
+                    OsStr::new(Self::SETTINGS_FILE),
+                    false,
+                    filesystem::identity(file)?,
+                )?;
+                private(file, false, 0o400)?;
+                unchanged(file, stamp)
+            };
+            check()?;
+            #[cfg(test)]
+            if self.fail_commit_checkpoint == Some(CommitCheckpoint::SettingsFileSync) {
+                return Err(InstallError::Io);
+            }
+            sync(file)?;
+            check()?;
+            #[cfg(test)]
+            if self.fail_commit_checkpoint == Some(CommitCheckpoint::SettingsRootSync) {
+                return Err(InstallError::Io);
+            }
+            sync(&self.root)?;
+            check()?;
+            #[cfg(test)]
+            if self.fail_commit_checkpoint == Some(CommitCheckpoint::SettingsConfirmation) {
+                return Err(InstallError::Io);
+            }
+            Ok(())
+        }
+
+        pub(super) fn update_settings(
+            &mut self,
+            expected_revision: u64,
+            action: &str,
+            update: &PluginSettingsUpdate,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<PluginSettings> {
+            let guard = OperationGuard::new(authorized);
+            guard.finish(
+                self.update_settings_inner(expected_revision, action, update, &|| guard.allowed()),
+            )
+        }
+
+        fn update_settings_inner(
+            &mut self,
+            expected_revision: u64,
+            action: &str,
+            update: &PluginSettingsUpdate,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<PluginSettings> {
+            self.check(authorized)?;
+            let desired = PluginSettings::next(expected_revision, action, update)?;
+            let bytes = serde_json::to_vec(&desired).map_err(|_| InstallError::CorruptSettings)?;
+            if bytes.len() > MAX_SETTINGS_BYTES {
+                return Err(InstallError::LimitExceeded);
+            }
+            let current = self.settings_snapshot(authorized)?;
+            if current.settings.action_id() == Some(action) {
+                if current.settings != desired {
+                    return Err(InstallError::ActionConflict);
+                }
+                let file = current.file.as_ref().ok_or(InstallError::CorruptSettings)?;
+                let stamp = current
+                    .stamp
+                    .as_ref()
+                    .ok_or(InstallError::CorruptSettings)?;
+                self.confirm_settings_file(file, stamp, authorized)
+                    .map_err(|_| InstallError::UnknownCommit)?;
+                return Ok(current.settings);
+            }
+            if current.settings.revision() != expected_revision {
+                return Err(InstallError::RevisionConflict);
+            }
+            self.check_settings_snapshot(&current, authorized)?;
+            let candidate = format!(".settings-candidate-{}", uuid::Uuid::new_v4());
+            let file = new_file(&self.root, OsStr::new(&candidate))?;
+            let candidate_id = filesystem::identity(&file)?;
+            let check_candidate = |mode| -> InstallResult<()> {
+                self.check(authorized)?;
+                same_root(&self.path, self.root_id)?;
+                same_file(&self.root, OsStr::new(&candidate), false, candidate_id)?;
+                private(&file, false, mode)
+            };
+            // Before promotion, failure retains only this private candidate.
+            // No cleanup guesses whether an unknown candidate belongs to us.
+            for chunk in bytes.chunks(64 * 1024) {
+                // The descriptor write follows a fresh name/ownership check.
+                self.check(authorized)?;
+                same_file(&self.root, OsStr::new(&candidate), false, candidate_id)?;
+                private(&file, false, 0o600)?;
+                (&file).write_all(chunk).map_err(|_| InstallError::Io)?;
+            }
+            let written_stamp = Stamp::from(&metadata(&file)?);
+            check_candidate(0o600)?;
+            unchanged(&file, &written_stamp)?;
+            chmod(&file, 0o400)?;
+            let stamp = Stamp::from(&metadata(&file)?);
+            #[cfg(test)]
+            if self.fail_commit_checkpoint == Some(CommitCheckpoint::SettingsCandidateSync) {
+                return Err(InstallError::Io);
+            }
+            sync(&file)?;
+            check_candidate(0o400)?;
+            unchanged(&file, &stamp)?;
+            let candidate_read = filesystem::open_child(&self.root, OsStr::new(&candidate), false)?;
+            if read_immutable(
+                &candidate_read,
+                MAX_SETTINGS_BYTES,
+                InstallError::CorruptSettings,
+            )? != bytes
+            {
+                return Err(InstallError::StoreChanged);
+            }
+            same_file(&self.root, OsStr::new(&candidate), false, candidate_id)?;
+            unchanged(&file, &stamp)?;
+            self.check_settings_snapshot(&current, authorized)?;
+            // Both checks follow the last guard before atomic namespace change.
+            same_file(&self.root, OsStr::new(&candidate), false, candidate_id)?;
+            unchanged(&file, &stamp)?;
+            if current.file.is_some() {
+                filesystem::replace_file(
+                    &self.root,
+                    OsStr::new(&candidate),
+                    OsStr::new(Self::SETTINGS_FILE),
+                )
+                .map_err(|error| {
+                    if error.raw_os_error() == Some(libc::EIO) {
+                        InstallError::UnknownCommit
+                    } else {
+                        InstallError::Io
+                    }
+                })?;
+            } else {
+                promote(
+                    &self.root,
+                    OsStr::new(&candidate),
+                    &self.root,
+                    OsStr::new(Self::SETTINGS_FILE),
+                )
+                .map_err(|error| {
+                    if error == InstallError::ActionConflict {
+                        InstallError::StoreChanged
+                    } else {
+                        error
+                    }
+                })?;
+            }
+            // Promotion may change ctime. Establish its post-rename stamp only
+            // after the intended bytes, mode and name are checked again.
+            let confirmed = (|| -> InstallResult<()> {
+                same_file(
+                    &self.root,
+                    OsStr::new(Self::SETTINGS_FILE),
+                    false,
+                    candidate_id,
+                )?;
+                private(&file, false, 0o400)?;
+                let stamp = Stamp::from(&metadata(&file)?);
+                let reopened = self
+                    .optional_settings_file()?
+                    .ok_or(InstallError::StoreChanged)?;
+                if read_immutable(&reopened, MAX_SETTINGS_BYTES, InstallError::CorruptSettings)?
+                    != bytes
+                {
+                    return Err(InstallError::StoreChanged);
+                }
+                unchanged(&file, &stamp)?;
+                same_file(
+                    &self.root,
+                    OsStr::new(Self::SETTINGS_FILE),
+                    false,
+                    candidate_id,
+                )?;
+                self.confirm_settings_file(&file, &stamp, authorized)
+            })();
+            confirmed.map_err(|_| InstallError::UnknownCommit)?;
+            Ok(desired)
+        }
+
         pub(super) fn inventory(
             &self,
             authorized: &impl Fn() -> bool,
@@ -2609,6 +2925,123 @@ mod platform {
                     fs::read_dir(root.0.path().join("objects")).unwrap().count(),
                     1
                 );
+            }
+        }
+
+        #[test]
+        fn settings_commit_checkpoints_reconcile_the_same_intent_after_reopen() {
+            for existing in [false, true] {
+                for checkpoint in [
+                    CommitCheckpoint::SettingsCandidateSync,
+                    CommitCheckpoint::SettingsFileSync,
+                    CommitCheckpoint::SettingsRootSync,
+                    CommitCheckpoint::SettingsConfirmation,
+                ] {
+                    let root = OwnedRoot(
+                        tempfile::Builder::new()
+                            .permissions(fs::Permissions::from_mode(0o700))
+                            .tempdir()
+                            .unwrap(),
+                    );
+                    let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                    let old_action = "00000000-0000-4000-8000-000000000001";
+                    let action = "00000000-0000-4000-8000-000000000002";
+                    let approval = PackageApproval {
+                        plugin: sdk::PluginIdentity {
+                            publisher: "example".into(),
+                            id: "example.resource".into(),
+                            version: "0.1.0".into(),
+                        },
+                        package_digest: "a".repeat(64),
+                        origin: PackageOrigin {
+                            source_id: "approved-source".into(),
+                            publisher_id: "approved-key".into(),
+                        },
+                    };
+                    let mut update = PluginSettingsUpdate {
+                        packages: vec![ApprovedPackageSetting {
+                            approval,
+                            enabled: false,
+                        }],
+                        runtimes: vec![],
+                    };
+                    let expected = if existing {
+                        store
+                            .update_settings(0, old_action, &update, || true)
+                            .unwrap()
+                            .revision()
+                    } else {
+                        0
+                    };
+                    let old = store.settings(|| true).unwrap();
+                    update.packages[0].enabled = true;
+                    store.inner.fail_commit_checkpoint = Some(checkpoint);
+                    let error = store
+                        .update_settings(expected, action, &update, || true)
+                        .unwrap_err();
+                    let visible = store.settings(|| true).unwrap();
+                    let before_promotion = checkpoint == CommitCheckpoint::SettingsCandidateSync;
+                    if before_promotion {
+                        assert_eq!(error, InstallError::Io);
+                        assert_eq!(visible, old);
+                    } else {
+                        assert_eq!(error, InstallError::UnknownCommit);
+                        assert_eq!(visible.revision(), expected + 1);
+                        assert!(visible.packages()[0].enabled);
+                        assert_eq!(
+                            store
+                                .update_settings(expected, action, &update, || true)
+                                .unwrap_err(),
+                            InstallError::UnknownCommit
+                        );
+                        let mut changed = update.clone();
+                        changed.packages[0].enabled = false;
+                        assert_eq!(
+                            store
+                                .update_settings(expected, action, &changed, || true)
+                                .unwrap_err(),
+                            InstallError::ActionConflict
+                        );
+                    }
+                    drop(store);
+                    let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                    let recovered = store
+                        .update_settings(expected, action, &update, || true)
+                        .unwrap();
+                    assert_eq!(recovered.revision(), expected + 1);
+                    assert!(recovered.packages()[0].enabled);
+                    assert_eq!(store.settings(|| true).unwrap(), recovered);
+                    let bytes = fs::read(root.0.path().join("settings.json")).unwrap();
+                    assert_eq!(
+                        store
+                            .update_settings(expected, action, &update, || true)
+                            .unwrap(),
+                        recovered
+                    );
+                    assert_eq!(
+                        fs::read(root.0.path().join("settings.json")).unwrap(),
+                        bytes
+                    );
+                    assert_eq!(
+                        fs::metadata(root.0.path().join("settings.json"))
+                            .unwrap()
+                            .permissions()
+                            .mode()
+                            & 0o7777,
+                        0o400
+                    );
+                    let candidates = fs::read_dir(root.0.path())
+                        .unwrap()
+                        .flatten()
+                        .filter(|entry| {
+                            entry
+                                .file_name()
+                                .to_string_lossy()
+                                .starts_with(".settings-candidate-")
+                        })
+                        .count();
+                    assert_eq!(candidates, usize::from(before_promotion));
+                }
             }
         }
     }

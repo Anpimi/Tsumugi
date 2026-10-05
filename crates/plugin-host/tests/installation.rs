@@ -1436,3 +1436,564 @@ fn inventory_rejects_namespace_insertion_at_the_final_live_check() {
         assert!(root.candidates().is_empty());
     }
 }
+
+fn settings_update(
+    approval: &PackageApproval,
+    enabled: bool,
+) -> tsumugi_plugin_host::PluginSettingsUpdate {
+    tsumugi_plugin_host::PluginSettingsUpdate {
+        packages: vec![tsumugi_plugin_host::ApprovedPackageSetting {
+            approval: approval.clone(),
+            enabled,
+        }],
+        runtimes: vec![],
+    }
+}
+
+fn settings_candidates(root: &OwnedRoot) -> Vec<PathBuf> {
+    fs::read_dir(&root.root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(".settings-candidate-")
+        })
+        .collect()
+}
+
+#[test]
+fn settings_are_empty_until_an_independent_decision_and_reopen_exact_disabled_versions() {
+    let root = OwnedRoot::new();
+    let (old, old_approval) = basic();
+    let (new, new_approval) = fixture("example.resource", "0.2.0", "new bytes", origin());
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    install(&mut store, &old, &old_approval, ACTION).unwrap();
+    install(&mut store, &new, &new_approval, OTHER_ACTION).unwrap();
+    let empty = store.settings(|| true).unwrap();
+    assert_eq!(empty.revision(), 0);
+    assert_eq!(empty.action_id(), None);
+    assert!(empty.packages().is_empty() && empty.runtimes().is_empty());
+    assert!(!root.root.join("settings.json").exists());
+    let mut update = settings_update(&new_approval, false);
+    update
+        .packages
+        .push(tsumugi_plugin_host::ApprovedPackageSetting {
+            approval: old_approval.clone(),
+            enabled: true,
+        });
+    let saved = store.update_settings(0, ACTION, &update, || true).unwrap();
+    assert_eq!(saved.revision(), 1);
+    assert_eq!(saved.action_id(), Some(ACTION));
+    assert_eq!(saved.packages().len(), 2);
+    assert_eq!(saved.packages()[0].approval, old_approval);
+    assert!(saved.packages()[0].enabled);
+    assert!(!saved.packages()[1].enabled);
+    assert!(!old.is_enabled(&old_approval.plugin).unwrap());
+    assert!(!new.is_enabled(&new_approval.plugin).unwrap());
+    assert_eq!(
+        fs::metadata(root.root.join("settings.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o400
+    );
+    assert!(settings_candidates(&root).is_empty());
+    drop(store);
+    let store = PackageStore::open_existing(&root.root).unwrap();
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    // Settings retention itself neither captures bytes nor changes either catalog.
+    assert_eq!(
+        store
+            .load(&old_approval, || true)
+            .unwrap()
+            .receipt()
+            .action_id(),
+        ACTION
+    );
+    assert!(!old.is_enabled(&old_approval.plugin).unwrap());
+}
+
+#[test]
+fn settings_revision_cas_and_exact_retry_preserve_newer_decisions() {
+    let root = OwnedRoot::new();
+    let (_, approval) = basic();
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    let enabled = settings_update(&approval, true);
+    let first = store.update_settings(0, ACTION, &enabled, || true).unwrap();
+    let first_bytes = fs::read(root.root.join("settings.json")).unwrap();
+    assert_eq!(
+        store.update_settings(0, ACTION, &enabled, || true).unwrap(),
+        first
+    );
+    assert_eq!(
+        fs::read(root.root.join("settings.json")).unwrap(),
+        first_bytes
+    );
+    assert_eq!(
+        store
+            .update_settings(0, ACTION, &settings_update(&approval, false), || true)
+            .unwrap_err(),
+        InstallError::ActionConflict
+    );
+    assert_eq!(
+        store
+            .update_settings(0, OTHER_ACTION, &enabled, || true)
+            .unwrap_err(),
+        InstallError::RevisionConflict
+    );
+    let second = store
+        .update_settings(1, OTHER_ACTION, &settings_update(&approval, false), || true)
+        .unwrap();
+    assert_eq!(second.revision(), 2);
+    assert!(!second.packages()[0].enabled);
+    let second_bytes = fs::read(root.root.join("settings.json")).unwrap();
+    assert_eq!(
+        store
+            .update_settings(0, ACTION, &enabled, || true)
+            .unwrap_err(),
+        InstallError::RevisionConflict
+    );
+    assert_eq!(store.settings(|| true).unwrap(), second);
+    assert_eq!(
+        fs::read(root.root.join("settings.json")).unwrap(),
+        second_bytes
+    );
+    assert!(settings_candidates(&root).is_empty());
+}
+
+#[test]
+fn settings_reject_invalid_and_conflicting_decisions_before_writing() {
+    for invalid in [
+        "action",
+        "revision-overflow",
+        "identity",
+        "version",
+        "digest",
+        "origin",
+        "duplicate",
+        "changed-digest",
+        "source",
+        "publisher",
+        "capacity",
+    ] {
+        let root = OwnedRoot::new();
+        let (_, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        let mut update = settings_update(&approval, false);
+        let mut second = approval.clone();
+        match invalid {
+            "identity" => update.packages[0].approval.plugin.id = "Invalid ID".into(),
+            "version" => update.packages[0].approval.plugin.version = "not-semver".into(),
+            "digest" => update.packages[0].approval.package_digest = "A".repeat(64),
+            "origin" => update.packages[0].approval.origin.source_id = "invalid origin".into(),
+            "duplicate" => update.packages.push(update.packages[0].clone()),
+            "changed-digest" => {
+                second.package_digest = "a".repeat(64);
+                update
+                    .packages
+                    .push(tsumugi_plugin_host::ApprovedPackageSetting {
+                        approval: second,
+                        enabled: true,
+                    });
+            }
+            "source" | "publisher" => {
+                second.plugin.version = "0.2.0".into();
+                if invalid == "source" {
+                    second.origin.source_id = "other-source".into();
+                } else {
+                    second.origin.publisher_id = "other-key".into();
+                }
+                update
+                    .packages
+                    .push(tsumugi_plugin_host::ApprovedPackageSetting {
+                        approval: second,
+                        enabled: true,
+                    });
+            }
+            "capacity" => {
+                update.packages = vec![update.packages[0].clone(); MAX_INSTALLED_PACKAGES + 1]
+            }
+            _ => (),
+        }
+        let action = if invalid == "action" {
+            "not-action"
+        } else {
+            ACTION
+        };
+        let expected = if invalid == "revision-overflow" {
+            u64::MAX
+        } else {
+            0
+        };
+        assert!(
+            store
+                .update_settings(expected, action, &update, || true)
+                .is_err(),
+            "{invalid}"
+        );
+        assert!(!root.root.join("settings.json").exists());
+        assert!(settings_candidates(&root).is_empty());
+        assert_eq!(store.settings(|| true).unwrap().revision(), 0);
+    }
+}
+
+#[test]
+fn malformed_settings_are_preserved_and_never_rebuilt_from_installation_receipts() {
+    for damage in [
+        "unknown",
+        "duplicate",
+        "version",
+        "zero-revision",
+        "missing-action",
+        "nested-unknown",
+        "enabled-missing",
+        "invalid-identity",
+        "oversized",
+    ] {
+        let root = OwnedRoot::new();
+        let (catalog, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        install(&mut store, &catalog, &approval, ACTION).unwrap();
+        let update = settings_update(&approval, false);
+        let settings = store.update_settings(0, ACTION, &update, || true).unwrap();
+        let original = serde_json::to_vec(&settings).unwrap();
+        let mut value = serde_json::to_value(&settings).unwrap();
+        let bytes = match damage {
+            "unknown" => {
+                value["grant"] = "synthetic".into();
+                serde_json::to_vec(&value).unwrap()
+            }
+            "duplicate" => {
+                let mut data = b"{\"revision\":1,".to_vec();
+                data.extend_from_slice(&original[1..]);
+                data
+            }
+            "version" => {
+                value["formatVersion"] = 2.into();
+                serde_json::to_vec(&value).unwrap()
+            }
+            "zero-revision" => {
+                value["revision"] = 0.into();
+                serde_json::to_vec(&value).unwrap()
+            }
+            "missing-action" => {
+                value.as_object_mut().unwrap().remove("actionId");
+                serde_json::to_vec(&value).unwrap()
+            }
+            "nested-unknown" => {
+                value["packages"][0]["approval"]["origin"]["credential"] = "synthetic".into();
+                serde_json::to_vec(&value).unwrap()
+            }
+            "enabled-missing" => {
+                value["packages"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("enabled");
+                serde_json::to_vec(&value).unwrap()
+            }
+            "invalid-identity" => {
+                value["packages"][0]["approval"]["plugin"]["id"] = "Invalid ID".into();
+                serde_json::to_vec(&value).unwrap()
+            }
+            "oversized" => vec![b' '; 1024 * 1024 + 1],
+            _ => unreachable!(),
+        };
+        let path = root.root.join("settings.json");
+        replace_receipt(&path, &bytes);
+        assert_eq!(
+            store.settings(|| true).unwrap_err(),
+            InstallError::CorruptSettings,
+            "{damage}"
+        );
+        assert_eq!(
+            store
+                .update_settings(1, OTHER_ACTION, &update, || true)
+                .unwrap_err(),
+            InstallError::CorruptSettings,
+            "{damage}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(store.inventory(|| true).unwrap().packages.len(), 1);
+        assert!(settings_candidates(&root).is_empty());
+    }
+}
+
+#[test]
+fn unsafe_settings_entries_are_errors_instead_of_empty_state_and_remain_untouched() {
+    for kind in [
+        "symlink",
+        "dangling-symlink",
+        "hardlink",
+        "writable",
+        "directory",
+        "fifo",
+    ] {
+        let root = OwnedRoot::new();
+        let (_, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        let update = settings_update(&approval, false);
+        let path = root.root.join("settings.json");
+        let target = root.directory.path().join("retained-settings");
+        if matches!(kind, "hardlink" | "writable") {
+            store.update_settings(0, ACTION, &update, || true).unwrap();
+        }
+        match kind {
+            "symlink" => {
+                fs::write(&target, b"retained fixture").unwrap();
+                symlink(&target, &path).unwrap();
+            }
+            "dangling-symlink" => symlink(&target, &path).unwrap(),
+            "hardlink" => fs::hard_link(&path, &target).unwrap(),
+            "writable" => mode(&path, 0o600),
+            "directory" => fs::create_dir(&path).unwrap(),
+            "fifo" => {
+                use std::os::unix::ffi::OsStrExt;
+                let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+            }
+            _ => unreachable!(),
+        }
+        assert!(store.settings(|| true).is_err(), "{kind}");
+        assert!(
+            store
+                .update_settings(0, OTHER_ACTION, &update, || true)
+                .is_err(),
+            "{kind}"
+        );
+        assert!(fs::symlink_metadata(&path).is_ok());
+        if kind == "symlink" {
+            assert_eq!(fs::read(&target).unwrap(), b"retained fixture");
+        }
+        assert!(settings_candidates(&root).is_empty());
+    }
+}
+
+#[test]
+fn settings_pre_promotion_revocation_preserves_old_snapshot_and_private_candidate() {
+    let root = OwnedRoot::new();
+    let (_, approval) = basic();
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    let first = store
+        .update_settings(0, ACTION, &settings_update(&approval, false), || true)
+        .unwrap();
+    assert_eq!(
+        store
+            .update_settings(1, OTHER_ACTION, &settings_update(&approval, true), || {
+                settings_candidates(&root).is_empty()
+            })
+            .unwrap_err(),
+        InstallError::AuthorityRevoked
+    );
+    assert_eq!(store.settings(|| true).unwrap(), first);
+    let candidates = settings_candidates(&root);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        fs::metadata(&candidates[0]).unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+    assert_eq!(
+        store
+            .update_settings(1, OTHER_ACTION, &settings_update(&approval, true), || true)
+            .unwrap()
+            .revision(),
+        2
+    );
+    assert!(candidates[0].exists());
+}
+
+#[test]
+fn settings_post_promotion_revocation_requires_exact_intent_reconciliation() {
+    let root = OwnedRoot::new();
+    let (_, approval) = basic();
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    let enabled = settings_update(&approval, true);
+    assert_eq!(
+        store
+            .update_settings(0, ACTION, &enabled, || !root
+                .root
+                .join("settings.json")
+                .exists())
+            .unwrap_err(),
+        InstallError::UnknownCommit
+    );
+    let visible = store.settings(|| true).unwrap();
+    assert_eq!(visible.revision(), 1);
+    assert!(visible.packages()[0].enabled);
+    assert_eq!(
+        store
+            .update_settings(0, OTHER_ACTION, &enabled, || true)
+            .unwrap_err(),
+        InstallError::RevisionConflict
+    );
+    assert_eq!(
+        store
+            .update_settings(0, ACTION, &settings_update(&approval, false), || true)
+            .unwrap_err(),
+        InstallError::ActionConflict
+    );
+    let before = fs::read(root.root.join("settings.json")).unwrap();
+    drop(store);
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    assert_eq!(
+        store.update_settings(0, ACTION, &enabled, || true).unwrap(),
+        visible
+    );
+    assert_eq!(fs::read(root.root.join("settings.json")).unwrap(), before);
+    assert!(settings_candidates(&root).is_empty());
+}
+
+#[test]
+fn settings_observed_replacement_during_candidate_write_is_preserved_and_rejected() {
+    for target in ["settings", "candidate", "root"] {
+        let root = OwnedRoot::new();
+        let (_, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        store
+            .update_settings(0, ACTION, &settings_update(&approval, false), || true)
+            .unwrap();
+        let moved = root.directory.path().join("retained-entry");
+        let changed = Cell::new(false);
+        let error = store
+            .update_settings(1, OTHER_ACTION, &settings_update(&approval, true), || {
+                let candidates = settings_candidates(&root);
+                if !changed.get() && !candidates.is_empty() {
+                    changed.set(true);
+                    let path = match target {
+                        "settings" => root.root.join("settings.json"),
+                        "candidate" => candidates[0].clone(),
+                        _ => root.root.clone(),
+                    };
+                    fs::rename(&path, &moved).unwrap();
+                    if target == "root" {
+                        fs::create_dir(&path).unwrap();
+                        mode(&path, 0o700);
+                    } else {
+                        fs::write(&path, b"concurrent fixture").unwrap();
+                        mode(&path, 0o400);
+                    }
+                }
+                true
+            })
+            .unwrap_err();
+        assert!(changed.get());
+        assert_eq!(error, InstallError::StoreChanged, "{target}");
+        assert!(moved.exists());
+        if target != "root" {
+            let path = if target == "settings" {
+                root.root.join("settings.json")
+            } else {
+                settings_candidates(&root)[0].clone()
+            };
+            assert_eq!(fs::read(path).unwrap(), b"concurrent fixture");
+        }
+    }
+}
+
+#[test]
+fn settings_accepts_128_distinct_package_decisions_and_preserves_them_when_129_is_refused() {
+    let root = OwnedRoot::new();
+    let (_, approval) = basic();
+    let mut update = tsumugi_plugin_host::PluginSettingsUpdate::default();
+    for index in 0..MAX_INSTALLED_PACKAGES {
+        let mut approval = approval.clone();
+        approval.plugin.version = format!("0.{index}.0");
+        approval.package_digest = format!("{:064x}", index + 1);
+        update
+            .packages
+            .push(tsumugi_plugin_host::ApprovedPackageSetting {
+                approval,
+                enabled: false,
+            });
+    }
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    let saved = store.update_settings(0, ACTION, &update, || true).unwrap();
+    assert_eq!(saved.packages().len(), MAX_INSTALLED_PACKAGES);
+    assert!(saved.packages().iter().all(|package| !package.enabled));
+    let bytes = fs::read(root.root.join("settings.json")).unwrap();
+    let mut excess = approval;
+    excess.plugin.version = "0.128.0".into();
+    update
+        .packages
+        .push(tsumugi_plugin_host::ApprovedPackageSetting {
+            approval: excess,
+            enabled: true,
+        });
+    assert_eq!(
+        store
+            .update_settings(1, OTHER_ACTION, &update, || true)
+            .unwrap_err(),
+        InstallError::LimitExceeded
+    );
+    assert_eq!(fs::read(root.root.join("settings.json")).unwrap(), bytes);
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    assert!(settings_candidates(&root).is_empty());
+}
+
+#[test]
+fn settings_candidate_bytes_changed_after_sealing_cannot_replace_the_old_state() {
+    let root = OwnedRoot::new();
+    let (_, approval) = basic();
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    let saved = store
+        .update_settings(0, ACTION, &settings_update(&approval, false), || true)
+        .unwrap();
+    let changed = Cell::new(false);
+    let error = store
+        .update_settings(1, OTHER_ACTION, &settings_update(&approval, true), || {
+            if !changed.get() {
+                for path in settings_candidates(&root) {
+                    if fs::metadata(&path).unwrap().permissions().mode() & 0o7777 == 0o400 {
+                        changed.set(true);
+                        replace_receipt(&path, b"concurrent fixture");
+                    }
+                }
+            }
+            true
+        })
+        .unwrap_err();
+    assert!(changed.get());
+    assert_eq!(error, InstallError::StoreChanged);
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    let candidates = settings_candidates(&root);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(fs::read(&candidates[0]).unwrap(), b"concurrent fixture");
+}
+
+#[test]
+fn settings_candidate_changed_after_write_is_rejected_before_replacing_the_old_snapshot() {
+    let root = OwnedRoot::new();
+    let (_, approval) = basic();
+    let mut store = PackageStore::open_existing(&root.root).unwrap();
+    let old = store
+        .update_settings(0, ACTION, &settings_update(&approval, false), || true)
+        .unwrap();
+    let old_bytes = fs::read(root.root.join("settings.json")).unwrap();
+    let changed = Cell::new(false);
+    let error = store
+        .update_settings(1, OTHER_ACTION, &settings_update(&approval, true), || {
+            if !changed.get() {
+                for path in settings_candidates(&root) {
+                    let info = fs::metadata(&path).unwrap();
+                    if info.len() > 0 && info.permissions().mode() & 0o7777 == 0o600 {
+                        changed.set(true);
+                        fs::write(&path, b"concurrent fixture").unwrap();
+                    }
+                }
+            }
+            true
+        })
+        .unwrap_err();
+    assert!(changed.get());
+    assert_eq!(error, InstallError::StoreChanged);
+    assert_eq!(
+        fs::read(root.root.join("settings.json")).unwrap(),
+        old_bytes
+    );
+    assert_eq!(store.settings(|| true).unwrap(), old);
+    let candidates = settings_candidates(&root);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(fs::read(&candidates[0]).unwrap(), b"concurrent fixture");
+}

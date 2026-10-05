@@ -10,6 +10,15 @@ pub struct PluginIdentity {
     pub version: String,
 }
 
+impl PluginIdentity {
+    /// Validate identity syntax only, without authenticating its publisher.
+    pub fn validate(&self) -> Result<(), crate::ContractError> {
+        crate::validation::name(&self.publisher, "plugin.publisher")?;
+        crate::validation::name(&self.id, "plugin.id")?;
+        crate::validation::version(&self.version)
+    }
+}
+
 /// Schema and behavior are separate exact-match compatibility identities.
 /// Matching JSON field types or a package SemVer is not behavioral compatibility.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

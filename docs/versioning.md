@@ -92,6 +92,15 @@ controls, trusted runtime distribution or a new release boundary. Metadata-only
 package/runtime inventory extends this same store without changing its layout,
 SDK/wire profile or schema 18. It does not persist approval or enablement, and
 there is no additional version bump or earlier development-format migration.
+Trusted application settings add a separate bounded decision file under the
+existing Store lock and filesystem owner, without changing installation receipts,
+SDK wire shapes or schema 18. Pure SDK identity/digest validation helpers expose
+existing syntax rules without changing declaration data. The experimental Host
+installation error enum adds `CorruptSettings` and `RevisionConflict`; exhaustive
+callers must handle those classifications. These APIs remain in the same
+undistributed application/SDK alpha.1 batch, with no further bump or historical
+format migration. They do not establish production Desktop controls or a new
+runtime distribution.
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
 

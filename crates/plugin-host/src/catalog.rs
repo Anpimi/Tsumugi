@@ -27,11 +27,62 @@ pub struct PackageOrigin {
 /// Independent expected values from verified metadata or explicit approval.
 /// Constructing this value does not verify signatures, TUF metadata, publisher
 /// identity or update freshness; that responsibility stays with its caller.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PackageApproval {
     pub plugin: sdk::PluginIdentity,
     pub package_digest: String,
     pub origin: PackageOrigin,
+}
+
+impl PackageApproval {
+    /// Syntax only. The application supplies independently trusted values;
+    /// validating this metadata does not authenticate or admit a package.
+    pub fn validate(&self) -> CatalogResult<()> {
+        validate_origin(&self.origin)?;
+        self.plugin
+            .validate()
+            .map_err(|error| CatalogError::Contract(error.code))?;
+        sdk::validate_package_digest(&self.package_digest)
+            .map_err(|error| CatalogError::Contract(error.code))
+    }
+}
+
+/// Shared metadata conflict policy for catalogs, installation indices and
+/// trusted application settings. It retains no executable bytes or authority.
+#[derive(Default)]
+pub(crate) struct PackageApprovalIndex {
+    plugins: BTreeMap<sdk::PluginIdentity, String>,
+    origins: BTreeMap<String, (String, String, String)>,
+}
+impl PackageApprovalIndex {
+    pub(crate) fn insert(&mut self, approval: &PackageApproval) -> CatalogResult<()> {
+        approval.validate()?;
+        let origin = (
+            approval.origin.source_id.clone(),
+            approval.origin.publisher_id.clone(),
+            approval.plugin.publisher.clone(),
+        );
+        if let Some(prior) = self.origins.get(&approval.plugin.id) {
+            if prior.0 != origin.0 {
+                return Err(CatalogError::SourceConflict);
+            }
+            if prior.1 != origin.1 || prior.2 != origin.2 {
+                return Err(CatalogError::PublisherConflict);
+            }
+        }
+        if let Some(digest) = self.plugins.get(&approval.plugin) {
+            return Err(if digest == &approval.package_digest {
+                CatalogError::DuplicatePackage
+            } else {
+                CatalogError::IdentityDigestConflict
+            });
+        }
+        self.origins.insert(approval.plugin.id.clone(), origin);
+        self.plugins
+            .insert(approval.plugin.clone(), approval.package_digest.clone());
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,27 +232,15 @@ impl PackageCatalog {
         if image.package_digest() != approval.package_digest {
             return Err(CatalogError::DigestMismatch);
         }
+        let mut index = PackageApprovalIndex::default();
         for entry in self.packages.values() {
-            if entry.package.plugin().id == plugin.id {
-                if entry.package.origin.source_id != approval.origin.source_id {
-                    return Err(CatalogError::SourceConflict);
-                }
-                if entry.package.origin.publisher_id != approval.origin.publisher_id
-                    || entry.package.plugin().publisher != plugin.publisher
-                {
-                    return Err(CatalogError::PublisherConflict);
-                }
-            }
+            index.insert(&PackageApproval {
+                plugin: entry.package.plugin().clone(),
+                package_digest: entry.package.package_digest().into(),
+                origin: entry.package.origin().clone(),
+            })?;
         }
-        if let Some(entry) = self.packages.get(plugin) {
-            return Err(
-                if entry.package.package_digest() == image.package_digest() {
-                    CatalogError::DuplicatePackage
-                } else {
-                    CatalogError::IdentityDigestConflict
-                },
-            );
-        }
+        index.insert(&approval)?;
         if self.packages.len() >= MAX_CATALOG_PACKAGES {
             return Err(CatalogError::LimitExceeded);
         }

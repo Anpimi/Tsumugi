@@ -890,3 +890,119 @@ fn stored_object_replacement_during_load_is_rejected_without_deleting_replacemen
     assert!(object.exists());
     assert!(moved.join("receipt.json").exists());
 }
+
+#[test]
+fn settings_retains_exact_runtime_approval_without_capture_or_activation() {
+    let fixture = Fixture::new();
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    let (_, package_approval) = package();
+    let mut second = fixture.approval.clone();
+    second.environment.tool_version = "26.10.1".into();
+    let update = tsumugi_plugin_host::PluginSettingsUpdate {
+        packages: vec![tsumugi_plugin_host::ApprovedPackageSetting {
+            approval: package_approval,
+            enabled: false,
+        }],
+        runtimes: vec![second.clone(), fixture.approval.clone()],
+    };
+    let saved = store.update_settings(0, ACTION, &update, || true).unwrap();
+    assert_eq!(saved.runtimes().len(), 2);
+    assert_eq!(
+        fs::read_dir(fixture.root.join("runtimes")).unwrap().count(),
+        0
+    );
+    assert_eq!(
+        fs::read_dir(fixture.root.join("objects")).unwrap().count(),
+        0
+    );
+    assert_eq!(
+        store.load_runtime(&fixture.approval, || true).unwrap_err(),
+        InstallError::MissingRuntime
+    );
+    drop(store);
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    store
+        .install_runtime(OTHER_ACTION, &fixture.runtime, &fixture.approval, || true)
+        .unwrap();
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    assert_eq!(
+        store
+            .load_runtime(&fixture.approval, || true)
+            .unwrap()
+            .runtime()
+            .descriptor(),
+        &fixture.approval.environment
+    );
+    let mut changed = fixture.approval.clone();
+    changed.origin.source_id = "other-source".into();
+    assert_eq!(
+        store.load_runtime(&changed, || true).unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+}
+
+#[test]
+fn settings_rejects_duplicate_invalid_and_excess_runtime_decisions_before_write() {
+    for invalid in [
+        "duplicate",
+        "invalid-origin",
+        "invalid-descriptor",
+        "capacity",
+    ] {
+        let fixture = Fixture::new();
+        let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+        let mut update = tsumugi_plugin_host::PluginSettingsUpdate {
+            packages: vec![],
+            runtimes: vec![fixture.approval.clone()],
+        };
+        match invalid {
+            "duplicate" => update.runtimes.push(fixture.approval.clone()),
+            "invalid-origin" => update.runtimes[0].origin.source_id = "invalid origin".into(),
+            "invalid-descriptor" => {
+                update.runtimes[0].environment.tool.tree_digest = "invalid digest".into()
+            }
+            "capacity" => {
+                update.runtimes = vec![fixture.approval.clone(); MAX_INSTALLED_RUNTIMES + 1]
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            store.update_settings(0, ACTION, &update, || true).is_err(),
+            "{invalid}"
+        );
+        assert!(!fixture.root.join("settings.json").exists());
+        assert!(fixture.candidates().is_empty());
+        assert_eq!(store.settings(|| true).unwrap().revision(), 0);
+    }
+}
+
+#[test]
+fn settings_accepts_128_distinct_environments_without_loading_them() {
+    let fixture = Fixture::new();
+    let mut update = tsumugi_plugin_host::PluginSettingsUpdate::default();
+    for index in 0..MAX_INSTALLED_RUNTIMES {
+        let mut approval = fixture.approval.clone();
+        approval.environment.tool_version = format!("26.10.{index}");
+        update.runtimes.push(approval);
+    }
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    let saved = store.update_settings(0, ACTION, &update, || true).unwrap();
+    assert_eq!(saved.runtimes().len(), MAX_INSTALLED_RUNTIMES);
+    assert_eq!(
+        fs::read_dir(fixture.root.join("runtimes")).unwrap().count(),
+        0
+    );
+    let bytes = fs::read(fixture.root.join("settings.json")).unwrap();
+    let mut extra = fixture.approval.clone();
+    extra.environment.tool_version = "26.10.128".into();
+    update.runtimes.push(extra);
+    assert_eq!(
+        store
+            .update_settings(1, OTHER_ACTION, &update, || true)
+            .unwrap_err(),
+        InstallError::LimitExceeded
+    );
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    assert_eq!(fs::read(fixture.root.join("settings.json")).unwrap(), bytes);
+}

@@ -13,10 +13,10 @@ mod session;
 mod staging;
 mod tree;
 pub use package::installation::{
-    InstallError, InstallReceipt, InstallResult, InstalledInventory, InstalledObjectState,
-    InstalledPackage, InstalledPackageRecord, InstalledRuntime, InstalledRuntimeRecord,
-    MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, PackageStore, RuntimeApproval,
-    RuntimeInstallReceipt,
+    ApprovedPackageSetting, InstallError, InstallReceipt, InstallResult, InstalledInventory,
+    InstalledObjectState, InstalledPackage, InstalledPackageRecord, InstalledRuntime,
+    InstalledRuntimeRecord, MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, PackageStore,
+    PluginSettings, PluginSettingsUpdate, RuntimeApproval, RuntimeInstallReceipt,
 };
 pub use package::{PackageFile, PackageImage, PackageInspection};
 pub use runtime::CapturedRuntime;

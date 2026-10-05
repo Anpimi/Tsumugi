@@ -78,8 +78,9 @@ pub(crate) fn remove_child(parent: &File, name: &OsStr, directory: bool) -> io::
     Ok(())
 }
 
-pub(crate) fn open_entry(parent: &File, name: &OsStr) -> HostResult<File> {
-    let name = CString::new(name.as_bytes()).map_err(|_| HostError::PackagePath)?;
+fn open_readonly(parent: &File, name: &OsStr) -> io::Result<File> {
+    let name =
+        CString::new(name.as_bytes()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
     // The parent and C string remain live. Success transfers fd ownership.
     // NONBLOCK and NOCTTY keep rejected special files from waiting or taking
     // ownership of a terminal before their actual type can be checked.
@@ -91,9 +92,46 @@ pub(crate) fn open_entry(parent: &File, name: &OsStr) -> HostResult<File> {
         )
     };
     if descriptor < 0 {
-        return Err(HostError::PackagePath);
+        return Err(io::Error::last_os_error());
     }
-    let file = unsafe { File::from_raw_fd(descriptor) };
+    Ok(unsafe { File::from_raw_fd(descriptor) })
+}
+
+/// Only ENOENT is absence. Unsafe entries and other IO failures are errors.
+pub(crate) fn open_optional_file(parent: &File, name: &OsStr) -> io::Result<Option<File>> {
+    child_name(name)?;
+    let file = match open_readonly(parent, name) {
+        Ok(file) => file,
+        Err(error) if error.raw_os_error() == Some(libc::ENOENT) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::from(io::ErrorKind::InvalidData));
+    }
+    Ok(Some(file))
+}
+
+/// Atomic namespace replacement under one held application-owned directory.
+/// The caller checks the old entry and its candidate immediately beforehand.
+pub(crate) fn replace_file(parent: &File, source: &OsStr, destination: &OsStr) -> io::Result<()> {
+    let source = child_name(source)?;
+    let destination = child_name(destination)?;
+    if unsafe {
+        libc::renameat(
+            parent.as_raw_fd(),
+            source.as_ptr(),
+            parent.as_raw_fd(),
+            destination.as_ptr(),
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+pub(crate) fn open_entry(parent: &File, name: &OsStr) -> HostResult<File> {
+    let file = open_readonly(parent, name).map_err(|_| HostError::PackagePath)?;
     let metadata = file.metadata().map_err(|_| HostError::CaptureFailed)?;
     if !metadata.is_dir() && !metadata.is_file() {
         return Err(HostError::PackagePath);

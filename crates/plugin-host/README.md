@@ -156,6 +156,46 @@ admission. Inventory creates no approval, enablement, process or Core grant.
 Like the other store APIs, it belongs on a blocking worker and is not an OS
 sandbox against software running as the same user.
 
+`PackageStore::settings` reads bounded local application decisions separately
+from installation receipts. Only an absent `settings.json` returns revision 0
+with no package/runtime approvals. Existing files must be private, regular,
+unlinked mode `0400`, at most 1 MiB, strictly decoded and semantically valid.
+Malformed, unsafe or changed settings are refused and preserved; they are never
+reconstructed from inventory. Each snapshot contains at most 128 independently
+approved package versions with exact `enabled` flags and 128 approved runtime
+environments. Same-source package versions coexist; duplicate identities and
+conflicting sources/publishers are rejected through the catalog's shared policy.
+
+The trusted application supplies `PluginSettingsUpdate` after independently
+verifying application metadata or receiving an explicit human decision. It must
+not convert a receipt or a digest match into approval. Runtime descriptors,
+package identity and digest syntax share SDK validation; origin identifiers use
+the catalog owner. These settings contain no execution grant, project session,
+channel token or credentials. Reading or saving them does not load code, enable
+an in-memory catalog, activate a component or restore a Core permit.
+
+`update_settings` takes an expected revision, a canonical action UUID and the
+complete desired state. It normalizes exact records before saving, refuses stale
+revisions without writes and advances the revision once. Settings action IDs
+identify settings intents, separately from installation receipts. Keep the
+expected revision, action ID and complete intended update until its outcome is
+confirmed. A retry matching the last action and exact normalized snapshot
+rechecks file and parent-directory durability without another revision change;
+a changed retry is refused. Once a newer decision is saved, an old intent cannot
+silently overwrite it.
+
+The same store lock, held root descriptor, live guard and observed 60-second
+IO deadline govern settings. A private exclusive candidate is fully written,
+checked against intended bytes, sealed and synchronized before atomic
+promotion/replacement. The settings file and root directory must then synchronize
+and retain their bindings. A failure after namespace replacement is
+`UnknownCommit`, even if the new values can be read. Re-read current settings and
+reconcile the same intended update rather than issuing a fresh action blindly.
+Pre-promotion failure preserves the old snapshot and its private candidate;
+unknown candidates are not deleted. This cooperative CAS is not protection
+against malicious software running as the same user. Desktop decision controls
+and execution consent remain separate integration work.
+
 Installation accepts an already approved `RegisteredPackage` and a canonical
 non-nil UUID action. It writes captured bytes into a private candidate, synchronizes
 files and nested directories, then promotes the whole object exclusively under

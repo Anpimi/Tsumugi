@@ -72,6 +72,11 @@ pub fn validate_package_path(value: &str) -> Result<(), ContractError> {
     validation::path(value, "package.path")
 }
 
+/// Validate a lowercase SHA-256 value, without inspecting or approving bytes.
+pub fn validate_package_digest(value: &str) -> Result<(), ContractError> {
+    validation::digest(value, "package.digest")
+}
+
 #[cfg(feature = "schema")]
 pub fn process_schema() -> schemars::Schema {
     schemars::schema_for!(ProcessFrame)

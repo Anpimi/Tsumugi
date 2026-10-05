@@ -355,3 +355,35 @@ fn overlapping_providers_require_explicit_choice_and_collection_keeps_provenance
         ContractErrorCode::DuplicateIdentity
     );
 }
+
+#[test]
+fn standalone_approval_identity_and_digest_syntax_uses_the_sdk_contract() {
+    let plugin = parse_manifest(SMAPI).unwrap().manifest().plugin.clone();
+    plugin.validate().unwrap();
+    for field in ["publisher", "id", "version"] {
+        let mut invalid = plugin.clone();
+        match field {
+            "publisher" => invalid.publisher = "Invalid Publisher".into(),
+            "id" => invalid.id = "invalid//name".into(),
+            "version" => invalid.version = "not-semver".into(),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            invalid.validate().unwrap_err().code,
+            ContractErrorCode::InvalidDeclaration,
+            "{field}"
+        );
+    }
+    validate_package_digest(&"a".repeat(64)).unwrap();
+    for digest in [
+        "A".repeat(64),
+        "g".repeat(64),
+        "a".repeat(63),
+        "a".repeat(65),
+    ] {
+        assert_eq!(
+            validate_package_digest(&digest).unwrap_err().code,
+            ContractErrorCode::InvalidDeclaration
+        );
+    }
+}
