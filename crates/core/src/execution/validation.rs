@@ -6,7 +6,9 @@ pub(crate) fn requires_semantic_check(input: &FixedInput) -> bool {
     input.envelope().plugin.is_some()
         && matches!(
             input.envelope().operation.as_str(),
-            crate::content::OPERATION | crate::content::BUILD_OPERATION
+            crate::content::OPERATION
+                | crate::content::BUILD_OPERATION
+                | crate::content::TRANSLATION_EXTRACTION_OPERATION
         )
 }
 
@@ -120,6 +122,16 @@ pub struct PreparedResultValidation {
     pub(crate) proof: ValidationProof,
 }
 impl ResultValidationCapture {
+    pub fn prepare_translation_check(
+        self,
+        attempt: ExecutionId,
+    ) -> Result<TranslationValidationCapture, ExecutionError> {
+        let mut capture = TranslationValidationCapture::capture(self)?;
+        let mut envelope = capture.check_input().envelope().clone();
+        envelope.attempt_id = attempt;
+        capture.set_check_input(FixedInput::capture(envelope)?);
+        Ok(capture)
+    }
     /// Capture actual artifacts and the independently fixed checker policy on a
     /// computation worker. Submission still requires a separate current grant.
     pub fn prepare_artifact_check(
@@ -155,10 +167,12 @@ impl ResultValidationCapture {
         if requires_semantic_check(&self.input) {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
-                if self.input.envelope().operation == crate::content::OPERATION {
-                    "source-semantic-check-required"
-                } else {
-                    "artifact-semantic-check-required"
+                match self.input.envelope().operation.as_str() {
+                    crate::content::OPERATION => "source-semantic-check-required",
+                    crate::content::TRANSLATION_EXTRACTION_OPERATION => {
+                        "translation-semantic-check-required"
+                    }
+                    _ => "artifact-semantic-check-required",
                 },
             ));
         }

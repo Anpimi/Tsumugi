@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental Core translation extraction now checks the current source set, snapshot, native scope and existing project language before recording a captured plugin attempt. Complete proposals require separately authorized domain checks through the existing durable proof owner; generic validators cannot approve them, and reopening verifies saved evidence without restoring permission. Per-entry matching/adoption and desktop integration remain under development.
+
 - Experimental SDK existing-translation contracts retain complete captured material, explicit target-language evidence and original native identity references, with separately required domain checks. The Host binds their immutable single-file Resource metadata without executing code; project matching, adoption and desktop integration remain under development.
 
 - Extensions can review and set up a fixed application-bundled package set and its runtime in one local operation. Prepared bytes must match source-owned provenance and digest pins. New included packages are enabled, existing enable/disable choices are preserved, and uncertain or partial installation retains original per-artifact actions for recovery. Setup starts no worker and does not grant execution or release permission. The current Apple silicon candidate includes the independent WebVTT package; the complete two-domain distribution remains under development.

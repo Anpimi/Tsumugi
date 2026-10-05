@@ -1,11 +1,7 @@
 #![cfg(all(unix, feature = "core-adapter", feature = "javascript-conformance"))]
 //! A prebuilt independent domain package runs through Core's real execution,
 //! semantic-check and atomic source-adoption boundaries, using synthetic data.
-use std::{
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::{path::PathBuf, sync::Arc};
 use tsumugi_core::{
     ProjectMetadata, ProjectStore,
     content::{
@@ -19,61 +15,10 @@ use tsumugi_plugin_sdk as sdk;
 #[path = "support/runtime.rs"]
 mod runtime_fixture;
 
-fn authorize(
-    runtime: &ExecutionRuntime,
-    store: &mut ProjectStore,
-    input: &FixedInput,
-) -> ExecutionId {
-    let grant = ExecutionId::new();
-    let expires = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
-        + 180_000;
-    runtime
-        .authorize_plugin(
-            store,
-            grant,
-            input,
-            expires,
-            PluginConsent {
-                unsandboxed_execution: true,
-            },
-        )
-        .unwrap();
-    grant
-}
-fn execute(
-    runtime: &mut ExecutionRuntime,
-    store: &mut ProjectStore,
-    input: &FixedInput,
-) -> FixedResult {
-    runtime.submit(store, input).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        runtime.tick(store).unwrap();
-        if !runtime.is_active(input.envelope().attempt_id) {
-            if let Some(id) = store
-                .execution_current_result(
-                    input.envelope().attempt_id,
-                    input.envelope().items[0].item_id,
-                )
-                .unwrap()
-            {
-                let result = store
-                    .execution_result(input.envelope().attempt_id, id)
-                    .unwrap();
-                assert_eq!(result.envelope().outcome, ExecutionState::Succeeded);
-                return result;
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "actual source worker completion deadline"
-        );
-        std::thread::sleep(Duration::from_millis(2));
-    }
-}
+#[path = "support/core_execution.rs"]
+mod core_execution;
+use core_execution::{authorize, execute};
+
 fn fixed(
     store: &ProjectStore,
     resource: &sdk::SourceImportBinding,

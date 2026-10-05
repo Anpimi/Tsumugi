@@ -437,6 +437,15 @@ do not prove a production plugin catalog, domain migration or desktop workflow.
 
 ## Real-process conformance
 
+The `translation_validation` test, with `core-adapter,javascript-conformance`,
+uses an explicitly captured SMAPI package and the independently approved runtime
+to adopt its actual source, then qualify a complete translation proposal in the
+Core ledger. It checks existing project locale/current source/native scope,
+separate producer/checker grants, mandatory proof, revocation before commit and
+read-only reopening without renewed permission. The original material remains
+fixed and native values are not normalized by Core. This library conformance
+does not implement per-entry translation projection/adoption or desktop import.
+
 `PackageImage::translation_import` reads the SDK's translation Resource from
 captured bytes and binds its exact extractor/checker selections. The SDK binding
 checks single-file path/extension, role, raw bound and profile data without

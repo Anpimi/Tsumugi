@@ -571,6 +571,10 @@ pub(super) fn validate_plugin_link(
         validate_source_link(connection, input, result, expected_valid)?;
         return Ok(());
     }
+    if input.envelope().operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+        validate_translation_link(connection, input, result, expected_valid)?;
+        return Ok(());
+    }
     if input.envelope().plugin.is_none()
         || input.envelope().operation != crate::content::BUILD_OPERATION
     {
@@ -592,6 +596,27 @@ pub(super) fn validate_plugin_link(
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
     Ok(())
+}
+
+pub(super) fn validate_translation_link(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+    expected_valid: bool,
+) -> Result<PreparedTranslationValidation, ExecutionError> {
+    let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
+    let prepared = TranslationValidationCapture::restore(
+        ResultValidationCapture {
+            input: input.clone(),
+            result: result.clone(),
+        },
+        check_input,
+    )?
+    .prepare(check_result)?;
+    if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
+        return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+    }
+    Ok(prepared)
 }
 
 impl ProjectStore {
@@ -1513,6 +1538,24 @@ impl ProjectStore {
     ) -> Result<ArtifactValidationCapture, ExecutionError> {
         ArtifactValidationCapture::capture(self.capture_result_validation(attempt, result)?)
     }
+    pub fn capture_translation_validation(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<TranslationValidationCapture, ExecutionError> {
+        TranslationValidationCapture::capture(self.capture_result_validation(attempt, result)?)
+    }
+    pub fn commit_translation_validation(
+        &mut self,
+        prepared: PreparedTranslationValidation,
+    ) -> Result<(), ExecutionError> {
+        self.commit_semantic_validation(
+            prepared.capture.producer,
+            prepared.capture.check_input,
+            prepared.check_result,
+            prepared.proof,
+        )
+    }
     pub fn commit_artifact_validation(
         &mut self,
         prepared: PreparedArtifactValidation,
@@ -1524,7 +1567,7 @@ impl ProjectStore {
             prepared.proof,
         )
     }
-    /// Both producer/checker flows use one durable link and the same mutation
+    /// All producer/checker flows use one durable link and the same mutation
     /// boundary. Expensive reconstruction runs before this short write phase.
     fn commit_semantic_validation(
         &mut self,

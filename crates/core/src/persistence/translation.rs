@@ -278,6 +278,9 @@ pub(super) fn record_input(
     connection: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+        return record_plugin_input(connection, input);
+    }
     if input.envelope().operation != crate::content::TRANSLATION_OPERATION {
         return Ok(());
     }
@@ -307,6 +310,61 @@ pub(super) fn record_input(
     let source = crate::content::SourceBundle::from_input(&original)?;
     if source.format_id != bundle.format_id || source.format_version != bundle.format_version {
         return Err(error(ErrorCode::DependencyConflict, "translation-format"));
+    }
+    Ok(())
+}
+
+/// The existing ledger owns captured plugin attempts as well as later entry
+/// adoption. No filename decoder or second project store is introduced here.
+fn record_plugin_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
+    let (material, _) = crate::content::plugin_translation_input(input)?;
+    check_target(
+        connection,
+        input.envelope().project_id,
+        &material.target_language,
+    )?;
+    let row: Option<(String, String, String, String)> = connection
+        .query_row(
+            "SELECT s.project_id,s.set_id,s.attempt_id,s.result_id FROM source_snapshots s
+             JOIN content_scope c ON c.current_snapshot=s.snapshot_id
+             WHERE s.snapshot_id=?1",
+            [&material.source_snapshot_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(super::ledger::sql_error)?;
+    let Some((project, set, attempt, result)) = row else {
+        return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+    };
+    if project != input.envelope().project_id.to_string() || set != material.source_set_id {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-source-set",
+        ));
+    }
+    let source_input = super::ledger::load_input(connection, id(attempt)?)?;
+    let source_result = super::ledger::load_result(connection, &source_input, id(result)?)?;
+    let bundle = crate::content::SourceBundle::from_input(&source_input)?;
+    let source = crate::content::validate_output(&source_input, &source_result)?;
+    if bundle.profile != material.profile || source.namespace != material.native_scope.namespace {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-native-scope",
+        ));
+    }
+    // Compare the selected domain policy exactly. Display labels and text
+    // equality cannot establish a policy or justify normalizing native values.
+    let policies: std::collections::BTreeSet<_> = source
+        .occurrences
+        .iter()
+        .filter_map(|occurrence| occurrence.native_identity.as_ref())
+        .map(|identity| &identity.policy)
+        .collect();
+    if !policies.is_empty() && !policies.contains(&material.native_scope.policy) {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-native-policy",
+        ));
     }
     Ok(())
 }

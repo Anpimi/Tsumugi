@@ -1,5 +1,6 @@
 //! Immutable source bundles, native identity evidence and read-only projections.
 mod build;
+mod plugin_translation;
 mod smapi;
 mod translation;
 pub mod webvtt;
@@ -8,6 +9,10 @@ pub use build::{
     BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILD_OPERATION, BUILDER_VERSION, BuildEntry,
     BuildLocale, BuildManifest, BuildOutput, BuildRunner, BuildSourceFile, VALIDATOR_VERSION,
     WebvttBuildRunner, artifact_digest, build_locale, validate_build_output,
+};
+pub use plugin_translation::{
+    MAX_TRANSLATION_INPUT_BYTES, MAX_TRANSLATION_RESULT_BYTES, PluginTranslationSettings,
+    TRANSLATION_EXTRACTION_OPERATION, plugin_translation_input, validate_plugin_translation_output,
 };
 pub use smapi::{SourceRunner, WebvttSourceRunner};
 pub fn extract(

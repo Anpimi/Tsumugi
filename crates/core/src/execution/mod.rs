@@ -13,6 +13,7 @@ mod runtime;
 mod source_validation;
 #[cfg(feature = "execution-test-host")]
 pub mod test_support;
+mod translation_validation;
 mod validation;
 
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,9 @@ pub use runner::*;
 pub use runtime::{ExecutionRuntime, OutcomeQuery};
 pub use source_validation::{
     PreparedSourceValidation, SOURCE_CHECK_OPERATION, SourceValidationCapture,
+};
+pub use translation_validation::{
+    PreparedTranslationValidation, TRANSLATION_CHECK_OPERATION, TranslationValidationCapture,
 };
 pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
 pub(crate) use validation::{ValidationProof, requires_semantic_check};

@@ -102,8 +102,10 @@ impl FixedInput {
                 | SOURCE_CHECK_OPERATION
                 | crate::content::BUILD_OPERATION
                 | ARTIFACT_CHECK_OPERATION
+                | crate::content::TRANSLATION_EXTRACTION_OPERATION
+                | TRANSLATION_CHECK_OPERATION
         );
-        // Source/check/build output is strict JSON with bounded integer/string fields.
+        // Content/check/build output is strict JSON with bounded integer/string fields.
         // Quoting its original JSON costs at most twice the raw bytes; the
         // checked canonical projection is no larger. Reserve metadata separately.
         // Other contracts keep their conservative opaque-payload budget.

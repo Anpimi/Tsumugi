@@ -143,6 +143,19 @@ reads, nested held directories, per-file outcomes and IO continuation are part o
 this same undistributed alpha.1 batch; both Unreleased changelogs are synchronized,
 with no additional bump or historical migration.
 
+Core's experimental complete-translation qualification now uses the existing
+execution ledger, live plugin grants and durable producer/checker proof links.
+Its fixed material/check inputs retain the 1 MiB bound and complete ledger
+results the 2 MiB bound; exceeding the whole encoded budget refuses qualification
+instead of splitting or truncating a file. Current source/locale checks run at
+the existing enqueue boundary, while native values remain plugin-owned.
+This additive library route allocates no translation revision or selection and
+does not complete per-entry projection, desktop integration or native acceptance.
+It changes no database table, SDK/process profile, installed Store format,
+dependency or version source. Both Unreleased changelogs are synchronized, with
+application `0.2.0-alpha.1`, SDK `0.1.0-alpha.1` and schema20 unchanged in this
+same undistributed batch; there is no additional bump or historical migration.
+
 ## Choosing the next version
 
 The optional package source-import Resource has its own experimental contract
