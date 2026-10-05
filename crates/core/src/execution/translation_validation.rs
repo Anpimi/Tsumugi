@@ -17,6 +17,159 @@ fn invalid() -> ExecutionError {
     ExecutionError::new(ErrorCode::OutputInvalid, "translation-semantic-check")
 }
 
+// The ledger captures each material once. The SDK checker still receives its
+// complete original contract; only fields proven equal by SDK association are
+// shared here. Coordinates, opaque IDs and proposal artifact order stay exact.
+type CheckSource = (String, sdk::TextEncoding, u32, u32);
+type CheckEntry = (
+    String,
+    String,
+    CheckSource,
+    String,
+    String,
+    Option<CheckSource>,
+);
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TranslationCheckPayload {
+    version: u32,
+    input: sdk::TranslationExtractionInput,
+    declared_language: String,
+    artifact_order: Vec<String>,
+    entries: Vec<CheckEntry>,
+    order: Vec<String>,
+    requirements: Vec<sdk::CheckRequirement>,
+}
+fn pack_source(source: sdk::SourceReference) -> CheckSource {
+    (
+        source.artifact_id,
+        source.range.encoding,
+        source.range.start,
+        source.range.end,
+    )
+}
+fn unpack_source(source: CheckSource) -> sdk::SourceReference {
+    sdk::SourceReference {
+        artifact_id: source.0,
+        range: sdk::TextRange {
+            encoding: source.1,
+            start: source.2,
+            end: source.3,
+        },
+    }
+}
+impl TranslationCheckPayload {
+    fn capture(payload: sdk::TranslationExtractionCheckInput) -> Result<Self, ExecutionError> {
+        payload.validate().map_err(|_| invalid())?;
+        Ok(Self {
+            version: 1,
+            input: payload.input,
+            declared_language: payload.proposal.declared_language,
+            artifact_order: payload
+                .proposal
+                .artifacts
+                .into_iter()
+                .map(|a| a.id)
+                .collect(),
+            entries: payload
+                .proposal
+                .entries
+                .into_iter()
+                .map(|entry| {
+                    (
+                        entry.id,
+                        entry.text,
+                        pack_source(entry.source),
+                        entry.native_identity.value,
+                        entry.native_identity.display.value,
+                        entry.native_identity.display.source.map(pack_source),
+                    )
+                })
+                .collect(),
+            order: payload.proposal.order,
+            requirements: payload.requirements,
+        })
+    }
+    fn expand(self) -> Result<sdk::TranslationExtractionCheckInput, ExecutionError> {
+        if self.version != 1 {
+            return Err(invalid());
+        }
+        let artifacts = self
+            .artifact_order
+            .iter()
+            .map(|id| {
+                self.input
+                    .artifacts
+                    .iter()
+                    .find(|artifact| &artifact.id == id)
+                    .cloned()
+                    .ok_or_else(invalid)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let entries = self
+            .entries
+            .into_iter()
+            .map(
+                |(id, text, source, value, display, display_source)| sdk::ImportedTranslation {
+                    id,
+                    text,
+                    source: unpack_source(source),
+                    native_identity: sdk::NativeIdentityEvidence {
+                        namespace: self.input.native_scope.namespace.clone(),
+                        policy: self.input.native_scope.policy.clone(),
+                        value,
+                        display: sdk::NativeIdentityDisplay {
+                            value: display,
+                            source: display_source.map(unpack_source),
+                        },
+                    },
+                },
+            )
+            .collect();
+        let proposal = sdk::TranslationExchange {
+            profile: self.input.profile.clone(),
+            import_id: self.input.import_id.clone(),
+            source_set_id: self.input.source_set_id.clone(),
+            source_snapshot_id: self.input.source_snapshot_id.clone(),
+            target_language: self.input.target_language.clone(),
+            declared_language: self.declared_language,
+            language_evidence: self.input.language_evidence,
+            native_scope: self.input.native_scope.clone(),
+            artifacts,
+            entries,
+            order: self.order,
+        };
+        let payload = sdk::TranslationExtractionCheckInput {
+            input: self.input,
+            proposal,
+            requirements: self.requirements,
+        };
+        payload.validate().map_err(|_| invalid())?;
+        Ok(payload)
+    }
+}
+pub(crate) fn expand_translation_check_payload(value: &Value) -> Result<Value, ExecutionError> {
+    let captured: TranslationCheckPayload =
+        serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+    serde_json::to_value(captured.expand()?).map_err(|_| invalid())
+}
+/// Restore the full SDK checker payload from its single-material ledger capture.
+/// This pure read neither creates a proof nor grants execution permission.
+pub fn translation_check_payload(
+    input: &FixedInput,
+) -> Result<sdk::TranslationExtractionCheckInput, ExecutionError> {
+    if input.envelope().operation != TRANSLATION_CHECK_OPERATION
+        || input.envelope().items.len() != 1
+        || input.bytes().len() > crate::content::MAX_TRANSLATION_INPUT_BYTES
+    {
+        return Err(invalid());
+    }
+    let captured: TranslationCheckPayload =
+        serde_json::from_value(input.envelope().items[0].payload.clone()).map_err(|_| invalid())?;
+    captured.expand()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TranslationValidationBasis {
@@ -93,7 +246,8 @@ impl TranslationValidationCapture {
                 id: payload.input.import_id.clone(),
                 locale: Some(payload.input.target_language.clone()),
             },
-            serde_json::to_value(payload).map_err(|_| invalid())?,
+            serde_json::to_value(TranslationCheckPayload::capture(payload)?)
+                .map_err(|_| invalid())?,
             vec![],
         );
         let project = producer

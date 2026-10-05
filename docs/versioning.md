@@ -267,22 +267,34 @@ WebVTT development candidate, not acceptance of a complete two-domain release.
 
 ## Maintaining each change
 
+Core now stores complete plugin translation results with a schema/digest
+reference and their original SDK bytes once. Fixed checker inputs share captured
+material and structurally associated fields, reconstructing the unchanged full
+SDK contract for the actual channel. This changes persisted execution shapes and
+advances the current-only project format to schema 21. Schema 20 and earlier
+projects are refused unchanged, without migration; preserve their directories
+and use a new current-format project. SDK/process identities, installed Store
+formats and dependency metadata are unchanged. Application `0.2.0-alpha.1` and
+SDK `0.1.0-alpha.1` stay in the same undistributed batch, with no additional
+SemVer bump or publication. The 1 MiB fixed input, 2 MiB ledger result and 8 MiB
+attempt bounds remain independent complete encoded limits.
+
 The SDK's existing-translation input/proposal/check/Resource data contracts use
 their own schema/behavior 1/1 identities within the same undistributed SDK
 `0.1.0-alpha.1` batch. They reuse captured material/native reference and required
 check owners, and add Host metadata inspection without starting a component or
-changing Desktop, process frames, Store layout or current schema 20. Application
+changing Desktop, process frames, Store layout or the then-current schema 20. Application
 `0.2.0-alpha.1` therefore remains unchanged. Public consumers must select the
 actual immutable SDK source artifact containing these additions; no compatibility
 conversion, production translation cutover or release is claimed.
 
-Core checked translations now project into per-entry EX items and adoption units
-through the existing ledger and revision/selection/receipt owner. The experimental
-translation preview's key range is required nullable because native display evidence
+The preceding Core translation projection unit added per-entry EX items and
+adoption units through the existing ledger and revision/selection/receipt owner.
+The experimental translation preview's key range is required nullable because native display evidence
 may have no source location; consumers must preserve explicit absence. This adds
 no table or alternate persistence/proof owner, and does not change the SDK/process
-profile, Store format, current schema 20 or desktop import assembly. It remains
-in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+profile, Store format, the then-current schema 20 or desktop import assembly. It
+remains in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
 with no additional bump, release or historical development-format migration.
 
 1. Assess user-visible behavior, compatibility, project migrations and the application's release impact before completing a change. Check the existing unreleased entries and version target.

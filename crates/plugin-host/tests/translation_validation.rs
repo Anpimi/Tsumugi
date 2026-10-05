@@ -271,8 +271,7 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
         .prepare_translation_check(ExecutionId::new())
         .unwrap();
     let checker_input = capture.check_input().clone();
-    let typed: sdk::TranslationExtractionCheckInput =
-        serde_json::from_value(checker_input.envelope().items[0].payload.clone()).unwrap();
+    let typed = translation_check_payload(&checker_input).unwrap();
     assert_eq!(typed.input, material);
     assert_eq!(typed.proposal, proposal);
     assert!(typed.requirements.iter().all(|r| r.mandatory

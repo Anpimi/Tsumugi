@@ -35,6 +35,7 @@ pub use source_validation::{
 };
 pub use translation_validation::{
     PreparedTranslationValidation, TRANSLATION_CHECK_OPERATION, TranslationValidationCapture,
+    translation_check_payload,
 };
 pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
 pub(crate) use validation::{ValidationProof, requires_semantic_check};

@@ -89,7 +89,12 @@ impl FixedInput {
         }
         let declaration = &binding.capability.declaration;
         let item = self.item(item_id)?;
-        let bytes = codec::encode(&item.payload, declaration.limits.max_input_bytes as usize)?;
+        let payload = if envelope.operation == TRANSLATION_CHECK_OPERATION {
+            translation_validation::expand_translation_check_payload(&item.payload)?
+        } else {
+            item.payload.clone()
+        };
+        let bytes = codec::encode(&payload, declaration.limits.max_input_bytes as usize)?;
         let input = sdk::EncodedPayload::capture(
             declaration.input_schema.clone(),
             String::from_utf8(bytes)
@@ -109,16 +114,28 @@ impl FixedInput {
         // Quoting its original JSON costs at most twice the raw bytes; the
         // checked canonical projection is no larger. Reserve metadata separately.
         // Other contracts keep their conservative opaque-payload budget.
-        let max_result_bytes = if bounded_json_contract {
-            let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
-            let raw = raw
-                .min(declaration.limits.max_output_bytes)
-                .min(sdk::MAX_EXCHANGE_BYTES as u32);
-            if raw == 0 { 0 } else { raw * 2 + 32 * 1024 }
-        } else {
-            (envelope.limits.max_result_bytes.saturating_sub(16 * 1024) / 8)
-                .min(declaration.limits.max_output_bytes)
-        };
+        let max_result_bytes =
+            if envelope.operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+                // This operation stores the complete channel result once, with a
+                // small digest reference rather than a duplicate parsed proposal.
+                // The SDK receiver bounds the entire encoded response, including
+                // quoting; Core metadata has its own reserved space.
+                envelope
+                    .limits
+                    .max_result_bytes
+                    .saturating_sub(64 * 1024)
+                    .min(declaration.limits.max_output_bytes)
+                    .min(sdk::MAX_EXCHANGE_BYTES as u32)
+            } else if bounded_json_contract {
+                let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
+                let raw = raw
+                    .min(declaration.limits.max_output_bytes)
+                    .min(sdk::MAX_EXCHANGE_BYTES as u32);
+                if raw == 0 { 0 } else { raw * 2 + 32 * 1024 }
+            } else {
+                (envelope.limits.max_result_bytes.saturating_sub(16 * 1024) / 8)
+                    .min(declaration.limits.max_output_bytes)
+            };
         if max_result_bytes == 0 {
             return Err(ExecutionError::new(
                 ErrorCode::LimitExceeded,
@@ -172,8 +189,7 @@ impl PluginResultEvidence {
         sdk::receive_invocation_result(&bytes, &request, &self.channel).map_err(contract_error)?;
         match &self.result.outcome {
             sdk::InvocationOutcome::Succeeded { output } => {
-                let projected: Value =
-                    codec::decode(output.utf8.as_bytes(), request.max_result_bytes as usize)?;
+                let projected = ledger_output(input, output)?;
                 if envelope.outcome != ExecutionState::Succeeded
                     || envelope.output.as_ref() != Some(&projected)
                 {
@@ -215,10 +231,7 @@ impl FixedResult {
         let (outcome, output, diagnostic) = match &evidence.result.outcome {
             sdk::InvocationOutcome::Succeeded { output } => (
                 ExecutionState::Succeeded,
-                Some(codec::decode(
-                    output.utf8.as_bytes(),
-                    input.envelope().limits.max_result_bytes as usize,
-                )?),
+                Some(ledger_output(input, output)?),
                 None,
             ),
             sdk::InvocationOutcome::Failed { .. } => (
@@ -256,5 +269,24 @@ impl FixedResult {
             input,
             token,
         )
+    }
+}
+
+fn ledger_output(
+    input: &FixedInput,
+    output: &sdk::EncodedPayload,
+) -> Result<Value, ExecutionError> {
+    // Decode strict JSON before accepting the original bytes even when the
+    // ledger projects only their schema/hash. Qualification parses the SDK
+    // translation contract from those same immutable bytes.
+    let parsed: Value = codec::decode(
+        output.utf8.as_bytes(),
+        input.envelope().limits.max_result_bytes as usize,
+    )?;
+    if input.envelope().operation == crate::content::TRANSLATION_EXTRACTION_OPERATION {
+        serde_json::to_value((&output.schema, &output.sha256))
+            .map_err(|_| ExecutionError::new(ErrorCode::OutputInvalid, "plugin-output"))
+    } else {
+        Ok(parsed)
     }
 }
