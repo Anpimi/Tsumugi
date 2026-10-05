@@ -24,6 +24,7 @@ impl ValidationProof {
 }
 
 /// Store-owned immutable snapshot; preparation does not retain the store.
+#[derive(Clone)]
 pub struct ResultValidationCapture {
     pub(crate) input: FixedInput,
     pub(crate) result: FixedResult,
@@ -33,6 +34,22 @@ pub struct PreparedResultValidation {
     pub(crate) proof: ValidationProof,
 }
 impl ResultValidationCapture {
+    /// Build the mandatory source checker input from store-owned evidence on a
+    /// computation worker, without retaining a project connection or write.
+    pub fn prepare_source_check(
+        self,
+        attempt: ExecutionId,
+    ) -> Result<SourceValidationCapture, ExecutionError> {
+        let mut capture = SourceValidationCapture::capture(self)?;
+        let mut envelope = capture.check_input().envelope().clone();
+        envelope.attempt_id = attempt;
+        capture.set_check_input(FixedInput::capture(envelope)?);
+        Ok(capture)
+    }
+
+    pub fn input(&self) -> &FixedInput {
+        &self.input
+    }
     pub fn prepare(
         self,
         validator: &dyn ResultValidator,

@@ -29,6 +29,7 @@ pub(crate) struct SourceValidationBasis {
 
 /// Created from a store-owned immutable source result. The checker input can be
 /// submitted through the existing runtime only after separate authorization.
+#[derive(Clone)]
 pub struct SourceValidationCapture {
     pub(crate) source: ResultValidationCapture,
     pub(crate) check_input: FixedInput,
@@ -131,6 +132,9 @@ impl SourceValidationCapture {
     }
     pub fn check_input(&self) -> &FixedInput {
         &self.check_input
+    }
+    pub(super) fn set_check_input(&mut self, input: FixedInput) {
+        self.check_input = input;
     }
     /// Reconstruct required policy from original fixed source evidence. Saved
     /// checker identities may differ; its entire remaining input must match.

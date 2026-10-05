@@ -135,3 +135,27 @@ it("keeps grapheme references, canonical identity and domain-confirmed display d
   expect(received.rows[0].occurrence.nativeIdentity?.value).toBe("canonical-id");
   expect(received.rows[0].occurrence.nativeIdentity?.display).toEqual({ value: "Original ID", source: null });
 });
+
+it("validates and transports separately fixed plugin source and semantic-check requests", async () => {
+  const { default: flow } = await import("../test/fixtures/pluginSourceWorkflow.contract.json");
+  for (const [validate, value] of [
+    [validators.validateRequestPluginSelect, flow.select], [validators.validateResponsePluginSelection, flow.selection],
+    [validators.validateRequestPluginCapture, flow.capture], [validators.validateResponsePluginPreflight, flow.preflight],
+    [validators.validateRequestPluginStart, flow.start], [validators.validateRequestCheckPrepare, flow.prepareCheck],
+    [validators.validateResponseCheckReview, flow.checkReview], [validators.validateRequestCheckFinish, flow.finishCheck],
+  ] as const) expect(validate(value), validate.name).toBe(true);
+  expect(validators.validateRequestPluginStart({ ...flow.start, expiresAtMs: Number(flow.start.expiresAtMs) })).toBe(false);
+  expect(validators.validateRequestPluginStart({ ...flow.start, directory: "/untrusted" })).toBe(false);
+  invoke.mockResolvedValueOnce(flow.selection); await sourceCommands.selectPlugin(flow.select);
+  expect(invoke).toHaveBeenLastCalledWith("select_plugin_source", { request: flow.select });
+  invoke.mockResolvedValueOnce(flow.preflight); await sourceCommands.capturePlugin(flow.capture);
+  expect(invoke).toHaveBeenLastCalledWith("preflight_plugin_source", { request: flow.capture });
+  invoke.mockResolvedValueOnce(flow.start.attemptId); await sourceCommands.startPlugin(flow.start);
+  expect(invoke).toHaveBeenLastCalledWith("start_plugin_source", { request: flow.start });
+  invoke.mockResolvedValueOnce(flow.checkReview); await sourceCommands.prepareCheck(flow.prepareCheck);
+  expect(invoke).toHaveBeenLastCalledWith("prepare_source_check", { request: flow.prepareCheck });
+  invoke.mockResolvedValueOnce(flow.start.attemptId); await sourceCommands.startCheck(flow.start);
+  expect(invoke).toHaveBeenLastCalledWith("start_source_check", { request: flow.start });
+  invoke.mockResolvedValueOnce(null); await sourceCommands.finishCheck(flow.finishCheck);
+  expect(invoke).toHaveBeenLastCalledWith("finish_source_check", { request: flow.finishCheck });
+});

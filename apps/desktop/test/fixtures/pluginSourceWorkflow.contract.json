@@ -1,0 +1,632 @@
+{
+  "select": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "source": {
+      "package": {
+        "plugin": {
+          "publisher": "example",
+          "id": "plain-text",
+          "version": "0.1.0"
+        },
+        "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "resourceId": "source-profile",
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0"
+    }
+  },
+  "selection": {
+    "selectionId": "00000000-0000-4000-8000-000000000002",
+    "folderName": "Captions",
+    "source": {
+      "settingsRevision": "1",
+      "resourceId": "source-profile",
+      "declaration": {
+        "displayName": "Example plain text",
+        "profile": {
+          "id": "example.plain-text",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "materials": [
+          {
+            "logicalPath": "materials/raw.txt",
+            "role": "source",
+            "maxBytes": 131072
+          },
+          {
+            "logicalPath": "metadata/header.txt",
+            "role": "companion",
+            "maxBytes": 16384
+          }
+        ],
+        "extractor": "extract",
+        "checker": "source-check",
+        "revisionPolicy": {
+          "profile": {
+            "id": "example.plain-text",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "revisionBasis": [
+            {
+              "id": "example.text-basis",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ]
+        },
+        "semanticRules": [
+          {
+            "id": "example.source-semantics",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        ]
+      },
+      "extractor": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "extract"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.extract",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.source-extraction-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.content-exchange",
+            "schemaVersion": 2,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 2097152,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "checker": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "source-check"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.source-check",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.source-extraction-check-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.check-results",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 1,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+      "runtimeOrigin": {
+        "sourceId": "application-bundle",
+        "publisherId": "application-build"
+      }
+    }
+  },
+  "capture": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "selectionId": "00000000-0000-4000-8000-000000000002",
+    "sourceLanguage": "en-US",
+    "attemptId": "10000000-0000-4000-8000-000000000201"
+  },
+  "preflight": {
+    "attemptId": "10000000-0000-4000-8000-000000000201",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceLanguage": "en-US",
+    "source": {
+      "settingsRevision": "1",
+      "resourceId": "source-profile",
+      "declaration": {
+        "displayName": "Example plain text",
+        "profile": {
+          "id": "example.plain-text",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "materials": [
+          {
+            "logicalPath": "materials/raw.txt",
+            "role": "source",
+            "maxBytes": 131072
+          },
+          {
+            "logicalPath": "metadata/header.txt",
+            "role": "companion",
+            "maxBytes": 16384
+          }
+        ],
+        "extractor": "extract",
+        "checker": "source-check",
+        "revisionPolicy": {
+          "profile": {
+            "id": "example.plain-text",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "revisionBasis": [
+            {
+              "id": "example.text-basis",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ]
+        },
+        "semanticRules": [
+          {
+            "id": "example.source-semantics",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        ]
+      },
+      "extractor": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "extract"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.extract",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.source-extraction-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.content-exchange",
+            "schemaVersion": 2,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 2097152,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "checker": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "source-check"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.source-check",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.source-extraction-check-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.check-results",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 1,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+      "runtimeOrigin": {
+        "sourceId": "application-bundle",
+        "publisherId": "application-build"
+      }
+    },
+    "files": [
+      {
+        "logicalPath": "source.vtt",
+        "role": "source",
+        "byteLength": 80,
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "start": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "attemptId": "10000000-0000-4000-8000-000000000201",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "grantId": "10000000-0000-4000-8000-000000000204",
+    "expiresAtMs": "1893456000000",
+    "unsandboxedExecution": true
+  },
+  "prepareCheck": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "sourceAttemptId": "10000000-0000-4000-8000-000000000201",
+    "sourceResultId": "10000000-0000-4000-8000-000000000203",
+    "attemptId": "10000000-0000-4000-8000-000000000202",
+    "source": {
+      "package": {
+        "plugin": {
+          "publisher": "example",
+          "id": "plain-text",
+          "version": "0.1.0"
+        },
+        "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "resourceId": "source-profile",
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0"
+    }
+  },
+  "checkReview": {
+    "attemptId": "10000000-0000-4000-8000-000000000202",
+    "inputDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "sourceAttemptId": "10000000-0000-4000-8000-000000000201",
+    "sourceResultId": "10000000-0000-4000-8000-000000000203",
+    "source": {
+      "settingsRevision": "1",
+      "resourceId": "source-profile",
+      "declaration": {
+        "displayName": "Example plain text",
+        "profile": {
+          "id": "example.plain-text",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "materials": [
+          {
+            "logicalPath": "materials/raw.txt",
+            "role": "source",
+            "maxBytes": 131072
+          },
+          {
+            "logicalPath": "metadata/header.txt",
+            "role": "companion",
+            "maxBytes": 16384
+          }
+        ],
+        "extractor": "extract",
+        "checker": "source-check",
+        "revisionPolicy": {
+          "profile": {
+            "id": "example.plain-text",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "revisionBasis": [
+            {
+              "id": "example.text-basis",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ]
+        },
+        "semanticRules": [
+          {
+            "id": "example.source-semantics",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          }
+        ]
+      },
+      "extractor": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "extract"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.extract",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.source-extraction-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.content-exchange",
+            "schemaVersion": 2,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 2097152,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "checker": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "plain-text",
+            "version": "0.1.0"
+          },
+          "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "componentId": "worker",
+          "contributionId": "source-check"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.source-check",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.source-extraction-check-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.check-results",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.source-extraction-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      },
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 1,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+      "runtimeOrigin": {
+        "sourceId": "application-bundle",
+        "publisherId": "application-build"
+      }
+    },
+    "rules": [
+      {
+        "id": "example.source-semantics",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      }
+    ]
+  },
+  "finishCheck": {
+    "sessionToken": "fixture-session",
+    "projectId": "00000000-0000-4000-8000-000000000001",
+    "attemptId": "10000000-0000-4000-8000-000000000202",
+    "resultId": "10000000-0000-4000-8000-000000000205"
+  }
+}

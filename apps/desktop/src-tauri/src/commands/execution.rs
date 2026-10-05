@@ -20,7 +20,9 @@ macro_rules! handlers {
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
-        source::select_source,source::select_webvtt_source,source::read_webvtt_integration,source::preflight_source,source::start_source_import,
+        source::select_source,source::select_webvtt_source,source::read_webvtt_integration,
+        source::plugin::select_plugin_source,source::plugin::preflight_plugin_source,source::plugin::start_plugin_source,
+        source::plugin::prepare_source_check,source::plugin::start_source_check,source::plugin::finish_source_check,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
         source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
@@ -53,12 +55,21 @@ pub(super) fn handler<R: tauri::Runtime>()
 -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
     #[cfg(feature = "execution-test-host")]
     {
-        handlers!(seed_execution_fixture)
+        handlers!(seed_execution_fixture,source::preflight_source,source::start_source_import)
     }
-    #[cfg(not(feature = "execution-test-host"))]
+    #[cfg(all(test, not(feature = "execution-test-host")))]
     {
-        handlers!()
+        handlers!(source::preflight_source,source::start_source_import)
     }
+    #[cfg(not(any(test, feature = "execution-test-host")))]
+    {
+        production_handler()
+    }
+}
+
+pub(super) fn production_handler<R: tauri::Runtime>()
+-> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    handlers!()
 }
 
 #[cfg(feature = "execution-test-host")]
@@ -144,6 +155,7 @@ impl ExecutionHost {
             arena: arena::ArenaSession::default(),
             work_plans: work_plans::WorkPlanSession::default(),
         };
+        #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::SourceRunner))
             .map_err(map_read)?;
@@ -153,6 +165,7 @@ impl ExecutionHost {
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::BuildRunner))
             .map_err(map_read)?;
+        #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::WebvttSourceRunner))
             .map_err(map_read)?;

@@ -9,20 +9,24 @@ import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourcePageFixture, sourceRowFixture, sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
+import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import { pluginSourceView, pluginSourceWorkflow, pluginSourceRequest, pluginSourceInventory, pluginSourcePackage } from "./testSupport/pluginSourceFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const preview: ContentPage = sourcePageFixture({ snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: "hash" }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [sourceRowFixture({}, { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", source: { artifactId: fixtureIdentity(101), range: { encoding: "utf8-byte", start: 9, end: 30 } } })] });
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); invoke.mockReset();
-  invoke.mockImplementation(async (command: string) => {
-    if (command === "read_source_integration") return sourceIntegrationFixture;
+  let identities = 0;
+  invoke.mockImplementation(async (command: string, args: { request?: { attemptId?: string } }) => {
+    if (command === "read_plugin_inventory") return pluginSourceInventory;
+    if (command === "read_plugin_package") return pluginSourcePackage;
+    if (command === "read_plugin_source") return pluginSourceView;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: null };
-    if (command === "select_source") return { selectionId: fixtureIdentity(102), folderName: "Example Mod" };
-    if (command === "preflight_source") return { namespace: "Example.Mod", count: 2, sourceLanguage: "en-US", diagnostics: [], files: [] };
-    if (command === "create_execution_identity") return executionFixture.prepare.actionId;
-    if (command === "start_source_import") return executionFixture.detail.attemptId;
+    if (command === "select_plugin_source") return { ...pluginSourceWorkflow.selection, selectionId: fixtureIdentity(102), folderName: "Example Mod" };
+    if (command === "preflight_plugin_source") return { ...pluginSourceWorkflow.preflight, attemptId: args.request!.attemptId };
+    if (command === "create_execution_identity") { identities++; return identities === 1 && invoke.mock.calls.some(([name]) => name === "select_plugin_source") ? executionFixture.detail.attemptId : executionFixture.prepare.actionId; }
+    if (command === "start_plugin_source") return args.request!.attemptId;
     if (command === "read_execution_attempt") return { ...executionFixture.detail, items: [{ ...executionFixture.detail.items[0], resultId: executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: "succeeded", validation: "valid" } }] };
     if (command === "read_source_preview") return preview;
     if (command === "prepare_source_adoption") return executionFixture.action;
@@ -34,31 +38,29 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
-it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", "I confirm", "Check source files", "This subtitle does not match caption profile 1."], ["zh-CN", "源内容", "源格式", "选择字幕目录", "我确认", "检查源文件", "字幕不符合 profile 1。"]])("selects WebVTT explicitly and recovers from invalid captions in %s", async (locale, entry, format, choose, declaration, check, message) => {
+it.each([["en-US", "Source content", "Choose source folder", "I confirm", "Check source files", "The source operation could not complete."], ["zh-CN", "源内容", "选择源文件夹", "我确认", "检查源文件", "源操作未能完成"]])("loads installed source declarations and recovers from capture failure in %s", async (locale, entry, choose, declaration, check, message) => {
   await i18n.changeLanguage(locale);
   const original = invoke.getMockImplementation()!;
   let invalid = true;
   invoke.mockImplementation((command: string, args: unknown) => {
-    if (command === "read_webvtt_integration") return Promise.resolve(captionIntegrationFixture);
-    if (command === "select_webvtt_source") return Promise.resolve({ selectionId: fixtureIdentity(103), folderName: "Captions" });
-    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", outcome: "rejected", reason: "vtt-timing" });
+    if (command === "preflight_plugin_source" && invalid) return Promise.reject({ code: "invalid-input", outcome: "rejected", reason: "missing-companion" });
     return original(command, args);
   });
   render(<SourceWorkbench project={project} disabled={false} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: entry }));
-  await user.selectOptions(await screen.findByRole("combobox", { name: format }), "webvtt");
-  await user.click(await screen.findByRole("button", { name: choose }));
-  expect(screen.getByRole("region", { name: choose })).toBeInTheDocument();
-  expect(screen.queryByText(/The name default\.json|default\.json 文件名/)).not.toBeInTheDocument();
-  expect(invoke).toHaveBeenCalledWith("select_webvtt_source", { request: { sessionToken: "session", projectId: "project" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: choose })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: choose }));
+  expect(invoke).toHaveBeenCalledWith("select_plugin_source", { request: { sessionToken: "session", projectId: "project", source: pluginSourceRequest } });
   await user.click(screen.getByRole("checkbox", { name: new RegExp(declaration) }));
   await user.click(screen.getByRole("button", { name: check }));
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  const failedRequest = invoke.mock.calls.find(([name]) => name === "preflight_plugin_source")![1];
   invalid = false;
   await user.click(screen.getByRole("button", { name: check }));
-  await screen.findByText(/Example\.Mod[:：]/);
+  await screen.findByRole("button", { name: locale === "zh-CN" ? "导入并预览" : "Import for preview" });
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "preflight_plugin_source")[1][1]).toEqual(failedRequest);
 });
 
 it("retains an update selection when reopening an already imported project", async () => {
@@ -68,7 +70,7 @@ it("retains an update selection when reopening an already imported project", asy
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));
   await user.click(await screen.findByRole("button", { name: "Update source content" }));
-  await user.click(screen.getByRole("button", { name: "Choose Mod folder" }));
+  await user.click(screen.getByRole("button", { name: "Choose source folder" }));
   await screen.findByText("Example Mod");
   const contentReads = invoke.mock.calls.filter(([name]) => name === "read_source_content").length;
   await user.click(screen.getByRole("button", { name: "Back to overview" }));
@@ -78,47 +80,27 @@ it("retains an update selection when reopening an already imported project", asy
   expect(invoke.mock.calls.filter(([name]) => name === "read_source_content")).toHaveLength(contentReads);
 });
 
-it("ignores a late domain descriptor after the user returns to SMAPI", async () => {
+it("ignores an outdated source environment after a new installed-choice refresh", async () => {
   let complete!: (value: unknown) => void;
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args: unknown) => command === "read_webvtt_integration" ? new Promise(resolve => { complete = resolve; }) : original(command, args));
-  render(<SourceWorkbench project={project} disabled={false} />);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Source content" }));
-  const format = await screen.findByRole("combobox", { name: "Source format" });
-  await user.selectOptions(format, "webvtt");
-  await user.selectOptions(format, "stardew-smapi");
-  await act(async () => complete(captionIntegrationFixture));
-  expect(format).toHaveValue("stardew-smapi");
-  expect(screen.getByRole("button", { name: "Choose Mod folder" })).toBeEnabled();
-});
-it.each([
-  ["en-US", "Source content", "Choose Mod folder", "I confirm", "Check source files", "Every value in i18n/default.json must be a string."],
-  ["zh-CN", "源内容", "选择 Mod 文件夹", "我确认", "检查源文件", "i18n/default.json 中的每个值都必须是字符串。"],
-])("explains unsupported source values in %s and allows rechecking", async (locale, entry, choose, declaration, check, message) => {
-  await i18n.changeLanguage(locale);
-  const original = invoke.getMockImplementation()!;
-  let invalid = true;
+  let reads = 0;
   invoke.mockImplementation((command: string, args: unknown) => {
-    if (command === "preflight_source" && invalid) return Promise.reject({ code: "output-invalid", outcome: "rejected", reason: "source-value-not-string" });
+    if (command === "read_plugin_source" && reads++ === 0) return new Promise(resolve => { complete = resolve; });
     return original(command, args);
   });
   render(<SourceWorkbench project={project} disabled={false} />);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: entry }));
-  await user.click(await screen.findByRole("button", { name: choose }));
-  await user.click(screen.getByRole("checkbox", { name: new RegExp(declaration) }));
-  await user.click(screen.getByRole("button", { name: check }));
-  expect(await screen.findByRole("alert")).toHaveTextContent(message);
-  invalid = false;
-  await user.click(screen.getByRole("button", { name: check }));
-  await screen.findByText(/Example\.Mod[:：]/);
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  await waitFor(() => expect(reads).toBe(1));
+  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
+  await act(async () => complete({ ...pluginSourceView, declaration: { ...pluginSourceView.declaration, displayName: "STALE ENVIRONMENT" } }));
+  expect(screen.queryByText("STALE ENVIRONMENT")).not.toBeInTheDocument();
 });
 async function select() {
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));
-  await user.click(await screen.findByRole("button", { name: "Choose Mod folder" }));
+  await user.click(await screen.findByRole("button", { name: "Choose source folder" }));
   await screen.findByText("Example Mod");
   return user;
 }
@@ -126,7 +108,8 @@ async function prepare() {
   const user = await select();
   await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
   await user.click(screen.getByRole("button", { name: "Check source files" }));
-  await user.click(await screen.findByRole("button", { name: "Import for preview" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(screen.getByRole("button", { name: "Import for preview" }));
   await screen.findByRole("heading", { name: "Review imported strings" });
   return user;
 }
@@ -241,17 +224,17 @@ it("ignores a preflight response invalidated by leaving, and supports Chinese la
   render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "源内容" }));
-  await user.click(await screen.findByRole("button", { name: "选择 Mod 文件夹" }));
+  await user.click(await screen.findByRole("button", { name: "选择源文件夹" }));
   await user.click(screen.getByRole("checkbox", { name: /我确认/ }));
   let complete!: (value: unknown) => void;
   const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args: unknown) => command === "preflight_source" ? new Promise(resolve => { complete = resolve; }) : original(command, args));
+  invoke.mockImplementation((command: string, args: unknown) => command === "preflight_plugin_source" ? new Promise(resolve => { complete = resolve; }) : original(command, args));
   await user.click(screen.getByRole("button", { name: "检查源文件" }));
   let decision!: Promise<boolean>;
   act(() => { decision = ref.current!.allowLeave(); });
   await user.click(screen.getByRole("button", { name: "放弃选择并继续" }));
   expect(await decision).toBe(true);
-  await act(async () => { complete({ namespace: "STALE", sourceLanguage: "en", count: 1, files: [], diagnostics: [] }); });
+  await act(async () => { complete({ ...pluginSourceWorkflow.preflight, sourceLanguage: "STALE" }); });
   await waitFor(() => expect(screen.queryByText(/STALE/)).not.toBeInTheDocument());
 });
 
@@ -317,4 +300,197 @@ it("does not overwrite a newer identity draft after a delayed estimate or projec
   expect(await leave).toBe(false);
   await act(async () => complete([{ locale: "zh-CN", preserved: 1, reassess: 1, unresolved: 0, total: 2 }]));
   expect(screen.getByRole("textbox", { name: "Reason for this decision" })).toHaveValue("Preserved draft");
+});
+
+it("requires producer consent after capture and never executes through built-in source routes", async () => {
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  expect(await screen.findByRole("button", { name: "Import for preview" })).toBeDisabled();
+  expect(screen.getByText(/No plugin has run/)).toBeInTheDocument();
+  expect(invoke.mock.calls.some(([name]) => name === "start_plugin_source")).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(screen.getByRole("button", { name: "Import for preview" }));
+  await screen.findByRole("heading", { name: "Review imported strings" });
+  expect(invoke.mock.calls.some(([name]) => ["read_source_integration", "read_webvtt_integration", "preflight_source", "start_source_import"].includes(name))).toBe(false);
+});
+
+it("clears producer consent on a fresh material capture after a rejected grant", async () => {
+  const original = invoke.getMockImplementation()!;
+  let captures = 0;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "preflight_plugin_source") return Promise.resolve({ ...pluginSourceWorkflow.preflight, attemptId: fixtureIdentity(221 + captures++), inputDigest: captures === 1 ? "a".repeat(64) : "d".repeat(64) });
+    if (command === "start_plugin_source") return Promise.reject({ code: "permission-denied", outcome: "rejected", reason: "plugin-grant-expired" });
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(screen.getByRole("button", { name: "Import for preview" }));
+  await screen.findByRole("alert");
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: /I allow this exact plugin/ })).not.toBeChecked());
+  expect(screen.getByRole("button", { name: "Import for preview" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "start_plugin_source")).toHaveLength(1);
+});
+
+it("reconciles an uncertain producer start with its original input, grant and expiry", async () => {
+  const ref = createRef<SourceHandle>();
+  const original = invoke.getMockImplementation()!;
+  let rejected = false;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "start_plugin_source" && !rejected) { rejected = true; return Promise.reject({ code: "outcome-unknown" }); }
+    return original(command, args);
+  });
+  render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  await user.click(screen.getByRole("button", { name: "Import for preview" }));
+  await screen.findByRole("alert");
+  expect(await ref.current!.allowNavigate()).toBe(false);
+  expect(await ref.current!.allowLeave()).toBe(false);
+  const first = invoke.mock.calls.find(([name]) => name === "start_plugin_source")![1];
+  await user.click(screen.getByRole("button", { name: "Check or resume this import" }));
+  await screen.findByRole("heading", { name: "Review imported strings" });
+  expect(invoke.mock.calls.filter(([name]) => name === "start_plugin_source")[1][1]).toEqual(first);
+});
+
+it("retains pending proposals and requires separate checker consent and recorded proof before adoption", async () => {
+  const original = invoke.getMockImplementation()!;
+  const checkAttempt = fixtureIdentity(225), checkResult = fixtureIdentity(226);
+  let recorded = false;
+  invoke.mockImplementation((command: string, args: { request?: { attemptId?: string } }) => {
+    if (command === "read_execution_attempt") return Promise.resolve({ ...executionFixture.detail, attemptId: args.request!.attemptId,
+      items: [{ ...executionFixture.detail.items[0], resultId: args.request!.attemptId === checkAttempt ? checkResult : executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: "succeeded", validation: args.request!.attemptId === checkAttempt || recorded ? "valid" : "pending" } }] });
+    if (command === "prepare_source_check") return Promise.resolve({ ...pluginSourceWorkflow.checkReview, attemptId: checkAttempt, sourceAttemptId: executionFixture.detail.attemptId, sourceResultId: executionFixture.prepare.resultIds[0] });
+    if (command === "start_source_check") return Promise.resolve(checkAttempt);
+    if (command === "finish_source_check") { recorded = true; return Promise.resolve(null); }
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  expect(screen.getByText("Unchanged {{name}} 世界")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /Apply all 2/ })).toBeDisabled();
+  expect(invoke.mock.calls.some(([name]) => name === "start_source_check")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
+  expect(await screen.findByRole("button", { name: "Run independent source checks" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: /I separately allow/ }));
+  await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
+  await screen.findByRole("button", { name: "Record fixed check validation" });
+  expect(screen.getByRole("button", { name: "Apply to project" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Record fixed check validation" }));
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: /Apply all 2/ })).toBeEnabled());
+  expect(screen.getByText("Unchanged {{name}} 世界")).toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /Apply all 2/ }));
+  await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  await screen.findByRole("heading", { name: "Imported source content" });
+  expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+});
+
+it("keeps source controls unavailable without an independently approved installed runtime", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_plugin_inventory" ? Promise.resolve({ ...pluginSourceInventory, runtimeDecisions: [] }) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  await screen.findByText(/independently approve and install/);
+  expect(screen.getByRole("button", { name: "Choose source folder" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([name]) => name === "select_plugin_source")).toBe(false);
+});
+
+
+it("allows a fresh independent check after cancellation before dispatch", async () => {
+  const original = invoke.getMockImplementation()!;
+  const checkAttempt = fixtureIdentity(231);
+  let prepared = 0;
+  invoke.mockImplementation((command: string, args: { request?: { attemptId?: string } }) => {
+    if (command === "read_execution_attempt") return Promise.resolve({ ...executionFixture.detail, attemptId: args.request!.attemptId,
+      items: [{ ...executionFixture.detail.items[0], resultId: args.request!.attemptId === checkAttempt ? null : executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: args.request!.attemptId === checkAttempt ? "cancelled-before-dispatch" : "succeeded", validation: "pending" } }] });
+    if (command === "prepare_source_check") { prepared++; return Promise.resolve({ ...pluginSourceWorkflow.checkReview, attemptId: prepared === 1 ? checkAttempt : fixtureIdentity(232), sourceAttemptId: executionFixture.detail.attemptId, sourceResultId: executionFixture.prepare.resultIds[0] }); }
+    if (command === "start_source_check") return Promise.resolve(checkAttempt);
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I separately allow/ }));
+  await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
+  await screen.findByText(/Independent checks did not complete successfully/);
+  await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
+  expect(await screen.findByRole("checkbox", { name: /I separately allow/ })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Run independent source checks" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "start_source_check")).toHaveLength(1);
+  expect(screen.getByText("Unchanged {{name}} 世界")).toBeInTheDocument();
+});
+
+it("reconciles uncertain validation with the original result and keeps a failed proposal blocked", async () => {
+  const ref = createRef<SourceHandle>();
+  const original = invoke.getMockImplementation()!;
+  const checkAttempt = fixtureIdentity(233), checkResult = fixtureIdentity(234);
+  let recorded = false, acknowledged = false;
+  invoke.mockImplementation((command: string, args: { request?: { attemptId?: string } }) => {
+    if (command === "read_execution_attempt") return Promise.resolve({ ...executionFixture.detail, attemptId: args.request!.attemptId,
+      items: [{ ...executionFixture.detail.items[0], resultId: args.request!.attemptId === checkAttempt ? checkResult : executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: "succeeded", validation: args.request!.attemptId === checkAttempt ? "valid" : recorded ? "invalid" : "pending" } }] });
+    if (command === "prepare_source_check") return Promise.resolve({ ...pluginSourceWorkflow.checkReview, attemptId: checkAttempt, sourceAttemptId: executionFixture.detail.attemptId, sourceResultId: executionFixture.prepare.resultIds[0] });
+    if (command === "start_source_check") return Promise.resolve(checkAttempt);
+    if (command === "finish_source_check") { recorded = true; if (!acknowledged) { acknowledged = true; return Promise.reject({ code: "outcome-unknown" }); } return Promise.resolve(null); }
+    return original(command, args);
+  });
+  render(<SourceWorkbench ref={ref} project={project} disabled={false} />);
+  const user = await prepare();
+  await user.click(screen.getByRole("button", { name: "Review independent check execution" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I separately allow/ }));
+  await user.click(screen.getByRole("button", { name: "Run independent source checks" }));
+  await user.click(await screen.findByRole("button", { name: "Record fixed check validation" }));
+  await screen.findByRole("alert");
+  expect(await ref.current!.allowNavigate()).toBe(false);
+  expect(await ref.current!.allowLeave()).toBe(false);
+  const first = invoke.mock.calls.find(([name]) => name === "finish_source_check")![1];
+  await user.click(screen.getByRole("button", { name: "Reconcile recorded check validation" }));
+  await screen.findByText(/The proposal failed its mandatory source checks/);
+  expect(invoke.mock.calls.filter(([name]) => name === "finish_source_check")[1][1]).toEqual(first);
+  expect(screen.getByRole("checkbox", { name: /Apply all 2/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Apply to project" })).toBeDisabled();
+  expect(screen.getByText("Unchanged {{name}} 世界")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Choose new source input" })).toBeEnabled();
+  expect(invoke.mock.calls.some(([name]) => name === "adopt_execution")).toBe(false);
+});
+
+it("keeps capture consent and material while an installed-choice refresh is unavailable", async () => {
+  const original = invoke.getMockImplementation()!;
+  let unavailable = false;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "read_plugin_inventory" && unavailable) return Promise.reject({ code: "busy", outcome: "rejected" });
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I allow this exact plugin/ }));
+  unavailable = true;
+  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
+  await screen.findByRole("alert");
+  expect(screen.getByText("Example Mod")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /I allow this exact plugin/ })).toBeChecked();
+  expect(screen.getByRole("button", { name: "Import for preview" })).toBeDisabled();
+  unavailable = false;
+  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Import for preview" })).toBeEnabled());
+  expect(invoke.mock.calls.some(([name]) => name === "start_plugin_source")).toBe(false);
+});
+
+it("reports a rejected capture discard and retains the selected material", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "cancel_source_capture" ? Promise.reject({ code: "busy", outcome: "rejected" }) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("button", { name: "Discard selection" }));
+  await screen.findByRole("alert");
+  expect(screen.getByText("Example Mod")).toBeInTheDocument();
 });

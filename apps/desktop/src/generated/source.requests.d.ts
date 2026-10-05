@@ -3,16 +3,22 @@
 export type ExecutionId = string;
 export type Revision = string;
 export type LineageDecision = "continue" | "reject";
+export type UnsignedDecimal = string;
 
 export interface Requests {
   adopt: SourceAdoptRequest;
   capture: CaptureRequest;
+  checkFinish: SourceCheckFinishRequest;
+  checkPrepare: SourceCheckPrepareRequest;
   comparison: ComparisonRequest;
   content: ContentRequest;
   history: HistoryRequest;
   historyContent: HistoryContentRequest;
   impact: ImpactRequest;
   lineage: LineageRequest;
+  pluginCapture: PluginCaptureRequest;
+  pluginSelect: PluginSourceSelectRequest;
+  pluginStart: PluginStartRequest;
   preview: PreviewRequest;
   session: SessionRequest;
   start: StartRequest;
@@ -46,6 +52,37 @@ export interface CaptureRequest {
   selectionId: ExecutionId;
   sessionToken: string;
   sourceLanguage: string;
+}
+export interface SourceCheckFinishRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+  sessionToken: string;
+}
+export interface SourceCheckPrepareRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  source: PluginSourceRequest;
+  sourceAttemptId: ExecutionId;
+  sourceResultId: ExecutionId;
+}
+export interface PluginSourceRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
 }
 export interface ComparisonRequest {
   after: number;
@@ -91,6 +128,27 @@ export interface LineageRequest {
   projectId: ExecutionId;
   sessionToken: string;
   snapshotId: ExecutionId;
+}
+export interface PluginCaptureRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  sessionToken: string;
+  sourceLanguage: string;
+}
+export interface PluginSourceSelectRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  source: PluginSourceRequest;
+}
+export interface PluginStartRequest {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  unsandboxedExecution: boolean;
 }
 export interface PreviewRequest {
   after: number;

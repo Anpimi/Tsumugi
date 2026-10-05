@@ -32,7 +32,7 @@ function failureMessage(failure: CommandFailure, unknown: boolean): TranslationK
   return "plugins.failed";
 }
 
-function Permissions({ permissions }: { permissions: PermissionRequest[] }) {
+export function PluginPermissions({ permissions }: { permissions: PermissionRequest[] }) {
   const { t } = useTranslation();
   if (!permissions.length) return <p>{t("plugins.noPermissions")}</p>;
   return <ul>{permissions.map((permission, index) => <li key={index}>{t(`plugins.permissions.${permission.kind}`)}
@@ -131,8 +131,8 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
         <p>{t("plugins.declaredPublisher", { publisher: candidate.manifest.plugin.publisher })}</p>
         <p>{t("plugins.manualTrust")}</p>
         <h4>{t("plugins.runtime")}</h4><ul>{candidate.manifest.components.map(component => <li key={component.id}>{component.id}: {t(`plugins.runtimes.${component.runtime}`)}</li>)}</ul>
-        <h4>{t("plugins.permissionsTitle")}</h4><Permissions permissions={candidate.manifest.permissions}/>
-        {candidate.manifest.contributions.map(contribution => contribution.contribution.kind === "capability" ? <div key={contribution.id}><p>{t("plugins.capability", { name: contribution.id })}</p><Permissions permissions={contribution.contribution.declaration.permissions}/></div> : null)}
+        <h4>{t("plugins.permissionsTitle")}</h4><PluginPermissions permissions={candidate.manifest.permissions}/>
+        {candidate.manifest.contributions.map(contribution => contribution.contribution.kind === "capability" ? <div key={contribution.id}><p>{t("plugins.capability", { name: contribution.id })}</p><PluginPermissions permissions={contribution.contribution.declaration.permissions}/></div> : null)}
         <details><summary>{t("plugins.fingerprint")}</summary><p><code>{candidate.packageDigest}</code></p><p>{t("plugins.files", { count: candidate.fileCount, bytes: candidate.byteCount })}</p></details>
         <p>{t("plugins.installEffect")}</p>
         <label className="plugin-consent"><input type="checkbox" checked={consent} disabled={busy || unknown} onChange={event => setConsent(event.target.checked)}/>{t("plugins.consent")}</label>
@@ -186,7 +186,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
         })}</ul>}
         {inventory.runtimeDecisions.filter(decision => !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)).map(decision => <p key={decision.environmentDigest}>{t("plugins.runtimeApprovedMissing", { version: decision.environment.toolVersion })}</p>)}
       </section> : null}
-      {details ? <section className="plugin-section" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><Permissions permissions={details.manifest.permissions}/>
+      {details ? <section className="plugin-section" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><PluginPermissions permissions={details.manifest.permissions}/>
         <ul>{details.manifest.contributions.map(contribution => <li key={contribution.id}>{contribution.id} · {t(`plugins.contributions.${contribution.contribution.kind}`)}</li>)}</ul>
       </section> : null}
     </DialogContent></DialogPortal>

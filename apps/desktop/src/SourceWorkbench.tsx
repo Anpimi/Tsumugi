@@ -9,7 +9,9 @@ import type { UiMessages } from "./i18n/types";
 import { useSessionQuery } from "./SessionReadProvider";
 import { SourceHistoryPanel, SourceImpactPanel, SourceOccurrenceOrigin, readSourceHistoryCoverage, useSourceOccurrenceLabel } from "./SourceMaintenance";
 import { executionCommands as execution, executionContext, type AttemptDetail } from "./executionCommands";
-import { sourceCommands as commands, type ContentPage, type SourceChangePage, type LineageChoice, type Preflight, type SourceAdoptRequest, type SourceSelection, type StartRequest, type IntegrationDescriptor, type SourceHistory, type SourceImpactSummary } from "./sourceCommands";
+import { sourceCommands as commands, type ContentPage, type SourceChangePage, type LineageChoice, type SourceAdoptRequest, type SourceHistory, type SourceImpactSummary } from "./sourceCommands";
+
+import { SourceImportControls, type SourceImportHandle, type SourceImportState } from "./SourceImportControls";
 
 export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
 export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean; ref?: Ref<SourceHandle> }) {
@@ -17,11 +19,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const sourceLabel = useSourceOccurrenceLabel();
   const context = executionContext(project);
   const [open, setOpen] = useWorkbenchView("source");
-  const [integration, setIntegration] = useState<IntegrationDescriptor | null>(null);
-  const [domain, setDomain] = useState("stardew-smapi");
-  const [selection, setSelection] = useState<SourceSelection | null>(null);
-  const [declared, setDeclared] = useState(false);
-  const [preflight, setPreflight] = useState<Preflight | null>(null);
+  const sourceImport = useRef<SourceImportHandle>(null);
+  const [importState, setImportState] = useState<SourceImportState>({ busy: false, pending: false, hasDraft: false });
   const [attempt, setAttempt] = useState<string | null>(null);
   const [page, setPage] = useState<ContentPage | null>(null);
   const [comparison, setComparison] = useState<SourceChangePage | null>(null);
@@ -39,7 +38,6 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const [failureValue, setFailure] = useState<CommandFailure | null>(null);
   const failure = failureReason(failureValue);
   const [confirmed, setConfirmed] = useState(false);
-  const [pendingStart, setPendingStart] = useState<StartRequest | null>(null);
   const [pendingApply, setPendingApply] = useState<SourceAdoptRequest | null>(null);
   const [receiptChecked, setReceiptChecked] = useState(false);
   const [leave, setLeave] = useState(false);
@@ -54,16 +52,10 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const first = useRef<HTMLHeadingElement>(null);
   const errorRegion = useRef<HTMLDivElement>(null);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
-  useEffect(() => {
-    if (!open) return;
-    let stale = false;
-    void commands.integration(context, domain).then(value => { if (!stale) { setIntegration(value); setDomain(value.id); } }, error => { if (!stale) showError(error); });
-    return () => { stale = true; };
-  }, [open, project.sessionToken, domain]);
   useImperativeHandle(ref, () => ({
-    showAttempt(id) { if (mutation.current || pendingApply || pendingStart) { setOpen(true); return; } sequence.current++; setAttempt(id); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); setConfirmed(false); setFailure(null); setOpen(true); },
-    allowNavigate() { return Promise.resolve(!busy && !pendingApply && !pendingStart); },
-    allowLeave() { if (pendingApply || pendingStart) { setOpen(true); return Promise.resolve(false); } if (!selection && Object.keys(lineage).length === 0 && !busy) return Promise.resolve(true); setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
+    showAttempt(id) { if (mutation.current || importState.busy || pendingApply || importState.pending) { setOpen(true); return; } sequence.current++; setAttempt(id); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); setConfirmed(false); setFailure(null); setOpen(true); },
+    allowNavigate() { return Promise.resolve(!busy && !importState.busy && !pendingApply && !importState.pending); },
+    allowLeave() { if (pendingApply || importState.pending) { setOpen(true); return Promise.resolve(false); } if (!importState.hasDraft && Object.keys(lineage).length === 0 && !busy && !importState.busy) return Promise.resolve(true); setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
   }));
   function showError(error: unknown) {
     setFailure(commandFailure(error));
@@ -84,7 +76,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     let stopped = false;
     const current = () => !stopped && mounted.current && ticket === sequence.current;
     const result = detail.items[0];
-    if (result?.resultId && result.status.validation === "valid" && result.status.execution === "succeeded") {
+    if (result?.resultId && result.status.validation !== "invalid" && result.status.execution === "succeeded") {
       void (async () => {
         try {
           const scope = await commands.scope(context);
@@ -108,11 +100,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   async function loadCurrent(current: () => boolean) {
     const scope = await commands.scope(context);
     const next = scope.currentSnapshot ? await commands.content({ ...context, snapshotId: scope.currentSnapshot, after: 0, limit: 50 }) : null;
-    if (current()) { setPage(next); setComparison(null); setUpdating(false); setLineage({}); setConfirmed(false); if (next) { setAttempt(null); setSelection(null); setPreflight(null); } }
-  }
-  async function start(request: StartRequest, current: () => boolean) {
-    const id = await commands.start(request);
-    if (current()) { setAttempt(id); setPendingStart(null); setSelection(null); setPreflight(null); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); }
+    if (current()) { setPage(next); setComparison(null); setUpdating(false); setLineage({}); setConfirmed(false); if (next) { setAttempt(null); } }
   }
   async function applied(request: SourceAdoptRequest, current: () => boolean) {
     let receipt;
@@ -127,7 +115,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     const snapshot = receipt.changes.find(change => change.kind === "source-snapshot")?.id;
     if (!snapshot) throw { code: "output-invalid" };
     const next = await commands.content({ ...context, snapshotId: snapshot, after: 0, limit: 50 });
-    if (current()) { setPage(next); setComparison(null); setUpdating(false); setLineage({}); setEstimate(null); setHistory(null); setPendingApply(null); setAttempt(null); setConfirmed(false); setSelection(null); }
+    if (current()) { setPage(next); setComparison(null); setUpdating(false); setLineage({}); setEstimate(null); setHistory(null); setPendingApply(null); setAttempt(null); setConfirmed(false); }
   }
   async function compare(after: number, current: () => boolean, base: string | null = comparison?.previousSnapshotId ?? null, query = appliedFilter, reset = false) {
     if (!comparison) return;
@@ -140,51 +128,30 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     }
   }
   useEffect(() => {
-    if (open && !attempt && !page && !selection && !updating) void perform(loadCurrent);
+    if (open && !attempt && !page && !importState.hasDraft && !updating) void perform(loadCurrent);
   }, [open, project.sessionToken]);
   function requestBack() {
-    if (!mutation.current && !pendingApply && !pendingStart) setOpen(false);
+    if (!mutation.current && !pendingApply && !importState.pending && !importState.busy) setOpen(false);
   }
   const knownErrors: Record<string, keyof UiMessages["source"]["errors"]> = {
     "unsupported-encoding": "encoding", "source-changed": "changed", "duplicate-native-key": "duplicate", "empty-source": "empty", "capture-timeout": "timeout", "extract-timeout": "unknown", "source-corrupt": "invalid", "stale-preview": "conflict", "language-required": "language",
     "vtt-header": "webvtt", "vtt-timing": "webvtt", "vtt-setting": "webvtt", "vtt-region": "webvtt", "vtt-block": "webvtt", "vtt-cue-id": "webvtt", "vtt-order": "webvtt", "vtt-payload": "webvtt", "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", "invalid-json": "invalid", "source-value-not-string": "stringValue", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
   };
-  const locked = busy || pendingStart !== null || pendingApply !== null;
-  const warnings = page?.diagnostics ?? preflight?.diagnostics ?? [];
+  const locked = busy || importState.busy || importState.pending || pendingApply !== null;
+  const sourceValid = detail?.items[0]?.status.validation === "valid";
+  const proposal = comparison ? { attemptId: comparison.attemptId, resultId: comparison.resultId } : page && !page.snapshotId ? { attemptId: page.attemptId, resultId: page.resultId } : null;
+  const warnings = page?.diagnostics ?? [];
   const manualOccurrence = comparison?.rows.find(row => row.new?.ordinal === manualOrdinal)?.new;
   return <>
     <WorkbenchPanel open={open} title={t("source.title")} description={t("source.description")} className="source-dialog" onBack={() => void requestBack()} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
-          {integration ? <><p>{t("source.profile", { version: integration.version, name: integration.id === "webvtt" ? "WebVTT" : "Stardew SMAPI", profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {warnings.includes("source-template") ? <p role="status">{t("source.templateWarning")}</p> : null}
-          {!page && !comparison && !attempt ? <section aria-label={t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}>
-            <label className="source-field">{t("source.integration")}<select disabled={locked || updating} value={domain} onChange={event => { sequence.current++; setDomain(event.target.value); setIntegration(null); setSelection(null); setPreflight(null); setDeclared(false); setFailure(null); }}><option value="stardew-smapi">Stardew SMAPI</option><option value="webvtt">WebVTT</option></select></label>
-            {updating ? <p role="status">{t("source.updateIntro")}</p> : null}
-            <p>{t(domain === "webvtt" ? "source.webvttSupport" : "source.support")}</p>
-            <button className="secondary-button" disabled={locked || !integration?.available} onClick={() => void perform(async current => {
-              const next = await commands.select(context, domain);
-              if (current()) { setSelection(next); setPreflight(null); setDeclared(false); setConfirmed(false); if (next) { setPage(null); setComparison(null); setLineage({}); setAttempt(null); setDetail(null); } }
-            })}>{t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}</button>
-            {selection ? <>
-              <p>{selection.folderName}</p>
-              <label className="source-check"><input type="checkbox" checked={declared} disabled={locked} onChange={event => { setDeclared(event.target.checked); setPreflight(null); }} />{t("source.language", { language: project.metadata.sourceLocale })}</label>
-              <p>{t("source.languageHelp", { file: domain === "webvtt" ? "source.vtt" : "default.json" })}</p>
-              <button className="secondary-button" disabled={locked || !declared} onClick={() => void perform(async current => {
-                const result = await commands.preflight({ ...context, selectionId: selection.selectionId, sourceLanguage: project.metadata.sourceLocale });
-                if (current()) setPreflight(result);
-              })}>{t("source.preflight")}</button>
-              {preflight ? <><p>{t("source.preflightResult", { namespace: preflight.namespace, count: preflight.count })}</p>
-                <button className="primary-button" disabled={locked} onClick={() => void perform(async current => {
-                  const request = { ...context, selectionId: selection.selectionId, sourceLanguage: project.metadata.sourceLocale, attemptId: await execution.identity(context) };
-                  if (!current()) return;
-                  setPendingStart(request); await start(request, current);
-                })}>{t("source.start")}</button></> : null}
-              <button className="text-button" disabled={locked} onClick={() => void perform(async current => { await commands.cancelCapture(context); if (current()) { setSelection(null); setPreflight(null); setDeclared(false); } })}>{t("source.discard")}</button>
-            </> : null}
-          </section> : null}
-          {pendingStart && !busy ? <section><p>{t("source.startUnknown")}</p><button className="secondary-button" disabled={busy} onClick={() => void perform(current => start(pendingStart, current))}>{t("source.checkStart")}</button></section> : null}
+          <SourceImportControls ref={sourceImport} project={project} open={open} canCapture={!page && !comparison && !attempt} proposal={proposal} validation={detail?.items[0]?.status.validation ?? "pending"} disabled={disabled || busy || !!pendingApply} onState={setImportState}
+            onStarted={id => { sequence.current++; setAttempt(id); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); setConfirmed(false); }}
+            onValidated={async () => { if (!proposal) return; const ticket = sequence.current; const fresh = await execution.attempt({ ...context, attemptId: proposal.attemptId, offset: 0, limit: 100 }); if (mounted.current && sequence.current === ticket) setDetail(fresh); }} />
+          {proposal && !sourceValid ? <button className="secondary-button" disabled={locked || Object.keys(lineage).length > 0} onClick={() => { sequence.current++; setAttempt(null); setPage(null); setComparison(null); setConfirmed(false); setFailure(null); }}>{t("sourcePlugin.newInput")}</button> : null}
           {attempt && !page && !comparison ? <section><p role="status">{t("source.savedTask")}</p><p>{t("source.taskHelp")}</p>
             {detail ? <button className="secondary-button" disabled={locked} onClick={() => void perform(async () => { await execution.cancel({ ...context, taskId: detail.taskId, requestId: await execution.identity(context) }); })}>{t("execution.cancel")}</button> : null}
             <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { if (current()) setDetail(null); })}>{t("execution.refresh")}</button>
@@ -200,23 +167,23 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
               if (current()) setPage(next);
             })}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
             {!page.snapshotId ? <>
-              <label className="source-check"><input type="checkbox" disabled={locked || page.scope.currentSnapshot !== null} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.confirm", { count: page.total, language: page.confirmation.sourceLanguage })}</label>
+              <label className="source-check"><input type="checkbox" disabled={locked || !sourceValid || page.scope.currentSnapshot !== null} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.confirm", { count: page.total, language: page.confirmation.sourceLanguage })}</label>
               <p>{t("source.applyHelp")}</p>
               {page.scope.currentSnapshot ? <p>{t("source.errors.conflict")}</p> : null}
-              <button className="primary-button" disabled={locked || !confirmed || page.scope.currentSnapshot !== null} onClick={() => void perform(async current => {
+              <button className="primary-button" disabled={locked || !sourceValid || !confirmed || page.scope.currentSnapshot !== null} onClick={() => void perform(async current => {
                 const request = { ...context, attemptId: page.attemptId, resultId: page.resultId, actionId: await execution.identity(context), confirmation: page.confirmation };
                 if (!current()) return;
                 setPendingApply(request); setReceiptChecked(false); await applied(request, current);
               })}>{t("source.apply")}</button>
             </> : null}
-            {page.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <button className="primary-button" disabled={locked || !integration?.available} onClick={() => {
-              sequence.current++; setPage(null); setComparison(null); setLineage({}); setUpdating(true); setConfirmed(false); setSelection(null); setPreflight(null); setFailure(null);
+            {page.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <button className="primary-button" disabled={locked} onClick={() => {
+              sequence.current++; setPage(null); setComparison(null); setLineage({}); setUpdating(true); setConfirmed(false); setFailure(null);
             }}>{t("source.update")}</button> : null}
           </section> : null}
           {comparison ? <section>
             <h3 ref={first} tabIndex={-1}>{t("source.compareTitle")}</h3>
             <p role="status">{t("source.compareSummary", { unchanged: String(comparison.unchanged), moved: String(comparison.moved), changed: String(comparison.changed), added: String(comparison.added), ambiguous: String(comparison.ambiguous), removed: String(comparison.removed) })}</p>
-            <p>{t(domain === "webvtt" ? "source.webvttCompareHelp" : "source.compareHelp")}</p>
+            <p>{t("source.compareHelp")}</p>
             <label className="source-field">{t("source.mappingActor")}<input disabled={locked} value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
             <label className="source-field">{t("source.comparisonFilter")}<input disabled={locked} value={filter} maxLength={256} onChange={event => setFilter(event.target.value)} /></label>
             <button className="secondary-button" disabled={locked} onClick={() => void perform(current => compare(0, current, comparison.previousSnapshotId, filter))}>{t("source.search")}</button>
@@ -264,9 +231,9 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
             </section> : null}
             <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { const next = await commands.estimate({ ...context, attemptId: comparison.attemptId, resultId: comparison.resultId, actionId: await execution.identity(context), confirmation: { ...comparison.confirmation, lineage: Object.values(lineage), actor: actor.trim() || null } }); if (current()) setEstimate(next); })}>{t("source.reviewImpact")}</button>
             <p>{t("source.estimateHelp")}</p>{estimate?.map(summary => <p key={summary.locale}>{t("source.impactSummary", { locale: summary.locale, preserved: String(summary.preserved), reassess: String(summary.reassess), unresolved: String(summary.unresolved), total: String(summary.total) })}</p>)}
-            <label className="source-check"><input type="checkbox" disabled={locked || !estimate} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.updateConfirm", { count: comparison.total })}</label>
+            <label className="source-check"><input type="checkbox" disabled={locked || !sourceValid || !estimate} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.updateConfirm", { count: comparison.total })}</label>
             <p>{t("source.updateImpact")}</p>
-            <button className="primary-button" disabled={locked || !confirmed || (Object.keys(lineage).length > 0 && (!actor.trim() || Object.values(lineage).some(choice => !choice.reason.trim())))} onClick={() => void perform(async current => {
+            <button className="primary-button" disabled={locked || !sourceValid || !confirmed || (Object.keys(lineage).length > 0 && (!actor.trim() || Object.values(lineage).some(choice => !choice.reason.trim())))} onClick={() => void perform(async current => {
               const request = { ...context, attemptId: comparison.attemptId, resultId: comparison.resultId, actionId: await execution.identity(context), confirmation: { ...comparison.confirmation, lineage: Object.values(lineage), actor: actor.trim() || null } };
               if (!current()) return;
               setPendingApply(request); setReceiptChecked(false); await applied(request,current);
@@ -290,7 +257,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}>
         <Dialog.Title>{t("source.leaveTitle")}</Dialog.Title><Dialog.Description>{t("source.leaveHelp")}</Dialog.Description>
         <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; }}>{t("source.keep")}</button>
-          <button className="primary-button" onClick={() => { sequence.current++; void commands.cancelCapture(context).then(() => { setSelection(null); setPreflight(null); setLineage({}); setComparison(null); setLeave(false); leaveResolver.current?.(true); leaveResolver.current = null; }, error => { showError(error); setLeave(false); setOpen(true); leaveResolver.current?.(false); leaveResolver.current = null; }); }}>{t("source.leave")}</button></div>
+          <button className="primary-button" onClick={() => { sequence.current++; void (sourceImport.current?.discard() ?? commands.cancelCapture(context)).then(() => { setLineage({}); setComparison(null); setLeave(false); leaveResolver.current?.(true); leaveResolver.current = null; }, error => { showError(error); setLeave(false); setOpen(true); leaveResolver.current?.(false); leaveResolver.current = null; }); }}>{t("source.leave")}</button></div>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
   </>;

@@ -96,6 +96,11 @@ struct SourceRequests {
     lineage: execution::source::LineageRequest,
     impact: execution::source::ImpactRequest,
     adopt: execution::source::SourceAdoptRequest,
+    plugin_select: execution::source::plugin::PluginSourceSelectRequest,
+    plugin_capture: execution::source::plugin::PluginCaptureRequest,
+    plugin_start: execution::source::plugin::PluginStartRequest,
+    check_prepare: execution::source::plugin::SourceCheckPrepareRequest,
+    check_finish: execution::source::plugin::SourceCheckFinishRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -114,6 +119,9 @@ struct SourceResponses {
     estimates: Vec<tsumugi_core::content::SourceImpactSummary>,
     impact: tsumugi_core::content::SourceImpactPage,
     action: tsumugi_core::execution::AdoptionAction,
+    plugin_selection: Option<execution::source::plugin::PluginSourceSelection>,
+    plugin_preflight: execution::source::plugin::PluginSourcePreflight,
+    check_review: execution::source::plugin::SourceCheckReview,
 }
 
 #[derive(JsonSchema)]

@@ -81,7 +81,15 @@ Read-only Desktop source-environment resolution extends generated IPC using the
 same SDK types, current package enablement and independent installed-runtime
 approval. It creates no project mutation or execution grant and changes no
 application, SDK, process or data-format version.
-Existing static desktop source assembly has not been cut over by these APIs.
+The desktop source workbench now uses the installed Resource path for native
+selection, fixed material capture and separately consented extractor/checker
+execution through Core. Six generated source commands extend the same IPC domain.
+Normal builds no longer register the former built-in source preflight/start
+commands or their source runners; explicit test builds retain legacy fixtures.
+This is an incompatible initial-development source entry-point change, not
+a migration of earlier projects. Translation/build assembly and default domain
+package distribution remain incomplete. No dependency versions, SDK/process
+contracts, Store layout or schema 18 change in this unit.
 Application `0.2.0-alpha.1`, SDK `0.1.0-alpha.1` and schema 18 remain in the same
 undistributed batch, with no additional bump or earlier development migration.
 

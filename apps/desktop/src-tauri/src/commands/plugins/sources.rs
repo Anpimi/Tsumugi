@@ -29,10 +29,12 @@ pub struct PluginSourceView {
 
 /// Immutable inputs for a subsequent native capture and per-attempt review.
 /// Neither the view nor this snapshot is a current dispatch/adoption permit.
+#[derive(Clone)]
 pub(in crate::commands) struct SourceEnvironment {
     pub package: RegisteredPackage,
     pub binding: sdk::SourceImportBinding,
     pub runtime: CapturedRuntime,
+    pub staging_parent: std::path::PathBuf,
     resource_id: String,
     settings_revision: UnsignedDecimal,
     runtime_origin: PackageOrigin,
@@ -119,6 +121,13 @@ impl ApplicationPlugins {
             package: package.clone(),
             binding,
             runtime,
+            // The already provisioned Tauri application directory is the
+            // parent. Host creates and owns private per-process children there;
+            // package-store internals and project data are never used as stages.
+            staging_parent: {
+                let directory = manager.directory.as_ref().expect("directory configured");
+                directory.anchor.join(&directory.application)
+            },
             resource_id: request.resource_id.clone(),
             settings_revision: settings.revision().into(),
             runtime_origin,

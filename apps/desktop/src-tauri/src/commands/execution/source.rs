@@ -1,15 +1,17 @@
 use super::*;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::content::{
-    self, ContentPage, ContentScope, SourceBundle, SourceChangePage, SourceConfirmation,
+    self, ContentPage, ContentScope, SourceChangePage, SourceConfirmation,
 };
 pub(super) mod capture;
+pub mod plugin;
 #[cfg(test)]
 mod tests;
 pub mod translation;
 
 #[derive(Default)]
 pub(super) struct SourceSession {
+    plugin: plugin::PluginSourceSession,
     selection: Option<(ExecutionId, Arc<capture::Selection>)>,
     picker: Option<ExecutionId>,
     pub(super) resource_picker: Option<ExecutionId>,
@@ -35,6 +37,7 @@ impl SourceSession {
         self.picker = None;
         self.resource_picker = None;
         self.selection = None;
+        self.plugin.discard_capture();
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -282,6 +285,7 @@ fn finish<'a>(
     host.allow_mutation()?;
     Ok(active)
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn preflight_source(
     state: State<'_, AppState>,
@@ -334,6 +338,7 @@ pub async fn preflight_source(
         )
         .await
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn start_source_import(
     state: State<'_, AppState>,
@@ -408,7 +413,7 @@ pub async fn start_source_import(
             CommandStage::ExecutionRecover,
             move |sessions| {
                 let active = finish(sessions, &request.session_token, request.project_id, id)?;
-                let bundle: SourceBundle = result?;
+                let bundle: content::SourceBundle = result?;
                 let metadata = active
                     .store
                     .metadata()

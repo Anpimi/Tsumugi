@@ -2,6 +2,43 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+export type UnsignedDecimal = string;
 export type LineageDecision = "continue" | "reject";
 export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
 export type SourceChangeKind =
@@ -12,6 +49,7 @@ export interface Responses {
   action: AdoptionAction;
   attempt: ExecutionId;
   cancelled: null;
+  checkReview: SourceCheckReview;
   comparison: SourceChangePage;
   estimates: SourceImpactSummary[];
   history: SourceHistory;
@@ -19,6 +57,8 @@ export interface Responses {
   integration: IntegrationDescriptor;
   lineage: LineageEvidence[];
   page: ContentPage;
+  pluginPreflight: PluginSourcePreflight;
+  pluginSelection: PluginSourceSelection | null;
   preflight: Preflight;
   scope: ContentScope;
   selection: SourceSelection | null;
@@ -32,6 +72,139 @@ export interface AdoptionAction {
   projectId: ExecutionId;
   resultIds: ExecutionId[];
   unitId: ExecutionId;
+}
+export interface SourceCheckReview {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  rules: ContractRef[];
+  source: PluginSourceView;
+  sourceAttemptId: ExecutionId;
+  sourceResultId: ExecutionId;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface PluginSourceView {
+  checker: CapabilityBinding;
+  declaration: SourceImportDeclaration;
+  environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
+  extractor: CapabilityBinding;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * All listed materials are required, relative to one user-selected directory.
+ * This first contract supports fixed files, not globs or discovery programs.
+ */
+export interface SourceImportDeclaration {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  materials: SourceMaterialDeclaration[];
+  profile: ContractRef;
+  revisionPolicy: SourceRevisionPolicy;
+  semanticRules: ContractRef[];
+}
+export interface SourceMaterialDeclaration {
+  logicalPath: string;
+  maxBytes: number;
+  role: string;
+}
+/**
+ * Captured by the trusted policy owner before a proposal is received. Only
+ * these exact block schemas contribute opaque bytes to source revisions.
+ */
+export interface SourceRevisionPolicy {
+  profile: ContractRef;
+  revisionBasis: ContractRef[];
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
 }
 export interface SourceChangePage {
   added: number;
@@ -140,15 +313,6 @@ export interface TextRange {
   end: number;
   start: number;
 }
-/**
- * Schema and behavior are separate exact-match compatibility identities.
- * Matching JSON field types or a package SemVer is not behavioral compatibility.
- */
-export interface ContractRef {
-  behaviorVersion: number;
-  id: string;
-  schemaVersion: number;
-}
 export interface ContentScope {
   currentSnapshot: ExecutionId | null;
   revision: Revision;
@@ -249,6 +413,24 @@ export interface ContentPage {
   scope: ContentScope;
   snapshotId: ExecutionId | null;
   total: number;
+}
+export interface PluginSourcePreflight {
+  attemptId: ExecutionId;
+  files: PluginSourceFile[];
+  inputDigest: string;
+  source: PluginSourceView;
+  sourceLanguage: string;
+}
+export interface PluginSourceFile {
+  byteLength: number;
+  logicalPath: string;
+  role: string;
+  sha256: string;
+}
+export interface PluginSourceSelection {
+  folderName: string;
+  selectionId: ExecutionId;
+  source: PluginSourceView;
 }
 export interface Preflight {
   count: number;

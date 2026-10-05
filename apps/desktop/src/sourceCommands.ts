@@ -1,11 +1,19 @@
 import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
-import type { CaptureRequest, StartRequest, SourceAdoptRequest, PreviewRequest, ContentRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest } from "./generated/source.requests";
-import { validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction } from "./generated/source.validators";
+import type { CaptureRequest, StartRequest, SourceAdoptRequest, PreviewRequest, ContentRequest, ComparisonRequest, HistoryRequest, HistoryContentRequest, LineageRequest, ImpactRequest, PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
+import { validateResponseIntegration, validateResponseSelection, validateResponsePreflight, validateResponseAttempt, validateResponseCancelled, validateResponseScope, validateResponsePage, validateResponseComparison, validateResponseHistory, validateResponseLineage, validateResponseEstimates, validateResponseImpact, validateResponseAction, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseCheckReview } from "./generated/source.validators";
 
 export type { CaptureRequest, StartRequest, SourceAdoptRequest, SourceConfirmation } from "./generated/source.requests";
+export type { PluginSourceSelectRequest, PluginCaptureRequest, PluginStartRequest, SourceCheckPrepareRequest, SourceCheckFinishRequest } from "./generated/source.requests";
+export type { PluginSourceSelection, PluginSourcePreflight, SourceCheckReview } from "./generated/source.responses";
 export type { SourceSelection, IntegrationDescriptor, FileCoverage as Coverage, Preflight, ContentScope, LineageChoice, SourceOccurrence, ContentRow, ContentPage, SourceChange, SourceChangeKind, SourceChangePage, SourceHistoryEntry, SourceHistory, LineageEvidence, SourceImpactBasis, SourceImpactSummary, SourceImpactRow, SourceImpactStatus, SourceImpactPage } from "./generated/source.responses";
 export const sourceCommands = {
+  selectPlugin: (request: PluginSourceSelectRequest) => checkedInvoke("select_plugin_source", request, validateResponsePluginSelection),
+  capturePlugin: (request: PluginCaptureRequest) => checkedInvoke("preflight_plugin_source", request, validateResponsePluginPreflight),
+  startPlugin: (request: PluginStartRequest) => checkedInvoke("start_plugin_source", request, validateResponseAttempt),
+  prepareCheck: (request: SourceCheckPrepareRequest) => checkedInvoke("prepare_source_check", request, validateResponseCheckReview),
+  startCheck: (request: PluginStartRequest) => checkedInvoke("start_source_check", request, validateResponseAttempt),
+  finishCheck: (request: SourceCheckFinishRequest) => checkedInvoke("finish_source_check", request, validateResponseCancelled),
   integration: (request: SessionRequest, integrationId = "stardew-smapi") => checkedInvoke(integrationId === "webvtt" ? "read_webvtt_integration" : "read_source_integration", request, validateResponseIntegration),
   select: (request: SessionRequest, integrationId = "stardew-smapi") => checkedInvoke(integrationId === "webvtt" ? "select_webvtt_source" : "select_source", request, validateResponseSelection),
   preflight: (request: CaptureRequest) => checkedInvoke("preflight_source", request, validateResponsePreflight),
