@@ -15,21 +15,7 @@ pub(crate) mod installation;
 pub use directory::PackageInspection;
 
 pub(crate) fn portable_path(path: &str) -> HostResult<()> {
-    validate_package_path(path).map_err(|_| HostError::PackagePath)?;
-    // Avoid aliases and reserved device names across supported filesystems.
-    if !path.is_ascii()
-        || path.split('/').any(|part| {
-            let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
-            part.ends_with(['.', ' '])
-                || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-                || (stem.len() == 4
-                    && (stem.starts_with("COM") || stem.starts_with("LPT"))
-                    && matches!(stem.as_bytes()[3], b'1'..=b'9'))
-        })
-    {
-        return Err(HostError::PackagePath);
-    }
-    Ok(())
+    validate_portable_package_path(path).map_err(|_| HostError::PackagePath)
 }
 
 pub use tsumugi_plugin_sdk::RuntimeArtifactFile as PackageFile;
@@ -128,6 +114,22 @@ impl PackageImage {
     /// Interpret only the explicitly selected SDK resource from this immutable
     /// package. The resource cannot substitute another package's declarations.
     pub fn source_import(&self, contribution_id: &str) -> HostResult<SourceImportBinding> {
+        parse_source_import_declaration(
+            self.resource_bytes(contribution_id, &source_import_declaration_contract())?,
+        )
+        .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+        .map_err(|_| HostError::InvalidContract)
+    }
+    /// Bind the selected immutable SDK build resource without executing a
+    /// component, reading user material or granting publication authority.
+    pub fn build_declaration(&self, contribution_id: &str) -> HostResult<BuildBinding> {
+        parse_build_declaration(
+            self.resource_bytes(contribution_id, &build_declaration_contract())?,
+        )
+        .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+        .map_err(|_| HostError::InvalidContract)
+    }
+    fn resource_bytes(&self, contribution_id: &str, expected: &ContractRef) -> HostResult<&[u8]> {
         let contribution = self
             .manifest
             .manifest()
@@ -138,16 +140,14 @@ impl PackageImage {
         let ContributionKind::Resource { schema, path } = &contribution.contribution else {
             return Err(HostError::InvalidContract);
         };
-        if *schema != source_import_declaration_contract() {
+        if schema != expected {
             return Err(HostError::InvalidContract);
         }
         let file = self.files.get(path).ok_or(HostError::MissingArtifact)?;
         if file.executable {
             return Err(HostError::InvalidContract);
         }
-        parse_source_import_declaration(&file.bytes)
-            .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
-            .map_err(|_| HostError::InvalidContract)
+        Ok(&file.bytes)
     }
     pub(crate) fn stage(
         &self,

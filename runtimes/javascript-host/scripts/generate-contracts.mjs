@@ -24,6 +24,12 @@ for (const kind of ['input', 'error', 'check-input']) {
   ));
 }
 cargo('check-check-results-schema', fileURLToPath(new URL('crates/plugin-sdk/schemas/check-results.schema.json', root)));
+const buildSchemas = new Map();
+for (const kind of ['build-input', 'artifact-set', 'artifact-check-input', 'build-declaration', 'build-error', 'build-types']) {
+  const url = new URL(`crates/plugin-sdk/schemas/${kind}.schema.json`, root);
+  cargo(`check-${kind}-schema`, fileURLToPath(url));
+  buildSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
+}
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
 const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
 const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
@@ -56,6 +62,16 @@ const outputs = [
   [new URL('../src/generated/validate-process.mjs', import.meta.url), banner + processValidator],
   [new URL('../src/generated/protocol.ts', import.meta.url), `${banner}export const PROCESS_PROFILE = ${JSON.stringify(profile, null, 2)} as const;\n`],
 ];
+outputs.push([new URL('crates/plugin-sdk/javascript/build.d.ts', root), await compile(buildSchemas.get('build-types'), 'BuildTypes', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+for (const kind of ['build-input', 'artifact-set', 'artifact-check-input']) {
+  const validator = standaloneCode(ajv, ajv.compile(buildSchemas.get(kind)));
+  if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
+    throw new Error('The generated build validator requires a runtime dependency.');
+  }
+  outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
+}
 for (const [url, source] of outputs) {
   if (process.argv.includes('--check')) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);

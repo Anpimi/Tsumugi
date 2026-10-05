@@ -5,6 +5,7 @@
 //! persistence belong to the host; this crate has no Core or database dependency.
 
 mod binding;
+mod build;
 mod checks;
 mod content;
 mod declaration;
@@ -18,6 +19,7 @@ mod text;
 mod validation;
 
 pub use binding::{CapabilityBinding, ProviderSelectionBinding, bind_capability};
+pub use build::*;
 pub use checks::*;
 pub use content::*;
 pub use declaration::*;
@@ -75,6 +77,12 @@ pub const PROCESS_PROTOCOL: u32 = 1;
 /// This does not open a path or prove filesystem containment.
 pub fn validate_package_path(value: &str) -> Result<(), ContractError> {
     validation::path(value, "package.path")
+}
+
+/// Apply the Host's portable relative-file naming policy to data artifacts.
+/// This checks syntax only; filesystem containment and held handles stay host-owned.
+pub fn validate_portable_package_path(value: &str) -> Result<(), ContractError> {
+    validation::portable_path(value, "artifact.path")
 }
 
 /// Validate a lowercase SHA-256 value, without inspecting or approving bytes.

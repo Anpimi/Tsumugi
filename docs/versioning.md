@@ -60,6 +60,15 @@ the package format, runtime profile, project schema or desktop assembly. Neither
 addition distributes an application/SDK release or requires a historical migration;
 the application and SDK version sources therefore remain unchanged.
 
+The SDK's additive build-input/artifact/check/declaration/error contracts have
+independent schema/behavior 1/1 identities in this same undistributed alpha.1
+batch. Host build-resource inspection reuses captured package bytes and the
+existing portable-path policy; it does not switch desktop build execution,
+change stored project data, process frames, installed Store formats or dependencies.
+The application and SDK versions therefore remain unchanged, with the public
+experimental feature recorded in both Unreleased changelogs. No release or
+historical development-format migration is implied.
+
 The read-only runtime inspector and fixed macOS arm64 preparation command use
 the existing capture/SDK hash owners. They add build tooling and a source-owned
 Node distribution pin, not new wire fields, Store formats, project migrations or

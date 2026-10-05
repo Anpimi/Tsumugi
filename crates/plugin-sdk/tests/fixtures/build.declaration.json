@@ -1,0 +1,21 @@
+{
+  "displayName": "Example text artifact",
+  "profile": {
+    "id": "example.plain-text",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "builder": "build",
+  "checker": "check-artifact",
+  "outputLimits": {
+    "maxArtifacts": 2,
+    "maxTotalBytes": 131072
+  },
+  "artifactRules": [
+    {
+      "id": "example.artifact-conformance",
+      "schemaVersion": 1,
+      "behaviorVersion": 1
+    }
+  ]
+}

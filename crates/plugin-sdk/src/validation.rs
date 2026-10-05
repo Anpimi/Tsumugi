@@ -116,6 +116,22 @@ pub(crate) fn path(value: &str, field: &str) -> Result<(), ContractError> {
     }
     Ok(())
 }
+pub(crate) fn portable_path(value: &str, field: &str) -> Result<(), ContractError> {
+    path(value, field)?;
+    if !value.is_ascii()
+        || value.split('/').any(|part| {
+            let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
+            part.ends_with(['.', ' '])
+                || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                || (stem.len() == 4
+                    && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                    && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+        })
+    {
+        return Err(ContractError::at(ContractErrorCode::InvalidPath, field));
+    }
+    Ok(())
+}
 fn permission(value: &PermissionRequest) -> Result<(), ContractError> {
     match value {
         PermissionRequest::ProjectService { contract } => {

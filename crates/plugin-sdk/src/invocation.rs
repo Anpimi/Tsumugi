@@ -112,7 +112,7 @@ impl EncodedPayload {
         payload.validate()?;
         Ok(payload)
     }
-    fn validate(&self) -> Result<(), ContractError> {
+    pub(crate) fn validate(&self) -> Result<(), ContractError> {
         reference(&self.schema, "payload.schema")?;
         digest(&self.sha256, "payload.sha256")?;
         if self.utf8.len() > MAX_INVOCATION_PAYLOAD_BYTES {

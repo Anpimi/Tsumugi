@@ -1,0 +1,137 @@
+{
+  "protocolVersion": 1,
+  "plugin": {
+    "publisher": "example",
+    "id": "plain-text",
+    "version": "0.1.0"
+  },
+  "permissions": [
+    {
+      "kind": "captured-input"
+    }
+  ],
+  "components": [
+    {
+      "id": "worker",
+      "scope": "project",
+      "runtime": "javascript",
+      "entrypoint": "component.mjs",
+      "dependencies": [],
+      "exit": {
+        "stopTimeoutMs": 1000,
+        "cleanupTimeoutMs": 1000
+      }
+    }
+  ],
+  "contributions": [
+    {
+      "id": "build-profile",
+      "componentId": "worker",
+      "contribution": {
+        "kind": "resource",
+        "schema": {
+          "id": "tsumugi.build-declaration",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "path": "build-profile.json"
+      }
+    },
+    {
+      "id": "build",
+      "componentId": "worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.build",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.build-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.artifact-set",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.build-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "proposal",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    },
+    {
+      "id": "check-artifact",
+      "componentId": "worker",
+      "contribution": {
+        "kind": "capability",
+        "declaration": {
+          "contract": {
+            "id": "example.artifact-check",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.artifact-check-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.check-results",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.build-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "read-only",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 4194304,
+            "maxOutputBytes": 2097152,
+            "concurrency": 1,
+            "timeoutMs": 30000
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ArtifactSet",
+  "description": "Actual UTF-8 output, including BOM and line endings. This contract deliberately\nmakes no binary-artifact or domain conformance claim. No local paths are used.",
+  "type": "object",
+  "properties": {
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CapturedTextArtifact"
+      }
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    },
+    "sourceSetId": {
+      "type": "string"
+    },
+    "targetLanguage": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "profile",
+    "sourceSetId",
+    "targetLanguage",
+    "artifacts"
+  ],
+  "$defs": {
+    "CapturedTextArtifact": {
+      "description": "Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "logicalPath": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "utf8": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "logicalPath",
+        "role",
+        "sha256",
+        "utf8"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    }
+  }
+}

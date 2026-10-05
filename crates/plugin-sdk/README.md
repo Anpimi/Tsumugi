@@ -21,6 +21,12 @@ fix material paths, a profile and independent extractor/checker selections.
 The Host interprets only its captured bytes; directory access and current grants
 remain separate application decisions.
 
+[Build and artifact data](docs/build.md) defines fixed decided targets, actual
+UTF-8 output, complete independent check scope and a captured build Resource.
+The SDK and Host metadata APIs are available; the production desktop ReleasePlan
+path is still being integrated. These contracts grant no execution or publication
+permission.
+
 From the repository root:
 
 ```sh

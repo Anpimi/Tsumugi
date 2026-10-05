@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "BuildDeclaration",
+  "type": "object",
+  "properties": {
+    "artifactRules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ContractRef"
+      }
+    },
+    "builder": {
+      "type": "string"
+    },
+    "checker": {
+      "type": "string"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "outputLimits": {
+      "$ref": "#/$defs/BuildOutputLimits"
+    },
+    "profile": {
+      "$ref": "#/$defs/ContractRef"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "displayName",
+    "profile",
+    "builder",
+    "checker",
+    "outputLimits",
+    "artifactRules"
+  ],
+  "$defs": {
+    "BuildOutputLimits": {
+      "type": "object",
+      "properties": {
+        "maxArtifacts": {
+          "type": "integer",
+          "maximum": 32,
+          "minimum": 1
+        },
+        "maxTotalBytes": {
+          "type": "integer",
+          "maximum": 2097152,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxArtifacts",
+        "maxTotalBytes"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    }
+  }
+}

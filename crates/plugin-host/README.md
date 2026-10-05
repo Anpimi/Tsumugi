@@ -109,6 +109,13 @@ conformance profile does not provide this Node-specific Core environment binding
 
 ## Package catalog and fixed selection
 
+`PackageImage::build_declaration` reads an explicitly selected non-executable
+SDK build Resource from its immutable captured bytes, then binds both exact
+builder/checker declarations from that same manifest. It grants no execution or
+publication authority. The [SDK build contract](../plugin-sdk/docs/build.md)
+defines decided input, actual UTF-8 artifacts and complete independent check data;
+production desktop build integration is still pending.
+
 `catalog::PackageCatalog` records at most 128 captured package versions. Its
 `PackageApproval` comes from independently verified metadata or explicit local
 source approval, with expected plugin identity, digest and non-secret source and
