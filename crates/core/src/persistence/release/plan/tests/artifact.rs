@@ -3,7 +3,22 @@
 use super::*;
 use crate::execution::*;
 
+mod release;
+
 fn fixture_build(locales: &[&str]) -> (tempfile::TempDir, ProjectStore, ExecutionId, FixedInput) {
+    fixture_build_limit(locales, 131072)
+}
+fn fixture_build_limit(
+    locales: &[&str],
+    bytes: u32,
+) -> (tempfile::TempDir, ProjectStore, ExecutionId, FixedInput) {
+    fixture_build_policy(locales, bytes, RecoveryPolicy::ExternalUnknown)
+}
+fn fixture_build_policy(
+    locales: &[&str],
+    bytes: u32,
+    policy: RecoveryPolicy,
+) -> (tempfile::TempDir, ProjectStore, ExecutionId, FixedInput) {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(
         directory.path().join("project"),
@@ -33,6 +48,7 @@ fn fixture_build(locales: &[&str]) -> (tempfile::TempDir, ProjectStore, Executio
         })
         .collect();
     let mut build = environment(&store);
+    build.binding.declaration.output_limits.max_total_bytes = bytes;
     build
         .binding
         .declaration
@@ -47,10 +63,18 @@ fn fixture_build(locales: &[&str]) -> (tempfile::TempDir, ProjectStore, Executio
         .unwrap();
     let generation = ExecutionId::new();
     store.begin_plugin_epoch(generation).unwrap();
-    authorize(&mut store, generation, &input);
+    authorize_policy(&mut store, generation, &input, policy);
     (directory, store, generation, input)
 }
 fn authorize(store: &mut ProjectStore, generation: ExecutionId, input: &FixedInput) -> ExecutionId {
+    authorize_policy(store, generation, input, RecoveryPolicy::ExternalUnknown)
+}
+fn authorize_policy(
+    store: &mut ProjectStore,
+    generation: ExecutionId,
+    input: &FixedInput,
+    policy: RecoveryPolicy,
+) -> ExecutionId {
     let grant = ExecutionId::new();
     store
         .authorize_plugin_input(
@@ -63,7 +87,9 @@ fn authorize(store: &mut ProjectStore, generation: ExecutionId, input: &FixedInp
             },
         )
         .unwrap();
-    store.enqueue_execution(input).unwrap();
+    store
+        .enqueue_execution_with_policy(input, policy, None)
+        .unwrap();
     grant
 }
 fn sdk_result(request: &DispatchRequest, value: serde_json::Value) -> FixedResult {

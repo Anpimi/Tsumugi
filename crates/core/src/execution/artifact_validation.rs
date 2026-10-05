@@ -52,14 +52,7 @@ impl ArtifactValidationCapture {
             &build.input,
             result.envelope().dispatch_token,
         )?;
-        let evidence = result.envelope().plugin.as_ref().ok_or_else(invalid)?;
-        let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
-            return Err(invalid());
-        };
-        if output.schema != sdk::artifact_set_contract() {
-            return Err(invalid());
-        }
-        let output = sdk::parse_artifact_set(output.utf8.as_bytes()).map_err(|_| invalid())?;
+        let output = plan.artifact_set(result)?;
         let item = build.input.item(result.envelope().item_id)?;
         let locale = item.scope.locale.as_deref().ok_or_else(invalid)?;
         let input = plan.plugin_input(locale)?;

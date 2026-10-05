@@ -91,7 +91,21 @@ generic validators cannot grant their mandatory proof. SDK contracts, process
 frames and installed Store formats are unchanged. This remains the same
 undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with no
 additional SemVer bump, publication or historical migration. Actual desktop
-plugin build execution and Release adoption remain separate requirements.
+plugin build execution remained separate at that proof-only boundary.
+
+Core immutable release adoption now records a tagged current manifest and all
+artifacts per locale in the existing release tables, binding original inputs,
+results, mandatory proof and receipts. This advances the current-only project
+format to schema 20. Schema 19 and earlier development directories are refused
+unchanged, without conversion; preserve them and create a new current-format
+project. Exact-path reads support complete ArtifactSets, while locale-only reads
+explicitly refuse ambiguous multi-file outputs. The generic entry count denotes
+frozen source units, not parsed domain records. SDK shapes, generated desktop DTOs,
+installed Store formats, dependencies and version sources are unchanged. This
+remains the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
+batch, with no extra SemVer bump or historical migration. Desktop installed build
+execution and actual filesystem delivery still require their own integration and
+acceptance evidence.
 
 The read-only runtime inspector and fixed macOS arm64 preparation command use
 the existing capture/SDK hash owners. They add build tooling and a source-owned

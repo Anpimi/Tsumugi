@@ -2079,6 +2079,66 @@ fn plugin_source_adoption_rechecks_checker_authority_before_capture_and_commit()
 }
 
 #[test]
+fn plugin_source_adoption_refuses_a_superseded_checker_after_saved_proof() {
+    for after_prepare in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = create(&temp.path().join("project"));
+        let mut runtime = ExecutionRuntime::new(&mut store).unwrap();
+        for checker in [false, true] {
+            runtime
+                .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                    checker,
+                ))))
+                .unwrap();
+        }
+        let input = generic_source_input(&store, 1, 1, "CaseKey", false);
+        let result = run_generic_source(&mut runtime, &mut store, &input);
+        let capture = store
+            .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)
+            .unwrap();
+        let check_input = capture.check_input().clone();
+        let checked = run_generic_source(&mut runtime, &mut store, &check_input);
+        store
+            .commit_source_validation(capture.prepare(checked.clone()).unwrap())
+            .unwrap();
+        let action = prepare(&mut store, &input, &result);
+        let prepared = after_prepare.then(|| {
+            store
+                .capture_execution_adoption(&action)
+                .unwrap()
+                .prepare(&SourceAdoptionHandler)
+                .unwrap()
+        });
+        let mut envelope = checked.envelope().clone();
+        envelope.result_id = ExecutionId::new();
+        envelope.supersedes = Some(checked.envelope().result_id);
+        envelope.plugin.as_mut().unwrap().result.result_id = ExecutionId::new().to_string();
+        let replacement =
+            FixedResult::capture(envelope, &check_input, checked.envelope().dispatch_token)
+                .unwrap();
+        store.save_execution_result(&replacement).unwrap();
+        let error = if let Some(prepared) = prepared {
+            store.commit_execution_adoption(prepared).unwrap_err()
+        } else {
+            store.capture_execution_adoption(&action).unwrap_err()
+        };
+        assert_eq!(error.code, ErrorCode::ResultMismatch);
+        assert!(store.content_scope().unwrap().current_snapshot.is_none());
+        assert!(store.adoption_receipt(action.action_id).unwrap().is_none());
+        assert!(
+            store
+                .source_preview(
+                    input.envelope().attempt_id,
+                    result.envelope().result_id,
+                    0,
+                    50
+                )
+                .is_ok()
+        );
+    }
+}
+
+#[test]
 fn adopted_plugin_source_remains_readable_after_checker_revocation_and_reopen() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");

@@ -340,6 +340,36 @@ fn load_input_cached(
     check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
     Ok(input)
 }
+/// A reused result remains bound to its original fixed input and permission.
+fn result_input<'a>(
+    connection: &Connection,
+    input: &'a FixedInput,
+    result: ExecutionId,
+) -> Result<std::borrow::Cow<'a, FixedInput>, ExecutionError> {
+    let reused = input
+        .envelope()
+        .reused_results
+        .iter()
+        .find(|reference| reference.result_id == result);
+    if let Some(reference) = reused {
+        let source = load_input(connection, reference.source_attempt_id)?;
+        if source.envelope().task_id != input.envelope().task_id
+            || source.envelope().project_id != input.envelope().project_id
+            || source.envelope().operation != input.envelope().operation
+            || source.envelope().capability_id != input.envelope().capability_id
+            || source.envelope().capability_version != input.envelope().capability_version
+            || source.envelope().settings != input.envelope().settings
+            || source.envelope().plugin != input.envelope().plugin
+            || source.item(reference.item_id)? != input.item(reference.item_id)?
+        {
+            return Err(error(ErrorCode::CorruptLedger, "reused-input"));
+        }
+        Ok(std::borrow::Cow::Owned(source))
+    } else {
+        Ok(std::borrow::Cow::Borrowed(input))
+    }
+}
+
 pub(super) fn load_result(
     connection: &Connection,
     input: &FixedInput,
@@ -349,28 +379,12 @@ pub(super) fn load_result(
         .envelope()
         .reused_results
         .iter()
-        .find(|reference| reference.result_id == result);
-    let source = if let Some(reference) = reused {
-        let source = load_input(connection, reference.source_attempt_id)?;
-        if source.envelope().task_id != input.envelope().task_id
-            || source.envelope().project_id != input.envelope().project_id
-            || source.envelope().operation != input.envelope().operation
-            || source.envelope().capability_id != input.envelope().capability_id
-            || source.envelope().capability_version != input.envelope().capability_version
-            || source.envelope().settings != input.envelope().settings
-            || source.item(reference.item_id)? != input.item(reference.item_id)?
-        {
-            return Err(error(ErrorCode::CorruptLedger, "reused-input"));
-        }
-        Some(source)
-    } else {
-        None
-    };
-    let result_input = source.as_ref().unwrap_or(input);
+        .find(|r| r.result_id == result);
+    let result_input = result_input(connection, input, result)?;
     let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
         "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
         params![result.to_string(),result_input.envelope().attempt_id.to_string(),i64::from(result_input.envelope().limits.max_result_bytes)], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
-    let result_value = FixedResult::restore(&bytes, &digest, result_input, parse_id(token)?)?;
+    let result_value = FixedResult::restore(&bytes, &digest, &result_input, parse_id(token)?)?;
     if reused.is_some_and(|reference| {
         reference.item_id != result_value.envelope().item_id
             || result_value.envelope().outcome != ExecutionState::Succeeded
@@ -545,12 +559,14 @@ pub(super) fn validate_source_link(
     Ok(prepared)
 }
 
-fn validate_plugin_link(
+pub(super) fn validate_plugin_link(
     connection: &Connection,
     input: &FixedInput,
     result: &FixedResult,
     expected_valid: bool,
 ) -> Result<(), ExecutionError> {
+    let original = result_input(connection, input, result.envelope().result_id)?;
+    let input = original.as_ref();
     if input.envelope().operation == crate::content::OPERATION {
         validate_source_link(connection, input, result, expected_valid)?;
         return Ok(());
@@ -1813,6 +1829,27 @@ impl ProjectStore {
     }
 }
 
+fn require_current_result(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    let (current, execution): (Option<String>, String) = connection.query_row(
+        "SELECT current_result_id,execution FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+        params![input.envelope().attempt_id.to_string(), result.envelope().item_id.to_string()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(sql_error)?;
+    if current.as_deref() != Some(result.envelope().result_id.to_string().as_str())
+        || execution != "succeeded"
+    {
+        return Err(error(
+            ErrorCode::ResultMismatch,
+            "semantic-check-current-result",
+        ));
+    }
+    Ok(())
+}
+
 fn capture_adoption_in(
     connection: &Connection,
     action: &AdoptionAction,
@@ -1845,6 +1882,11 @@ fn capture_adoption_in(
         };
     }
     super::application::check_input(connection, &input)?;
+    if input.envelope().plugin.is_some()
+        && input.envelope().operation == crate::content::BUILD_OPERATION
+    {
+        super::release::ReleasePlan::from_input(&input)?.validate_source_reference(connection)?;
+    }
     let permit = super::plugin_execution::check_input_in(connection, &input, authority)?;
     let results = action
         .result_ids
@@ -1852,12 +1894,19 @@ fn capture_adoption_in(
         .map(|id| load_result(connection, &input, *id))
         .collect::<Result<Vec<_>, _>>()?;
     action.validate(&input, &results)?;
-    if results.iter().any(|result| {
-        result.envelope().plugin.as_ref().is_some_and(|origin| {
-            permit.as_ref().map(PluginPermit::grant_id) != Some(origin.authorization_id)
-        })
-    }) {
-        return Err(error(ErrorCode::Unauthorized, "plugin-adoption-grant"));
+    for result in &results {
+        let original = result_input(connection, &input, result.envelope().result_id)?;
+        let result_permit = if original.envelope().attempt_id == input.envelope().attempt_id {
+            permit.clone()
+        } else {
+            require_current_result(connection, &original, result)?;
+            super::plugin_execution::check_input_in(connection, &original, authority)?
+        };
+        if result.envelope().plugin.as_ref().is_some_and(|origin| {
+            result_permit.as_ref().map(PluginPermit::grant_id) != Some(origin.authorization_id)
+        }) {
+            return Err(error(ErrorCode::Unauthorized, "plugin-adoption-grant"));
+        }
     }
     if cancel_revision(connection, input.envelope().task_id)? != action.cancellation_revision {
         return Err(error(ErrorCode::Cancelled, "adoption"));
@@ -1886,25 +1935,24 @@ fn capture_adoption_in(
         {
             return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
         }
-        if input.envelope().plugin.is_some()
-            && input.envelope().operation == crate::content::OPERATION
-        {
-            // Saved semantic evidence remains readable after revocation. A new
-            // adoption additionally needs the exact checker's current grant,
-            // both when capturing and when committing the prepared mutation.
-            let checked = validate_source_link(connection, &input, result, true)?;
-            let permit = super::plugin_execution::check_input_in(
-                connection,
-                &checked.capture.check_input,
-                authority,
-            )?;
-            let origin = checked.check_result.envelope().plugin.as_ref();
+        if requires_semantic_check(&input) {
+            // Historical proof remains readable. New adoption also requires
+            // the exact checker's live grant and unsuperseded result, both at
+            // capture and again in the short commit transaction.
+            let (check_input, check_result, _) = load_check_link(connection, result)?;
+            require_current_result(connection, &check_input, &check_result)?;
+            let permit =
+                super::plugin_execution::check_input_in(connection, &check_input, authority)?;
             if permit.as_ref().map(PluginPermit::grant_id)
-                != origin.map(|evidence| evidence.authorization_id)
+                != check_result
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .map(|e| e.authorization_id)
             {
                 return Err(error(
                     ErrorCode::Unauthorized,
-                    "source-check-adoption-grant",
+                    "semantic-check-adoption-grant",
                 ));
             }
         }

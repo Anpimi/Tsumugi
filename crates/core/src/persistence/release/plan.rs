@@ -109,6 +109,89 @@ pub(super) fn decided_text(target: &ReviewTarget) -> Result<&str, ExecutionError
 }
 
 impl ReleasePlan {
+    pub(crate) fn artifact_set(
+        &self,
+        result: &FixedResult,
+    ) -> Result<sdk::ArtifactSet, ExecutionError> {
+        let invalid = || failure(ErrorCode::OutputInvalid, "release-artifacts");
+        let evidence = result.envelope().plugin.as_ref().ok_or_else(invalid)?;
+        let sdk::InvocationOutcome::Succeeded { output } = &evidence.result.outcome else {
+            return Err(invalid());
+        };
+        if output.schema != sdk::artifact_set_contract() {
+            return Err(invalid());
+        }
+        let output = sdk::parse_artifact_set(output.utf8.as_bytes()).map_err(|_| invalid())?;
+        let input = self.plugin_input(&output.target_language)?;
+        self.build
+            .binding
+            .validate_artifacts(&input, &output)
+            .map_err(|_| invalid())?;
+        Ok(output)
+    }
+    pub(super) fn release_summary(&self) -> super::record::ManifestSummary {
+        let binding = &self.build.binding;
+        let version = |capability: &sdk::CapabilityBinding| {
+            let provider = &capability.provider;
+            let contract = &capability.declaration.contract;
+            format!(
+                "{}@{} / {}:{}:{}",
+                provider.plugin.id,
+                provider.plugin.version,
+                contract.id,
+                contract.schema_version,
+                contract.behavior_version
+            )
+        };
+        let exceptions = self
+            .locales
+            .iter()
+            .flat_map(|locale| {
+                locale.targets.iter().flat_map(|target| {
+                    let mut exceptions = Vec::new();
+                    if target.review.selection_id.is_none()
+                        && target
+                            .review
+                            .current_fallback
+                            .as_ref()
+                            .is_some_and(|f| f.allow)
+                    {
+                        exceptions.push(super::ReleaseException {
+                            locale: locale.choice.locale.clone(),
+                            native_key: target.review.native_key.clone(),
+                            kind: super::ReleaseExceptionKind::SourceFallback,
+                        });
+                    }
+                    if !target.review.current_waivers.is_empty() {
+                        exceptions.push(super::ReleaseException {
+                            locale: locale.choice.locale.clone(),
+                            native_key: target.review.native_key.clone(),
+                            kind: super::ReleaseExceptionKind::QaWaiver,
+                        });
+                    }
+                    exceptions
+                })
+            })
+            .collect();
+        super::record::ManifestSummary {
+            project_id: self.project_id,
+            source_snapshot_id: self.source_snapshot_id,
+            policy_version: self.policy_version.clone(),
+            eligibility_basis: self.eligibility_basis.clone(),
+            builder_version: version(&binding.builder),
+            validator_version: version(&binding.checker),
+            source_files: self
+                .source
+                .artifacts
+                .iter()
+                .map(|a| BuildSourceFile {
+                    logical_path: a.logical_path.clone(),
+                    sha256: a.sha256.clone(),
+                })
+                .collect(),
+            exceptions,
+        }
+    }
     pub fn project_id(&self) -> ExecutionId {
         self.project_id
     }
@@ -123,6 +206,41 @@ impl ReleasePlan {
     }
     pub fn source(&self) -> &sdk::ContentExchange {
         &self.source
+    }
+    /// Verify frozen references, without recapturing the current source or
+    /// invoking any domain parser. Adopted source history needs no live grant.
+    pub(in crate::persistence) fn validate_source_reference(
+        &self,
+        connection: &Connection,
+    ) -> Result<(), ExecutionError> {
+        let invalid = || failure(ErrorCode::CorruptLedger, "release-source-reference");
+        let associated: (String, String, String) = connection
+            .query_row(
+                "SELECT project_id,attempt_id,result_id FROM source_snapshots WHERE snapshot_id=?1",
+                [self.source_snapshot_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(|_| invalid())?;
+        let input = super::super::ledger::load_input(connection, self.source_attempt_id)?;
+        if associated
+            != (
+                self.project_id.to_string(),
+                self.source_attempt_id.to_string(),
+                self.source_result_id.to_string(),
+            )
+            || input.envelope().project_id != self.project_id
+            || input.digest() != self.source_input_digest
+        {
+            return Err(invalid());
+        }
+        let result = super::super::ledger::load_result(connection, &input, self.source_result_id)?;
+        if result.digest() != self.source_result_digest {
+            return Err(invalid());
+        }
+        if input.envelope().plugin.is_some() {
+            super::super::ledger::validate_source_link(connection, &input, &result, true)?;
+        }
+        Ok(())
     }
     pub fn choices(&self) -> Vec<PluginBuildLocaleChoice> {
         self.locales.iter().map(|l| l.choice.clone()).collect()
@@ -459,12 +577,18 @@ impl ProjectStore {
 
 fn validate_capture(store: &ProjectStore, input: &FixedInput) -> Result<(), ExecutionError> {
     let plan = ReleasePlan::from_input(input)?;
-    let current = store.capture_plugin_release_plan(
-        plan.project_id,
-        &plan.choices(),
-        &plan.eligibility_basis,
-        &plan.build,
-    )?;
+    // A continuation keeps the already qualified frozen plan. Later review
+    // edits do not silently recapture it or discard successful locale results.
+    let current = if let Some(previous) = input.envelope().previous_attempt_id {
+        ReleasePlan::from_input(&store.execution_input(previous)?)?
+    } else {
+        store.capture_plugin_release_plan(
+            plan.project_id,
+            &plan.choices(),
+            &plan.eligibility_basis,
+            &plan.build,
+        )?
+    };
     if current != plan {
         return Err(failure(ErrorCode::ResultMismatch, "build-plan-capture"));
     }

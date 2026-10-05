@@ -114,8 +114,8 @@ explicit fallback decision.
 `find_plugin_build` reconciles the original attempt and exact request after later
 edits or reopening; it does not recapture newer choices or restore execution
 authority. These APIs have not yet replaced the desktop's built-in build runners.
-Actual plugin execution, release adoption and delivery
-are separate integration requirements; Core artifact proof is described below. The existing release store remains the
+Actual desktop plugin execution and filesystem delivery remain integration
+requirements; Core artifact proof and immutable release adoption are described below. The existing release store remains the
 owner; this capture adds no parallel database, planner or authorization mechanism.
 
 ## Current Core artifact-proof boundary
@@ -141,8 +141,46 @@ saved inputs/results and current result pointers. All locales retain separate
 proofs within one release adoption unit. Reopening reconstructs the captured
 policy and checker input, detects missing/substituted proof and does not restore
 execution authority. Historical result bytes remain fixed after later edits.
-The current-only project format is schema 19; earlier development directories
-are preserved and refused without migration. These Core APIs do not publish a
-Release or replace desktop built-in build runners. Production Host execution,
-final release-eligibility checks, persistent Release adoption and delivery still
-require their own integration and acceptance evidence.
+Validation alone does not publish a Release or replace desktop built-in build
+runners. The release adoption boundary below is a separate action.
+
+## Current Core immutable-release boundary
+
+`ReleaseAdoptionHandler` prepares the entire declared ArtifactSet for all locales
+outside the write transaction and records it through the existing release store.
+Adoption rechecks current producer/checker grants, cancellation, exact mandatory
+proof and unsuperseded results in the normal execution transaction. A missing
+locale or incomplete check cannot become a successful release. A committed action
+returns its original receipt after revocation or reopening.
+
+The qualified plan freezes at registration. Later project edits do not rewrite
+its decided texts, review evidence or output paths. A permitted partial continuation
+reuses original successful results and proofs, checking their original current
+permissions as well as the new attempt. Replay eligibility still comes from the
+trusted Host's stored effect policy; unknown external effects require new explicit
+consent and cannot be replayed merely because the package claims to be read-only.
+
+The release manifest binds the original input digest, exact result IDs and the
+complete frozen plan. The original source snapshot/attempt/result references and
+raw digests are rechecked at adoption capture, commit and read, without replacing
+them with the current project source. Each artifact retains its locale, operation-local ID, role,
+logical path, exact UTF-8 bytes and digest. Reads and reopening reconstruct the
+original results and mandatory proof, compare every stored artifact and require
+the original adoption receipt. Recomputed hashes cannot conceal substituted
+bytes. Reading a historical release does not execute a checker or restore a grant.
+
+`release_artifact_by_path` selects the exact saved locale/path pair.
+`release_artifact` accepts a locale only when it has one artifact and explicitly
+rejects ambiguity. The existing `ReleasedArtifact.entry_count` reports the frozen
+source-unit count for generic builds; it does not claim a parsed per-file domain
+record count. Empty artifact bytes and the SDK's complete bounds are retained.
+Delivery records include every saved output and distinguish partial and unknown
+outcomes; an unresolved action must be reconciled before another delivery to the
+same destination. These record APIs perform no destination-directory IO.
+
+The current-only project format is schema 20. Schema 19 and earlier development
+directories are preserved and refused without migration. The still-running built-in
+build workflow has an explicit current-format manifest tag in the same store;
+it remains until desktop installed-builder/checker integration replaces it.
+Actual Host builder/checker execution, held-directory export, native UI acceptance
+and removal of the built-in production runners remain pending.
