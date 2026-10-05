@@ -84,7 +84,7 @@ impl RuntimeEnvironmentDescriptor {
     pub fn validate(&self) -> Result<(), ContractError> {
         if self.protocol_version != RUNTIME_ENVIRONMENT_PROTOCOL
             || self.process_protocol != PROCESS_PROTOCOL
-            || self.sdk_version != env!("CARGO_PKG_VERSION")
+            || self.sdk_version != crate::SDK_VERSION
         {
             return Err(ContractError::at(
                 ContractErrorCode::UnsupportedProtocol,

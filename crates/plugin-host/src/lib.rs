@@ -19,7 +19,7 @@ pub use package::installation::{
     PluginSettings, PluginSettingsUpdate, RuntimeApproval, RuntimeInstallReceipt,
 };
 pub use package::{PackageFile, PackageImage, PackageInspection};
-pub use runtime::CapturedRuntime;
+pub use runtime::{CapturedRuntime, RuntimeInspection, RuntimeInspectionRequest};
 pub use session::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

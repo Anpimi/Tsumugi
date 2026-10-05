@@ -28,6 +28,9 @@ pub use source_extraction::*;
 pub use text::*;
 pub use validation::{ContractError, ContractErrorCode, ValidatedManifest, parse_manifest};
 
+/// Version of the SDK that owns the current contracts, from its package metadata.
+pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// The one currently supported declaration protocol, independent of SDK SemVer.
 pub const MANIFEST_PROTOCOL: u32 = 1;
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
@@ -90,7 +93,7 @@ pub fn process_profile() -> serde_json::Value {
         "protocolVersion": PROCESS_PROTOCOL,
         "maxFrameBytes": MAX_PROCESS_FRAME_BYTES,
         "maxInvocationPayloadBytes": MAX_INVOCATION_PAYLOAD_BYTES,
-        "sdkVersion": env!("CARGO_PKG_VERSION")
+        "sdkVersion": SDK_VERSION
     })
 }
 

@@ -1,0 +1,18 @@
+{
+  "version": "26.10.0",
+  "archive": "node-v26.10.0-darwin-arm64.tar.xz",
+  "url": "https://nodejs.org/dist/v26.10.0/node-v26.10.0-darwin-arm64.tar.xz",
+  "checksumsUrl": "https://nodejs.org/dist/v26.10.0/SHASUMS256.txt",
+  "archiveSha256": "f222f7e85cc1d5a3d84786aa86836ec3d41c4dcdf59a40e4a9d719b6b0ae28af",
+  "files": {
+    "bin/node": "56d28b39a8048f0cd1af7ad7e09f6cbe1c04439b6dfeb6c8d9090c082af60861",
+    "LICENSE": "6b85ee1983d01fa2cdcdd5d1a3053c6221fae41d6a54e43b416bf35969fc4128"
+  },
+  "minimumSystemVersion": "13.5",
+  "systemLibraries": [
+    "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+    "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+    "/usr/lib/libc++.1.dylib",
+    "/usr/lib/libSystem.B.dylib"
+  ]
+}

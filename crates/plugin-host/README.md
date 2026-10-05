@@ -81,6 +81,23 @@ entrypoint with external dynamic libraries cannot be approved by hashing that
 entrypoint alone. The Host does not infer this premise from a declared version,
 parse binary dependencies, authenticate signatures or freeze the OS itself.
 
+Build tooling can use `CapturedRuntime::inspect_directories` and the public CLI
+to derive an observed SDK descriptor through that same bounded tree owner:
+
+```sh
+cargo run --locked -p tsumugi-plugin-host --bin tsumugi-plugin-runtime -- \
+  inspect /absolute/tool-tree /absolute/host-tree /absolute/inspection-request.json
+```
+
+The strict request contains `profile`, `toolVersion`, `toolEntrypoint` and
+`hostEntrypoint`; the CLI limits its JSON to 4096 bytes. The output includes the
+SDK-owned descriptor/digest and combined file/byte counts. The requested version
+and profile are claims, not discovered facts or trusted approval. The inspector
+executes no artifacts and never installs, approves, activates or grants Core
+authority. The [fixed macOS preparation tool](../../runtimes/javascript-host/README.md#prepare-the-fixed-macos-tool-and-host-artifact)
+verifies pinned distribution bytes and their loader boundary before inspection.
+Its output still requires independent application approval and installation.
+
 Launch materializes captured package, tool and Host bytes into one private owned
 instance (`package/`, `runtime/tool/`, `runtime/host/`). Descriptor-relative
 create-new IO uses private directories and read-only files, checking live

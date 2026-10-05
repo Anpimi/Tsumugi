@@ -135,6 +135,52 @@ grant execution. The trusted Rust capture/installer must independently approve a
 capture the actual tool and Host artifacts before launch. Do not use the pnpm
 deployment's linked tree as that captured Host artifact.
 
+## Prepare the fixed macOS tool and Host artifact
+
+The repository pins one Node distribution in
+[node-distribution.macos-aarch64.json](scripts/node-distribution.macos-aarch64.json).
+It records the official archive checksum and selected `bin/node`/`LICENSE`
+checksums. Pin changes require a deliberate review of the actual distribution;
+the preparation command does not download updates or verify a signature chain.
+Use a trusted Node build tool and the inspector built from this source tree:
+
+```sh
+cargo build --locked -p tsumugi-plugin-host --bin tsumugi-plugin-runtime
+pnpm --dir runtimes/javascript-host prepare:runtime \
+  --node-archive /absolute/pinned/node-v26.10.0-darwin-arm64.tar.xz \
+  --host-source /absolute/new/production-deploy \
+  --cordis-license /absolute/approved/cordis-LICENSE \
+  --inspector /absolute/project/target/debug/tsumugi-plugin-runtime \
+  --output /absolute/new/prepared-runtime
+```
+
+Build and deploy the current Host first using the preceding instructions. Keep
+the explicit deploy unchanged during preparation. The output parent must exist
+and the output must be new and separate from that input. The command captures
+the pinned archive without following its final symlink, extracts only its two
+selected members into memory, verifies their checksums, and inspects the actual
+thin arm64 Mach-O. It rejects non-system imports, runtime search paths and
+unsupported loader commands. It then uses the existing clean Host packager and
+Rust capture owner; it does not copy the SDK's artifact/environment hash rules.
+
+The resulting directory contains complete `tool/` and `host/` trees,
+`inspection-request.json`, `inspection.json` and `distribution.json`. Metadata
+contains logical paths and public provenance, without local input/output paths.
+The descriptor includes every retained tool/Host file and executable flag,
+including dependency metadata and licenses. Actual Node imports require **macOS
+13.5 or later**. Preparation supports macOS arm64 only; this does not change the
+application's base macOS minimum or establish Intel/Linux runtime availability.
+A desktop installer must check this requirement before offering that artifact.
+
+Fixed archive/file pins are build inputs, not a publisher update policy or a
+user execution decision. Inspection records the installer-supplied version;
+the verified distribution supplies that claim. Neither output JSON nor an
+installation receipt independently approves its own bytes. Application approval,
+installation, exact selection, bundling and each Core execution grant remain
+separate steps. No selected Node, Host or plugin code executes during preparation.
+An IO/tool failure after output creation leaves a partial preparation directory;
+review it and explicitly discard it before retrying with a new destination.
+
 ## Limits and actual isolation
 
 Frames use the SDK protocol, bounded before allocation, with a 64 MiB input / 64 MiB

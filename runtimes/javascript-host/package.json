@@ -10,6 +10,7 @@
     "check:contracts": "node scripts/generate-contracts.mjs --check",
     "build": "tsc",
     "package:runtime": "node scripts/package-runtime.mjs",
+    "prepare:runtime": "node scripts/prepare-desktop-runtime.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:process": "node scripts/test-process.mjs"
   },

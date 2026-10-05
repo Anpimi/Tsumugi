@@ -60,6 +60,16 @@ the package format, runtime profile, project schema or desktop assembly. Neither
 addition distributes an application/SDK release or requires a historical migration;
 the application and SDK version sources therefore remain unchanged.
 
+The read-only runtime inspector and fixed macOS arm64 preparation command use
+the existing capture/SDK hash owners. They add build tooling and a source-owned
+Node distribution pin, not new wire fields, Store formats, project migrations or
+desktop runtime distribution. SDK metadata now exposes its existing package
+version as a constant without changing its value. This remains the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with no
+additional version bump. The prepared Node requires macOS 13.5; the base
+application minimum is unchanged until runtime bundling is integrated and its
+availability is checked independently.
+
 ## Choosing the next version
 
 The source-check SDK additions remain in the same undistributed SDK alpha.1
