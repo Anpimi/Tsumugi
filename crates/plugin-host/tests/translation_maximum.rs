@@ -24,6 +24,15 @@ use core_execution::{authorize, execute};
 
 #[test]
 fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen() {
+    maximum_file_workflow(false);
+}
+
+#[test]
+fn maximum_unicode_and_escaped_text_executes_and_adopts_with_exact_saved_values() {
+    maximum_file_workflow(true);
+}
+
+fn maximum_file_workflow(unicode: bool) {
     let selected = PathBuf::from(
         std::env::var_os("TSUMUGI_TEST_PLUGIN_PACKAGE")
             .expect("explicit prebuilt SMAPI package required"),
@@ -136,18 +145,36 @@ fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen
     let native = source.rows[0].occurrence.native_identity.as_ref().unwrap();
 
     assert_eq!(store.source_content(snapshot, 0, 100).unwrap().total, 2000);
-    let pairs = (0..2000)
+    let expected_texts = (0..2000)
         .map(|n| {
-            let text = if n % 500 == 0 {
+            if unicode && n == 0 {
+                "😀".repeat(4096)
+            } else if unicode {
+                format!("译文 {n} \"\\\n\t é 👩🏽‍💻")
+            } else if n % 500 == 0 {
                 format!("译文 {n} 👩🏽‍💻")
             } else {
                 String::new()
-            };
-            format!("\"k{n:04}x\":{}", serde_json::to_string(&text).unwrap())
+            }
         })
         .collect::<Vec<_>>();
-    let mut raw = format!("{{{}}}", pairs.join(","));
-    raw.push_str(&" ".repeat(128 * 1024 - raw.len()));
+    if unicode {
+        assert_eq!(expected_texts[0].len(), 16 * 1024);
+    }
+    let pairs = expected_texts
+        .iter()
+        .enumerate()
+        .map(|(n, text)| format!("\"k{n:04}x\":{}", serde_json::to_string(&text).unwrap()))
+        .collect::<Vec<_>>();
+    let mut raw = format!(
+        "{}{{{}}}",
+        if unicode { "\u{feff}" } else { "" },
+        pairs.join(",")
+    );
+    let padding = (128 * 1024usize)
+        .checked_sub(raw.len())
+        .expect("complete fixture fits raw limit");
+    raw.push_str(&" ".repeat(padding));
     let material = sdk::TranslationExtractionInput {
         profile: profile.clone(),
         import_id: ExecutionId::new().to_string(),
@@ -171,6 +198,63 @@ fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen
         declaration: resource.declaration.clone(),
         checker: checker.execution_binding(Some(profile.clone())).unwrap(),
     };
+    if unicode {
+        for (key, text, expected) in [
+            (
+                "İ",
+                "译文".to_owned(),
+                sdk::SourceExtractionErrorCode::UnsupportedStructure,
+            ),
+            (
+                "k0000x",
+                format!("{}x", "😀".repeat(4096)),
+                sdk::SourceExtractionErrorCode::LimitExceeded,
+            ),
+        ] {
+            let mut rejected = material.clone();
+            rejected.import_id = ExecutionId::new().to_string();
+            rejected.artifacts[0].id = ExecutionId::new().to_string();
+            rejected.artifacts[0].utf8 =
+                serde_json::to_string(&std::collections::BTreeMap::from([(key, text)])).unwrap();
+            rejected.artifacts[0].sha256 = sdk::payload_digest(&rejected.artifacts[0].utf8);
+            let input = settings
+                .fixed_input(
+                    project,
+                    rejected,
+                    producer.execution_binding(Some(profile.clone())).unwrap(),
+                )
+                .unwrap();
+            authorize_maximum(&runtime, &mut store, &input);
+            let result = execute_failure(&mut runtime, &mut store, &input);
+            let sdk::InvocationOutcome::Failed { error } =
+                &result.envelope().plugin.as_ref().unwrap().result.outcome
+            else {
+                panic!("typed domain failure required")
+            };
+            assert_eq!(
+                sdk::parse_source_extraction_error(error.utf8.as_bytes())
+                    .unwrap()
+                    .code,
+                expected
+            );
+            assert!(
+                store
+                    .capture_translation_validation(
+                        input.envelope().attempt_id,
+                        result.envelope().result_id
+                    )
+                    .is_err()
+            );
+            assert!(
+                store
+                    .capture_translation_projection(
+                        input.envelope().attempt_id,
+                        result.envelope().result_id
+                    )
+                    .is_err()
+            );
+        }
+    }
     let input = settings
         .fixed_input(
             project,
@@ -184,6 +268,12 @@ fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen
         .capture_translation_validation(input.envelope().attempt_id, proposal.envelope().result_id)
         .unwrap();
     let check_input = capture.check_input().clone();
+    println!(
+        "maximum transport unicode={unicode} producer_input={} ledger_proposal={} fixed_check={}",
+        input.bytes().len(),
+        proposal.bytes().len(),
+        check_input.bytes().len()
+    );
     authorize_maximum(&runtime, &mut store, &check_input);
     let checked = execute(&mut runtime, &mut store, &check_input);
     store
@@ -312,6 +402,7 @@ fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen
     );
     for (n, row) in rows.iter().enumerate() {
         assert_eq!(row.entry.native_key, format!("k{n:04}x"));
+        assert_eq!(row.entry.text, expected_texts[n]);
     }
     let mut receipts = Vec::new();
     let adopted = Instant::now();
@@ -378,6 +469,29 @@ fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen
             *receipt
         );
     }
+    for (n, row) in rows.iter().enumerate() {
+        let history = reopened
+            .translation_history(
+                ExecutionId::parse(&project.to_string()).unwrap(),
+                row.unit_id.unwrap(),
+                "zh-CN",
+                0,
+                1,
+            )
+            .unwrap();
+        assert_eq!(history.total, 1);
+        assert_eq!(
+            history.current_text.as_deref(),
+            Some(expected_texts[n].as_str())
+        );
+        assert_eq!(history.rows[0].text, expected_texts[n]);
+        assert_eq!(history.rows[0].result_id, Some(row.result_id));
+        assert_eq!(history.rows[0].action_id, receipts[n].0.action_id);
+        assert_eq!(
+            history.current.as_ref().unwrap().revision_id,
+            history.rows[0].revision_id
+        );
+    }
     let reopened_basis = reopened
         .translation_preview(projected.envelope().attempt_id, 0, 100, None)
         .unwrap()
@@ -394,12 +508,51 @@ fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen
     assert_eq!(history.rows[99].entry.ordinal, 1999);
     assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
     println!(
-        "maximum file raw=131072 entries=2000 projection_input={} execution_seconds={:.3} adoption_seconds={:.3} receipts={}",
+        "maximum file unicode={unicode} raw=131072 entries=2000 projection_input={} execution_seconds={:.3} adoption_seconds={:.3} receipts={}",
         projected.bytes().len(),
         execution_seconds,
         adoption_seconds,
         receipts.len()
     );
+}
+
+fn execute_failure(
+    runtime: &mut ExecutionRuntime,
+    store: &mut ProjectStore,
+    input: &FixedInput,
+) -> FixedResult {
+    runtime.submit(store, input).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        runtime.tick(store).unwrap();
+        if !runtime.is_active(input.envelope().attempt_id) {
+            let id = store
+                .execution_current_result(
+                    input.envelope().attempt_id,
+                    input.envelope().items[0].item_id,
+                )
+                .unwrap()
+                .unwrap();
+            let result = store
+                .execution_result(input.envelope().attempt_id, id)
+                .unwrap();
+            assert_eq!(result.envelope().outcome, ExecutionState::Failed);
+            assert_ne!(
+                store
+                    .execution_attempt(input.envelope().attempt_id, false)
+                    .unwrap()
+                    .items[0]
+                    .validation,
+                ValidationState::Valid
+            );
+            return result;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "typed failure completion deadline"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 // This bounded maximum-file fixture performs thousands of separately durable
