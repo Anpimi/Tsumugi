@@ -9,6 +9,8 @@ export interface Requests {
   inventory: PluginInventoryRequest;
   lookup: PluginLookupRequest;
   package: PluginPackageRequest;
+  runtimeInstall: PluginRuntimeInstallRequest;
+  runtimeLookup: PluginRuntimeLookupRequest;
 }
 export interface PluginEnableRequest {
   actionId: ExecutionId;
@@ -47,4 +49,13 @@ export interface ProviderSelectionBinding {
   contributionId: string;
   packageDigest: string;
   plugin: PluginIdentity;
+}
+export interface PluginRuntimeInstallRequest {
+  actionId: ExecutionId;
+  environmentDigest: string;
+  expectedRevision: UnsignedDecimal;
+  id: string;
+}
+export interface PluginRuntimeLookupRequest {
+  environmentDigest: string;
 }

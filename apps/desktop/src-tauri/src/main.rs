@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+#[path = "../runtime_bundle.rs"]
+mod runtime_bundle;
 
 fn main() {
     #[cfg(feature = "wire-schema")]

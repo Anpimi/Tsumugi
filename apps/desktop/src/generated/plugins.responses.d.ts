@@ -175,6 +175,8 @@ export type RuntimeOperatingSystem = "macos" | "linux";
  * OS image. Runtime capture must refuse unsupported profiles and platforms.
  */
 export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+export type RuntimeAvailability =
+  "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
 
 export interface Responses {
   binding: CapabilityBinding;
@@ -182,6 +184,7 @@ export interface Responses {
   error: CommandError;
   inventory: PluginInventoryView;
   package: PluginPackageDetailsView;
+  runtime: RuntimeEnvironmentDescriptor;
 }
 /**
  * Captured declaration data for one selected capability. Requested permissions
@@ -315,6 +318,10 @@ export interface PluginInventoryView {
    */
   runtimeDecisions: PluginRuntimeDecisionView[];
   /**
+   * @maxItems 1
+   */
+  runtimeOffers: [] | [PluginRuntimeOfferView];
+  /**
    * @maxItems 128
    */
   runtimes: PluginRuntimeView[];
@@ -338,6 +345,7 @@ export interface PluginPackageView {
 }
 export interface PluginRuntimeDecisionView {
   environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
   origin: PluginOriginView;
 }
 /**
@@ -367,6 +375,16 @@ export interface RuntimeArtifactBinding {
 export interface RuntimePlatform {
   architecture: RuntimeArchitecture;
   operatingSystem: RuntimeOperatingSystem;
+}
+export interface PluginRuntimeOfferView {
+  availability: RuntimeAvailability;
+  byteCount: UnsignedDecimal;
+  environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
+  fileCount: number;
+  id: string;
+  minimumSystemVersion: string;
+  origin: PluginOriginView;
 }
 export interface PluginRuntimeView {
   environment: RuntimeEnvironmentDescriptor;

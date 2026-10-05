@@ -182,6 +182,7 @@ export async function prepare(args) {
     || inspected.environment.platform.architecture !== 'aarch64'
     || inspected.environment.profile !== 'node-system-libraries-v1'
     || inspected.environment.toolVersion !== LOCK.version
+    || inspected.environment.tool.treeDigest !== LOCK.toolTreeDigest
     || inspected.environment.tool.entrypoint !== 'bin/node'
     || inspected.environment.host.entrypoint !== 'dist/main.js') fail('Runtime inspector returned an unexpected platform/profile.');
   await fs.writeFile(join(output, 'inspection.json'), `${JSON.stringify(inspected, null, 2)}\n`, { mode: 0o600, flag: 'wx' });

@@ -9,6 +9,7 @@ runtimes/javascript-host/dist/
 
 # Generated Tauri permission schemas
 apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/resources/javascript-runtime/
 
 # Local tooling noise
 *.log

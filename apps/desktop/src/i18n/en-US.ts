@@ -1,5 +1,17 @@
 export const enUS = {
 plugins: {
+  runtimeTitle: "JavaScript runtime", bundledRuntime: "Node {{version}} and bundled Host", runtimeSystem: "Requires macOS {{version}} or later on Apple silicon.",
+  runtimeEffect: "Approve this exact application-provided environment and install its fixed files. This does not enable plugins, run code or authorize an execution. Each execution needs separate permission; a child process is not an OS sandbox.",
+  runtimeNotBundled: "This application build does not include a JavaScript runtime. Use a build that includes the supported runtime.",
+  runtimeUnavailable: "This exact runtime is unavailable on the current system. Check the bundled runtime requirements and current application build.",
+  runtimeChanged: "The bundled files differ from the reviewed application environment. Use an intact build and review its environment before approving it.",
+  runtimeConsent: "I approve this exact bundled runtime and its installation.", installRuntime: "Approve and install runtime", confirmRuntime: "Approve and confirm runtime",
+  runtimeFingerprint: "Exact environment fingerprint", installedRuntimes: "Installed environments", runtimeEmpty: "No runtime environments are installed.",
+  runtimeRecovery: "Installation needs confirmation. Retry the original operation, or explicitly approve a matching bundled environment to recover it.",
+  runtimeApproved: "Installed and independently approved. Exact files and execution permission are checked separately.",
+  runtimeApprovedMissing: "Node {{version}} has an approved environment that is not installed. Review a matching bundled environment to install it.",
+  verifyRuntime: "Verify installed environment", runtimeVerified: "The exact approved installed files were verified. No worker was started or execution permission granted.",
+  runtimeAvailability: { "unsupported-platform": "This bundled runtime supports Apple silicon macOS only.", "system-too-old": "Update macOS to the stated minimum before installing this runtime.", "system-version-unknown": "The macOS version could not be verified. Installation is unavailable.", "resources-unavailable": "Bundled runtime resources could not be located. Use a complete application build." },
   open: "Extensions", title: "Installed extensions", description: "Review local plugin packages and control whether they can be selected for new work.",
   close: "Close", choose: "Choose plugin folder", refresh: "Read current state", loading: "Checking local plugin state…",
   readFailed: "Could not read plugin state. Keep the current choice and retry reading.", saved: "The requested change is saved. Execution still needs an approved runtime and separate permission.",

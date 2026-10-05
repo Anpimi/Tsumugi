@@ -102,6 +102,42 @@
         ],
         "type": "object"
       },
+      "PluginRuntimeInstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "environmentDigest",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginRuntimeLookupRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
       "ProviderSelectionBinding": {
         "additionalProperties": false,
         "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
@@ -147,6 +183,12 @@
       },
       "package": {
         "$ref": "#/definitions/PluginPackageRequest"
+      },
+      "runtimeInstall": {
+        "$ref": "#/definitions/PluginRuntimeInstallRequest"
+      },
+      "runtimeLookup": {
+        "$ref": "#/definitions/PluginRuntimeLookupRequest"
       }
     },
     "required": [
@@ -154,7 +196,9 @@
       "install",
       "enable",
       "package",
-      "lookup"
+      "lookup",
+      "runtimeInstall",
+      "runtimeLookup"
     ],
     "title": "Requests",
     "type": "object",
@@ -1168,6 +1212,13 @@
             "maxItems": 128,
             "type": "array"
           },
+          "runtimeOffers": {
+            "items": {
+              "$ref": "#/definitions/PluginRuntimeOfferView"
+            },
+            "maxItems": 1,
+            "type": "array"
+          },
           "runtimes": {
             "items": {
               "$ref": "#/definitions/PluginRuntimeView"
@@ -1185,7 +1236,8 @@
           "packages",
           "runtimes",
           "packageDecisions",
-          "runtimeDecisions"
+          "runtimeDecisions",
+          "runtimeOffers"
         ],
         "type": "object"
       },
@@ -1324,13 +1376,60 @@
           "environment": {
             "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
           },
+          "environmentDigest": {
+            "type": "string"
+          },
           "origin": {
             "$ref": "#/definitions/PluginOriginView"
           }
         },
         "required": [
           "environment",
+          "environmentDigest",
           "origin"
+        ],
+        "type": "object"
+      },
+      "PluginRuntimeOfferView": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "$ref": "#/definitions/RuntimeAvailability"
+          },
+          "byteCount": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "environment": {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "fileCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "minimumSystemVersion": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          }
+        },
+        "required": [
+          "id",
+          "environment",
+          "environmentDigest",
+          "origin",
+          "minimumSystemVersion",
+          "fileCount",
+          "byteCount",
+          "availability"
         ],
         "type": "object"
       },
@@ -1438,6 +1537,16 @@
           "entrypoint"
         ],
         "type": "object"
+      },
+      "RuntimeAvailability": {
+        "enum": [
+          "available",
+          "unsupported-platform",
+          "system-too-old",
+          "system-version-unknown",
+          "resources-unavailable"
+        ],
+        "type": "string"
       },
       "RuntimeEnvironmentDescriptor": {
         "additionalProperties": false,
@@ -1551,6 +1660,9 @@
       },
       "package": {
         "$ref": "#/definitions/PluginPackageDetailsView"
+      },
+      "runtime": {
+        "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
       }
     },
     "required": [
@@ -1558,6 +1670,7 @@
       "candidate",
       "package",
       "binding",
+      "runtime",
       "error"
     ],
     "title": "Responses",

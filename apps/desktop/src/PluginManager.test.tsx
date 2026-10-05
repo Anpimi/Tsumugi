@@ -10,7 +10,8 @@ import candidate from "../test/fixtures/pluginPackage.contract.json";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const onBusy = vi.fn();
-const installed: PluginInventoryView = { ...inventory.empty, settingsRevision: "1", lastSettingsAction: "00000000-0000-4000-8000-000000000020",
+const empty: PluginInventoryView = { ...inventory.empty, runtimeOffers: [] };
+const installed: PluginInventoryView = { ...empty, settingsRevision: "1", lastSettingsAction: "00000000-0000-4000-8000-000000000020",
   packages: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, state: "sealed" }],
   packageDecisions: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, enabled: false }],
 };
@@ -49,7 +50,7 @@ it.each([["en-US", "Extensions", "Choose plugin folder", "I trust this exact", "
 
 it("retains an unknown original request across panel close and confirms that same action", async () => {
   let installedAttempts = 0;
-  let latest: PluginInventoryView = inventory.empty;
+  let latest: PluginInventoryView = empty;
   invoke.mockImplementation(async (command: string) => {
     if (command === "read_plugin_inventory") return latest;
     if (command === "select_plugin_package") return candidate;

@@ -9,6 +9,7 @@ export const ProviderSelectionValues = ["single","collect-independent"] as const
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
 export const RecoveryGuidanceValues = ["reconcile-original","review-current","choose-destination"] as const;
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
+export const RuntimeAvailabilityValues = ["available","unsupported-platform","system-too-old","system-version-unknown","resources-unavailable"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeKindValues = ["data","native-worker","javascript"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux"] as const;

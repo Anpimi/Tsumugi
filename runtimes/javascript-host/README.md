@@ -6,7 +6,8 @@ Plugins see only the [SDK component facade](../../crates/plugin-sdk/javascript/c
 not a Cordis Context, Loader, service registry, credential or project database.
 It implements one project-scoped, serial capability per process. Required service
 dependencies and other scopes are refused by the Rust parent until their broker
-exists. This is development runtime tooling, not a bundled desktop feature.
+exists. Desktop builds can opt into the fixed runtime bundle described below;
+production provider/Core execution integration remains under development.
 
 A captured `.mjs` entrypoint exports a component:
 
@@ -140,7 +141,8 @@ deployment's linked tree as that captured Host artifact.
 The repository pins one Node distribution in
 [node-distribution.macos-aarch64.json](scripts/node-distribution.macos-aarch64.json).
 It records the official archive checksum and selected `bin/node`/`LICENSE`
-checksums. Pin changes require a deliberate review of the actual distribution;
+checksums, plus the SDK-owned complete tool-tree digest including executable
+flags. Pin changes require a deliberate review of the actual distribution;
 the preparation command does not download updates or verify a signature chain.
 Use a trusted Node build tool and the inspector built from this source tree:
 
@@ -180,6 +182,35 @@ installation, exact selection, bundling and each Core execution grant remain
 separate steps. No selected Node, Host or plugin code executes during preparation.
 An IO/tool failure after output creation leaves a partial preparation directory;
 review it and explicitly discard it before retrying with a new destination.
+
+## Opt into the desktop runtime bundle
+
+On an Apple silicon Mac, prepare the preceding output at the fixed path
+`apps/desktop/src-tauri/resources/javascript-runtime` in this checkout. Its
+parent must exist and the destination must be new. Build the desktop with:
+
+```sh
+pnpm --dir apps/desktop tauri build --config src-tauri/tauri.runtime.conf.json
+```
+
+The `bundled-runtime` feature requires an Apple silicon macOS builder and target.
+The build captures both actual trees through the Host, compares the complete tool
+digest with the independent source pin, and embeds the actual complete SDK
+descriptor, public application-build origin and limits. Tauri preserves the two
+directory trees at logical resource paths. Preparation JSON is not copied into
+the bundle or used as approval. This opt-in bundle requires macOS 13.5; ordinary
+builds retain their base minimum and have no implicit Node/PATH fallback.
+
+The global Extensions panel separately reviews and approves that exact environment.
+The backend queries the real macOS version and captures approved bytes before
+recording the full settings decision and independently installing them through
+the same Store. Retrying an uncertain operation retains its original action,
+revision and fixed intent. Existing installed environments can be selected after
+the bundle acquisition tree is gone, but current independent approval, supported
+tool policy, actual system availability and complete installed bytes are rechecked.
+The panel can verify an exact installation without launching it. Installation,
+plugin enablement and per-execution Core consent are separate; these controls do
+not run a worker, authenticate network updates or claim an OS sandbox.
 
 ## Limits and actual isolation
 

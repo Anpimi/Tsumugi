@@ -16,9 +16,13 @@ use tsumugi_plugin_host::{
 };
 use tsumugi_plugin_sdk as sdk;
 pub(super) mod packages;
+pub(super) mod runtimes;
 pub use packages::{
     PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
     PluginPackageDetailsView, PluginPackageRequest,
+};
+pub use runtimes::{
+    PluginRuntimeInstallRequest, PluginRuntimeLookupRequest, PluginRuntimeOfferView,
 };
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -93,6 +97,7 @@ pub struct PluginPackageDecisionView {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PluginRuntimeDecisionView {
     pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub environment_digest: String,
     pub origin: PluginOriginView,
 }
 
@@ -112,6 +117,8 @@ pub struct PluginInventoryView {
     pub package_decisions: Vec<PluginPackageDecisionView>,
     #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_RUNTIMES)))]
     pub runtime_decisions: Vec<PluginRuntimeDecisionView>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = 1)))]
+    pub runtime_offers: Vec<PluginRuntimeOfferView>,
 }
 
 struct PluginDirectory {
@@ -167,6 +174,7 @@ struct PluginManager {
     )>,
     candidate: Option<packages::Candidate>,
     pending: Option<packages::PendingMutation>,
+    bundle: Option<runtimes::Bundle>,
 }
 
 /// The mutex serializes application operations; the Store retains its existing
@@ -276,10 +284,23 @@ impl ApplicationPlugins {
             runtime_decisions: settings
                 .runtimes()
                 .iter()
-                .map(|approval| PluginRuntimeDecisionView {
-                    environment: approval.environment.clone(),
-                    origin: (&approval.origin).into(),
+                .map(|approval| {
+                    Ok(PluginRuntimeDecisionView {
+                        environment: approval.environment.clone(),
+                        environment_digest: approval
+                            .environment
+                            .digest()
+                            .map_err(|_| map_store_error(InstallError::CorruptSettings))?,
+                        origin: (&approval.origin).into(),
+                    })
                 })
+                .collect::<Result<Vec<_>, CommandError>>()?,
+            runtime_offers: manager
+                .bundle
+                .as_ref()
+                .map(runtimes::Bundle::view)
+                .transpose()?
+                .into_iter()
                 .collect(),
         })
     }

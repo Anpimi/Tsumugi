@@ -1,8 +1,9 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
 import candidate from "../test/fixtures/pluginPackage.contract.json";
-import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable } from "./generated/plugins.validators";
+import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup } from "./generated/plugins.validators";
 import { pluginCommands } from "./pluginCommands";
+import runtime from "../test/fixtures/pluginRuntime.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -14,6 +15,20 @@ it("keeps the shared Serde fixture's installation and approval observations sepa
   expect(fixture.rich.settingsRevision).toBe("18446744073709551615");
   expect(fixture.rich.packages[0].plugin.id).not.toBe(fixture.rich.packageDecisions[0].plugin.id);
   expect(fixture.rich.runtimes[0].state).toBe("recovery-required");
+});
+
+it("keeps runtime installation exact and rejects caller approval, resources and execution permission", async () => {
+  const request = { id: runtime.id, environmentDigest: runtime.environmentDigest, expectedRevision: "0", actionId: "00000000-0000-4000-8000-000000000030" };
+  expect(validateRequestRuntimeInstall(request)).toBe(true);
+  for (const field of ["directory", "origin", "environment", "approved", "allowUnsandboxedExecution"]) expect(validateRequestRuntimeInstall({ ...request, [field]: true })).toBe(false);
+  expect(validateRequestRuntimeLookup({ environmentDigest: runtime.environmentDigest })).toBe(true);
+  expect(validateRequestRuntimeLookup({ environmentDigest: runtime.environmentDigest, launcherPath: "/untrusted" })).toBe(false);
+  expect(validateResponseInventory({ ...fixture.empty, runtimeOffers: [runtime] })).toBe(true);
+  expect(validateResponseInventory({ ...fixture.empty, runtimeOffers: [runtime, runtime] })).toBe(false);
+  expect(validateResponseInventory({ ...fixture.empty, runtimeOffers: [{ ...runtime, availability: "runnable" }] })).toBe(false);
+  invoke.mockResolvedValueOnce(fixture.empty);
+  await expect(pluginCommands.installRuntime(request)).resolves.toEqual(fixture.empty);
+  expect(invoke).toHaveBeenLastCalledWith("install_plugin_runtime", { request });
 });
 
 it("rejects caller paths, authority, lossy revisions and unrecognized metadata", () => {

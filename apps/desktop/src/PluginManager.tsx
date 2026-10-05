@@ -4,12 +4,12 @@ import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, Dial
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
 import { isCommandError } from "./projectCommands";
-import { pluginCommands, type PluginCandidateView, type PluginInstallRequest, type PluginEnableRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
+import { pluginCommands, type PluginCandidateView, type PluginInstallRequest, type PluginEnableRequest, type PluginRuntimeInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
 import "./PluginManager.css";
 import type { TranslationKey } from "./i18n/types";
 
 const inventoryKey = ["application", "plugins", "inventory"] as const;
-type Intent = { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest };
+type Intent = { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
 const reasonMessages: Partial<Record<string, TranslationKey>> = {
   "plugin-selection-expired": "plugins.selectionExpired",
   "plugin-candidate-changed": "plugins.candidateChanged",
@@ -19,6 +19,8 @@ const reasonMessages: Partial<Record<string, TranslationKey>> = {
   "plugin-store-busy": "plugins.busy",
   "plugin-operation-pending": "plugins.pending",
   "plugin-approval-mismatch": "plugins.approvalMismatch",
+  "plugin-runtime-unavailable": "plugins.runtimeUnavailable",
+  "plugin-runtime-changed": "plugins.runtimeChanged",
 };
 function failureMessage(failure: CommandFailure, unknown: boolean): TranslationKey {
   if (unknown) return "plugins.unknown";
@@ -54,6 +56,9 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
   const mounted = useRef(true);
   const [candidate, setCandidate] = useState<PluginCandidateView | null>(null);
   const [consent, setConsent] = useState(false);
+  // Bind consent to the complete environment, rather than an old checkbox.
+  const [runtimeConsent, setRuntimeConsent] = useState<string | null>(null);
+  const [verifiedRuntime, setVerifiedRuntime] = useState<string | null>(null);
   const [details, setDetails] = useState<PluginPackageDetailsView | null>(null);
   const [failure, setFailure] = useState<CommandFailure | null>(null);
   const [intent, setIntent] = useState<Intent | null>(null);
@@ -65,6 +70,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
     return result;
   } }, client);
   useEffect(() => { onBusyChange(busy || unknown); }, [busy, unknown, onBusyChange]);
+  useEffect(() => { setVerifiedRuntime(null); }, [query.dataUpdatedAt]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; client.clear(); }; }, [client]);
 
   async function operation(work: () => Promise<void>) {
@@ -82,17 +88,19 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
       setIntent(next);
       await client.cancelQueries({ queryKey: inventoryKey });
       try {
-        const result = next.kind === "install" ? await pluginCommands.install(next.request) : await pluginCommands.enable(next.request);
+        const result = next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : await pluginCommands.enable(next.request);
         if (!mounted.current) return;
         client.setQueryData(inventoryKey, result);
         setIntent(null);
         setUnknown(false);
         setCandidate(null);
         setConsent(false);
+        setRuntimeConsent(null);
+        setVerifiedRuntime(null);
         setDetails(null);
         setSaved(true);
       } catch (error) {
-        if (mounted.current) setUnknown(!isCommandError(error) || error.code === "outcome-unknown");
+        if (mounted.current) setUnknown(previous => previous || !isCommandError(error) || error.code === "outcome-unknown");
         throw error;
       }
     });
@@ -115,8 +123,8 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
       {query.isError ? <div role="alert"><p>{t("plugins.readFailed")}</p>{query.data ? <p>{t("plugins.stale")}</p> : null}<CommandFailureDetails failure={commandFailure(query.error)}/></div> : null}
       {saved ? <p role="status">{t("plugins.saved")}</p> : null}
       {failure ? <div role="alert"><p>{t(failureMessage(failure, unknown))}</p>
-        <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
-        {!unknown && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCandidate(null); setConsent(false); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
+        <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
+        {!unknown && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCandidate(null); setConsent(false); setRuntimeConsent(null); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
       </div> : null}
       {candidate ? <section className="plugin-section" aria-label={t("plugins.candidate")}><h3>{t("plugins.candidate")}</h3>
         <p><strong>{candidate.manifest.plugin.id}</strong> · {candidate.manifest.plugin.version}</p>
@@ -148,6 +156,35 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
         })}</ul>}
         {inventory.packageDecisions.filter(decision => !inventory.packages.some(record => record.packageDigest === decision.packageDigest)).map(decision => <div key={decision.packageDigest}><p>{t("plugins.approvedMissing", { name: decision.plugin.id, version: decision.plugin.version })}</p>
           {decision.enabled ? <button type="button" disabled={blocked || intent !== null} onClick={() => { if (query.data) void submit({ kind: "enable", request: { package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, enabled: false, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } }); }}>{t("plugins.disable")}</button> : null}</div>)}
+      </section> : null}
+      {inventory ? <section className="plugin-section" aria-label={t("plugins.runtimeTitle")}><h3>{t("plugins.runtimeTitle")}</h3>
+        {!inventory.runtimeOffers.length ? <p>{t("plugins.runtimeNotBundled")}</p> : inventory.runtimeOffers.map(offer => {
+          const record = inventory.runtimes.find(record => record.environmentDigest === offer.environmentDigest);
+          return <div key={offer.environmentDigest}>
+            <h4>{t("plugins.bundledRuntime", { version: offer.environment.toolVersion })}</h4>
+            <p>{t("plugins.runtimeSystem", { version: offer.minimumSystemVersion })}</p><p>{t("plugins.runtimeEffect")}</p>
+            <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{offer.environmentDigest}</code><p>{t("plugins.files", { count: offer.fileCount, bytes: offer.byteCount })}</p></details>
+            {offer.availability !== "available" ? <p>{t(`plugins.runtimeAvailability.${offer.availability}`)}</p> : <>
+              <label className="plugin-consent"><input type="checkbox" checked={runtimeConsent === offer.environmentDigest} disabled={blocked || intent !== null} onChange={event => setRuntimeConsent(event.target.checked ? offer.environmentDigest : null)}/>{t("plugins.runtimeConsent")}</label>
+              <button type="button" className="primary-button" disabled={blocked || intent !== null || runtimeConsent !== offer.environmentDigest} onClick={() => {
+                void submit({ kind: "runtime", request: { id: offer.id, environmentDigest: offer.environmentDigest, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID() } });
+              }}>{t(record ? "plugins.confirmRuntime" : "plugins.installRuntime")}</button>
+            </>}
+          </div>;
+        })}
+        <h4>{t("plugins.installedRuntimes")}</h4>
+        {!inventory.runtimes.length ? <p>{t("plugins.runtimeEmpty")}</p> : <ul className="plugin-list">{inventory.runtimes.map(record => {
+          const approved = inventory.runtimeDecisions.some(decision => decision.origin.sourceId === record.origin.sourceId && decision.origin.publisherId === record.origin.publisherId && decision.environmentDigest === record.environmentDigest);
+          return <li key={record.environmentDigest}><p>{t("plugins.bundledRuntime", { version: record.environment.toolVersion })}</p>
+            <p>{t(record.state === "recovery-required" ? "plugins.runtimeRecovery" : approved ? "plugins.runtimeApproved" : "plugins.unapproved")}</p>
+            <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{record.environmentDigest}</code></details>
+            {approved && record.state === "sealed" ? <button type="button" className="secondary-button" disabled={blocked || intent !== null} onClick={() => void operation(async () => {
+              setVerifiedRuntime(null); await pluginCommands.lookupRuntime({ environmentDigest: record.environmentDigest }); if (mounted.current) setVerifiedRuntime(record.environmentDigest);
+            })}>{t("plugins.verifyRuntime")}</button> : null}
+            {verifiedRuntime === record.environmentDigest ? <p role="status">{t("plugins.runtimeVerified")}</p> : null}
+          </li>;
+        })}</ul>}
+        {inventory.runtimeDecisions.filter(decision => !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)).map(decision => <p key={decision.environmentDigest}>{t("plugins.runtimeApprovedMissing", { version: decision.environment.toolVersion })}</p>)}
       </section> : null}
       {details ? <section className="plugin-section" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><Permissions permissions={details.manifest.permissions}/>
         <ul>{details.manifest.contributions.map(contribution => <li key={contribution.id}>{contribution.id} · {t(`plugins.contributions.${contribution.contribution.kind}`)}</li>)}</ul>

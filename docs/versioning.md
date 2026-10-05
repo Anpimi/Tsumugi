@@ -72,6 +72,16 @@ availability is checked independently.
 
 ## Choosing the next version
 
+Opt-in Apple silicon macOS runtime bundling and independent Desktop runtime
+approval/install/selection extend the same unreleased application batch. Build
+metadata comes from actual Host capture and the source-owned complete tool pin;
+the optional bundle raises its minimum to macOS 13.5 while base builds retain
+their minimum. Generated IPC adds runtime offers, exact decision digests and
+runtime operations. This changes no SDK/process profile, Store layout or schema
+18 and adds no external dependency or historical data migration. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the version sources; no additional
+bump or distribution-ready production claim follows from this opt-in build.
+
 The source-check SDK additions remain in the same undistributed SDK alpha.1
 batch. Content output schema 2 requires original identity display evidence;
 plugin check keys now capture package selection separately from active channel

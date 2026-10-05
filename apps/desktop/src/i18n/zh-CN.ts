@@ -2,6 +2,18 @@ import type { UiMessages } from "./types";
 
 export const zhCN = {
 plugins: {
+  runtimeTitle: "JavaScript 运行环境", bundledRuntime: "Node {{version}} 与随附 Host", runtimeSystem: "需要 Apple 芯片及 macOS {{version}} 或更高版本。",
+  runtimeEffect: "批准此应用随附的准确环境，并安装固定文件。此操作不会启用插件、运行代码或授予执行权限。每次执行需要独立授权；子进程不等于操作系统沙箱。",
+  runtimeNotBundled: "此应用构建未随附 JavaScript 运行环境。请使用包含受支持运行环境的构建。",
+  runtimeUnavailable: "此准确运行环境在当前系统上不可用。请检查随附运行环境要求及当前应用构建。",
+  runtimeChanged: "随附文件与所审阅的应用环境不一致。请使用完整构建，并在批准前重新审阅环境。",
+  runtimeConsent: "我批准此准确随附运行环境及其安装。", installRuntime: "批准并安装运行环境", confirmRuntime: "批准并确认运行环境",
+  runtimeFingerprint: "准确环境指纹", installedRuntimes: "已安装环境", runtimeEmpty: "尚未安装运行环境。",
+  runtimeRecovery: "安装需要确认。请重试原操作，或明确批准匹配的随附环境进行恢复。",
+  runtimeApproved: "已安装并独立批准。准确文件与执行权限分别核验。",
+  runtimeApprovedMissing: "Node {{version}} 的一个环境已批准但尚未安装。请审阅匹配的随附环境进行安装。",
+  verifyRuntime: "核验已安装环境", runtimeVerified: "已核验独立批准的准确安装文件。没有启动 Worker 或授予执行权限。",
+  runtimeAvailability: { "unsupported-platform": "此随附运行环境仅支持 Apple 芯片 macOS。", "system-too-old": "请先将 macOS 升级至声明的最低版本，再安装此运行环境。", "system-version-unknown": "无法核验 macOS 版本，暂不能安装。", "resources-unavailable": "无法定位随附运行环境文件。请使用完整应用构建。" },
   open: "扩展", title: "已安装扩展", description: "审阅本地插件包，并决定是否允许在新任务中选择它们。",
   close: "关闭", choose: "选择插件目录", refresh: "读取当前状态", loading: "正在核对本地插件状态…",
   readFailed: "无法读取插件状态。保留当前选择，并重试读取。", saved: "请求的变更已保存。执行仍需要已批准的运行环境及独立授权。",

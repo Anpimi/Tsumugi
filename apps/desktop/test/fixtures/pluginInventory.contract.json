@@ -6,7 +6,8 @@
     "packages": [],
     "runtimes": [],
     "packageDecisions": [],
-    "runtimeDecisions": []
+    "runtimeDecisions": [],
+    "runtimeOffers": []
   },
   "rich": {
     "settingsRevision": "18446744073709551615",
@@ -94,8 +95,10 @@
         "origin": {
           "sourceId": "synthetic-approved-source",
           "publisherId": "synthetic-approved-key"
-        }
+        },
+        "environmentDigest": "2222222222222222222222222222222222222222222222222222222222222222"
       }
-    ]
+    ],
+    "runtimeOffers": []
   }
 }

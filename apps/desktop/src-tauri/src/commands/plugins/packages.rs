@@ -5,10 +5,10 @@ use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::execution::ExecutionId;
 use tsumugi_plugin_host::{
+    ApprovedPackageSetting, PackageImage, PluginSettingsUpdate,
     catalog::{
         CatalogError, PackageApproval, PackageCatalog, RegisteredPackage, ResolvedCapability,
     },
-    ApprovedPackageSetting, PackageImage, PluginSettingsUpdate,
 };
 
 const CANDIDATE_LIFETIME: Duration = Duration::from_secs(600);
@@ -85,15 +85,20 @@ impl Drop for PickerLease {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-enum MutationRequest {
+pub(super) enum MutationRequest {
     Install(PluginInstallRequest),
     Enable(PluginEnableRequest),
+    Runtime(PluginRuntimeInstallRequest),
 }
 
 pub(super) struct PendingMutation {
     request: MutationRequest,
     desired: PluginSettingsUpdate,
     package: Option<RegisteredPackage>,
+    runtime: Option<(
+        tsumugi_plugin_host::CapturedRuntime,
+        tsumugi_plugin_host::RuntimeApproval,
+    )>,
     settings_confirmed: bool,
     install_action: Option<String>,
     complete: bool,
@@ -104,12 +109,14 @@ impl PendingMutation {
         match &self.request {
             MutationRequest::Install(request) => request.action_id.to_string(),
             MutationRequest::Enable(request) => request.action_id.to_string(),
+            MutationRequest::Runtime(request) => request.action_id.to_string(),
         }
     }
     fn revision(&self) -> u64 {
         match &self.request {
             MutationRequest::Install(request) => request.expected_revision.get(),
             MutationRequest::Enable(request) => request.expected_revision.get(),
+            MutationRequest::Runtime(request) => request.expected_revision.get(),
         }
     }
 }
@@ -227,9 +234,13 @@ impl ApplicationPlugins {
         self.mutate(MutationRequest::Enable(request))
     }
 
-    fn mutate(&self, request: MutationRequest) -> Result<PluginInventoryView, CommandError> {
+    pub(super) fn mutate(
+        &self,
+        request: MutationRequest,
+    ) -> Result<PluginInventoryView, CommandError> {
         let stage = match &request {
             MutationRequest::Install(_) => CommandStage::PluginInstall,
+            MutationRequest::Runtime(_) => CommandStage::PluginInstall,
             MutationRequest::Enable(_) => CommandStage::PluginSettings,
         };
         let mut manager = self.try_manager().map_err(|mut error| {
@@ -278,6 +289,7 @@ impl ApplicationPlugins {
             let expected = match &request {
                 MutationRequest::Install(request) => request.expected_revision.get(),
                 MutationRequest::Enable(request) => request.expected_revision.get(),
+                MutationRequest::Runtime(request) => request.expected_revision.get(),
             };
             if expected != settings.revision() {
                 return Err(at_stage(InstallError::RevisionConflict, stage));
@@ -286,6 +298,7 @@ impl ApplicationPlugins {
                 packages: settings.packages().to_vec(),
                 runtimes: settings.runtimes().to_vec(),
             };
+            let mut runtime = None;
             let package = match &request {
                 MutationRequest::Install(request) => {
                     let candidate = manager
@@ -361,11 +374,33 @@ impl ApplicationPlugins {
                     decision.enabled = request.enabled;
                     None
                 }
+                MutationRequest::Runtime(request) => {
+                    let captured = runtimes::capture_offer(&manager, request, allowed).map_err(
+                        |mut error| {
+                            error.stage = stage;
+                            error
+                        },
+                    )?;
+                    if let Some(prior) = desired
+                        .runtimes
+                        .iter()
+                        .find(|prior| prior.environment == captured.1.environment)
+                    {
+                        if prior != &captured.1 {
+                            return Err(at_stage(InstallError::ApprovalMismatch, stage));
+                        }
+                    } else {
+                        desired.runtimes.push(captured.1.clone());
+                    }
+                    runtime = Some(captured);
+                    None
+                }
             };
             manager.pending = Some(PendingMutation {
                 request,
                 desired,
                 package,
+                runtime,
                 settings_confirmed: false,
                 install_action: None,
                 complete: false,
@@ -428,6 +463,17 @@ impl ApplicationPlugins {
                         }
                     }
                 }
+                if let Some((runtime, approval)) = &pending.runtime {
+                    let action = pending.action();
+                    runtimes::install_pending(
+                        store,
+                        runtime,
+                        approval,
+                        &mut pending.install_action,
+                        &action,
+                        allowed,
+                    )?;
+                }
                 Ok::<_, InstallError>(())
             })();
             if let Err(error) = result {
@@ -443,6 +489,9 @@ impl ApplicationPlugins {
             }
             pending.complete = true;
             pending.unknown = false;
+            // A confirmed install no longer needs its potentially large frozen
+            // trees. A lost inventory ACK retains the original completed intent.
+            pending.runtime = None;
         }
         // A lost projection/ACK must retain the accepted immutable intent; retry
         // confirms its exact original result rather than generating a new action.

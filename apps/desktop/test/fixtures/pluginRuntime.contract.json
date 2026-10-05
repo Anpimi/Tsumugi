@@ -1,0 +1,31 @@
+{
+  "id": "bundled-javascript",
+  "environment": {
+    "protocolVersion": 1,
+    "platform": {
+      "operatingSystem": "macos",
+      "architecture": "aarch64"
+    },
+    "sdkVersion": "0.1.0-alpha.1",
+    "processProtocol": 1,
+    "profile": "node-system-libraries-v1",
+    "toolVersion": "26.10.0",
+    "tool": {
+      "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+      "entrypoint": "bin/node"
+    },
+    "host": {
+      "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+      "entrypoint": "dist/main.js"
+    }
+  },
+  "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+  "origin": {
+    "sourceId": "application-bundle",
+    "publisherId": "application-build"
+  },
+  "minimumSystemVersion": "13.5",
+  "fileCount": 60,
+  "byteCount": "147808941",
+  "availability": "available"
+}
