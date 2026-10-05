@@ -227,6 +227,34 @@ impl fmt::Debug for PackageStore {
 }
 
 impl PackageStore {
+    /// Provision a fixed application-owned suffix below an existing current-user
+    /// directory. The anchor may be readable by others, but not writable by them;
+    /// every suffix directory must be private mode 0700. Existing permissions are
+    /// never changed. At most eight simple UTF-8 child names are accepted.
+    ///
+    /// Call this bounded synchronous IO on the application's blocking worker.
+    /// Links and observed path replacement are rejected, and the original root
+    /// descriptor is retained through store initialization. A failed operation
+    /// may leave private empty directories; retrying the same suffix is safe.
+    /// Provisioning neither approves artifacts nor enables or authorizes plugins.
+    pub fn provision(
+        anchor: &Path,
+        suffix: &[&str],
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<Self> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            Ok(Self {
+                inner: platform::Store::provision(anchor, suffix, &authorized)?,
+            })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (anchor, suffix, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
     /// Open an existing current-user mode-0700 managed directory without
     /// following links. The caller chooses its application-owned location.
     pub fn open_existing(root: &Path) -> InstallResult<Self> {
@@ -594,10 +622,142 @@ mod platform {
         Ok(directory)
     }
 
+    struct ProvisionDirectory {
+        path: PathBuf,
+        file: File,
+        identity: (u64, u64),
+    }
+
+    fn check_provision_chain(
+        directories: &[ProvisionDirectory],
+        authorized: &impl Fn() -> bool,
+    ) -> InstallResult<()> {
+        if !authorized() {
+            return Err(InstallError::AuthorityRevoked);
+        }
+        for (index, directory) in directories.iter().enumerate() {
+            let info = metadata(&directory.file)?;
+            if !info.is_dir()
+                || info.uid() != unsafe { libc::geteuid() }
+                || (index == 0 && info.mode() & 0o7022 != 0)
+                || (index > 0 && info.mode() & 0o7777 != 0o700)
+            {
+                return Err(InstallError::InvalidRoot);
+            }
+            same_root(&directory.path, directory.identity)?;
+            if index > 0 {
+                same_file(
+                    &directories[index - 1].file,
+                    directory
+                        .path
+                        .file_name()
+                        .ok_or(InstallError::InvalidRoot)?,
+                    true,
+                    directory.identity,
+                )?;
+            }
+        }
+        if !authorized() {
+            return Err(InstallError::AuthorityRevoked);
+        }
+        Ok(())
+    }
+
     impl Store {
+        pub(super) fn provision(
+            anchor: &Path,
+            suffix: &[&str],
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<Self> {
+            let guard = OperationGuard::new(authorized);
+            guard.finish(Self::provision_inner(anchor, suffix, &|| guard.allowed()))
+        }
+
+        fn provision_inner(
+            anchor: &Path,
+            suffix: &[&str],
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<Self> {
+            if suffix.is_empty()
+                || suffix.len() > 8
+                || suffix.iter().any(|child| {
+                    child.is_empty()
+                        || child.len() > 128
+                        || *child == "."
+                        || *child == ".."
+                        || child.trim() != *child
+                        || child
+                            .chars()
+                            .any(|c| c.is_control() || matches!(c, '/' | '\\'))
+                })
+                || anchor.components().count() + suffix.len() > 128
+            {
+                return Err(InstallError::InvalidRoot);
+            }
+            if !authorized() {
+                return Err(InstallError::AuthorityRevoked);
+            }
+            let (path, file) =
+                filesystem::open_directory(anchor).map_err(|_| InstallError::InvalidRoot)?;
+            let identity = filesystem::identity(&file)?;
+            let mut directories = vec![ProvisionDirectory {
+                path,
+                file,
+                identity,
+            }];
+            for child in suffix {
+                check_provision_chain(&directories, authorized)?;
+                let parent = directories.last().ok_or(InstallError::InvalidRoot)?;
+                let child_name = OsStr::new(child);
+                let file = match filesystem::open_child(&parent.file, child_name, true) {
+                    Ok(file) => file,
+                    Err(_) => {
+                        if let Err(error) = filesystem::create_directory(&parent.file, child_name) {
+                            if error.kind() != std::io::ErrorKind::AlreadyExists {
+                                return Err(InstallError::Io);
+                            }
+                        }
+                        filesystem::open_child(&parent.file, child_name, true)
+                            .map_err(|_| InstallError::InvalidRoot)?
+                    }
+                };
+                private(&file, true, 0o700).map_err(|_| InstallError::InvalidRoot)?;
+                let identity = filesystem::identity(&file)?;
+                if identity.0 != directories[0].identity.0 {
+                    return Err(InstallError::InvalidRoot);
+                }
+                same_file(&parent.file, child_name, true, identity)?;
+                directories.push(ProvisionDirectory {
+                    path: parent.path.join(child),
+                    file,
+                    identity,
+                });
+                check_provision_chain(&directories, authorized)?;
+                sync(&directories.last().ok_or(InstallError::InvalidRoot)?.file)?;
+                sync(&directories[directories.len() - 2].file)?;
+                check_provision_chain(&directories, authorized)?;
+            }
+            let root = directories.pop().ok_or(InstallError::InvalidRoot)?;
+            let store = Self::open_held(root.path, root.file, authorized)?;
+            check_provision_chain(&directories, authorized)?;
+            store.check(authorized)?;
+            Ok(store)
+        }
+
         pub(super) fn open(root: &Path) -> InstallResult<Self> {
             let (path, root) =
                 filesystem::open_directory(root).map_err(|_| InstallError::InvalidRoot)?;
+            Self::open_held(path, root, &|| true)
+        }
+
+        fn open_held(
+            path: PathBuf,
+            root: File,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<Self> {
+            if !authorized() {
+                return Err(InstallError::AuthorityRevoked);
+            }
             private(&root, true, 0o700).map_err(|_| InstallError::InvalidRoot)?;
             let root_id = filesystem::identity(&root)?;
             same_root(&path, root_id)?;
@@ -623,8 +783,14 @@ mod platform {
             let lock_id = filesystem::identity(&lock)?;
             same_root(&path, root_id)?;
             same_file(&root, OsStr::new(".lock"), false, lock_id)?;
+            if !authorized() {
+                return Err(InstallError::AuthorityRevoked);
+            }
             let objects = open_namespace(&root, "objects", root_id)?;
             let objects_id = filesystem::identity(&objects)?;
+            if !authorized() {
+                return Err(InstallError::AuthorityRevoked);
+            }
             let runtimes = open_namespace(&root, "runtimes", root_id)?;
             let runtimes_id = filesystem::identity(&runtimes)?;
             let store = Self {
@@ -640,12 +806,15 @@ mod platform {
                 #[cfg(test)]
                 fail_commit_checkpoint: None,
             };
-            store.check(&|| true)?;
+            store.check(authorized)?;
             sync(&store.lock)?;
+            store.check(authorized)?;
             sync(&store.objects)?;
+            store.check(authorized)?;
             sync(&store.runtimes)?;
+            store.check(authorized)?;
             sync(&store.root)?;
-            store.check(&|| true)?;
+            store.check(authorized)?;
             Ok(store)
         }
 

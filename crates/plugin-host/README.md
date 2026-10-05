@@ -128,6 +128,17 @@ links, hard-linked regular files, unexpected modes and unknown receipt fields.
 The same-user process can still change permissions; these checks do not create
 an OS sandbox or authenticate the publisher.
 
+`PackageStore::provision` creates a fixed application-owned suffix under an
+existing current-user directory. Its anchor must not be writable by other users;
+one to eight simple UTF-8 child names are accepted, and every suffix directory
+must have mode `0700`. Existing permissions and entries are preserved. The same
+descriptor-relative filesystem owner creates and synchronizes directories,
+checks observed anchor/suffix/root replacement and retains the root descriptor
+through lock acquisition and store initialization. Run it on a blocking worker
+with a live guard; its observed deadline is 60 seconds. Failure can leave private
+empty directories or initialized namespaces, which the same suffix can safely
+reopen. This does not approve packages, enable a catalog entry or restore grants.
+
 Installation accepts an already approved `RegisteredPackage` and a canonical
 non-nil UUID action. It writes captured bytes into a private candidate, synchronizes
 files and nested directories, then promotes the whole object exclusively under

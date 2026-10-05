@@ -71,6 +71,206 @@ impl Drop for OwnedRoot {
 fn mode(path: &Path, value: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(value)).unwrap();
 }
+
+#[test]
+fn provision_creates_private_suffix_reopens_and_preserves_store_lock() {
+    let owned = OwnedRoot::new();
+    let anchor = owned.directory.path();
+    mode(anchor, 0o755);
+    let suffix = ["application", "plugins"];
+    let path = anchor.join("application/plugins");
+    let mut store = PackageStore::provision(anchor, &suffix, || true).unwrap();
+    assert_eq!(
+        fs::metadata(anchor).unwrap().permissions().mode() & 0o7777,
+        0o755
+    );
+    for directory in [anchor.join("application"), path.clone()] {
+        assert_eq!(
+            fs::metadata(directory).unwrap().permissions().mode() & 0o7777,
+            0o700
+        );
+    }
+    assert_eq!(fs::read_dir(path.join("objects")).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(path.join("runtimes")).unwrap().count(), 0);
+    assert_eq!(
+        PackageStore::provision(anchor, &suffix, || true).unwrap_err(),
+        InstallError::Busy
+    );
+    let (catalog, approval) = fixture("provisioned", "1.0.0", "stable", origin());
+    assert!(!catalog.is_enabled(&approval.plugin).unwrap());
+    let registered = catalog.registered(&approval.plugin).unwrap();
+    let receipt = store.install(ACTION, registered, || true).unwrap();
+    drop(store);
+    let store = PackageStore::provision(anchor, &suffix, || true).unwrap();
+    assert_eq!(store.load(&approval, || true).unwrap().receipt(), &receipt);
+    assert!(!catalog.is_enabled(&approval.plugin).unwrap());
+}
+
+#[test]
+fn provision_rejects_invalid_suffix_before_any_directory_write() {
+    let temporary = tempfile::tempdir().unwrap();
+    let long_name = "a".repeat(129);
+    for suffix in [
+        vec![],
+        vec!["valid", ".."],
+        vec!["."],
+        vec![""],
+        vec![" leading"],
+        vec!["child/escape"],
+        vec!["child\\escape"],
+        vec!["line\nbreak"],
+        vec![long_name.as_str()],
+        vec!["a"; 9],
+    ] {
+        assert_eq!(
+            PackageStore::provision(temporary.path(), &suffix, || true).unwrap_err(),
+            InstallError::InvalidRoot,
+            "{suffix:?}"
+        );
+        assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn provision_preserves_existing_wrong_permissions_and_rejects_writable_anchor() {
+    for bad_index in [0, 1] {
+        let temporary = tempfile::tempdir().unwrap();
+        let app = temporary.path().join("application");
+        let plugins = app.join("plugins");
+        fs::create_dir(&app).unwrap();
+        fs::create_dir(&plugins).unwrap();
+        mode(&app, 0o700);
+        mode(&plugins, 0o700);
+        let changed = if bad_index == 0 { &app } else { &plugins };
+        mode(changed, 0o755);
+        let sentinel = changed.join("preserved");
+        fs::write(&sentinel, b"user-owned bytes").unwrap();
+        assert_eq!(
+            PackageStore::provision(temporary.path(), &["application", "plugins"], || true)
+                .unwrap_err(),
+            InstallError::InvalidRoot
+        );
+        assert_eq!(
+            fs::metadata(changed).unwrap().permissions().mode() & 0o7777,
+            0o755
+        );
+        assert_eq!(fs::read(sentinel).unwrap(), b"user-owned bytes");
+        assert!(!plugins.join(".lock").exists());
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    mode(temporary.path(), 0o777);
+    assert_eq!(
+        PackageStore::provision(temporary.path(), &["plugins"], || true).unwrap_err(),
+        InstallError::InvalidRoot
+    );
+    assert!(!temporary.path().join("plugins").exists());
+    assert_eq!(
+        fs::metadata(temporary.path()).unwrap().permissions().mode() & 0o7777,
+        0o777
+    );
+}
+
+#[test]
+fn provision_rejects_anchor_and_suffix_links_and_regular_files() {
+    for at_anchor in [false, true] {
+        let temporary = tempfile::tempdir().unwrap();
+        let selected = temporary.path().join("selected");
+        let target = temporary.path().join("target");
+        fs::create_dir(&target).unwrap();
+        mode(&target, 0o700);
+        fs::write(target.join("preserved"), b"original").unwrap();
+        if at_anchor {
+            symlink(&target, &selected).unwrap();
+        } else {
+            fs::create_dir(&selected).unwrap();
+            mode(&selected, 0o700);
+            symlink(&target, selected.join("plugins")).unwrap();
+        }
+        assert_eq!(
+            PackageStore::provision(&selected, &["plugins"], || true).unwrap_err(),
+            InstallError::InvalidRoot
+        );
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+        assert_eq!(fs::read(target.join("preserved")).unwrap(), b"original");
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    fs::write(temporary.path().join("plugins"), b"existing file").unwrap();
+    assert_eq!(
+        PackageStore::provision(temporary.path(), &["plugins"], || true).unwrap_err(),
+        InstallError::InvalidRoot
+    );
+    assert_eq!(
+        fs::read(temporary.path().join("plugins")).unwrap(),
+        b"existing file"
+    );
+}
+
+#[test]
+fn provision_revocation_leaves_no_store_and_same_suffix_can_resume() {
+    let temporary = tempfile::tempdir().unwrap();
+    assert_eq!(
+        PackageStore::provision(temporary.path(), &["application", "plugins"], || false)
+            .unwrap_err(),
+        InstallError::AuthorityRevoked
+    );
+    assert_eq!(fs::read_dir(temporary.path()).unwrap().count(), 0);
+    let app = temporary.path().join("application");
+    assert_eq!(
+        PackageStore::provision(temporary.path(), &["application", "plugins"], || !app
+            .exists())
+        .unwrap_err(),
+        InstallError::AuthorityRevoked
+    );
+    assert!(app.is_dir());
+    assert!(!app.join("plugins").exists());
+    let store =
+        PackageStore::provision(temporary.path(), &["application", "plugins"], || true).unwrap();
+    drop(store);
+    assert!(app.join("plugins/objects").is_dir());
+}
+
+#[test]
+fn provision_detects_anchor_suffix_and_initialized_root_replacement() {
+    for point in ["anchor", "suffix", "root"] {
+        let temporary = tempfile::tempdir().unwrap();
+        let anchor = temporary.path().join("anchor");
+        fs::create_dir(&anchor).unwrap();
+        mode(&anchor, 0o700);
+        let app = anchor.join("application");
+        let root = app.join("plugins");
+        let replaced = Cell::new(false);
+        let selected = match point {
+            "anchor" => anchor.clone(),
+            "suffix" => app.clone(),
+            "root" => root.clone(),
+            _ => unreachable!(),
+        };
+        let held = temporary.path().join("original-held");
+        let result = PackageStore::provision(&anchor, &["application", "plugins"], || {
+            let reached = if point == "root" {
+                root.join(".lock").exists()
+            } else {
+                app.exists()
+            };
+            if reached && !replaced.replace(true) {
+                fs::rename(&selected, &held).unwrap();
+                fs::create_dir(&selected).unwrap();
+                mode(&selected, 0o700);
+                fs::write(selected.join("preserved"), b"replacement bytes").unwrap();
+            }
+            true
+        });
+        assert_eq!(result.unwrap_err(), InstallError::StoreChanged, "{point}");
+        assert!(replaced.get());
+        assert_eq!(
+            fs::read(selected.join("preserved")).unwrap(),
+            b"replacement bytes"
+        );
+        assert_eq!(fs::read_dir(&selected).unwrap().count(), 1);
+        assert!(held.is_dir());
+    }
+}
+
 fn contract(id: &str) -> sdk::ContractRef {
     sdk::ContractRef {
         id: id.into(),
