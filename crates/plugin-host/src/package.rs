@@ -125,6 +125,30 @@ impl PackageImage {
     pub fn manifest(&self) -> &ValidatedManifest {
         &self.manifest
     }
+    /// Interpret only the explicitly selected SDK resource from this immutable
+    /// package. The resource cannot substitute another package's declarations.
+    pub fn source_import(&self, contribution_id: &str) -> HostResult<SourceImportBinding> {
+        let contribution = self
+            .manifest
+            .manifest()
+            .contributions
+            .iter()
+            .find(|entry| entry.id == contribution_id)
+            .ok_or(HostError::InvalidContract)?;
+        let ContributionKind::Resource { schema, path } = &contribution.contribution else {
+            return Err(HostError::InvalidContract);
+        };
+        if *schema != source_import_declaration_contract() {
+            return Err(HostError::InvalidContract);
+        }
+        let file = self.files.get(path).ok_or(HostError::MissingArtifact)?;
+        if file.executable {
+            return Err(HostError::InvalidContract);
+        }
+        parse_source_import_declaration(&file.bytes)
+            .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+            .map_err(|_| HostError::InvalidContract)
+    }
     pub(crate) fn stage(
         &self,
         staging_parent: &Path,

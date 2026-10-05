@@ -158,6 +158,78 @@ impl Selection {
         selected.webvtt = true;
         Ok(selected)
     }
+    /// Capture only the fixed material recipe from a selected immutable package.
+    /// Approval of the root remains a native picker responsibility; neither the
+    /// resource nor an IPC string authorizes another directory.
+    pub fn capture_declared(
+        &self,
+        binding: &tsumugi_plugin_sdk::SourceImportBinding,
+        language: &str,
+        cancel: &Cancellation,
+    ) -> Result<SourceBundle, ExecutionError> {
+        self.capture_declared_inner(binding, language, cancel, || {})
+    }
+    fn capture_declared_inner(
+        &self,
+        binding: &tsumugi_plugin_sdk::SourceImportBinding,
+        language: &str,
+        cancel: &Cancellation,
+        opened: impl FnOnce(),
+    ) -> Result<SourceBundle, ExecutionError> {
+        binding
+            .validate()
+            .map_err(|_| error(ErrorCode::InvalidInput, "source-import-binding"))?;
+        self.verify()?;
+        let started = Instant::now();
+        let check = || {
+            if cancel.is_requested() {
+                Err(error(ErrorCode::Cancelled, "cancelled"))
+            } else if started.elapsed() > Duration::from_secs(30) {
+                Err(error(ErrorCode::Busy, "capture-timeout"))
+            } else {
+                Ok(())
+            }
+        };
+        let mut files = Vec::new();
+        let mut identities = Vec::new();
+        for material in &binding.declaration.materials {
+            check()?;
+            let path = self.root.join(&material.logical_path);
+            let file = platform::open(&path, false)?;
+            let identity = platform::identity(&file)?;
+            if platform::final_path(&file)? != path || identities.contains(&identity) {
+                return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
+            }
+            identities.push(identity);
+            #[cfg(target_os = "macos")]
+            let stamp = platform::stamp(&file)?;
+            files.push((
+                path,
+                file,
+                material.max_bytes as usize,
+                #[cfg(target_os = "macos")]
+                stamp,
+            ));
+        }
+        opened();
+        let mut materials = Vec::new();
+        for entry in &mut files {
+            materials.push(read(&mut entry.1, entry.2, &check)?);
+        }
+        for (entry, bytes) in files.iter_mut().zip(&materials) {
+            if *bytes != read(&mut entry.1, entry.2, &check)?
+                || platform::final_path(&entry.1)? != entry.0
+            {
+                return Err(error(ErrorCode::DependencyConflict, "source-changed"));
+            }
+            #[cfg(target_os = "macos")]
+            platform::verify_file(&entry.1, &entry.0, entry.3)?;
+        }
+        self.verify()?;
+        let bundle = SourceBundle::capture_declared(binding, materials, language)?;
+        check()?;
+        Ok(bundle)
+    }
     pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         self.verify()?;
         Ok(&self.root)
@@ -469,6 +541,9 @@ impl Selection {
     pub fn capture(&self, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    pub fn capture_declared(&self, _: &tsumugi_plugin_sdk::SourceImportBinding, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
+        Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
+    }
     pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
@@ -771,6 +846,123 @@ mod tests {
     }
 }
 
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod source_import_tests {
+    use super::*;
+    fn binding() -> tsumugi_plugin_sdk::SourceImportBinding {
+        let manifest = tsumugi_plugin_sdk::parse_manifest(include_bytes!(
+            "../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.manifest.json"
+        ))
+        .unwrap();
+        tsumugi_plugin_sdk::parse_source_import_declaration(include_bytes!(
+            "../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.declaration.json"
+        ))
+        .unwrap()
+        .bind(&manifest, &"a".repeat(64))
+        .unwrap()
+    }
+    fn fixture() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("materials")).unwrap();
+        fs::create_dir(root.path().join("metadata")).unwrap();
+        fs::write(
+            root.path().join("materials/raw.txt"),
+            "\u{feff}raw 👩🏽‍💻 é\r\n",
+        )
+        .unwrap();
+        fs::write(root.path().join("metadata/header.txt"), b"opaque companion").unwrap();
+        root
+    }
+    #[test]
+    fn source_import_capture_reads_only_declared_files_and_retains_original_bytes() {
+        let root = fixture();
+        fs::write(root.path().join("unrelated.txt"), b"excluded").unwrap();
+        let selected = Selection::authorize(root.path().into()).unwrap();
+        let bundle = selected
+            .capture_declared(&binding(), "en-US", &Cancellation::default())
+            .unwrap();
+        assert_eq!(bundle.files.len(), 2);
+        assert_eq!(bundle.files[0].utf8, "\u{feff}raw 👩🏽‍💻 é\r\n");
+        assert_eq!(bundle.files[1].utf8, "opaque companion");
+        fs::write(root.path().join("materials/raw.txt"), b"new bytes").unwrap();
+        assert_eq!(bundle.files[0].utf8, "\u{feff}raw 👩🏽‍💻 é\r\n");
+    }
+    #[test]
+    fn source_import_capture_refuses_missing_oversized_invalid_utf8_and_cancelled_material() {
+        for case in 0..4 {
+            let root = fixture();
+            let selected = Selection::authorize(root.path().into()).unwrap();
+            let cancel = Cancellation::default();
+            match case {
+                0 => fs::remove_file(root.path().join("metadata/header.txt")).unwrap(),
+                1 => fs::write(root.path().join("materials/raw.txt"), vec![b'x'; 131073]).unwrap(),
+                2 => fs::write(root.path().join("materials/raw.txt"), [0xff]).unwrap(),
+                _ => cancel.request(),
+            }
+            assert!(
+                selected
+                    .capture_declared(&binding(), "en-US", &cancel)
+                    .is_err(),
+                "case {case}"
+            );
+        }
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn source_import_capture_refuses_links_fifo_aliases_and_changes_after_open() {
+        use std::os::unix::fs::symlink;
+        for case in 0..6 {
+            let root = fixture();
+            let selected = Selection::authorize(root.path().into()).unwrap();
+            let source = root.path().join("materials/raw.txt");
+            let header = root.path().join("metadata/header.txt");
+            if case < 4 {
+                match case {
+                    0 => {
+                        fs::remove_file(&source).unwrap();
+                        symlink(&header, &source).unwrap();
+                    }
+                    1 => {
+                        fs::rename(root.path().join("materials"), root.path().join("moved"))
+                            .unwrap();
+                        symlink(root.path().join("moved"), root.path().join("materials")).unwrap();
+                    }
+                    2 => {
+                        fs::remove_file(&header).unwrap();
+                        fs::hard_link(&source, &header).unwrap();
+                    }
+                    _ => {
+                        use std::os::unix::ffi::OsStrExt;
+                        fs::remove_file(&source).unwrap();
+                        let path = std::ffi::CString::new(source.as_os_str().as_bytes()).unwrap();
+                        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+                    }
+                }
+                assert!(
+                    selected
+                        .capture_declared(&binding(), "en-US", &Cancellation::default())
+                        .is_err(),
+                    "case {case}"
+                );
+            } else {
+                let result = selected.capture_declared_inner(
+                    &binding(),
+                    "en-US",
+                    &Cancellation::default(),
+                    || {
+                        if case == 4 {
+                            fs::write(&source, b"changed").unwrap();
+                        } else {
+                            fs::rename(&source, root.path().join("old.txt")).unwrap();
+                            fs::write(&source, "\u{feff}raw 👩🏽‍💻 é\r\n").unwrap();
+                        }
+                    },
+                );
+                assert_eq!(result.unwrap_err().code, ErrorCode::DependencyConflict);
+            }
+        }
+    }
+}
 #[cfg(all(test, target_os = "macos"))]
 mod macos_tests {
     use super::*;

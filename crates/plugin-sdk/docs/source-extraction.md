@@ -63,6 +63,49 @@ parsing their domain schema or treating operation-local IDs as revision evidence
 
 ## Fixed source checks
 
+### Package-owned source import resource
+
+A `Resource` contribution can declare schema
+`tsumugi.source-import-declaration/1/1`. Its captured, nonexecutable JSON selects
+a `SourceImportDeclaration`: a human-readable `displayName`, exact `profile`,
+ordered required `materials`, independent `extractor` and `checker` contribution
+IDs, a `revisionPolicy` and nonempty mandatory `semanticRules`. Each material has
+one literal directory-relative `logicalPath`, `role` and positive `maxBytes`.
+The contract supports up to 32 fixed files, at most 16 path segments and 2 MiB
+aggregate declared bytes. It has no discovery script, optional file or glob
+expansion. Aliased ASCII-case paths and file/directory overlaps are rejected.
+The complete resource is bounded to 32 KiB. Hosts may enforce smaller encoded
+capture limits; they must refuse excess rather than truncate it.
+
+`parse_source_import_declaration` uses the strict typed receiver.
+`SourceImportDeclaration::bind` resolves both providers from the same validated
+manifest and independently supplied package digest. Both must support the exact
+profile and SDK source input/output/error schemas. Only captured-input permission
+requests are admitted; the checker must be read-only and distinct from the
+extractor. The captured resource fixes policy before extraction. Neither a
+producer result nor a later check result may choose another checker or omit rules.
+
+The Host reads the selected resource directly from the immutable `PackageImage`;
+it does not reopen a package path or execute a component to discover the recipe.
+The application still owns directory selection, bounded platform reads, runtime
+approval, separate current grants and explicit adoption. Material capture keeps
+actual UTF-8 bytes, including BOM and line endings, without interpreting a domain
+grammar. A successful capture or resource lookup proves no domain check or grant.
+
+The public schema and CLI are generated from these Rust types:
+
+```sh
+cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- schema-source-import-declaration
+cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- check-source-import-declaration-schema crates/plugin-sdk/schemas/source-import-declaration.schema.json
+cargo run -p tsumugi-plugin-sdk --features schema --bin tsumugi-plugin-contract -- validate-source-import-declaration crates/plugin-sdk/tests/fixtures/source-import.declaration.json
+```
+
+The fixture describes synthetic text. It is neither an official domain package
+nor a runnable worker. These data and capture APIs are prerequisites for dynamic
+desktop source assembly; they do not establish its production cutover.
+
+### Checker input and evidence
+
 `SourceExtractionCheckInput` carries the entire captured `source`, entire
 `proposal`, and independently fixed `requirements`. The receiver enforces the
 generic source association and unique nonempty plugin requirements. Each is

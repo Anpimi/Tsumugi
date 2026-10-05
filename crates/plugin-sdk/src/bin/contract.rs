@@ -33,6 +33,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() == 1 && args[0] == "schema-source-extraction-input" {
         return print(&source_extraction_input_schema());
     }
+    if args.len() == 1 && args[0] == "schema-source-import-declaration" {
+        return print(&source_import_declaration_schema());
+    }
     if args.len() == 1 && args[0] == "schema-source-extraction-error" {
         return print(&source_extraction_error_schema());
     }
@@ -59,6 +62,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             || args[0] == "check-exchange-schema"
             || args[0] == "check-process-schema"
             || args[0] == "check-source-extraction-input-schema"
+            || args[0] == "check-source-import-declaration-schema"
             || args[0] == "check-source-extraction-error-schema"
             || args[0] == "check-source-extraction-check-input-schema"
             || args[0] == "check-check-results-schema"
@@ -73,6 +77,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             process_schema()
         } else if args[0] == "check-source-extraction-input-schema" {
             source_extraction_input_schema()
+        } else if args[0] == "check-source-import-declaration-schema" {
+            source_import_declaration_schema()
         } else if args[0] == "check-source-extraction-error-schema" {
             source_extraction_error_schema()
         } else if args[0] == "check-source-extraction-check-input-schema" {
@@ -101,6 +107,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &args[1],
             MAX_EXCHANGE_BYTES,
         )?)?);
+    }
+    if args.len() == 2 && args[0] == "validate-source-import-declaration" {
+        return print(&parse_source_import_declaration(&read(&args[1], MAX_SOURCE_IMPORT_DECLARATION_BYTES)?)?);
     }
     if args.len() == 2 && args[0] == "validate-source-extraction-error" {
         return print(&parse_source_extraction_error(&read(
@@ -164,7 +173,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &serde_json::json!({"coverageComplete": coverage.complete, "entries": coverage.entries.len()}),
         );
     }
-    Err("usage: tsumugi-plugin-contract schema | schema-exchange | schema-process | schema-source-extraction-input | schema-source-extraction-error | schema-source-extraction-check-input | schema-check-results | schema-content-types | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | check-source-extraction-input-schema <file> | check-source-extraction-error-schema <file> | check-source-extraction-check-input-schema <file> | check-check-results-schema <file> | check-content-types-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | validate-source-extraction-input <file> | validate-source-extraction-error <file> | validate-source-extraction-check-input <file> | validate-check-results <file> | match-source-extraction <input> <content-exchange> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
+    Err("usage: tsumugi-plugin-contract schema | schema-exchange | schema-process | schema-source-extraction-input | schema-source-import-declaration | schema-source-extraction-error | schema-source-extraction-check-input | schema-check-results | schema-content-types | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | check-source-extraction-input-schema <file> | check-source-import-declaration-schema <file> | check-source-extraction-error-schema <file> | check-source-extraction-check-input-schema <file> | check-check-results-schema <file> | check-content-types-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | validate-source-extraction-input <file> | validate-source-import-declaration <file> | validate-source-extraction-error <file> | validate-source-extraction-check-input <file> | validate-check-results <file> | match-source-extraction <input> <content-exchange> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
 }
 fn main() {
     if let Err(error) = run() {

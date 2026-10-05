@@ -1459,6 +1459,62 @@ fn generic_source_input(
         .unwrap()
 }
 
+#[test]
+fn source_import_declared_capture_preserves_material_without_domain_interpretation() {
+    let manifest = sdk::parse_manifest(include_bytes!(
+        "../../../plugin-sdk/tests/fixtures/source-import.manifest.json"
+    ))
+    .unwrap();
+    let declaration = sdk::parse_source_import_declaration(include_bytes!(
+        "../../../plugin-sdk/tests/fixtures/source-import.declaration.json"
+    ))
+    .unwrap();
+    let binding = declaration.bind(&manifest, &"a".repeat(64)).unwrap();
+    let raw = "\u{feff}uninterpreted 👩🏽‍💻 é\r\n";
+    let materials = vec![raw.as_bytes().to_vec(), b"not a manifest".to_vec()];
+    let bundle = SourceBundle::capture_declared(&binding, materials.clone(), "en-US").unwrap();
+    assert_eq!(bundle.plugin_id, "plain-text");
+    assert_eq!(bundle.profile.id, "example.plain-text");
+    assert_eq!(bundle.files[0].logical_path, "materials/raw.txt");
+    assert_eq!(bundle.files[0].utf8.as_bytes(), raw.as_bytes());
+    assert_ne!(bundle.files[0].artifact_id, bundle.files[1].artifact_id);
+    assert!(SourceBundle::capture_declared(&binding, vec![materials[0].clone()], "en-US").is_err());
+    assert!(
+        SourceBundle::capture_declared(
+            &binding,
+            vec![vec![b'x'; 131073], materials[1].clone()],
+            "en-US"
+        )
+        .is_err()
+    );
+    assert!(
+        SourceBundle::capture_declared(&binding, vec![vec![0xff], materials[1].clone()], "en-US")
+            .is_err()
+    );
+    let environment = generic_source_binding(false).environment;
+    let selected = |capability| PluginExecutionBinding {
+        capability,
+        profile: Some(declaration.profile.clone()),
+        environment: environment.clone(),
+    };
+    let input = bundle
+        .fixed_plugin_input(
+            crate::ProjectId::new_v4(),
+            selected(binding.extractor.clone()),
+            SourceSettings {
+                revision_policy: declaration.revision_policy.clone(),
+                checker: Some(selected(binding.checker)),
+                semantic_rules: declaration.semantic_rules.clone(),
+            },
+        )
+        .unwrap();
+    assert_eq!(SourceBundle::from_input(&input).unwrap(), bundle);
+    assert_eq!(
+        SourceSettings::from_input(&input).unwrap().semantic_rules,
+        declaration.semantic_rules
+    );
+}
+
 fn generic_source_proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
     let config: serde_json::Value = serde_json::from_str(&source.artifacts[0].utf8).unwrap();
     let suffix = config["metadata"].as_u64().unwrap();

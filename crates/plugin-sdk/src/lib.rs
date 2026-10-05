@@ -13,6 +13,7 @@ mod invocation;
 mod process;
 mod resolution;
 mod source_extraction;
+mod source_import;
 mod text;
 mod validation;
 
@@ -25,6 +26,7 @@ pub use invocation::*;
 pub use process::*;
 pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
 pub use source_extraction::*;
+pub use source_import::*;
 pub use text::*;
 pub use validation::{ContractError, ContractErrorCode, ValidatedManifest, parse_manifest};
 

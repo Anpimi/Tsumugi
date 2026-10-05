@@ -162,6 +162,48 @@ pub struct SourceBundle {
     pub files: Vec<CapturedFile>,
 }
 impl SourceBundle {
+    /// Capture declared material without invoking an embedded domain parser.
+    /// Provider identity comes from the independently selected package binding;
+    /// logical paths, roles and byte limits come from its captured SDK resource.
+    pub fn capture_declared(
+        binding: &sdk::SourceImportBinding,
+        materials: Vec<Vec<u8>>,
+        language: &str,
+    ) -> Result<Self, ExecutionError> {
+        let declaration = &binding.declaration;
+        binding.validate().map_err(source_contract_error)?;
+        if materials.len() != declaration.materials.len() {
+            return Err(invalid("source-import-binding"));
+        }
+        let locale = Locale::parse(language).map_err(|_| invalid("language-required"))?;
+        let files = declaration
+            .materials
+            .iter()
+            .zip(materials)
+            .map(|(declared, bytes)| {
+                if bytes.len() > declared.max_bytes as usize {
+                    return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));
+                }
+                CapturedFile::new(&declared.logical_path, &declared.role, &bytes)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut bundle = Self {
+            version: 1,
+            plugin_id: binding.extractor.provider.plugin.id.clone(),
+            plugin_version: binding.extractor.provider.plugin.version.clone(),
+            set_id: ExecutionId::new(),
+            manifest_digest: String::new(),
+            source_language: locale.as_str().into(),
+            language_evidence: "user-declared".into(),
+            format_id: declaration.profile.id.clone(),
+            format_version: declaration.profile.schema_version,
+            profile: declaration.profile.clone(),
+            files,
+        };
+        bundle.manifest_digest = bundle.calculate_digest()?;
+        bundle.validate()?;
+        Ok(bundle)
+    }
     pub fn capture_webvtt(source: &[u8], language: &str) -> Result<Self, ExecutionError> {
         if source.len() > MAX_SOURCE_BYTES {
             return Err(failure(ErrorCode::LimitExceeded, "limit-exceeded"));

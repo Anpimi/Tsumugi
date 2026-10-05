@@ -16,6 +16,10 @@ the harness does not claim they are implemented domain APIs.
 input, exact content-result association and finite public errors. Its JavaScript
 content/text declarations are generated from the Rust schemas alongside the
 existing process bindings.
+An optional package Resource uses the same SDK's source-import declaration to
+fix material paths, a profile and independent extractor/checker selections.
+The Host interprets only its captured bytes; directory access and current grants
+remain separate application decisions.
 
 From the repository root:
 

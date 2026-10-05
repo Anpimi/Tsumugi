@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental source-import resources declare fixed material paths and limits, an exact profile, independent extractor/checker contributions and mandatory semantic policy. The SDK validates these bindings, the Host reads immutable package bytes, and generic capture preserves authorized source bytes without invoking an embedded domain parser. These are assembly prerequisites; production desktop source selection and consent remain in development.
+
 - Opt-in Apple silicon macOS builds bundle the fixed Node and complete Host trees, with a macOS 13.5 minimum and build-owned exact environment metadata. The Extensions panel independently approves and installs that environment, reports unsupported or missing resources, and verifies exact installed files against current approval. Uncertain retries preserve the original request until confirmation. Runtime installation does not enable plugins, launch workers or restore execution permission; production provider integration and authenticated updates remain under development.
 
 - Experimental runtime preparation verifies a pinned macOS arm64 Node archive and its selected files, inspects actual system-library imports and the macOS 13.5 minimum, and retains the complete clean Host dependency/license tree. A public read-only inspector uses the SDK and Host's existing digest/capture owners. Prepared metadata does not approve or install a runtime, bundle it into the desktop, or authorize execution.

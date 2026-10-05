@@ -72,6 +72,15 @@ availability is checked independently.
 
 ## Choosing the next version
 
+The optional package source-import Resource has its own experimental contract
+`tsumugi.source-import-declaration/1/1`, generated from the same data-only SDK.
+It fixes a material recipe and independent extractor/checker declarations before
+execution. Host resource lookup and generic authorized material capture add no
+manifest fields, process/exchange version, Store layout or project schema change.
+Existing static desktop source assembly has not been cut over by these APIs.
+Application `0.2.0-alpha.1`, SDK `0.1.0-alpha.1` and schema 18 remain in the same
+undistributed batch, with no additional bump or earlier development migration.
+
 Opt-in Apple silicon macOS runtime bundling and independent Desktop runtime
 approval/install/selection extend the same unreleased application batch. Build
 metadata comes from actual Host capture and the source-owned complete tool pin;
