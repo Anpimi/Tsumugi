@@ -104,7 +104,8 @@ frozen source units, not parsed domain records. SDK shapes, generated desktop DT
 installed Store formats, dependencies and version sources are unchanged. This
 remains the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
 batch, with no extra SemVer bump or historical migration. Desktop installed build
-execution and actual filesystem delivery still require their own integration and
+execution and saved filesystem delivery now use
+the existing owners; native build controls and domain cutover still require
 acceptance evidence.
 
 The read-only runtime inspector and fixed macOS arm64 preparation command use
@@ -128,8 +129,13 @@ separate exact consent, RunnerProxy execution and artifact proof to the existing
 Release adoption owner. Their generated IPC is additive, and the Core locale
 choice merely derives its wire schema at its existing owner. This same
 undistributed batch keeps application/SDK versions, schema20, process/Store
-formats and dependency metadata unchanged. Native build controls, domain-package
-migration and generic destination delivery remain pending.
+formats and dependency metadata unchanged. Native build controls and domain-package
+migration remain pending. Generic saved-artifact delivery extends the existing
+native selection and delivery owners without changing DTOs, project schema,
+SDK/process/Store formats, dependencies or version sources. Exact locale/path
+reads, nested held directories, per-file outcomes and IO continuation are part of
+this same undistributed alpha.1 batch; both Unreleased changelogs are synchronized,
+with no additional bump or historical migration.
 
 ## Choosing the next version
 

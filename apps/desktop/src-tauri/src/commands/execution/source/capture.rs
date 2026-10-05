@@ -12,6 +12,9 @@ use tsumugi_core::{
     execution::{Cancellation, ErrorCode, ExecutionError, ExecutionId},
 };
 
+mod destination;
+pub(crate) use destination::Destination;
+
 fn error(code: ErrorCode, reason: &str) -> ExecutionError {
     ExecutionError::new(code, reason)
 }
@@ -234,22 +237,10 @@ impl Selection {
         self.verify()?;
         Ok(&self.root)
     }
-    #[cfg(target_os = "macos")]
-    pub(crate) fn ensure_i18n_directory(&self) -> Result<(), ExecutionError> {
-        use std::os::fd::AsRawFd;
-        self.verify()?;
-        let name = c"i18n";
-        // The only created child is the declared output directory of this selection.
-        if unsafe { libc::mkdirat(self.root_file.as_raw_fd(), name.as_ptr(), 0o700) } == -1
-            && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
-        {
-            return Err(io(std::io::Error::last_os_error()));
-        }
-        let child = platform::open_child(&self.root_file, std::ffi::OsStr::new("i18n"), true)?;
-        if platform::final_path(&child)? != self.root.join("i18n") {
-            return Err(error(ErrorCode::Unauthorized, "unauthorized-selection"));
-        }
-        self.verify()
+    /// Recorded selection identity for project-thread metadata comparisons.
+    /// Actual filesystem work must still verify the held selection on the IO worker.
+    pub(crate) fn destination_path(&self) -> &Path {
+        &self.root
     }
     pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
         self.verify()?;
@@ -535,13 +526,21 @@ impl Selection {
     pub(crate) fn destination_root(&self) -> Result<&Path, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    pub(crate) fn destination_path(&self) -> &Path {
+        Path::new("")
+    }
     pub fn label(&self) -> String {
         String::new()
     }
     pub fn capture(&self, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
-    pub fn capture_declared(&self, _: &tsumugi_plugin_sdk::SourceImportBinding, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
+    pub fn capture_declared(
+        &self,
+        _: &tsumugi_plugin_sdk::SourceImportBinding,
+        _: &str,
+        _: &Cancellation,
+    ) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
     pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {

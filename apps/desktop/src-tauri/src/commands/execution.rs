@@ -233,16 +233,30 @@ impl ExecutionHost {
     fn active(&self, store: &ProjectStore) -> Result<bool, CommandError> {
         Ok(self.quiescing
             || self.source.is_active()
-            || self.release.plugin.is_active()
+            || self.release.is_active()
             || self.ai.active()
             || !self.queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
+    }
+    fn finish_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
+        if self.release.delivery_is_active() {
+            return Err(ExecutionError::new(ErrorCode::Busy, "delivery-active"));
+        }
+        self.runtime.finish_quiesce(store)?;
+        self.quiescing = false;
+        Ok(())
     }
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.poll_queries(store)?;
         self.runtime.tick(store).map_err(map_read)?;
         if !self.quiescing {
             self.ai.tick(store, &self.runtime);
+        } else {
+            match self.finish_quiesce(store) {
+                Ok(()) => {}
+                Err(error) if error.code == ErrorCode::Busy => {}
+                Err(error) => return Err(map_recover(error)),
+            }
         }
         Ok(())
     }
@@ -1137,8 +1151,8 @@ pub async fn quiesce_execution(
                 if !host.quiescing {
                     host.begin_quiesce(store)?;
                 }
-                match host.runtime.finish_quiesce(store) {
-                    Ok(()) => host.quiescing = false,
+                match host.finish_quiesce(store) {
+                    Ok(()) => {}
                     Err(error) if error.code == ErrorCode::Busy => {}
                     Err(error) => return Err(map_execution(error, CommandStage::ExecutionQuiesce)),
                 }

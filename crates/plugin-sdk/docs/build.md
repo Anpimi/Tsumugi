@@ -117,9 +117,10 @@ edits or reopening; it does not recapture newer choices or restore execution
 authority. These APIs have not yet replaced the desktop's built-in build runners.
 Desktop commands separately consent and execute the installed builder and checker
 through RunnerProxy, then commit Core proof before Release adoption. Native build
-controls, domain-package migration and generic filesystem delivery remain integration
-requirements. Core artifact proof and immutable release adoption are described below. The existing release store remains the
-owner; this capture adds no parallel database, planner or authorization mechanism.
+controls and domain-package migration remain integration requirements; saved
+artifact delivery uses the existing native directory owner. Core artifact proof
+and immutable release adoption are described below. The existing release store
+remains the owner; this capture adds no parallel database, planner or authorization mechanism.
 
 ## Current Core artifact-proof boundary
 
@@ -185,5 +186,13 @@ The current-only project format is schema 20. Schema 19 and earlier development
 directories are preserved and refused without migration. The still-running built-in
 build workflow has an explicit current-format manifest tag in the same store;
 it remains until desktop installed-builder/checker integration replaces it.
-Held-directory export, native UI acceptance, domain-package migration and removal
-of the built-in production runners remain pending.
+Desktop delivery captures exact saved locale/path bytes on the project owner,
+performs preview, file IO and reconciliation on its bounded IO worker, and records
+all results through these Core APIs. Held native directory handles cover every
+nested parent; previews and reconciliation do not create directories. Conflicts
+retain the observed hash, temp bytes are flushed and checked before commit, and
+pending or unknown actions are reconciled without re-executing plugins. Accepted
+IO survives a lost caller, while quiescing cancels further writes and waits for IO
+to finish before project close. A failed outcome commit leaves the original pending
+action for reconciliation and reports an unknown result. Native UI acceptance, domain-package migration
+and removal of the built-in production runners remain pending.

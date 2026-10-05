@@ -3,8 +3,9 @@
 `tsumugi-plugin-host` launches captured plugin artifacts through the standalone
 SDK process protocol. Its default feature set depends on the SDK without Core;
 the optional `core-adapter` feature implements Core's trusted execution port.
-It has no domain runner or model dependency and is not yet connected to the
-desktop's production extension catalog.
+It has no domain runner or model dependency. Desktop source/build commands use
+exact approved installed packages and runtimes; default domain-package distribution
+and the complete extension lifecycle remain under development.
 
 The implemented profile is one serialized capability on a project-scoped native
 worker or JavaScript component. The Unix launcher creates an owned process group;

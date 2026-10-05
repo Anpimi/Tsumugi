@@ -442,7 +442,7 @@ fn actual_installed_build_and_checker_ipc_commit_a_complete_release() {
     prepare["attemptId"] = attempt.clone();
     prepare["build"] = json!(choice);
     prepare["expectedEligibilityBasis"] = json!(basis.basis);
-    prepare["choices"] = json!([{"locale":"zh-CN","outputPaths":["zh-CN.txt","zh-CN.meta"],"configuration":[]},{"locale":"fr-FR","outputPaths":["fr-FR.txt","fr-FR.meta"],"configuration":[]}]);
+    prepare["choices"] = json!([{"locale":"zh-CN","outputPaths":["deliverables/zh-CN/content.txt","zh-CN.meta"],"configuration":[]},{"locale":"fr-FR","outputPaths":["deliverables/fr-FR/content.txt","fr-FR.meta"],"configuration":[]}]);
     let view = call(&window, "prepare_plugin_build", prepare.clone()).unwrap();
     assert_eq!(
         call(&window, "prepare_plugin_build", prepare.clone()).unwrap(),
@@ -579,11 +579,131 @@ fn actual_installed_build_and_checker_ipc_commit_a_complete_release() {
         for locale in ["zh-CN", "fr-FR"] {
             assert!(store.release_artifact(release, locale).is_err());
             let (_, bytes) = store
-                .release_artifact_by_path(release, locale, &format!("{locale}.txt"))
+                .release_artifact_by_path(
+                    release,
+                    locale,
+                    &format!("deliverables/{locale}/content.txt"),
+                )
                 .unwrap();
             assert_eq!(bytes, format!("\u{feff}Saved {locale} 👩🏽‍💻\r\n").as_bytes());
         }
     });
+    // The native picker authority is injected only by the test owner. All
+    // subsequent preview/export/reconcile calls use registered production IPC.
+    let destination = temporary.path().join("delivery");
+    fs::create_dir(&destination).unwrap();
+    let selected = Arc::new(source::capture::Selection::authorize(destination.clone()).unwrap());
+    let selection_id = ExecutionId::new();
+    let held = selected.clone();
+    state.sessions.with(move |sessions| {
+        sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .execution_parts()
+            .unwrap()
+            .0
+            .release
+            .selection = Some((selection_id, held));
+    });
+    let delivery_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],
+        "releaseId":release,"selectionId":selection_id});
+    let preview = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
+    assert_eq!(preview["files"].as_array().unwrap().len(), 4);
+    assert!(
+        preview["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["state"] == "absent")
+    );
+    assert_eq!(
+        fs::read_dir(&destination).unwrap().count(),
+        0,
+        "preview creates no output directory"
+    );
+    let mut export = delivery_request.clone();
+    export["previewId"] = preview["previewId"].clone();
+    export["actionId"] = json!(ExecutionId::new());
+    export["overwriteConflicts"] = json!(false);
+    let delivery = call(&window, "export_release", export.clone()).unwrap();
+    assert_eq!(delivery["state"], "succeeded");
+    assert_eq!(delivery["files"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        call(&window, "export_release", export.clone()).unwrap(),
+        delivery
+    );
+    for locale in ["zh-CN", "fr-FR"] {
+        assert_eq!(
+            fs::read(destination.join(format!("deliverables/{locale}/content.txt"))).unwrap(),
+            format!("\u{feff}Saved {locale} 👩🏽‍💻\r\n").as_bytes()
+        );
+        assert!(
+            fs::read(destination.join(format!("{locale}.meta")))
+                .unwrap()
+                .starts_with(b"[")
+        );
+    }
+    let preview = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
+    assert!(
+        preview["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["state"] == "same")
+    );
+    // A changed second file of the same locale is matched by path as well.
+    fs::write(destination.join("zh-CN.meta"), b"external metadata").unwrap();
+    export["previewId"] = preview["previewId"].clone();
+    export["actionId"] = json!(ExecutionId::new());
+    assert!(call(&window, "export_release", export.clone()).is_err());
+    let mut reconcile = context.clone();
+    reconcile["actionId"] = export["actionId"].clone();
+    reconcile["selectionId"] = json!(selection_id);
+    let failed = call(&window, "read_delivery_action", reconcile.clone()).unwrap();
+    assert_eq!(failed["state"], "failed");
+    let metadata = failed["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["locale"] == "zh-CN" && file["fileName"] == "zh-CN.meta")
+        .unwrap();
+    assert_eq!(
+        metadata["actualSha256"],
+        artifact_digest(b"external metadata")
+    );
+    assert_eq!(
+        fs::read(destination.join("zh-CN.meta")).unwrap(),
+        b"external metadata"
+    );
+    let conflict = call(&window, "preview_delivery", delivery_request.clone()).unwrap();
+    export["previewId"] = conflict["previewId"].clone();
+    export["actionId"] = json!(ExecutionId::new());
+    assert!(call(&window, "export_release", export.clone()).is_err());
+    assert!(call(&window, "read_delivery_action", json!({"actionId":export["actionId"],
+        "selectionId":selection_id,"sessionToken":context["sessionToken"],"projectId":context["projectId"]})).unwrap().is_null());
+    export["overwriteConflicts"] = json!(true);
+    assert_eq!(
+        call(&window, "export_release", export).unwrap()["state"],
+        "succeeded"
+    );
+    // Simulate a lost completion receipt using the real Core action owner.
+    let pending_action = ExecutionId::new();
+    let root = selected.destination_path().to_string_lossy().into_owned();
+    state.sessions.with(move |sessions| {
+        sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .store
+            .begin_delivery(pending_action, release, &root, false)
+            .unwrap();
+    });
+    reconcile["actionId"] = json!(pending_action);
+    assert_eq!(
+        call(&window, "reconcile_delivery", reconcile).unwrap()["state"],
+        "succeeded"
+    );
     call(&window, "quiesce_execution", context.clone()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -603,7 +723,133 @@ fn actual_installed_build_and_checker_ipc_commit_a_complete_release() {
     .unwrap();
     let reopened = call(&window, "open_project", json!({"locator":directory})).unwrap();
     let context = json!({"sessionToken":reopened["sessionToken"],"projectId":reopened["metadata"]["projectId"]});
-    assert_eq!(call(&window, "list_releases", context).unwrap(), releases);
+    assert_eq!(
+        call(&window, "list_releases", context.clone()).unwrap(),
+        releases
+    );
+    state.plugins.close();
+    // Release export has no dependency on the current package/runtime manager.
+    let held = selected;
+    let selection_id = ExecutionId::new();
+    state.sessions.with(move |sessions| {
+        sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .execution_parts()
+            .unwrap()
+            .0
+            .release
+            .selection = Some((selection_id, held));
+    });
+    let preview_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],
+        "releaseId":release,"selectionId":selection_id});
+    let preview = call(&window, "preview_delivery", preview_request.clone()).unwrap();
+    let mut export = preview_request;
+    export["previewId"] = preview["previewId"].clone();
+    export["actionId"] = json!(ExecutionId::new());
+    export["overwriteConflicts"] = json!(false);
+    assert_eq!(
+        call(&window, "export_release", export).unwrap()["state"],
+        "succeeded"
+    );
+    // A dropped command future is not cancellation of an already admitted action.
+    let mut preview_request = context.clone();
+    preview_request["releaseId"] = json!(release);
+    preview_request["selectionId"] = json!(selection_id);
+    let preview = call(&window, "preview_delivery", preview_request.clone()).unwrap();
+    let dropped_action = ExecutionId::new();
+    preview_request["previewId"] = preview["previewId"].clone();
+    preview_request["actionId"] = json!(dropped_action);
+    preview_request["overwriteConflicts"] = json!(false);
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    let mut waiting = Box::pin(export_release(
+        app.state(),
+        serde_json::from_value(preview_request).unwrap(),
+    ));
+    assert!(matches!(
+        waiting
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    drop(waiting);
+    let read = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],
+        "selectionId":selection_id,"actionId":dropped_action});
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let delivery = call(&window, "read_delivery_action", read.clone()).unwrap();
+        if delivery["state"] == "succeeded" {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "accepted export lost its completion: {delivery}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Real SQLite failure after a newly written file leaves the original
+    // pending action for read-only reconciliation, rather than replaying bytes.
+    let target = destination.join("deliverables/zh-CN/content.txt");
+    fs::remove_file(&target).unwrap();
+    let preview_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],
+        "selectionId":selection_id,"releaseId":release});
+    let preview = call(&window, "preview_delivery", preview_request.clone()).unwrap();
+    let connection = rusqlite::Connection::open(directory.join("project.sqlite3")).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_delivery_completion BEFORE UPDATE ON release_deliveries
+        BEGIN SELECT RAISE(FAIL, 'synthetic delivery completion failure'); END;",
+        )
+        .unwrap();
+    let action = ExecutionId::new();
+    let mut export = preview_request;
+    export["previewId"] = preview["previewId"].clone();
+    export["actionId"] = json!(action);
+    export["overwriteConflicts"] = json!(false);
+    let error = call(&window, "export_release", export.clone()).unwrap_err();
+    assert_eq!(error["code"], "outcome-unknown");
+    assert_eq!(error["recoveryRequired"], true);
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        "\u{feff}Saved zh-CN 👩🏽‍💻\r\n".as_bytes()
+    );
+    let modified = fs::metadata(&target).unwrap().modified().unwrap();
+    let read = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],
+        "selectionId":selection_id,"actionId":action});
+    assert_eq!(
+        call(&window, "read_delivery_action", read.clone()).unwrap()["state"],
+        "pending"
+    );
+    assert_eq!(
+        call(&window, "export_release", export).unwrap_err()["code"],
+        "outcome-unknown"
+    );
+    connection
+        .execute_batch("DROP TRIGGER fail_delivery_completion;")
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        call(&window, "reconcile_delivery", read).unwrap()["state"],
+        "succeeded"
+    );
+    assert_eq!(
+        fs::metadata(&target).unwrap().modified().unwrap(),
+        modified,
+        "reconciliation does not rewrite the file"
+    );
+    let history = call(
+        &window,
+        "list_deliveries",
+        json!({"sessionToken":context["sessionToken"],
+        "projectId":context["projectId"],"releaseId":release}),
+    )
+    .unwrap();
+    assert_eq!(history.as_array().unwrap().len(), 7);
+
     state.plugins.close();
     drop(state);
     drop(app);
