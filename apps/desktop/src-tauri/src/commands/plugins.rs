@@ -15,6 +15,8 @@ use tsumugi_plugin_host::{
     HostError, InstallError, InstalledObjectState, PackageStore, catalog::PackageOrigin,
 };
 use tsumugi_plugin_sdk as sdk;
+pub(super) mod builds;
+mod environment;
 pub(super) mod packages;
 pub(super) mod runtimes;
 pub(super) mod sources;
@@ -26,6 +28,7 @@ pub use runtimes::{
     PluginRuntimeInstallRequest, PluginRuntimeLookupRequest, PluginRuntimeOfferView,
 };
 pub use sources::{PluginSourceRequest, PluginSourceView};
+pub use builds::{PluginBuildRequest, PluginBuildView};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

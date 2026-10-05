@@ -1,7 +1,7 @@
 //! Fix a source recipe and its complete installed environment in one current
 //! application settings snapshot. No worker, directory or Core grant is created.
+use super::environment::{DeclaredEnvironment, invalid};
 use super::*;
-use tsumugi_plugin_host::{CapturedRuntime, catalog::RegisteredPackage};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -29,16 +29,7 @@ pub struct PluginSourceView {
 
 /// Immutable inputs for a subsequent native capture and per-attempt review.
 /// Neither the view nor this snapshot is a current dispatch/adoption permit.
-#[derive(Clone)]
-pub(in crate::commands) struct SourceEnvironment {
-    pub package: RegisteredPackage,
-    pub binding: sdk::SourceImportBinding,
-    pub runtime: CapturedRuntime,
-    pub staging_parent: std::path::PathBuf,
-    resource_id: String,
-    settings_revision: UnsignedDecimal,
-    runtime_origin: PackageOrigin,
-}
+pub(in crate::commands) type SourceEnvironment = DeclaredEnvironment<sdk::SourceImportBinding>;
 impl SourceEnvironment {
     pub(in crate::commands) fn view(&self) -> Result<PluginSourceView, CommandError> {
         Ok(PluginSourceView {
@@ -55,83 +46,21 @@ impl SourceEnvironment {
     }
 }
 
-fn invalid() -> CommandError {
-    let mut error = CommandError::simple(CommandErrorCode::InvalidInput, CommandStage::Read);
-    error.reason = Some("plugin-binding-invalid".into());
-    error
-}
-
 impl ApplicationPlugins {
     pub(in crate::commands) fn capture_source(
         &self,
         request: &PluginSourceRequest,
     ) -> Result<SourceEnvironment, CommandError> {
-        request.package.plugin.validate().map_err(|_| invalid())?;
-        sdk::validate_package_digest(&request.package.package_digest).map_err(|_| invalid())?;
-        sdk::validate_package_digest(&request.environment_digest).map_err(|_| invalid())?;
-        if request.resource_id.is_empty() || request.resource_id.len() > 128 {
-            return Err(invalid());
-        }
-        let mut manager = self.try_manager()?;
-        self.provision(&mut manager)?;
-        let allowed = || self.open.load(Ordering::Acquire);
-        let store = manager.store.as_ref().expect("store provisioned");
-        let settings = store.settings(allowed).map_err(map_store_error)?;
-        let catalog = packages::load_enabled_catalog(store, &settings, &request.package, allowed)?;
-        let package = catalog
-            .registered(&request.package.plugin)
-            .map_err(packages::catalog_error)?;
-        let binding = package
-            .image()
-            .source_import(&request.resource_id)
-            .map_err(|error| map_store_error(InstallError::Host(error)))?;
-        for capability in [&binding.extractor, &binding.checker] {
-            let resolved = catalog
-                .lookup(&capability.provider)
-                .map_err(packages::catalog_error)?;
-            if resolved.binding() != capability {
-                return Err(invalid());
-            }
-            // Only JavaScript components use this approved Node environment.
-            let component = package
-                .image()
-                .manifest()
-                .manifest()
-                .components
-                .iter()
-                .find(|component| component.id == capability.provider.component_id)
-                .ok_or_else(invalid)?;
-            if component.runtime != sdk::RuntimeKind::JavaScript {
-                return Err(invalid());
-            }
-        }
-        let (runtime, runtime_origin) = runtimes::load_approved_runtime(
-            store,
-            &settings,
+        self.capture_declared_environment(
+            &request.package,
+            &request.resource_id,
             &request.environment_digest,
-            allowed,
-        )?;
-        if store.settings(allowed).map_err(map_store_error)? != settings {
-            return Err(map_store_error(InstallError::RevisionConflict));
-        }
-        if !allowed() {
-            return Err(map_store_error(InstallError::AuthorityRevoked));
-        }
-        Ok(SourceEnvironment {
-            package: package.clone(),
-            binding,
-            runtime,
-            // The already provisioned Tauri application directory is the
-            // parent. Host creates and owns private per-process children there;
-            // package-store internals and project data are never used as stages.
-            staging_parent: {
-                let directory = manager.directory.as_ref().expect("directory configured");
-                directory.anchor.join(&directory.application)
+            |image, resource| {
+                let binding = image.source_import(resource)?;
+                let providers = [binding.extractor.clone(), binding.checker.clone()];
+                Ok((binding, providers))
             },
-            resource_id: request.resource_id.clone(),
-            settings_revision: settings.revision().into(),
-            runtime_origin,
-        })
+        )
     }
 }
 

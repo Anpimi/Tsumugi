@@ -1,10 +1,11 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
 import candidate from "../test/fixtures/pluginPackage.contract.json";
-import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource } from "./generated/plugins.validators";
+import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild } from "./generated/plugins.validators";
 import { pluginCommands } from "./pluginCommands";
 import runtime from "../test/fixtures/pluginRuntime.contract.json";
 import source from "../test/fixtures/pluginSource.contract.json";
+import build from "../test/fixtures/pluginBuild.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -103,4 +104,36 @@ it("uses strict local selection and mutation contracts without caller trust or l
   invoke.mockResolvedValueOnce(fixture.empty);
   await expect(pluginCommands.install(request)).resolves.toEqual(fixture.empty);
   expect(invoke).toHaveBeenLastCalledWith("install_plugin_package", { request });
+});
+
+it("keeps the complete build declaration and exact provider pair in the shared Serde snapshot", () => {
+  expect(validateRequestBuild(build.request)).toBe(true);
+  expect(validateResponseBuild(build.view)).toBe(true);
+  expect(build.view.builder.provider.plugin).toEqual(build.request.package.plugin);
+  expect(build.view.checker.provider.packageDigest).toBe(build.request.package.packageDigest);
+  expect(build.view.builder.provider.contributionId).not.toBe(build.view.checker.provider.contributionId);
+  expect(build.view.declaration.artifactRules).toHaveLength(1);
+  expect(build.view.declaration.outputLimits.maxArtifacts).toBe(2);
+  expect(build.view.environmentDigest).toBe(build.request.environmentDigest);
+});
+
+it("refuses caller build authority and incomplete recipe or runtime observations", () => {
+  for (const field of ["directory", "origin", "environment", "approved", "grantId", "allowUnsandboxedExecution"]) {
+    expect(validateRequestBuild({ ...build.request, [field]: true })).toBe(false);
+  }
+  expect(validateRequestBuild({ ...build.request, package: { ...build.request.package, approved: true } })).toBe(false);
+  expect(validateResponseBuild({ ...build.view, settingsRevision: 1 })).toBe(false);
+  expect(validateResponseBuild({ ...build.view, settingsRevision: "01" })).toBe(false);
+  expect(validateResponseBuild({ ...build.view, permissionGranted: true })).toBe(false);
+  expect(validateResponseBuild({ ...build.view, checker: undefined })).toBe(false);
+  expect(validateResponseBuild({ ...build.view, declaration: { ...build.view.declaration, outputLimits: undefined } })).toBe(false);
+  expect(validateResponseBuild({ ...build.view, environment: { ...build.view.environment, launcherPath: "/untrusted" } })).toBe(false);
+});
+
+it("reads the installed build recipe through the shared adapter and rejects malformed replies", async () => {
+  invoke.mockResolvedValueOnce(build.view);
+  await expect(pluginCommands.build(build.request)).resolves.toEqual(build.view);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_build", { request: build.request });
+  invoke.mockResolvedValueOnce({ ...build.view, runtimeOrigin: undefined });
+  await expect(pluginCommands.build(build.request)).rejects.toThrow("Invalid IPC response: read_plugin_build");
 });

@@ -5,6 +5,26 @@
       "ExecutionId": {
         "type": "string"
       },
+      "PluginBuildRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
       "PluginEnableRequest": {
         "additionalProperties": false,
         "properties": {
@@ -189,6 +209,9 @@
       }
     },
     "properties": {
+      "build": {
+        "$ref": "#/definitions/PluginBuildRequest"
+      },
       "enable": {
         "$ref": "#/definitions/PluginEnableRequest"
       },
@@ -222,7 +245,8 @@
       "lookup",
       "runtimeInstall",
       "runtimeLookup",
-      "source"
+      "source",
+      "build"
     ],
     "title": "Requests",
     "type": "object",
@@ -232,6 +256,61 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "BuildDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactRules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "builder": {
+            "type": "string"
+          },
+          "checker": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "outputLimits": {
+            "$ref": "#/definitions/BuildOutputLimits"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "displayName",
+          "profile",
+          "builder",
+          "checker",
+          "outputLimits",
+          "artifactRules"
+        ],
+        "type": "object"
+      },
+      "BuildOutputLimits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxArtifacts": {
+            "maximum": 32,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxTotalBytes": {
+            "maximum": 2097152,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxArtifacts",
+          "maxTotalBytes"
+        ],
+        "type": "object"
+      },
       "CapabilityBinding": {
         "additionalProperties": false,
         "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
@@ -1149,6 +1228,50 @@
           }
         ]
       },
+      "PluginBuildView": {
+        "additionalProperties": false,
+        "properties": {
+          "builder": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/BuildDeclaration"
+          },
+          "environment": {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "declaration",
+          "builder",
+          "checker",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
       "PluginCandidateView": {
         "additionalProperties": false,
         "properties": {
@@ -1796,6 +1919,9 @@
       "binding": {
         "$ref": "#/definitions/CapabilityBinding"
       },
+      "build": {
+        "$ref": "#/definitions/PluginBuildView"
+      },
       "candidate": {
         "anyOf": [
           {
@@ -1829,6 +1955,7 @@
       "binding",
       "runtime",
       "source",
+      "build",
       "error"
     ],
     "title": "Responses",

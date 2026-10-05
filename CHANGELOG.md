@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Desktop can read a build recipe with both exact providers from an enabled installed package and separately approved installed runtime. It shares the source environment capture and refuses changed settings; the read grants no execution or release permission. Production plugin build dispatch and native export integration remain pending.
+
 - Core release adoption now preserves every artifact for every requested locale in the existing release store. It rechecks producer and independent checker authority, cancellation and current results, preserves the frozen qualified plan after edits, and returns the original adoption receipt on replay. Reads compare saved bytes, paths, roles and identities with the original results and mandatory proof, without requiring live plugin permission. Exact-path reads and delivery records cover the complete output set, including empty files; desktop plugin build and file-export integration remain pending.
 
 - Core plugin artifact validation binds each complete builder result to a separately authorized checker and the original build policy. Required rule/target coverage and blocking findings control validation; a generic validator cannot bypass it. Saved source and artifact proofs share one ledger, are rechecked on reopening, and do not grant release or execution authority. Desktop plugin build execution remains pending.

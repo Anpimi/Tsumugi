@@ -114,7 +114,18 @@ SDK build Resource from its immutable captured bytes, then binds both exact
 builder/checker declarations from that same manifest. It grants no execution or
 publication authority. The [SDK build contract](../plugin-sdk/docs/build.md)
 defines decided input, actual UTF-8 artifacts and complete independent check data;
-production desktop build integration is still pending.
+production desktop build execution is still pending.
+
+Desktop `read_plugin_build` resolves that declaration from the exact enabled
+installed package and independently approved installed runtime in one current
+application-settings snapshot. Its read-only view includes both provider
+bindings, the fixed profile/output limits/artifact rules, complete environment
+and origins. Source and build resolution share the same package/runtime owner
+and recheck the entire settings snapshot before returning. It runs no component,
+captures no project data and grants no execution or release authority. Fresh
+resolution rejects disabled or changed package/runtime decisions; previously
+captured bytes remain an immutable observation. Actual builder/checker dispatch,
+Core proof/release adoption and filesystem delivery require their own integration.
 
 `catalog::PackageCatalog` records at most 128 captured package versions. Its
 `PackageApproval` comes from independently verified metadata or explicit local

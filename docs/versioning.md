@@ -117,6 +117,14 @@ additional version bump. The prepared Node requires macOS 13.5; the base
 application minimum is unchanged until runtime bundling is integrated and its
 availability is checked independently.
 
+Read-only Desktop build-environment resolution adds generated IPC from the same
+SDK BuildDeclaration and exact enabled-package/approved-runtime capture used by
+source imports. It changes no project data, schema20, Store layout, SDK/process
+contract, dependency, distributed runtime or execution authority. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` therefore remain unchanged in this same
+undistributed batch. Both Unreleased changelogs record the additive environment
+read; production plugin build dispatch and native delivery remain pending.
+
 ## Choosing the next version
 
 The optional package source-import Resource has its own experimental contract

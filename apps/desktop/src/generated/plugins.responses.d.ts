@@ -27,6 +27,15 @@ export type PermissionRequest =
       kind: "process";
       program: string;
     };
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
 export type UnsignedDecimal = string;
 /**
  * Multiple providers retain separate provenance. A later merge is another
@@ -166,20 +175,12 @@ export type CommandStage =
   | "execution-adopt"
   | "execution-quiesce";
 export type PluginObjectState = "sealed" | "recovery-required";
-export type RuntimeArchitecture = "aarch64" | "x86_64";
-export type RuntimeOperatingSystem = "macos" | "linux";
-/**
- * The installer must independently verify that the approved tool distribution
- * depends only on the supported platform's system libraries. The profile does
- * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
- * OS image. Runtime capture must refuse unsupported profiles and platforms.
- */
-export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
 export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
 
 export interface Responses {
   binding: CapabilityBinding;
+  build: PluginBuildView;
   candidate: PluginCandidateView | null;
   error: CommandError;
   inventory: PluginInventoryView;
@@ -242,6 +243,61 @@ export interface PluginIdentity {
   id: string;
   publisher: string;
   version: string;
+}
+export interface PluginBuildView {
+  builder: CapabilityBinding;
+  checker: CapabilityBinding;
+  declaration: BuildDeclaration;
+  environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+export interface BuildDeclaration {
+  artifactRules: ContractRef[];
+  builder: string;
+  checker: string;
+  displayName: string;
+  outputLimits: BuildOutputLimits;
+  profile: ContractRef;
+}
+export interface BuildOutputLimits {
+  maxArtifacts: number;
+  maxTotalBytes: number;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
 }
 export interface PluginCandidateView {
   byteCount: UnsignedDecimal;
@@ -334,10 +390,6 @@ export interface PluginPackageDecisionView {
   packageDigest: string;
   plugin: PluginIdentity;
 }
-export interface PluginOriginView {
-  publisherId: string;
-  sourceId: string;
-}
 export interface PluginPackageView {
   origin: PluginOriginView;
   packageDigest: string;
@@ -348,34 +400,6 @@ export interface PluginRuntimeDecisionView {
   environment: RuntimeEnvironmentDescriptor;
   environmentDigest: string;
   origin: PluginOriginView;
-}
-/**
- * Exact tool and Host choices for a fixed invocation. Paths are logical within
- * their respective artifacts, never machine paths. The trusted installer owns
- * approval of these bytes and the tool version, independently of worker output.
- * A digest is derived from the whole validated value, not separately supplied.
- */
-export interface RuntimeEnvironmentDescriptor {
-  host: RuntimeArtifactBinding;
-  platform: RuntimePlatform;
-  processProtocol: number;
-  profile: RuntimeEnvironmentProfile;
-  protocolVersion: number;
-  sdkVersion: string;
-  tool: RuntimeArtifactBinding;
-  toolVersion: string;
-}
-export interface RuntimeArtifactBinding {
-  entrypoint: string;
-  /**
-   * Digest of every actual file and its executable flag, including metadata,
-   * dependencies and licenses; this is not the entrypoint's file digest.
-   */
-  treeDigest: string;
-}
-export interface RuntimePlatform {
-  architecture: RuntimeArchitecture;
-  operatingSystem: RuntimeOperatingSystem;
 }
 export interface PluginRuntimeOfferView {
   availability: RuntimeAvailability;

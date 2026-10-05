@@ -4,6 +4,7 @@ export type ExecutionId = string;
 export type UnsignedDecimal = string;
 
 export interface Requests {
+  build: PluginBuildRequest;
   enable: PluginEnableRequest;
   install: PluginInstallRequest;
   inventory: PluginInventoryRequest;
@@ -13,11 +14,10 @@ export interface Requests {
   runtimeLookup: PluginRuntimeLookupRequest;
   source: PluginSourceRequest;
 }
-export interface PluginEnableRequest {
-  actionId: ExecutionId;
-  enabled: boolean;
-  expectedRevision: UnsignedDecimal;
+export interface PluginBuildRequest {
+  environmentDigest: string;
   package: PluginPackageRequest;
+  resourceId: string;
 }
 export interface PluginPackageRequest {
   packageDigest: string;
@@ -30,6 +30,12 @@ export interface PluginIdentity {
   id: string;
   publisher: string;
   version: string;
+}
+export interface PluginEnableRequest {
+  actionId: ExecutionId;
+  enabled: boolean;
+  expectedRevision: UnsignedDecimal;
+  package: PluginPackageRequest;
 }
 export interface PluginInstallRequest {
   actionId: ExecutionId;
