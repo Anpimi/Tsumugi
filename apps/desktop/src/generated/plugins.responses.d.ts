@@ -188,6 +188,7 @@ export interface Responses {
   package: PluginPackageDetailsView;
   runtime: RuntimeEnvironmentDescriptor;
   source: PluginSourceView;
+  translation: PluginTranslationView;
 }
 /**
  * Captured declaration data for one selected capability. Requested permissions
@@ -477,4 +478,33 @@ export interface SourceMaterialDeclaration {
 export interface SourceRevisionPolicy {
   profile: ContractRef;
   revisionBasis: ContractRef[];
+}
+export interface PluginTranslationView {
+  checker: CapabilityBinding;
+  declaration: TranslationImportDeclaration;
+  environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
+  extractor: CapabilityBinding;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+export interface TranslationImportDeclaration {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  material: TranslationMaterialDeclaration;
+  profile: ContractRef;
+  semanticRules: ContractRef[];
+}
+/**
+ * Metadata describing one selected file relative to an explicitly granted
+ * directory. No glob, executable discovery or filesystem authority is implied.
+ */
+export interface TranslationMaterialDeclaration {
+  extension: string;
+  logicalDirectory: string;
+  maxBytes: number;
+  role: string;
 }

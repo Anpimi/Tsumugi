@@ -313,3 +313,14 @@ with no additional bump, release or historical development-format migration.
 4. If the batch's target changes, update the Cargo workspace version, regenerate its lockfile entries, and synchronize current-version statements. Verify the resolved versions of both workspace packages and the version metadata of the actual desktop build. Select behavior checks according to the changed risk; a version-only change does not require an unrelated full test suite.
 
 Before an authorized application release, move the batch into `## [VERSION] - YYYY-MM-DD` in both changelogs using the actual release date, leave a fresh `Unreleased` section, and align the manifest version, release title, source commit and artifact identity. Preserve published entries. Tags and release publication are separate operations from local development commits.
+
+
+Read-only Desktop translation-environment resolution uses the same installed
+catalog, approval and immutable runtime owner as source/build resolution. Declared
+translation capture extends the existing native directory/file boundary rather
+than parsing domain filenames or JSON in the application. The generated IPC is
+additive; it does not grant execution authority or complete the translation
+workbench. Project schema 21, SDK/process/Store formats, dependencies and version
+sources remain unchanged in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch. Both Unreleased changelogs are
+synchronized, with no additional bump or historical migration.

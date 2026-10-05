@@ -14,6 +14,7 @@ export interface Requests {
   runtimeInstall: PluginRuntimeInstallRequest;
   runtimeLookup: PluginRuntimeLookupRequest;
   source: PluginSourceRequest;
+  translation: PluginTranslationRequest;
 }
 export interface PluginBuildRequest {
   environmentDigest: string;
@@ -74,6 +75,11 @@ export interface PluginRuntimeLookupRequest {
   environmentDigest: string;
 }
 export interface PluginSourceRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginTranslationRequest {
   environmentDigest: string;
   package: PluginPackageRequest;
   resourceId: string;

@@ -21,6 +21,7 @@ mod environment;
 pub(super) mod packages;
 pub(super) mod runtimes;
 pub(super) mod sources;
+pub(super) mod translations;
 pub use packages::{
     PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
     PluginPackageDetailsView, PluginPackageRequest,
@@ -29,6 +30,7 @@ pub use runtimes::{
     PluginRuntimeInstallRequest, PluginRuntimeLookupRequest, PluginRuntimeOfferView,
 };
 pub use sources::{PluginSourceRequest, PluginSourceView};
+pub use translations::{PluginTranslationRequest, PluginTranslationView};
 pub use builds::{PluginBuildRequest, PluginBuildView};
 pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 

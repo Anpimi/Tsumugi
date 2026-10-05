@@ -1,10 +1,11 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
 import candidate from "../test/fixtures/pluginPackage.contract.json";
-import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild } from "./generated/plugins.validators";
+import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild, validateRequestTranslation, validateResponseTranslation } from "./generated/plugins.validators";
 import { pluginCommands } from "./pluginCommands";
 import runtime from "../test/fixtures/pluginRuntime.contract.json";
 import source from "../test/fixtures/pluginSource.contract.json";
+import translation from "../test/fixtures/pluginTranslation.contract.json";
 import build from "../test/fixtures/pluginBuild.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -136,4 +137,21 @@ it("reads the installed build recipe through the shared adapter and rejects malf
   expect(invoke).toHaveBeenLastCalledWith("read_plugin_build", { request: build.request });
   invoke.mockResolvedValueOnce({ ...build.view, runtimeOrigin: undefined });
   await expect(pluginCommands.build(build.request)).rejects.toThrow("Invalid IPC response: read_plugin_build");
+});
+
+
+it("reads a declared translation pair and preserves metadata without accepting filesystem or execution grants", async () => {
+  expect(validateRequestTranslation(translation.request)).toBe(true);
+  expect(validateResponseTranslation(translation.view)).toBe(true);
+  for (const field of ["directory", "origin", "environment", "approved", "grantId", "allowUnsandboxedExecution"]) {
+    expect(validateRequestTranslation({ ...translation.request, [field]: true })).toBe(false);
+  }
+  expect(validateResponseTranslation({ ...translation.view, checker: undefined })).toBe(false);
+  expect(validateResponseTranslation({ ...translation.view, permissionGranted: true })).toBe(false);
+  expect(validateResponseTranslation({ ...translation.view, settingsRevision: "01" })).toBe(false);
+  invoke.mockResolvedValueOnce(translation.view);
+  await expect(pluginCommands.translation(translation.request)).resolves.toEqual(translation.view);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_translation", { request: translation.request });
+  invoke.mockResolvedValueOnce({ ...translation.view, runtimeOrigin: undefined });
+  await expect(pluginCommands.translation(translation.request)).rejects.toThrow("Invalid IPC response: read_plugin_translation");
 });

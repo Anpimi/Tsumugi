@@ -39,6 +39,7 @@ struct PluginRequests {
     defaults_install: plugins::PluginDefaultsInstallRequest,
     runtime_lookup: plugins::PluginRuntimeLookupRequest,
     source: plugins::PluginSourceRequest,
+    translation: plugins::PluginTranslationRequest,
     build: plugins::PluginBuildRequest,
 }
 #[derive(JsonSchema)]
@@ -51,6 +52,7 @@ struct PluginResponses {
     binding: tsumugi_plugin_sdk::CapabilityBinding,
     runtime: tsumugi_plugin_sdk::RuntimeEnvironmentDescriptor,
     source: plugins::PluginSourceView,
+    translation: plugins::PluginTranslationView,
     build: plugins::PluginBuildView,
     error: CommandError,
 }
