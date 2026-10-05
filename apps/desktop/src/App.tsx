@@ -1112,6 +1112,7 @@ function App() {
     areaNavigation.current = true;
     try {
       if (area === "source") { if (sourceWorkbench.current && !await sourceWorkbench.current.allowNavigate()) return; }
+      else if (area === "release") { if (releaseWorkbench.current && !await releaseWorkbench.current.allowNavigate()) return; }
       else if (area !== "overview" && handles[area].current && !await handles[area].current!.allowLeave()) return;
       if (currentSession.current === session) setArea(next);
     } finally { areaNavigation.current = false; }

@@ -67,8 +67,9 @@ syntax. Only an independent semantic check against actual output can supply
 domain evidence. Core must additionally verify actual channel identity, both
 current execution authorizations, complete check coverage and release eligibility
 before publishing. Desktop installed-builder/checker commands connect these
-contracts to Core execution and Release adoption. The native workbench and
-domain-package cutover are still being integrated.
+contracts to Core execution and Release adoption. The desktop workbench captures
+explicit paths and separately reviews each execution. Domain-package cutover and
+complete native workflow acceptance remain pending.
 
 Schemas, JavaScript types and standalone structural validators are generated
 from Rust. The Rust receivers also check relationships, hashes, paths and UTF-8
@@ -116,8 +117,9 @@ explicit fallback decision.
 edits or reopening; it does not recapture newer choices or restore execution
 authority. These APIs have not yet replaced the desktop's built-in build runners.
 Desktop commands separately consent and execute the installed builder and checker
-through RunnerProxy, then commit Core proof before Release adoption. Native build
-controls and domain-package migration remain integration requirements; saved
+through RunnerProxy, then commit Core proof before Release adoption. The desktop workbench
+uses these commands; domain-package migration and complete native acceptance remain
+integration requirements; saved
 artifact delivery uses the existing native directory owner. Core artifact proof
 and immutable release adoption are described below. The existing release store
 remains the owner; this capture adds no parallel database, planner or authorization mechanism.
@@ -147,6 +149,36 @@ policy and checker input, detects missing/substituted proof and does not restore
 execution authority. Historical result bytes remain fixed after later edits.
 Validation alone does not publish a Release or replace desktop built-in build
 runners. The release adoption boundary below is a separate action.
+
+## Desktop build and export workbench
+
+Choose an enabled installed package's BuildDeclaration and an independently
+approved runtime. Enter the complete relative output paths for every selected
+language, one path per line, then check current review eligibility and capture
+the build. The captured package profile supplies fixed build settings; these
+controls do not add per-locale configuration payloads. No filename is inferred
+from a locale, package ID or extension. Capture does not execute a component.
+
+Review the actual package, runtime, permissions and fixed mapping before granting
+this builder permission for up to ten minutes. Its saved results remain proposals.
+For each successful locale, review the actual output paths and byte hashes,
+separately authorize the exact artifact checker, and record its check proof.
+All requested locales need complete output and accepted proof before the workbench
+can record a verified release through Core's existing adoption boundary.
+
+Unconfirmed operations retain their exact attempt, input, grant, expiry or result.
+Reconciliation cannot renew a grant or create a replacement execution. Uncertain
+release adoption first reads the original receipt; an absent receipt permits only
+the original action to be retried. Task cancellation preserves saved output.
+Preparation drafts remain mounted across workspace navigation; leaving the
+project requires keeping or explicitly discarding an unfinished mapping. The
+macOS Quit menu and Command-Q use that same coordinated close workflow; cancelling
+the confirmation returns focus to the control that requested it.
+
+A recorded release is selected for the existing generic destination workflow.
+Saved history and export stay available when the current build package or runtime
+is unavailable. Domain-package cutover, default bundles, complete native workflow
+acceptance and removal of the built-in production runners remain separate work.
 
 ## Current Core immutable-release boundary
 

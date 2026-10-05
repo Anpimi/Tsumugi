@@ -115,7 +115,8 @@ SDK build Resource from its immutable captured bytes, then binds both exact
 builder/checker declarations from that same manifest. It grants no execution or
 publication authority. The [SDK build contract](../plugin-sdk/docs/build.md)
 defines decided input, actual UTF-8 artifacts and complete independent check data;
-domain-package build migration and the desktop workbench are still being integrated.
+the desktop workbench captures explicit paths and reviews each execution;
+domain-package migration and complete native acceptance remain pending.
 
 Desktop `read_plugin_build` resolves that declaration from the exact enabled
 installed package and independently approved installed runtime in one current
@@ -142,8 +143,10 @@ project queue, then commits through Core's existing validation owner. Only the
 complete proved locale set can be adopted by the existing Release handler.
 Original retries do not renew grants; cancelled preparation and closed sessions
 reject late continuations. Execution cancellation uses the existing task control.
-These backend commands and generated adapters do not complete the native build
-workbench, default domain bundles or generic filesystem delivery integration.
+The desktop workbench uses these commands with separate consent and original-action
+reconciliation. Generic saved-artifact delivery uses held native directories and
+per-file outcomes. Default domain bundles, domain-package cutover and complete
+native workflow acceptance remain pending.
 
 `catalog::PackageCatalog` records at most 128 captured package versions. Its
 `PackageApproval` comes from independently verified metadata or explicit local

@@ -7,8 +7,7 @@ import type { ProjectView } from "./projectCommands";
 import type { DeliveryView, ReleaseView } from "./releaseCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
-import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import { pluginBuildInventory } from "./testSupport/pluginBuildFixture";
 import { createRef } from "react";
 import type { ReleaseHandle } from "./ReleaseWorkbench";
 
@@ -34,11 +33,10 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string) => {
     if (command === "list_releases") return releases;
-    if (command === "read_source_integration") return sourceIntegrationFixture;
+    if (command === "read_plugin_inventory") return { ...pluginBuildInventory, packages: [], packageDecisions: [], runtimes: [], runtimeDecisions: [] };
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(707), basis: "basis", ready: true,
       locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 532, blockerCount: 0, exceptionCount: 0 }] };
     if (command === "create_execution_identity") return fixtureIdentity(1);
-    if (command === "start_locale_build") return fixtureIdentity(1);
     if (command === "choose_delivery_folder") return { selectionId: fixtureIdentity(704), folderName: "export" };
     if (command === "preview_delivery") return { previewId: fixtureIdentity(705), releaseId: fixtureIdentity(702), selectionId: fixtureIdentity(704), folderName: "export",
       files: [{ locale: "zh-CN", fileName: "i18n/zh.json", expectedSha256: "hash", currentSha256: "old", state: "conflict" }] };
@@ -50,17 +48,6 @@ beforeEach(async () => {
     throw new Error(command);
   });
 });
-
-async function readyBuild() {
-  const user = userEvent.setup();
-  const ref = createRef<ReleaseHandle>();
-  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
-  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
-  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
-  await user.click(screen.getByRole("button", { name: i18n.t("release.check") }));
-  await screen.findByText(i18n.t("release.ready", { count: 0 }));
-  return { user, ref };
-}
 
 async function readyExport() {
   releases = [release];
@@ -74,45 +61,6 @@ async function readyExport() {
   await user.click(screen.getByRole("checkbox", { name: /Replace the existing conflicting files/ }));
   return { user, ref };
 }
-
-const savedBuild = { ...executionFixture.detail, attemptId: fixtureIdentity(1), operation: "locale-build",
-  recovery: { ...executionFixture.detail.recovery, attemptId: fixtureIdentity(1) } };
-
-it.each(["en-US", "zh-CN"])("checks the original build after an unrelated ACK without submitting another attempt in %s", async locale => {
-  await i18n.changeLanguage(locale);
-  const { user, ref } = await readyBuild();
-  const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string, args: unknown) => command === "start_locale_build" ? Promise.resolve(fixtureIdentity(799))
-    : command === "read_locale_build_attempt" ? Promise.resolve(savedBuild) : original(command, args));
-  await user.click(screen.getByRole("button", { name: i18n.t("release.build") }));
-  await screen.findByText(i18n.t("release.buildUnknown"));
-  expect(await ref.current!.allowLeave()).toBe(false);
-  expect(screen.getByRole("button", { name: i18n.t("workbench.backOverview") })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: i18n.t("release.checkBuild") }));
-  await screen.findByText(i18n.t("release.started", { id: fixtureIdentity(1) }));
-  expect(await ref.current!.allowLeave()).toBe(true);
-  expect(invoke.mock.calls.filter(([c]) => c === "start_locale_build")).toHaveLength(1);
-  const start = invoke.mock.calls.find(([c]) => c === "start_locale_build")![1];
-  expect(invoke.mock.calls.find(([c]) => c === "read_locale_build_attempt")![1]).toEqual(start);
-});
-
-it("offers a same-build retry only after a successful lookup proves absence", async () => {
-  const { user } = await readyBuild();
-  const original = invoke.getMockImplementation()!;
-  let starts = 0, reads = 0;
-  invoke.mockImplementation((command: string, args: unknown) => command === "start_locale_build" && ++starts === 1 ? Promise.reject({ code: "outcome-unknown" })
-    : command === "read_locale_build_attempt" ? ++reads === 1 ? Promise.reject({ code: "storage-failed" }) : Promise.resolve(null) : original(command, args));
-  await user.click(screen.getByRole("button", { name: "Start build" }));
-  await user.click(await screen.findByRole("button", { name: "Check saved build task" }));
-  await waitFor(() => expect(invoke.mock.calls.filter(([c]) => c === "read_locale_build_attempt")).toHaveLength(1));
-  expect(screen.queryByRole("button", { name: "Retry the same build" })).not.toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Check saved build task" }));
-  await user.click(await screen.findByRole("button", { name: "Retry the same build" }));
-  await screen.findByText(i18n.t("release.started", { id: fixtureIdentity(1) }));
-  const calls = invoke.mock.calls.filter(([c]) => c === "start_locale_build");
-  expect(calls).toHaveLength(2); expect(calls[1][1]).toEqual(calls[0][1]);
-  expect(invoke.mock.calls.filter(([c]) => c === "create_execution_identity")).toHaveLength(1);
-});
 
 it("preserves a confirmed export and refreshes only its history after a read failure", async () => {
   const { user, ref } = await readyExport();
@@ -217,53 +165,18 @@ afterEach(() => {
   if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
   else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
-it.each(["en-US", "zh-CN"])("describes root caption delivery in %s", async locale => {
+it.each(["en-US", "zh-CN"])("exports saved arbitrary paths without requiring an installed builder in %s", async locale => {
   await i18n.changeLanguage(locale);
-  releases = [{ ...release, artifacts: [{ locale: "zh-CN", fileName: "zh-CN.vtt", sha256: "hash", entryCount: 2 }] }];
-  const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve(captionIntegrationFixture) : original(command));
+  releases = [{ ...release, artifacts: [{ locale: "zh-CN", fileName: "deliverables/captions.txt", sha256: "hash", entryCount: 2 }, { locale: "zh-CN", fileName: "deliverables/metadata.txt", sha256: "metadata", entryCount: 2 }] }];
   const user = userEvent.setup();
   render(<ReleaseWorkbench project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
   await user.click(await screen.findByRole("button", { name: /2026-09-29/ }));
   await user.click(screen.getByRole("button", { name: i18n.t("release.chooseFolder") }));
-  expect(await screen.findByText(i18n.t("release.webvttDestination", { name: "export" }))).toBeInTheDocument();
-  expect(screen.queryByText(i18n.t("release.destination", { name: "export" }))).not.toBeInTheDocument();
-});
-
-it("routes WebVTT builds to a root subtitle filename and preserves an edited mapping", async () => {
-  const original = invoke.getMockImplementation()!;
-  invoke.mockImplementation((command: string) => command === "read_source_integration" ? Promise.resolve(captionIntegrationFixture) : original(command));
-  const user = userEvent.setup();
-  render(<ReleaseWorkbench project={project} disabled={false} />);
-  await user.click(screen.getByRole("button", { name: "Build and export" }));
-  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
-  const name = await screen.findByRole("textbox", { name: "Subtitle file name for zh-CN" });
-  expect(name).toHaveValue("zh-CN.vtt");
-  await user.clear(name);
-  await user.type(name, "captions-zh.vtt");
-  await user.click(screen.getByRole("button", { name: "Check build readiness" }));
-  await screen.findByText(/Ready to build/);
-  await user.click(screen.getByRole("button", { name: "Start build" }));
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_locale_build", { request: {
-    sessionToken: "session", projectId: fixtureIdentity(700), attemptId: fixtureIdentity(1), expectedEligibilityBasis: "basis",
-    choices: [{ locale: "zh-CN", fileName: "captions-zh.vtt" }],
-  } }));
-});
-
-it("sends the explicit locale mapping and current eligibility basis to the native build boundary", async () => {
-  const user = userEvent.setup();
-  render(<ReleaseWorkbench project={project} disabled={false} />);
-  await user.click(screen.getByRole("button", { name: "Build and export" }));
-  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
-  expect(screen.getByRole("textbox", { name: "SMAPI file name for zh-CN" })).toHaveValue("zh.json");
-  await user.click(screen.getByRole("button", { name: "Check build readiness" }));
-  await screen.findByText(/Ready to build/);
-  await user.click(screen.getByRole("button", { name: "Start build" }));
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_locale_build", { request: {
-    sessionToken: "session", projectId: fixtureIdentity(700), attemptId: fixtureIdentity(1), expectedEligibilityBasis: "basis",
-    choices: [{ locale: "zh-CN", fileName: "i18n/zh.json" }],
-  } }));
+  expect(await screen.findByText(i18n.t("release.destination", { name: "export" }))).toBeInTheDocument();
+  expect(screen.getByText(/zh-CN → deliverables\/captions/)).toBeInTheDocument();
+  expect(screen.getByText(/zh-CN → deliverables\/metadata/)).toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command === "read_source_integration" || command === "start_locale_build")).toBe(false);
 });
 
 it("requires explicit confirmation for a conflicting file before export", async () => {

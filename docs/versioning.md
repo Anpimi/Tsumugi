@@ -129,8 +129,14 @@ separate exact consent, RunnerProxy execution and artifact proof to the existing
 Release adoption owner. Their generated IPC is additive, and the Core locale
 choice merely derives its wire schema at its existing owner. This same
 undistributed batch keeps application/SDK versions, schema20, process/Store
-formats and dependency metadata unchanged. Native build controls and domain-package
-migration remain pending. Generic saved-artifact delivery extends the existing
+formats and dependency metadata unchanged. Desktop build controls now select installed capabilities, capture explicit complete
+paths, separately authorize builder/checker attempts and reconcile original
+proof/adoption identities. The macOS Quit menu and Command-Q also use the existing coordinated
+window-close workflow.
+These changes add desktop behavior without new wire contracts,
+project formats, dependencies or version sources. Domain-package migration and
+complete native acceptance remain pending; both Unreleased changelogs are
+synchronized and this undistributed batch retains the same versions. Generic saved-artifact delivery extends the existing
 native selection and delivery owners without changing DTOs, project schema,
 SDK/process/Store formats, dependencies or version sources. Exact locale/path
 reads, nested held directories, per-file outcomes and IO continuation are part of

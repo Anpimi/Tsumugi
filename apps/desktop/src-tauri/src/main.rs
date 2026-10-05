@@ -4,15 +4,67 @@ mod commands;
 #[path = "../runtime_bundle.rs"]
 mod runtime_bundle;
 
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+
+#[cfg(target_os = "macos")]
+const QUIT_MENU_ID: &str = "coordinated-quit";
+
+#[cfg(target_os = "macos")]
+fn macos_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+
+    let menu = Menu::default(app)?;
+    let quit_text = PredefinedMenuItem::quit(app, None)?.text()?;
+    for item in menu.items()? {
+        if let Some(submenu) = item.as_submenu() {
+            for (position, child) in submenu.items()?.iter().enumerate() {
+                if let Some(native) = child.as_predefined_menuitem() {
+                    if native.text()? == quit_text {
+                        // The predefined macOS Quit calls Cocoa terminate directly,
+                        // bypassing Tauri's ExitRequested and frontend draft checks.
+                        let quit =
+                            MenuItem::with_id(app, QUIT_MENU_ID, &quit_text, true, Some("Cmd+Q"))?;
+                        submenu.remove(native)?;
+                        submenu.insert(&quit, position)?;
+                        return Ok(menu);
+                    }
+                }
+            }
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "default macOS menu is missing its Quit item",
+    )
+    .into())
+}
+
 fn main() {
     #[cfg(feature = "wire-schema")]
-    if std::env::args_os().nth(1).is_some_and(|arg| arg == "--export-ipc-schema") {
-        let destination = std::env::args_os().nth(2).expect("schema destination required");
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--export-ipc-schema")
+    {
+        let destination = std::env::args_os()
+            .nth(2)
+            .expect("schema destination required");
         commands::contracts::export(std::path::Path::new(&destination)).expect("export IPC schema");
         return;
     }
-    commands::register_commands(tauri::Builder::default())
-        .plugin(tauri_plugin_dialog::init())
+    let builder =
+        commands::register_commands(tauri::Builder::default()).plugin(tauri_plugin_dialog::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(macos_menu).on_menu_event(|app, event| {
+        if event.id().as_ref() == QUIT_MENU_ID {
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(error) = window.close() {
+                    eprintln!("Could not request coordinated window close: {error}");
+                }
+            }
+        }
+    });
+    builder
         .run(tauri::generate_context!())
         .expect("error while running Tsumugi desktop shell");
 }
