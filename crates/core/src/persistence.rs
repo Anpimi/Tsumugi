@@ -35,7 +35,8 @@ pub use arena::{
 pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskView};
 pub use release::{
     BuildLocaleChoice, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView,
-    ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind, ReleaseView, ReleasedArtifact,
+    PluginBuildLocaleChoice, ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException,
+    ReleaseExceptionKind, ReleasePlan, ReleaseView, ReleasedArtifact,
 };
 pub use resources::{
     CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision, GlossaryCapture,

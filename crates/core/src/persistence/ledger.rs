@@ -951,8 +951,10 @@ impl ProjectStore {
         if envelope.project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::Unauthorized, "project"));
         }
+        let prepared_build = super::release::prepare_input(self, input)?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
+        let verified_build = super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
         if input.envelope().plugin.is_some() && parent.is_some() {
             return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
         }
@@ -1073,7 +1075,7 @@ impl ProjectStore {
         provider::record_input(&tx, input, policy, parent)?;
         super::content::record_input(&tx, input)?;
         super::translation::record_input(&tx, input)?;
-        super::release::record_input(&tx, input)?;
+        super::release::record_input(&tx, input, verified_build.as_ref())?;
         super::application::record_input(&tx, input)?;
         #[cfg(test)]
         crash_hook("before-enqueue-commit");

@@ -8,7 +8,7 @@ the application's ReleasePlan, process frames and database schema.
 `BuildInput` carries the complete fixed `ContentExchange`, one already decided
 target text for every source unit, its exact source revision reference, a target
 language, optional domain configuration as a collection of exact `EncodedPayload`
-values, and captured output limits. Multiple occurrences of one unit share its
+values, the complete allowed relative output paths, and captured output limits. Multiple occurrences of one unit share its
 decided text. The receiver rejects omitted, duplicated, unrelated or changed
 revision references. Target text is never silently copied from the source.
 It preserves the original artifacts, protected fragments, occurrence order and
@@ -37,6 +37,8 @@ Each decided text keeps the existing 16 KiB bound. Build and artifact-check inpu
 have distinct 4 MiB encoded limits; each original ContentExchange remains subject
 to its own 2 MiB limit. Configurations are limited to 32 distinct schemas.
 No returned value may expand the original limits.
+Returned paths must exactly cover the captured paths, preserving their spelling;
+extra safe-looking paths, omitted outputs and case substitutions are refused.
 
 `ArtifactCheckInput` contains the fixed build input, the complete actual output
 and the caller's independently fixed domain requirements. Requirements are
@@ -83,3 +85,35 @@ build tests retain both caption and JSON source evidence and distinguish
 structural association from semantic acceptance. The failure contract has bounded
 public classifications and detail; diagnostic text must not disclose user data,
 local paths or secrets. This is still the undistributed experimental SDK alpha.1.
+
+## Current Core capture boundary
+
+Core's experimental `prepare_plugin_build` captures an immutable `ReleasePlan`
+from the existing review eligibility and saved source result owners. It preserves
+the current selection, decision, QA, waiver, fallback, context and term evidence,
+source snapshot/result digests, exact build/check bindings, runtime descriptor,
+configuration and output scope. Original operation-local unit/revision references
+are mapped to Core identities before decided texts are projected into BuildInput.
+No plugin ID or domain parser selects this generic projection.
+
+The existing execution ledger independently compares a new plan with qualified
+project evidence in a read snapshot before registration. A modified payload or
+internally consistent forged plan cannot
+be accepted solely because it passes data validation. Explicit Core grants remain
+necessary. Before the first write, an immediate transaction checks the same
+connection's [data version](https://www.sqlite.org/pragma.html#pragma_data_version)
+and [total changes](https://www.sqlite.org/c3ref/total_changes.html). An intervening
+database change conservatively refuses new registration; the transient check adds
+no stored version or authority. Full plan decoding and qualification remain
+outside that write transaction. All requested locales share one adoption unit,
+and output collisions
+are checked across locales using the same SDK path policy. Capture is read-only;
+missing or stale approval/QA is refused. Source text is used only through a current
+explicit fallback decision.
+
+`find_plugin_build` reconciles the original attempt and exact request after later
+edits or reopening; it does not recapture newer choices or restore execution
+authority. These APIs have not yet replaced the desktop's built-in build runners.
+Actual plugin execution, independent artifact proof, release adoption and delivery
+are separate integration requirements. The existing release store remains the
+owner; this capture adds no parallel database, planner or authorization mechanism.

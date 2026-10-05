@@ -1770,6 +1770,26 @@ fn check_generic_source(
         .unwrap();
 }
 
+/// Reuse the synthetic in-process source/check fixture for downstream identity
+/// mapping tests. It registers no Node process or installed domain component.
+pub(crate) fn adopt_shared_source_fixture(store: &mut ProjectStore) {
+    let mut runtime = ExecutionRuntime::new(store).unwrap();
+    for checker in [false, true] {
+        runtime
+            .register_read_only(Arc::new(GenericSourcePlugin(generic_source_binding(
+                checker,
+            ))))
+            .unwrap();
+    }
+    let input = generic_source_input(store, 1, 1, "CaseKey", false);
+    let result = run_generic_source(&mut runtime, store, &input);
+    check_generic_source(&mut runtime, store, &input, &result);
+    let action = prepare(store, &input, &result);
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+}
+
 #[test]
 fn generic_source_adoption_maps_shared_units_and_preserves_fixed_revision_evidence_on_reopen() {
     let temp = tempfile::tempdir().unwrap();

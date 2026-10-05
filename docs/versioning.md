@@ -69,6 +69,18 @@ The application and SDK versions therefore remain unchanged, with the public
 experimental feature recorded in both Unreleased changelogs. No release or
 historical development-format migration is implied.
 
+Core's experimental plugin ReleasePlan capture adds qualified build inputs to the
+existing execution ledger and keeps the current source/review/release owners.
+BuildInput now requires exact `outputPaths`; pre-path experimental build inputs
+are refused rather than given an implicit output scope. Consumers of this
+undistributed contract must supply the complete paths and validate returned
+coverage. BuildBinding can be serialized as fixed internal metadata, with its
+validation still required; serialization grants no execution permission.
+No database table, SDK/process profile, dependency, Store layout or desktop
+build assembly changes in this unit. Application `0.2.0-alpha.1`, SDK
+`0.1.0-alpha.1` and schema 18 remain in the same unreleased batch, with no
+additional bump, release or historical migration.
+
 The read-only runtime inspector and fixed macOS arm64 preparation command use
 the existing capture/SDK hash owners. They add build tooling and a source-owned
 Node distribution pin, not new wire fields, Store formats, project migrations or

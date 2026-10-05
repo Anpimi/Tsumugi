@@ -100,6 +100,8 @@ pub struct BuildInput {
     pub targets: Vec<BuildTarget>,
     /// Exact domain configuration; an empty collection means no configuration.
     pub configuration: Vec<EncodedPayload>,
+    /// Complete authorized relative output paths, fixed before dispatch.
+    pub output_paths: Vec<String>,
     /// Captured by the trusted planner, never replaced by returned artifacts.
     pub output_limits: BuildOutputLimits,
 }
@@ -108,6 +110,10 @@ impl BuildInput {
         self.source.validate()?;
         language(&self.target_language)?;
         self.output_limits.validate()?;
+        validate_build_output_paths(self.output_paths.iter().map(String::as_str))?;
+        if self.output_paths.len() > self.output_limits.max_artifacts as usize {
+            return Err(invalid("build.outputPaths"));
+        }
         if self.source.units.is_empty() || self.targets.len() != self.source.units.len() {
             return Err(invalid("build.targets.coverage"));
         }
@@ -168,23 +174,34 @@ impl ArtifactSet {
         if self.artifacts.len() > MAX_BUILD_ARTIFACTS {
             return Err(invalid("artifactSet.artifacts"));
         }
-        let mut paths: Vec<String> = Vec::new();
-        for artifact in &self.artifacts {
-            validate_portable_package_path(&artifact.logical_path)?;
-            let path = artifact.logical_path.to_ascii_lowercase();
-            if path.split('/').count() > 16
-                || paths.iter().any(|prior| {
-                    *prior == path
-                        || prior.starts_with(&(path.clone() + "/"))
-                        || path.starts_with(&(prior.clone() + "/"))
-                })
-            {
-                return Err(invalid("artifactSet.logicalPath"));
-            }
-            paths.push(path);
-        }
+        validate_build_output_paths(self.artifacts.iter().map(|a| a.logical_path.as_str()))?;
         encoded_limit(self, MAX_EXCHANGE_BYTES, "artifactSet")
     }
+}
+/// Portable path, alias and file/directory collision checks shared by one build
+/// and a Core release spanning several locales. Callers own collection limits.
+pub fn validate_build_output_paths<'a>(
+    paths: impl Iterator<Item = &'a str>,
+) -> Result<(), ContractError> {
+    let mut seen: Vec<String> = Vec::new();
+    for path in paths {
+        validate_portable_package_path(path)?;
+        let path = path.to_ascii_lowercase();
+        if path.split('/').count() > 16
+            || seen.iter().any(|prior| {
+                *prior == path
+                    || prior.starts_with(&(path.clone() + "/"))
+                    || path.starts_with(&(prior.clone() + "/"))
+            })
+        {
+            return Err(invalid("build.outputPaths"));
+        }
+        seen.push(path);
+    }
+    if seen.is_empty() {
+        return Err(invalid("build.outputPaths"));
+    }
+    Ok(())
 }
 /// Generic bytes/identity/bounds only. A valid association is not a semantic
 /// proof, a successful required check, release eligibility or publication.
@@ -197,6 +214,11 @@ pub fn validate_build_artifacts(
     if input.source.profile != output.profile
         || input.source.source_set_id != output.source_set_id
         || input.target_language != output.target_language
+        || input
+            .output_paths
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            != output.artifacts.iter().map(|a| &a.logical_path).collect()
     {
         return Err(mismatch("artifactSet.input"));
     }
@@ -280,7 +302,8 @@ pub struct BuildDeclaration {
     pub output_limits: BuildOutputLimits,
     pub artifact_rules: Vec<ContractRef>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildBinding {
     pub declaration: BuildDeclaration,
     pub builder: CapabilityBinding,

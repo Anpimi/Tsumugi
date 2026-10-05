@@ -24,7 +24,7 @@
 "use strict";
 export const validate = validate81;
 export default validate81;
-const schema93 = {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"BuildInput","type":"object","properties":{"configuration":{"description":"Exact domain configuration; an empty collection means no configuration.","type":"array","items":{"$ref":"#/$defs/EncodedPayload"}},"outputLimits":{"description":"Captured by the trusted planner, never replaced by returned artifacts.","$ref":"#/$defs/BuildOutputLimits"},"source":{"$ref":"#/$defs/ContentExchange"},"targetLanguage":{"type":"string"},"targets":{"type":"array","items":{"$ref":"#/$defs/BuildTarget"}}},"additionalProperties":false,"required":["source","targetLanguage","targets","configuration","outputLimits"],"$defs":{"BuildOutputLimits":{"type":"object","properties":{"maxArtifacts":{"type":"integer","maximum":32,"minimum":1},"maxTotalBytes":{"type":"integer","maximum":2097152,"minimum":1}},"additionalProperties":false,"required":["maxArtifacts","maxTotalBytes"]},"BuildTarget":{"description":"One already decided text per source unit, even when it has many occurrences.\nNo candidate selection, review decision or project write handle is supplied.","type":"object","properties":{"sourceRevisionId":{"type":"string"},"text":{"type":"string"},"unitId":{"type":"string"}},"additionalProperties":false,"required":["unitId","sourceRevisionId","text"]},"CapturedTextArtifact":{"description":"Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.","type":"object","properties":{"id":{"type":"string"},"logicalPath":{"type":"string"},"role":{"type":"string"},"sha256":{"type":"string"},"utf8":{"type":"string"}},"additionalProperties":false,"required":["id","logicalPath","role","sha256","utf8"]},"ContentExchange":{"type":"object","properties":{"artifacts":{"type":"array","items":{"$ref":"#/$defs/CapturedTextArtifact"}},"domainBlocks":{"type":"array","items":{"$ref":"#/$defs/DomainBlock"}},"order":{"description":"Exact occurrence order. Hierarchies and other graphs use typed relations.","type":"array","items":{"type":"string"}},"profile":{"$ref":"#/$defs/ContractRef"},"relations":{"type":"array","items":{"$ref":"#/$defs/ContentRelation"}},"sourceLanguage":{"type":"string"},"sourceSetId":{"type":"string"},"units":{"type":"array","items":{"$ref":"#/$defs/ContentUnit"}}},"additionalProperties":false,"required":["profile","sourceSetId","sourceLanguage","artifacts","units","order","relations","domainBlocks"]},"ContentOccurrence":{"type":"object","properties":{"id":{"type":"string"},"nativeIdentity":{"anyOf":[{"$ref":"#/$defs/NativeIdentityEvidence"},{"type":"null"}]},"source":{"$ref":"#/$defs/SourceReference"}},"additionalProperties":false,"required":["id","source"]},"ContentRelation":{"type":"object","properties":{"fromOccurrence":{"type":"string"},"kind":{"$ref":"#/$defs/ContractRef"},"toOccurrence":{"type":"string"}},"additionalProperties":false,"required":["kind","fromOccurrence","toOccurrence"]},"ContentTarget":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"snapshot"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","const":"unit"}},"additionalProperties":false,"required":["kind","id"]},{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","const":"occurrence"}},"additionalProperties":false,"required":["kind","id"]}]},"ContentUnit":{"type":"object","properties":{"id":{"description":"Operation-local reference or a captured project identity, as specified by\nthe capability. A plugin cannot allocate authoritative project revisions.","type":"string"},"occurrences":{"type":"array","items":{"$ref":"#/$defs/ContentOccurrence"}},"protectedFragments":{"type":"array","items":{"$ref":"#/$defs/ProtectedFragment"}},"sourceRevisionId":{"description":"During extraction this is an operation-local proposal reference. Only\nCore may map it to an authoritative project source revision.","type":"string"},"text":{"type":"string"}},"additionalProperties":false,"required":["id","sourceRevisionId","text","occurrences","protectedFragments"]},"ContractRef":{"description":"Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.","type":"object","properties":{"behaviorVersion":{"type":"integer","maximum":4294967295,"minimum":1},"id":{"type":"string"},"schemaVersion":{"type":"integer","maximum":4294967295,"minimum":1}},"additionalProperties":false,"required":["id","schemaVersion","behaviorVersion"]},"DomainBlock":{"type":"object","properties":{"handling":{"$ref":"#/$defs/ExtensionHandling"},"payloadUtf8":{"description":"Exact UTF-8 payload, intentionally not an open JSON property bag. Its\nschema is interpreted by the domain, without loss through Value parsing.","type":"string"},"schema":{"$ref":"#/$defs/ContractRef"},"target":{"$ref":"#/$defs/ContentTarget"}},"additionalProperties":false,"required":["target","schema","handling","payloadUtf8"]},"EncodedPayload":{"description":"Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.","type":"object","properties":{"schema":{"$ref":"#/$defs/ContractRef"},"sha256":{"type":"string"},"utf8":{"type":"string"}},"additionalProperties":false,"required":["schema","utf8","sha256"]},"ExtensionHandling":{"oneOf":[{"description":"An operation that needs this block must have the exact interpreter.","type":"string","const":"required"},{"description":"Preserve the payload exactly, including when its schema is understood.","type":"string","const":"preserve"},{"description":"Interpretation is optional; an unknown payload is still preserved.","type":"string","const":"optional"}]},"NativeIdentityDisplay":{"description":"Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.","type":"object","properties":{"source":{"anyOf":[{"$ref":"#/$defs/SourceReference"},{"type":"null"}]},"value":{"type":"string"}},"additionalProperties":false,"required":["value","source"]},"NativeIdentityEvidence":{"type":"object","properties":{"display":{"$ref":"#/$defs/NativeIdentityDisplay"},"namespace":{"type":"string"},"policy":{"$ref":"#/$defs/ContractRef"},"value":{"description":"The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.","type":"string"}},"additionalProperties":false,"required":["namespace","value","policy","display"]},"ProtectedFragment":{"type":"object","properties":{"kind":{"$ref":"#/$defs/ContractRef"},"range":{"description":"Coordinates into the decoded unit text, not its original artifact.","$ref":"#/$defs/TextRange"}},"additionalProperties":false,"required":["kind","range"]},"SourceReference":{"type":"object","properties":{"artifactId":{"type":"string"},"range":{"$ref":"#/$defs/TextRange"}},"additionalProperties":false,"required":["artifactId","range"]},"TextEncoding":{"type":"string","enum":["utf8-byte","utf16","grapheme"]},"TextRange":{"description":"Half-open offsets into one exact string, never between different strings.","type":"object","properties":{"encoding":{"$ref":"#/$defs/TextEncoding"},"end":{"type":"integer","maximum":4294967295,"minimum":0},"start":{"type":"integer","maximum":4294967295,"minimum":0}},"additionalProperties":false,"required":["encoding","start","end"]}}};
+const schema93 = {"$schema":"https://json-schema.org/draft/2020-12/schema","title":"BuildInput","type":"object","properties":{"configuration":{"description":"Exact domain configuration; an empty collection means no configuration.","type":"array","items":{"$ref":"#/$defs/EncodedPayload"}},"outputLimits":{"description":"Captured by the trusted planner, never replaced by returned artifacts.","$ref":"#/$defs/BuildOutputLimits"},"outputPaths":{"description":"Complete authorized relative output paths, fixed before dispatch.","type":"array","items":{"type":"string"}},"source":{"$ref":"#/$defs/ContentExchange"},"targetLanguage":{"type":"string"},"targets":{"type":"array","items":{"$ref":"#/$defs/BuildTarget"}}},"additionalProperties":false,"required":["source","targetLanguage","targets","configuration","outputPaths","outputLimits"],"$defs":{"BuildOutputLimits":{"type":"object","properties":{"maxArtifacts":{"type":"integer","maximum":32,"minimum":1},"maxTotalBytes":{"type":"integer","maximum":2097152,"minimum":1}},"additionalProperties":false,"required":["maxArtifacts","maxTotalBytes"]},"BuildTarget":{"description":"One already decided text per source unit, even when it has many occurrences.\nNo candidate selection, review decision or project write handle is supplied.","type":"object","properties":{"sourceRevisionId":{"type":"string"},"text":{"type":"string"},"unitId":{"type":"string"}},"additionalProperties":false,"required":["unitId","sourceRevisionId","text"]},"CapturedTextArtifact":{"description":"Captured UTF-8 bytes, including a BOM and original line endings. These are\nimmutable source evidence; logical paths are not local filesystem authority.","type":"object","properties":{"id":{"type":"string"},"logicalPath":{"type":"string"},"role":{"type":"string"},"sha256":{"type":"string"},"utf8":{"type":"string"}},"additionalProperties":false,"required":["id","logicalPath","role","sha256","utf8"]},"ContentExchange":{"type":"object","properties":{"artifacts":{"type":"array","items":{"$ref":"#/$defs/CapturedTextArtifact"}},"domainBlocks":{"type":"array","items":{"$ref":"#/$defs/DomainBlock"}},"order":{"description":"Exact occurrence order. Hierarchies and other graphs use typed relations.","type":"array","items":{"type":"string"}},"profile":{"$ref":"#/$defs/ContractRef"},"relations":{"type":"array","items":{"$ref":"#/$defs/ContentRelation"}},"sourceLanguage":{"type":"string"},"sourceSetId":{"type":"string"},"units":{"type":"array","items":{"$ref":"#/$defs/ContentUnit"}}},"additionalProperties":false,"required":["profile","sourceSetId","sourceLanguage","artifacts","units","order","relations","domainBlocks"]},"ContentOccurrence":{"type":"object","properties":{"id":{"type":"string"},"nativeIdentity":{"anyOf":[{"$ref":"#/$defs/NativeIdentityEvidence"},{"type":"null"}]},"source":{"$ref":"#/$defs/SourceReference"}},"additionalProperties":false,"required":["id","source"]},"ContentRelation":{"type":"object","properties":{"fromOccurrence":{"type":"string"},"kind":{"$ref":"#/$defs/ContractRef"},"toOccurrence":{"type":"string"}},"additionalProperties":false,"required":["kind","fromOccurrence","toOccurrence"]},"ContentTarget":{"oneOf":[{"type":"object","properties":{"kind":{"type":"string","const":"snapshot"}},"additionalProperties":false,"required":["kind"]},{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","const":"unit"}},"additionalProperties":false,"required":["kind","id"]},{"type":"object","properties":{"id":{"type":"string"},"kind":{"type":"string","const":"occurrence"}},"additionalProperties":false,"required":["kind","id"]}]},"ContentUnit":{"type":"object","properties":{"id":{"description":"Operation-local reference or a captured project identity, as specified by\nthe capability. A plugin cannot allocate authoritative project revisions.","type":"string"},"occurrences":{"type":"array","items":{"$ref":"#/$defs/ContentOccurrence"}},"protectedFragments":{"type":"array","items":{"$ref":"#/$defs/ProtectedFragment"}},"sourceRevisionId":{"description":"During extraction this is an operation-local proposal reference. Only\nCore may map it to an authoritative project source revision.","type":"string"},"text":{"type":"string"}},"additionalProperties":false,"required":["id","sourceRevisionId","text","occurrences","protectedFragments"]},"ContractRef":{"description":"Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.","type":"object","properties":{"behaviorVersion":{"type":"integer","maximum":4294967295,"minimum":1},"id":{"type":"string"},"schemaVersion":{"type":"integer","maximum":4294967295,"minimum":1}},"additionalProperties":false,"required":["id","schemaVersion","behaviorVersion"]},"DomainBlock":{"type":"object","properties":{"handling":{"$ref":"#/$defs/ExtensionHandling"},"payloadUtf8":{"description":"Exact UTF-8 payload, intentionally not an open JSON property bag. Its\nschema is interpreted by the domain, without loss through Value parsing.","type":"string"},"schema":{"$ref":"#/$defs/ContractRef"},"target":{"$ref":"#/$defs/ContentTarget"}},"additionalProperties":false,"required":["target","schema","handling","payloadUtf8"]},"EncodedPayload":{"description":"Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.","type":"object","properties":{"schema":{"$ref":"#/$defs/ContractRef"},"sha256":{"type":"string"},"utf8":{"type":"string"}},"additionalProperties":false,"required":["schema","utf8","sha256"]},"ExtensionHandling":{"oneOf":[{"description":"An operation that needs this block must have the exact interpreter.","type":"string","const":"required"},{"description":"Preserve the payload exactly, including when its schema is understood.","type":"string","const":"preserve"},{"description":"Interpretation is optional; an unknown payload is still preserved.","type":"string","const":"optional"}]},"NativeIdentityDisplay":{"description":"Domain-confirmed spelling for presentation, separate from canonical\nmatching. A source reference is optional when the identity is derived.","type":"object","properties":{"source":{"anyOf":[{"$ref":"#/$defs/SourceReference"},{"type":"null"}]},"value":{"type":"string"}},"additionalProperties":false,"required":["value","source"]},"NativeIdentityEvidence":{"type":"object","properties":{"display":{"$ref":"#/$defs/NativeIdentityDisplay"},"namespace":{"type":"string"},"policy":{"$ref":"#/$defs/ContractRef"},"value":{"description":"The domain's canonical matching value, not necessarily its original\nliteral spelling. Core does not normalize this value again.","type":"string"}},"additionalProperties":false,"required":["namespace","value","policy","display"]},"ProtectedFragment":{"type":"object","properties":{"kind":{"$ref":"#/$defs/ContractRef"},"range":{"description":"Coordinates into the decoded unit text, not its original artifact.","$ref":"#/$defs/TextRange"}},"additionalProperties":false,"required":["kind","range"]},"SourceReference":{"type":"object","properties":{"artifactId":{"type":"string"},"range":{"$ref":"#/$defs/TextRange"}},"additionalProperties":false,"required":["artifactId","range"]},"TextEncoding":{"type":"string","enum":["utf8-byte","utf16","grapheme"]},"TextRange":{"description":"Half-open offsets into one exact string, never between different strings.","type":"object","properties":{"encoding":{"$ref":"#/$defs/TextEncoding"},"end":{"type":"integer","maximum":4294967295,"minimum":0},"start":{"type":"integer","maximum":4294967295,"minimum":0}},"additionalProperties":false,"required":["encoding","start","end"]}}};
 const schema96 = {"type":"object","properties":{"maxArtifacts":{"type":"integer","maximum":32,"minimum":1},"maxTotalBytes":{"type":"integer","maximum":2097152,"minimum":1}},"additionalProperties":false,"required":["maxArtifacts","maxTotalBytes"]};
 const schema116 = {"description":"One already decided text per source unit, even when it has many occurrences.\nNo candidate selection, review decision or project write handle is supplied.","type":"object","properties":{"sourceRevisionId":{"type":"string"},"text":{"type":"string"},"unitId":{"type":"string"}},"additionalProperties":false,"required":["unitId","sourceRevisionId","text"]};
 const schema94 = {"description":"Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.","type":"object","properties":{"schema":{"$ref":"#/$defs/ContractRef"},"sha256":{"type":"string"},"utf8":{"type":"string"}},"additionalProperties":false,"required":["schema","utf8","sha256"]};
@@ -2283,14 +2283,14 @@ evaluated0.items = undefined;
 if(errors === 0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if((((((data.source === undefined) && (missing0 = "source")) || ((data.targetLanguage === undefined) && (missing0 = "targetLanguage"))) || ((data.targets === undefined) && (missing0 = "targets"))) || ((data.configuration === undefined) && (missing0 = "configuration"))) || ((data.outputLimits === undefined) && (missing0 = "outputLimits"))){
+if(((((((data.source === undefined) && (missing0 = "source")) || ((data.targetLanguage === undefined) && (missing0 = "targetLanguage"))) || ((data.targets === undefined) && (missing0 = "targets"))) || ((data.configuration === undefined) && (missing0 = "configuration"))) || ((data.outputPaths === undefined) && (missing0 = "outputPaths"))) || ((data.outputLimits === undefined) && (missing0 = "outputLimits"))){
 validate81.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(((((key0 === "configuration") || (key0 === "outputLimits")) || (key0 === "source")) || (key0 === "targetLanguage")) || (key0 === "targets"))){
+if(!((((((key0 === "configuration") || (key0 === "outputLimits")) || (key0 === "outputPaths")) || (key0 === "source")) || (key0 === "targetLanguage")) || (key0 === "targets"))){
 validate81.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -2416,11 +2416,29 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.source !== undefined){
+if(data.outputPaths !== undefined){
+let data5 = data.outputPaths;
 const _errs13 = errors;
-if(!(validate84(data.source, {instancePath:instancePath+"/source",parentData:data,parentDataProperty:"source",rootData,dynamicAnchors}))){
-vErrors = vErrors === null ? validate84.errors : vErrors.concat(validate84.errors);
-errors = vErrors.length;
+if(errors === _errs13){
+if(Array.isArray(data5)){
+var valid4 = true;
+const len1 = data5.length;
+for(let i1=0; i1<len1; i1++){
+const _errs15 = errors;
+if(typeof data5[i1] !== "string"){
+validate81.errors = [{instancePath:instancePath+"/outputPaths/" + i1,schemaPath:"#/properties/outputPaths/items/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid4 = _errs15 === errors;
+if(!valid4){
+break;
+}
+}
+}
+else {
+validate81.errors = [{instancePath:instancePath+"/outputPaths",schemaPath:"#/properties/outputPaths/type",keyword:"type",params:{type: "array"},message:"must be array"}];
+return false;
+}
 }
 var valid0 = _errs13 === errors;
 }
@@ -2428,80 +2446,92 @@ else {
 var valid0 = true;
 }
 if(valid0){
+if(data.source !== undefined){
+const _errs17 = errors;
+if(!(validate84(data.source, {instancePath:instancePath+"/source",parentData:data,parentDataProperty:"source",rootData,dynamicAnchors}))){
+vErrors = vErrors === null ? validate84.errors : vErrors.concat(validate84.errors);
+errors = vErrors.length;
+}
+var valid0 = _errs17 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
 if(data.targetLanguage !== undefined){
-const _errs14 = errors;
+const _errs18 = errors;
 if(typeof data.targetLanguage !== "string"){
 validate81.errors = [{instancePath:instancePath+"/targetLanguage",schemaPath:"#/properties/targetLanguage/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid0 = _errs14 === errors;
+var valid0 = _errs18 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.targets !== undefined){
-let data7 = data.targets;
-const _errs16 = errors;
-if(errors === _errs16){
-if(Array.isArray(data7)){
-var valid4 = true;
-const len1 = data7.length;
-for(let i1=0; i1<len1; i1++){
-let data8 = data7[i1];
-const _errs18 = errors;
-const _errs19 = errors;
-if(errors === _errs19){
-if(data8 && typeof data8 == "object" && !Array.isArray(data8)){
+let data9 = data.targets;
+const _errs20 = errors;
+if(errors === _errs20){
+if(Array.isArray(data9)){
+var valid5 = true;
+const len2 = data9.length;
+for(let i2=0; i2<len2; i2++){
+let data10 = data9[i2];
+const _errs22 = errors;
+const _errs23 = errors;
+if(errors === _errs23){
+if(data10 && typeof data10 == "object" && !Array.isArray(data10)){
 let missing2;
-if((((data8.unitId === undefined) && (missing2 = "unitId")) || ((data8.sourceRevisionId === undefined) && (missing2 = "sourceRevisionId"))) || ((data8.text === undefined) && (missing2 = "text"))){
-validate81.errors = [{instancePath:instancePath+"/targets/" + i1,schemaPath:"#/$defs/BuildTarget/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"}];
+if((((data10.unitId === undefined) && (missing2 = "unitId")) || ((data10.sourceRevisionId === undefined) && (missing2 = "sourceRevisionId"))) || ((data10.text === undefined) && (missing2 = "text"))){
+validate81.errors = [{instancePath:instancePath+"/targets/" + i2,schemaPath:"#/$defs/BuildTarget/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"}];
 return false;
 }
 else {
-const _errs21 = errors;
-for(const key2 in data8){
+const _errs25 = errors;
+for(const key2 in data10){
 if(!(((key2 === "sourceRevisionId") || (key2 === "text")) || (key2 === "unitId"))){
-validate81.errors = [{instancePath:instancePath+"/targets/" + i1,schemaPath:"#/$defs/BuildTarget/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"}];
+validate81.errors = [{instancePath:instancePath+"/targets/" + i2,schemaPath:"#/$defs/BuildTarget/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"}];
 return false;
 break;
 }
 }
-if(_errs21 === errors){
-if(data8.sourceRevisionId !== undefined){
-const _errs22 = errors;
-if(typeof data8.sourceRevisionId !== "string"){
-validate81.errors = [{instancePath:instancePath+"/targets/" + i1+"/sourceRevisionId",schemaPath:"#/$defs/BuildTarget/properties/sourceRevisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-var valid6 = _errs22 === errors;
-}
-else {
-var valid6 = true;
-}
-if(valid6){
-if(data8.text !== undefined){
-const _errs24 = errors;
-if(typeof data8.text !== "string"){
-validate81.errors = [{instancePath:instancePath+"/targets/" + i1+"/text",schemaPath:"#/$defs/BuildTarget/properties/text/type",keyword:"type",params:{type: "string"},message:"must be string"}];
-return false;
-}
-var valid6 = _errs24 === errors;
-}
-else {
-var valid6 = true;
-}
-if(valid6){
-if(data8.unitId !== undefined){
+if(_errs25 === errors){
+if(data10.sourceRevisionId !== undefined){
 const _errs26 = errors;
-if(typeof data8.unitId !== "string"){
-validate81.errors = [{instancePath:instancePath+"/targets/" + i1+"/unitId",schemaPath:"#/$defs/BuildTarget/properties/unitId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+if(typeof data10.sourceRevisionId !== "string"){
+validate81.errors = [{instancePath:instancePath+"/targets/" + i2+"/sourceRevisionId",schemaPath:"#/$defs/BuildTarget/properties/sourceRevisionId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid6 = _errs26 === errors;
+var valid7 = _errs26 === errors;
 }
 else {
-var valid6 = true;
+var valid7 = true;
+}
+if(valid7){
+if(data10.text !== undefined){
+const _errs28 = errors;
+if(typeof data10.text !== "string"){
+validate81.errors = [{instancePath:instancePath+"/targets/" + i2+"/text",schemaPath:"#/$defs/BuildTarget/properties/text/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid7 = _errs28 === errors;
+}
+else {
+var valid7 = true;
+}
+if(valid7){
+if(data10.unitId !== undefined){
+const _errs30 = errors;
+if(typeof data10.unitId !== "string"){
+validate81.errors = [{instancePath:instancePath+"/targets/" + i2+"/unitId",schemaPath:"#/$defs/BuildTarget/properties/unitId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+var valid7 = _errs30 === errors;
+}
+else {
+var valid7 = true;
 }
 }
 }
@@ -2509,12 +2539,12 @@ var valid6 = true;
 }
 }
 else {
-validate81.errors = [{instancePath:instancePath+"/targets/" + i1,schemaPath:"#/$defs/BuildTarget/type",keyword:"type",params:{type: "object"},message:"must be object"}];
+validate81.errors = [{instancePath:instancePath+"/targets/" + i2,schemaPath:"#/$defs/BuildTarget/type",keyword:"type",params:{type: "object"},message:"must be object"}];
 return false;
 }
 }
-var valid4 = _errs18 === errors;
-if(!valid4){
+var valid5 = _errs22 === errors;
+if(!valid5){
 break;
 }
 }
@@ -2524,10 +2554,11 @@ validate81.errors = [{instancePath:instancePath+"/targets",schemaPath:"#/propert
 return false;
 }
 }
-var valid0 = _errs16 === errors;
+var valid0 = _errs20 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }

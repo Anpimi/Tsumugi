@@ -439,7 +439,7 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
     Ok(())
 }
 
-fn snapshot_rows(
+pub(super) fn snapshot_rows(
     connection: &Connection,
     snapshot: ExecutionId,
     has_lineage: bool,

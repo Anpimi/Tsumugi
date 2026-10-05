@@ -14,6 +14,13 @@
       "description": "Captured by the trusted planner, never replaced by returned artifacts.",
       "$ref": "#/$defs/BuildOutputLimits"
     },
+    "outputPaths": {
+      "description": "Complete authorized relative output paths, fixed before dispatch.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "source": {
       "$ref": "#/$defs/ContentExchange"
     },
@@ -33,6 +40,7 @@
     "targetLanguage",
     "targets",
     "configuration",
+    "outputPaths",
     "outputLimits"
   ],
   "$defs": {

@@ -13,7 +13,7 @@ use crate::review::CHECK_VERSION;
 mod checks;
 pub(super) use checks::record_check_in;
 pub use checks::{ComputedReviewCheck, PreparedReviewCheck};
-const POLICY_VERSION: &str = "balanced-1";
+pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 
 mod queries;
@@ -1601,7 +1601,7 @@ fn all_units(
     Ok((snapshot_id, units))
 }
 
-fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec<String>) {
+pub(super) fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec<String>) {
     let mut blockers = Vec::new();
     let mut exceptions = Vec::new();
     if target.selection_id.is_none() {
@@ -2127,7 +2127,7 @@ pub(super) mod tests {
             ErrorCode::InvalidInput
         );
     }
-    fn approve(
+    pub(in crate::persistence) fn approve(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,
@@ -2148,7 +2148,7 @@ pub(super) mod tests {
             })
             .unwrap()
     }
-    fn check(
+    pub(in crate::persistence) fn check(
         store: &mut ProjectStore,
         project: ExecutionId,
         unit: ExecutionId,

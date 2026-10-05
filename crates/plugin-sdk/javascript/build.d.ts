@@ -111,6 +111,10 @@ export interface BuildInput {
    */
   configuration: EncodedPayload[];
   outputLimits: BuildOutputLimits;
+  /**
+   * Complete authorized relative output paths, fixed before dispatch.
+   */
+  outputPaths: string[];
   source: ContentExchange;
   targetLanguage: string;
   targets: BuildTarget[];

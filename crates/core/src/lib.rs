@@ -15,6 +15,7 @@ pub use persistence::{
     AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
     ComparisonView, MergeBasis,
 };
+pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{
     AttemptView, BuildLocaleChoice, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,
     CheckRuleResult, CheckRun, ComputedAutomaticSelection, ComputedReviewCheck, ContextCapture, ContextItem, ContextOmission,

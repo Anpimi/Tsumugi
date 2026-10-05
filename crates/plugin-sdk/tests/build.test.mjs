@@ -19,7 +19,7 @@ function input(kind = 'webvtt') {
   source.profile = structuredClone(declaration.profile);
   return { source, targetLanguage: 'ja-JP', targets: source.units.map(unit => ({
     unitId: unit.id, sourceRevisionId: unit.sourceRevisionId, text: '決定済み 👩🏽‍💻 é\n😀',
-  })), configuration: [], outputLimits: structuredClone(declaration.outputLimits) };
+  })), configuration: [], outputPaths: ['locales/ja-JP.txt'], outputLimits: structuredClone(declaration.outputLimits) };
 }
 function output(input) {
   const utf8 = '\ufefffixed output 👩🏽‍💻 é\r\n';
@@ -51,6 +51,7 @@ test('build structural receivers reject unknown nested fields and invalid numeri
     value => { value.outputLimits.maxTotalBytes = 2097153; },
     value => { value.targets[0].projectStore = true; },
     value => { delete value.configuration; },
+    value => { delete value.outputPaths; },
   ]) {
     const captured = input(); mutate(captured);
     assert.equal(validateInput(captured), false); assert.throws(() => receive('build-input', captured));
@@ -78,5 +79,8 @@ test('independent checker data covers actual output without granting publication
   }] };
   assert.equal(validateCheck(checks), true); assert.deepEqual(receive('artifact-check-input', checks), checks);
   checks.requirements[0].targets = ['source-artifact'];
+  assert.equal(validateCheck(checks), true); assert.throws(() => receive('artifact-check-input', checks));
+  checks.requirements[0].targets = ['output-1'];
+  checks.output.artifacts[0].logicalPath = 'other-safe-path.txt';
   assert.equal(validateCheck(checks), true); assert.throws(() => receive('artifact-check-input', checks));
 });

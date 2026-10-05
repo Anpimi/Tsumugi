@@ -15,6 +15,10 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod plan;
+pub use plan::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
+pub(super) use plan::{VerifiedBuildInput, prepare_input, verify_prepared_input};
+
 const TABLES: &[(&str, &str)] = &[
     (
         "release_records",
@@ -53,9 +57,13 @@ pub(super) fn table_names() -> impl Iterator<Item = String> {
 pub(super) fn record_input(
     connection: &Connection,
     input: &FixedInput,
+    verified: Option<&VerifiedBuildInput>,
 ) -> Result<(), ExecutionError> {
     if input.envelope().operation != BUILD_OPERATION {
         return Ok(());
+    }
+    if input.envelope().plugin.is_some() {
+        return plan::record_input(input, verified);
     }
     let manifest = BuildManifest::from_input(input)?;
     let (attempt, project): (String, String) = connection
@@ -733,11 +741,9 @@ impl ProjectStore {
             .unchecked_transaction()
             .map_err(sql)?;
         let locales: Vec<_> = choices.iter().map(|choice| choice.locale.clone()).collect();
-        let eligibility =
-            self.review_eligibility_if_basis(project_id, &locales, expected_eligibility_basis)?;
-        if !eligibility.ready {
-            return Err(failure(ErrorCode::DependencyConflict, "build-ineligible"));
-        }
+        let qualified =
+            self.capture_qualified_release(project_id, &locales, expected_eligibility_basis)?;
+        let eligibility = qualified.eligibility;
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "build-read"))?;
@@ -762,50 +768,31 @@ impl ProjectStore {
             .collect::<Result<Vec<_>, _>>()
             .map_err(sql)?;
         let mut manifest_locales = Vec::with_capacity(choices.len());
-        for choice in choices {
-            let mut after = 0;
+        for (choice, targets) in choices.iter().zip(qualified.locales) {
             let mut entries = Vec::new();
-            loop {
-                let page = self.review_page(project_id, &choice.locale, after, 100)?;
-                for (ordinal, target) in page.rows.into_iter().enumerate() {
-                    let ordinal = after + ordinal as u32;
-                    let current_check = target
-                        .current_check
-                        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "build-check"))?;
-                    let selected = target.selection_id.is_some();
-                    let source_text = target.source_text.clone();
-                    let value = if selected {
-                        target
-                            .translation_text
-                            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "build-translation"))?
-                    } else if target.current_fallback.is_some() {
-                        target.source_text
-                    } else {
-                        return Err(failure(ErrorCode::DependencyConflict, "build-value"));
-                    };
-                    entries.push(BuildEntry {
-                        ordinal,
-                        unit_id: target.unit_id,
-                        source_revision_id: target.source_revision_id,
-                        native_key: target.native_key,
-                        source_text,
-                        value,
-                        selection_id: target.selection_id,
-                        revision_id: target.revision_id,
-                        fallback_id: target.current_fallback.map(|item| item.fallback_id),
-                        decision_id: target.current_decision.map(|item| item.decision_id),
-                        check_id: current_check.run_id,
-                        waiver_ids: target
-                            .current_waivers
-                            .into_iter()
-                            .map(|item| item.waiver_id)
-                            .collect(),
-                    });
-                }
-                match page.next_ordinal {
-                    Some(next) => after = next,
-                    None => break,
-                }
+            for (ordinal, target) in targets {
+                let value = plan::decided_text(&target)?.to_owned();
+                let current_check = target
+                    .current_check
+                    .ok_or_else(|| failure(ErrorCode::DependencyConflict, "build-check"))?;
+                entries.push(BuildEntry {
+                    ordinal,
+                    unit_id: target.unit_id,
+                    source_revision_id: target.source_revision_id,
+                    native_key: target.native_key,
+                    source_text: target.source_text,
+                    value,
+                    selection_id: target.selection_id,
+                    revision_id: target.revision_id,
+                    fallback_id: target.current_fallback.map(|item| item.fallback_id),
+                    decision_id: target.current_decision.map(|item| item.decision_id),
+                    check_id: current_check.run_id,
+                    waiver_ids: target
+                        .current_waivers
+                        .into_iter()
+                        .map(|item| item.waiver_id)
+                        .collect(),
+                });
             }
             manifest_locales.push(BuildLocale {
                 locale: choice.locale.clone(),

@@ -96,15 +96,15 @@ impl FixedInput {
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"))?,
         )
         .map_err(contract_error)?;
-        let source_contract = matches!(
+        let bounded_json_contract = matches!(
             envelope.operation.as_str(),
-            crate::content::OPERATION | SOURCE_CHECK_OPERATION
+            crate::content::OPERATION | SOURCE_CHECK_OPERATION | crate::content::BUILD_OPERATION
         );
-        // Source/check output is strict JSON with bounded integer/string fields.
+        // Source/check/build output is strict JSON with bounded integer/string fields.
         // Quoting its original JSON costs at most twice the raw bytes; the
         // checked canonical projection is no larger. Reserve metadata separately.
         // Other contracts keep their conservative opaque-payload budget.
-        let max_result_bytes = if source_contract {
+        let max_result_bytes = if bounded_json_contract {
             let raw = envelope.limits.max_result_bytes.saturating_sub(64 * 1024) / 3;
             let raw = raw
                 .min(declaration.limits.max_output_bytes)

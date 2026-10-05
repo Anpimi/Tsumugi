@@ -34,6 +34,7 @@ fn input(kind: &str) -> BuildInput {
         source,
         target_language: "ja-JP".into(),
         configuration: vec![],
+        output_paths: vec!["locales/ja-JP.txt".into()],
         output_limits: declaration().output_limits,
     }
 }
@@ -149,6 +150,37 @@ fn artifact_association_checks_actual_bytes_profile_locale_and_fixed_limits() {
     output.artifacts[0].utf8 = "different domain bytes".into();
     output.artifacts[0].sha256 = payload_digest(&output.artifacts[0].utf8);
     validate_build_artifacts(&input, &output).unwrap();
+}
+#[test]
+fn build_output_scope_is_fixed_complete_and_uses_one_portable_path_policy() {
+    let original = input("caption");
+    for paths in [
+        vec![],
+        vec!["../outside.txt".into()],
+        vec!["a.txt".into(), "A.txt".into()],
+        vec!["a.txt".into(), "a.txt/child.txt".into()],
+        vec!["a.txt".into(), "b.txt".into(), "c.txt".into()],
+    ] {
+        let mut captured = original.clone();
+        captured.output_paths = paths;
+        assert!(captured.validate().is_err());
+    }
+    let mut built = output(&original);
+    built.artifacts[0].logical_path = "other-safe-path.txt".into();
+    built.validate().unwrap();
+    assert!(validate_build_artifacts(&original, &built).is_err());
+    let mut captured = original.clone();
+    captured.output_paths.push("second.txt".into());
+    captured.validate().unwrap();
+    assert!(validate_build_artifacts(&captured, &output(&original)).is_err());
+    let mut built = output(&original);
+    let mut second = built.artifacts[0].clone();
+    second.id = "output-2".into();
+    second.logical_path = "second.txt".into();
+    built.artifacts.push(second);
+    validate_build_artifacts(&captured, &built).unwrap();
+    built.artifacts.reverse();
+    validate_build_artifacts(&captured, &built).unwrap();
 }
 #[test]
 fn artifacts_reject_unsafe_portable_aliases_and_parent_child_collisions() {
