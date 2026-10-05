@@ -9,8 +9,8 @@ use std::{
 };
 
 use tsumugi_plugin_host::{
-    HostError, InstallError, InstallReceipt, MAX_INSTALLED_PACKAGES, PackageFile, PackageImage,
-    PackageStore,
+    HostError, InstallError, InstallReceipt, InstalledObjectState, MAX_INSTALLED_PACKAGES,
+    PackageFile, PackageImage, PackageStore,
     catalog::{PackageApproval, PackageCatalog, PackageOrigin},
 };
 use tsumugi_plugin_sdk as sdk;
@@ -536,6 +536,34 @@ fn same_source_versions_coexist_and_loading_never_selects_a_newer_version() {
         &new_receipt
     );
     assert_ne!(old_receipt.package_digest(), new_receipt.package_digest());
+    let inventory = store.inventory(|| true).unwrap();
+    assert!(inventory.runtimes.is_empty());
+    let mut expected = vec![old_receipt, new_receipt];
+    expected.sort_by(|a, b| a.package_digest().cmp(b.package_digest()));
+    assert_eq!(
+        inventory
+            .packages
+            .iter()
+            .map(|p| p.receipt.clone())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert!(
+        inventory
+            .packages
+            .iter()
+            .all(|p| p.state == InstalledObjectState::Sealed)
+    );
+    assert!(!old.is_enabled(&old_approval.plugin).unwrap());
+    assert!(!new.is_enabled(&new_approval.plugin).unwrap());
+    drop(store);
+    assert_eq!(
+        PackageStore::open_existing(&root.root)
+            .unwrap()
+            .inventory(|| true)
+            .unwrap(),
+        inventory
+    );
 }
 
 #[test]
@@ -604,6 +632,10 @@ fn changed_cached_bytes_are_rejected_and_a_previous_capture_stays_immutable() {
     mode(&marker, 0o600);
     fs::write(&marker, b"tampered bytes").unwrap();
     mode(&marker, 0o400);
+    let inventory = store.inventory(|| true).unwrap();
+    assert_eq!(inventory.packages.len(), 1);
+    assert_eq!(inventory.packages[0].state, InstalledObjectState::Sealed);
+    assert_eq!(&inventory.packages[0].receipt, prior.receipt());
     assert_eq!(
         store.load(&approval, || true).unwrap_err(),
         InstallError::Host(HostError::PackageMismatch)
@@ -659,6 +691,12 @@ fn receipt_decoding_rejects_unknown_duplicate_and_invalid_version_or_action_fiel
         };
         replace_receipt(&path, &bytes);
         assert_eq!(
+            store.inventory(|| true).unwrap_err(),
+            InstallError::CorruptReceipt,
+            "{kind}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_eq!(
             store.load(&approval, || true).unwrap_err(),
             InstallError::CorruptReceipt,
             "{kind}"
@@ -688,6 +726,21 @@ fn structurally_valid_receipt_identity_or_origin_changes_cannot_impersonate_appr
             receipt["origin"]["sourceId"] = "other-registry".into();
         }
         replace_receipt(&path, &serde_json::to_vec(&receipt).unwrap());
+        if change_identity {
+            assert_eq!(
+                store.inventory(|| true).unwrap_err(),
+                InstallError::CorruptReceipt
+            );
+        } else {
+            // Observation of a legal origin is not authentication or approval.
+            assert_eq!(
+                store.inventory(|| true).unwrap().packages[0]
+                    .receipt
+                    .origin()
+                    .source_id,
+                "other-registry"
+            );
+        }
         assert_eq!(
             store.load(&approval, || true).unwrap_err(),
             InstallError::ApprovalMismatch
@@ -730,6 +783,7 @@ fn cached_links_and_writable_metadata_cannot_pass_digest_verification() {
             "writable-directory" => mode(&data, 0o700),
             _ => unreachable!(),
         }
+        assert!(store.inventory(|| true).is_err(), "{kind}");
         let error = store.load(&approval, || true).unwrap_err();
         assert!(
             matches!(
@@ -830,6 +884,9 @@ fn interrupted_and_unknown_candidates_are_retained_and_never_loaded_or_cleaned()
         InstallError::AuthorityRevoked
     );
     assert_eq!(root.candidates().len(), 2);
+    let inventory = store.inventory(|| true).unwrap();
+    assert!(inventory.packages.is_empty() && inventory.runtimes.is_empty());
+    assert_eq!(root.candidates().len(), 2);
     assert_eq!(
         store.load(&approval, || true).unwrap_err(),
         InstallError::MissingPackage
@@ -857,6 +914,18 @@ fn revocation_after_promotion_reports_unknown_commit_and_original_action_can_rec
         InstallError::UnknownCommit
     );
     assert!(object.join("receipt.json").exists());
+    let pending_receipt = fs::read(object.join("receipt.json")).unwrap();
+    let inventory = store.inventory(|| true).unwrap();
+    assert_eq!(inventory.packages.len(), 1);
+    assert_eq!(
+        inventory.packages[0].state,
+        InstalledObjectState::RecoveryRequired
+    );
+    assert_eq!(inventory.packages[0].receipt.action_id(), ACTION);
+    assert_eq!(
+        fs::read(object.join("receipt.json")).unwrap(),
+        pending_receipt
+    );
     assert!(root.candidates().is_empty());
     assert_eq!(
         fs::metadata(&object).unwrap().permissions().mode() & 0o777,
@@ -954,6 +1023,10 @@ fn object_enumeration_is_bounded_and_does_not_delete_excess_or_bad_objects() {
         fs::create_dir(root.root.join("objects").join(format!("{index:064x}"))).unwrap();
     }
     assert_eq!(
+        store.inventory(|| true).unwrap_err(),
+        InstallError::LimitExceeded
+    );
+    assert_eq!(
         install(&mut store, &catalog, &approval, ACTION).unwrap_err(),
         InstallError::LimitExceeded
     );
@@ -987,6 +1060,15 @@ fn a_full_valid_store_allows_original_action_retry_and_rejects_a_new_object() {
             .to_string();
         write_fixture_object(&root, &catalog, &approval, &action, &marker);
     }
+    let inventory = store.inventory(|| true).unwrap();
+    assert_eq!(inventory.packages.len(), MAX_INSTALLED_PACKAGES);
+    assert!(inventory.runtimes.is_empty());
+    assert!(
+        inventory
+            .packages
+            .windows(2)
+            .all(|pair| pair[0].receipt.package_digest() < pair[1].receipt.package_digest())
+    );
     let receipt = install(&mut store, &first, &first_approval, ACTION).unwrap();
     assert_eq!(receipt.action_id(), ACTION);
     let (next, next_approval) = fixture("example.resource", "0.128.0", "new object", origin());
@@ -1089,5 +1171,268 @@ fn directory_depth_profile_agrees_across_capture_install_and_reopen() {
                 InstallError::MissingPackage
             );
         }
+    }
+}
+
+#[test]
+fn inventory_rejects_invalid_manifest_identity_origin_and_oversized_metadata_without_repair() {
+    for damage in [
+        "manifest-unknown",
+        "manifest-duplicate",
+        "manifest-identity",
+        "manifest-oversized",
+        "origin",
+        "bytes",
+    ] {
+        let root = OwnedRoot::new();
+        let (catalog, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        install(&mut store, &catalog, &approval, ACTION).unwrap();
+        let object = root.object(&approval);
+        let path = if damage == "origin" {
+            object.join("receipt.json")
+        } else {
+            object.join("package/manifest.json")
+        };
+        let original = fs::read(&path).unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&original).unwrap();
+        let expected = match damage {
+            "manifest-unknown" => {
+                value["executionAllowed"] = true.into();
+                replace_receipt(&path, &serde_json::to_vec(&value).unwrap());
+                InstallError::CorruptStore
+            }
+            "manifest-duplicate" => {
+                let mut bytes = b"{\"protocolVersion\":1,".to_vec();
+                bytes.extend_from_slice(&original[1..]);
+                replace_receipt(&path, &bytes);
+                InstallError::CorruptStore
+            }
+            "manifest-identity" => {
+                value["plugin"]["id"] = "example.other".into();
+                replace_receipt(&path, &serde_json::to_vec(&value).unwrap());
+                InstallError::CorruptReceipt
+            }
+            "manifest-oversized" => {
+                replace_receipt(&path, &vec![b' '; sdk::MAX_MANIFEST_BYTES + 1]);
+                InstallError::CorruptStore
+            }
+            "origin" => {
+                value["origin"]["sourceId"] = "invalid origin".into();
+                replace_receipt(&path, &serde_json::to_vec(&value).unwrap());
+                InstallError::CorruptReceipt
+            }
+            "bytes" => {
+                let marker = object.join("package/data/marker.txt");
+                mode(&marker, 0o600);
+                fs::OpenOptions::new()
+                    .write(true)
+                    .open(&marker)
+                    .unwrap()
+                    .set_len(64 * 1024 * 1024 + 1)
+                    .unwrap();
+                mode(&marker, 0o400);
+                InstallError::CorruptStore
+            }
+            _ => unreachable!(),
+        };
+        let before = fs::read(&path).unwrap();
+        assert_eq!(store.inventory(|| true).unwrap_err(), expected, "{damage}");
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(root.candidates().is_empty());
+        assert_eq!(
+            fs::metadata(&object).unwrap().permissions().mode() & 0o777,
+            0o500
+        );
+    }
+}
+
+#[test]
+fn inventory_rejects_existing_collection_conflicts_without_admitting_or_removing_objects() {
+    for conflict in ["action", "identity", "source", "publisher"] {
+        let root = OwnedRoot::new();
+        let store = PackageStore::open_existing(&root.root).unwrap();
+        let (first, first_approval) = basic();
+        write_fixture_object(&root, &first, &first_approval, ACTION, "original bytes");
+        let mut second_origin = origin();
+        match conflict {
+            "source" => second_origin.source_id = "other-registry".into(),
+            "publisher" => second_origin.publisher_id = "other-key".into(),
+            _ => (),
+        }
+        let version = if conflict == "identity" {
+            "0.1.0"
+        } else {
+            "0.2.0"
+        };
+        let (second, second_approval) = fixture(
+            "example.resource",
+            version,
+            "different bytes",
+            second_origin,
+        );
+        let action = if conflict == "action" {
+            ACTION
+        } else {
+            OTHER_ACTION
+        };
+        write_fixture_object(&root, &second, &second_approval, action, "different bytes");
+        assert_eq!(
+            store.inventory(|| true).unwrap_err(),
+            InstallError::CorruptStore,
+            "{conflict}"
+        );
+        assert_eq!(fs::read_dir(root.root.join("objects")).unwrap().count(), 2);
+        assert!(root.object(&first_approval).join("receipt.json").exists());
+        assert!(root.object(&second_approval).join("receipt.json").exists());
+        assert!(root.candidates().is_empty());
+        assert!(!first.is_enabled(&first_approval.plugin).unwrap());
+        assert!(!second.is_enabled(&second_approval.plugin).unwrap());
+    }
+}
+
+#[test]
+fn inventory_observed_replacement_and_revocation_preserve_every_tree() {
+    for changed in ["root", "objects", "object", "revoked"] {
+        let root = OwnedRoot::new();
+        let (catalog, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        install(&mut store, &catalog, &approval, ACTION).unwrap();
+        let path = match changed {
+            "root" => root.root.clone(),
+            "objects" => root.root.join("objects"),
+            _ => root.object(&approval),
+        };
+        let moved = root.directory.path().join("retained");
+        let observed = Cell::new(false);
+        let error = store
+            .inventory(|| {
+                if changed == "revoked" {
+                    return false;
+                }
+                if !observed.replace(true) {
+                    mode(&path, 0o700);
+                    fs::rename(&path, &moved).unwrap();
+                    fs::create_dir(&path).unwrap();
+                    mode(&path, if changed == "object" { 0o500 } else { 0o700 });
+                    fs::write(moved.join("preserved.txt"), b"fixture retained").unwrap();
+                    if changed == "object" {
+                        mode(&moved, 0o500);
+                    }
+                }
+                true
+            })
+            .unwrap_err();
+        if changed == "revoked" {
+            assert_eq!(error, InstallError::AuthorityRevoked);
+            assert!(root.object(&approval).join("receipt.json").exists());
+        } else {
+            assert!(
+                matches!(
+                    error,
+                    InstallError::StoreChanged | InstallError::CorruptStore
+                ),
+                "{changed}: {error:?}"
+            );
+            assert!(path.is_dir());
+            assert_eq!(
+                fs::read(moved.join("preserved.txt")).unwrap(),
+                b"fixture retained"
+            );
+        }
+    }
+}
+
+#[test]
+fn inventory_rejects_manifest_changes_during_its_second_metadata_walk() {
+    for replacement in [false, true] {
+        let root = OwnedRoot::new();
+        let (catalog, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        install(&mut store, &catalog, &approval, ACTION).unwrap();
+        let path = root.object(&approval).join("package/manifest.json");
+        let original = fs::read(&path).unwrap();
+        let calls = Cell::new(0usize);
+        store
+            .inventory(|| {
+                calls.set(calls.get() + 1);
+                true
+            })
+            .unwrap();
+        // This fixture has two identical bounded tree walks around the manifest
+        // read. Derive a point well inside the second walk from the same scan,
+        // without fixing the number of guard checks in the implementation.
+        let change_at = calls.get() * 2 / 3;
+        calls.set(0);
+        let changed = Cell::new(false);
+        let retained = root.directory.path().join("retained-manifest.json");
+        let error = store
+            .inventory(|| {
+                calls.set(calls.get() + 1);
+                if calls.get() == change_at {
+                    changed.set(true);
+                    if replacement {
+                        mode(path.parent().unwrap(), 0o700);
+                        fs::rename(&path, &retained).unwrap();
+                        fs::write(&path, &original).unwrap();
+                        mode(&path, 0o400);
+                        mode(path.parent().unwrap(), 0o500);
+                    } else {
+                        // Even semantically identical bytes are an observed write,
+                        // and must not be confused with the captured manifest.
+                        replace_receipt(&path, &original);
+                    }
+                }
+                true
+            })
+            .unwrap_err();
+        assert!(changed.get());
+        assert_eq!(
+            error,
+            InstallError::StoreChanged,
+            "replacement={replacement}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        if replacement {
+            assert_eq!(fs::read(&retained).unwrap(), original);
+        }
+        assert!(root.candidates().is_empty());
+    }
+}
+
+#[test]
+fn inventory_rejects_namespace_insertion_at_the_final_live_check() {
+    for namespace in ["objects", "runtimes"] {
+        let root = OwnedRoot::new();
+        let (catalog, approval) = basic();
+        let mut store = PackageStore::open_existing(&root.root).unwrap();
+        install(&mut store, &catalog, &approval, ACTION).unwrap();
+        let calls = Cell::new(0usize);
+        store
+            .inventory(|| {
+                calls.set(calls.get() + 1);
+                true
+            })
+            .unwrap();
+        let final_check = calls.get();
+        calls.set(0);
+        let inserted = root.root.join(namespace).join("0".repeat(64));
+        let error = store
+            .inventory(|| {
+                calls.set(calls.get() + 1);
+                if calls.get() == final_check {
+                    fs::create_dir(&inserted).unwrap();
+                    fs::write(inserted.join("preserved.txt"), b"concurrent fixture").unwrap();
+                }
+                true
+            })
+            .unwrap_err();
+        assert_eq!(error, InstallError::StoreChanged, "{namespace}");
+        assert_eq!(
+            fs::read(inserted.join("preserved.txt")).unwrap(),
+            b"concurrent fixture"
+        );
+        assert!(root.object(&approval).join("receipt.json").exists());
+        assert!(root.candidates().is_empty());
     }
 }

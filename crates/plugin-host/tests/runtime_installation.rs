@@ -12,8 +12,8 @@ use std::{
 };
 
 use tsumugi_plugin_host::{
-    CapturedRuntime, InstallError, MAX_INSTALLED_RUNTIMES, PackageFile, PackageImage, PackageStore,
-    RuntimeApproval, RuntimeInstallReceipt,
+    CapturedRuntime, InstallError, InstalledObjectState, MAX_INSTALLED_RUNTIMES, PackageFile,
+    PackageImage, PackageStore, RuntimeApproval, RuntimeInstallReceipt,
     catalog::{PackageApproval, PackageCatalog, PackageOrigin},
 };
 use tsumugi_plugin_sdk as sdk;
@@ -241,6 +241,11 @@ fn reopen_uses_original_complete_bytes_after_sources_are_removed() {
     fs::remove_dir_all(&fixture.tool).unwrap();
     fs::remove_dir_all(&fixture.host).unwrap();
     let store = PackageStore::open_existing(&fixture.root).unwrap();
+    let inventory = store.inventory(|| true).unwrap();
+    assert!(inventory.packages.is_empty());
+    assert_eq!(inventory.runtimes.len(), 1);
+    assert_eq!(inventory.runtimes[0].receipt, receipt);
+    assert_eq!(inventory.runtimes[0].state, InstalledObjectState::Sealed);
     let loaded = store.load_runtime(&fixture.approval, || true).unwrap();
     assert_eq!(loaded.receipt(), &receipt);
     assert_eq!(loaded.runtime().descriptor(), &fixture.approval.environment);
@@ -399,6 +404,35 @@ fn package_and_runtime_actions_share_one_locked_namespace() {
         }
         store.load(&approval, || true).unwrap();
         store.load_runtime(&fixture.approval, || true).unwrap();
+        let inventory = store.inventory(|| true).unwrap();
+        assert_eq!(inventory.packages.len(), 1);
+        assert_eq!(inventory.runtimes.len(), 1);
+        assert_ne!(
+            inventory.packages[0].receipt.action_id(),
+            inventory.runtimes[0].receipt.action_id()
+        );
+        let mut corrupted = serde_json::to_value(&inventory.runtimes[0].receipt).unwrap();
+        corrupted["actionId"] = inventory.packages[0].receipt.action_id().into();
+        mode(&fixture.receipt_path(), 0o600);
+        fs::write(
+            fixture.receipt_path(),
+            serde_json::to_vec(&corrupted).unwrap(),
+        )
+        .unwrap();
+        mode(&fixture.receipt_path(), 0o400);
+        assert_eq!(
+            store.inventory(|| true).unwrap_err(),
+            InstallError::CorruptStore
+        );
+        assert!(fixture.receipt_path().exists());
+        assert!(
+            fixture
+                .root
+                .join("objects")
+                .join(approval.package_digest)
+                .join("receipt.json")
+                .exists()
+        );
     }
 }
 
@@ -516,6 +550,22 @@ fn strict_receipts_cannot_replace_independent_approval() {
                 InstallError::CorruptReceipt
             }
         );
+        if damage == "origin" {
+            assert_eq!(
+                store.inventory(|| true).unwrap().runtimes[0]
+                    .receipt
+                    .approval()
+                    .origin
+                    .source_id,
+                "changed-source"
+            );
+        } else {
+            assert_eq!(
+                store.inventory(|| true).unwrap_err(),
+                InstallError::CorruptReceipt,
+                "{damage}"
+            );
+        }
         assert!(fixture.receipt_path().exists());
     }
 }
@@ -568,6 +618,15 @@ fn revoked_promoted_runtime_requires_exact_original_action_recovery() {
             .unwrap_err(),
         InstallError::UnknownCommit
     );
+    let before = fs::read(fixture.receipt_path()).unwrap();
+    let inventory = store.inventory(|| true).unwrap();
+    assert_eq!(inventory.runtimes.len(), 1);
+    assert_eq!(
+        inventory.runtimes[0].state,
+        InstalledObjectState::RecoveryRequired
+    );
+    assert_eq!(inventory.runtimes[0].receipt.action_id(), ACTION);
+    assert_eq!(fs::read(fixture.receipt_path()).unwrap(), before);
     assert_eq!(
         store.load_runtime(&fixture.approval, || true).unwrap_err(),
         InstallError::RecoveryRequired
@@ -654,6 +713,10 @@ fn full_runtime_namespace_allows_original_action_retry_only() {
             .install_runtime(&action, &runtime, &approval, || true)
             .unwrap();
     }
+    let inventory = store.inventory(|| true).unwrap();
+    assert_eq!(inventory.runtimes.len(), MAX_INSTALLED_RUNTIMES);
+    assert!(inventory.packages.is_empty());
+    assert!(inventory.runtimes.windows(2).all(|pair| pair[0].receipt.environment_digest() < pair[1].receipt.environment_digest()));
     let mut approval = fixture.approval.clone();
     approval.environment.tool_version = "26.10.0".into();
     let first = CapturedRuntime::capture_directories(
@@ -684,6 +747,17 @@ fn full_runtime_namespace_allows_original_action_retry_only() {
     assert_eq!(
         fs::read_dir(fixture.root.join("runtimes")).unwrap().count(),
         MAX_INSTALLED_RUNTIMES
+    );
+    let excess = fixture.root.join("runtimes").join("0".repeat(64));
+    fs::create_dir(&excess).unwrap();
+    assert_eq!(
+        store.inventory(|| true).unwrap_err(),
+        InstallError::LimitExceeded
+    );
+    assert!(excess.exists());
+    assert_eq!(
+        fs::read_dir(fixture.root.join("runtimes")).unwrap().count(),
+        MAX_INSTALLED_RUNTIMES + 1
     );
 }
 
@@ -763,6 +837,10 @@ fn unselected_runtime_index_never_approves_its_cached_bytes() {
     )
     .unwrap();
     mode(&stored_host, 0o400);
+    let inventory = store.inventory(|| true).unwrap();
+    assert_eq!(inventory.runtimes.len(), 1);
+    assert_eq!(inventory.runtimes[0].state, InstalledObjectState::Sealed);
+    assert_eq!(inventory.runtimes[0].receipt.approval(), &fixture.approval);
     // A's strict record participates only in conflict detection while installing
     // B. A becomes executable bytes only after a separate complete load check.
     store

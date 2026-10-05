@@ -200,6 +200,34 @@ pub struct InstalledRuntime {
     runtime: CapturedRuntime,
     receipt: RuntimeInstallReceipt,
 }
+
+/// Metadata-only installation state. Sealed does not mean approved or that
+/// executable bytes have been recaptured; selected load still verifies both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstalledObjectState {
+    Sealed,
+    RecoveryRequired,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledPackageRecord {
+    pub receipt: InstallReceipt,
+    pub state: InstalledObjectState,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledRuntimeRecord {
+    pub receipt: RuntimeInstallReceipt,
+    pub state: InstalledObjectState,
+}
+
+/// Bounded, deterministic receipt metadata. No executable snapshot, enablement
+/// or approval is returned. Private interrupted candidates remain untouched.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstalledInventory {
+    pub packages: Vec<InstalledPackageRecord>,
+    pub runtimes: Vec<InstalledRuntimeRecord>,
+}
 impl InstalledRuntime {
     pub fn runtime(&self) -> &CapturedRuntime {
         &self.runtime
@@ -227,6 +255,23 @@ impl fmt::Debug for PackageStore {
 }
 
 impl PackageStore {
+    /// Inspect at most 128 packages and 128 runtime environments on a blocking
+    /// worker, with the existing sixty-second observed IO deadline. Strict
+    /// receipts, package manifest identity and readonly tree metadata are
+    /// checked. Full artifact hashing and admission require independent approval
+    /// and selected load; receipts cannot be used as a source of that approval.
+    pub fn inventory(&self, authorized: impl Fn() -> bool) -> InstallResult<InstalledInventory> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.inventory(&authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = authorized;
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
     /// Provision a fixed application-owned suffix below an existing current-user
     /// directory. The anchor may be readable by others, but not writable by them;
     /// every suffix directory must be private mode 0700. Existing permissions are
@@ -580,30 +625,58 @@ mod platform {
         }
         Ok(())
     }
-    fn read_receipt(file: &File) -> InstallResult<Vec<u8>> {
+    fn read_immutable(
+        file: &File,
+        limit: usize,
+        oversized: InstallError,
+    ) -> InstallResult<Vec<u8>> {
         private(file, false, 0o400)?;
-        let before = metadata(file)?;
-        if before.len() > MAX_RECEIPT_BYTES as u64 {
-            return Err(InstallError::CorruptReceipt);
+        let before = Stamp::from(&metadata(file)?);
+        if before.length > limit as u64 {
+            return Err(oversized);
         }
-        let mut bytes = Vec::with_capacity(before.len() as usize);
-        file.take((MAX_RECEIPT_BYTES + 1) as u64)
+        let mut bytes = Vec::with_capacity(before.length as usize);
+        file.take((limit + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| InstallError::Io)?;
-        let after = metadata(file)?;
-        if bytes.len() as u64 != before.len()
-            || after.dev() != before.dev()
-            || after.ino() != before.ino()
-            || after.mode() != before.mode()
-            || after.nlink() != before.nlink()
-            || after.uid() != before.uid()
-            || after.len() != before.len()
-            || (after.mtime(), after.mtime_nsec()) != (before.mtime(), before.mtime_nsec())
-            || (after.ctime(), after.ctime_nsec()) != (before.ctime(), before.ctime_nsec())
-        {
+        if bytes.len() as u64 != before.length {
             return Err(InstallError::StoreChanged);
         }
+        unchanged(file, &before)?;
         Ok(bytes)
+    }
+
+    fn read_receipt(file: &File) -> InstallResult<Vec<u8>> {
+        read_immutable(file, MAX_RECEIPT_BYTES, InstallError::CorruptReceipt)
+    }
+
+    #[derive(Default)]
+    struct PackageReceiptIndex {
+        actions: BTreeSet<String>,
+        plugins: BTreeSet<PluginIdentity>,
+        origins: BTreeMap<String, (String, String, String)>,
+    }
+    impl PackageReceiptIndex {
+        fn insert(&mut self, receipt: &InstallReceipt) -> InstallResult<()> {
+            if !self.actions.insert(receipt.action_id.clone())
+                || !self.plugins.insert(receipt.plugin.clone())
+            {
+                return Err(InstallError::CorruptStore);
+            }
+            let origin = (
+                receipt.origin.source_id.clone(),
+                receipt.origin.publisher_id.clone(),
+                receipt.plugin.publisher.clone(),
+            );
+            if self
+                .origins
+                .insert(receipt.plugin.id.clone(), origin.clone())
+                .is_some_and(|old| old != origin)
+            {
+                return Err(InstallError::CorruptStore);
+            }
+            Ok(())
+        }
     }
 
     fn open_namespace(root: &File, child: &str, root_id: (u64, u64)) -> InstallResult<File> {
@@ -664,6 +737,58 @@ mod platform {
     }
 
     impl Store {
+        pub(super) fn inventory(
+            &self,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<InstalledInventory> {
+            let guard = OperationGuard::new(authorized);
+            guard.finish(self.inventory_inner(&|| guard.allowed()))
+        }
+
+        fn inventory_inner(
+            &self,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<InstalledInventory> {
+            self.check(authorized)?;
+            let objects_before = Stamp::from(&metadata(&self.objects)?);
+            let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
+            let mut index = PackageReceiptIndex::default();
+            let mut packages = Vec::new();
+            for digest in self.names(authorized)? {
+                let object = self.open_object(&digest, authorized)?;
+                self.inspect_package_index(&digest, &object, authorized)?;
+                index.insert(&object.receipt)?;
+                packages.push(InstalledPackageRecord {
+                    state: if object.directory_mode == 0o500 {
+                        InstalledObjectState::Sealed
+                    } else {
+                        InstalledObjectState::RecoveryRequired
+                    },
+                    receipt: object.receipt,
+                });
+            }
+            let mut runtimes = Vec::new();
+            for digest in self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, authorized)? {
+                let object = self.open_runtime_object(&digest, authorized)?;
+                self.inspect_runtime_index(&digest, &object, authorized)?;
+                if !index.actions.insert(object.receipt.action_id.clone()) {
+                    return Err(InstallError::CorruptStore);
+                }
+                runtimes.push(InstalledRuntimeRecord {
+                    state: if object.directory_mode == 0o500 {
+                        InstalledObjectState::Sealed
+                    } else {
+                        InstalledObjectState::RecoveryRequired
+                    },
+                    receipt: object.receipt,
+                });
+            }
+            self.check(authorized)?;
+            unchanged(&self.objects, &objects_before)?;
+            unchanged(&self.runtimes, &runtimes_before)?;
+            Ok(InstalledInventory { packages, runtimes })
+        }
+
         pub(super) fn provision(
             anchor: &Path,
             suffix: &[&str],
@@ -1066,6 +1191,50 @@ mod platform {
             Ok(image)
         }
 
+        fn inspect_package_index(
+            &self,
+            digest: &str,
+            object: &Object,
+            authorized: &impl Fn() -> bool,
+        ) -> InstallResult<()> {
+            self.check_object(digest, object, authorized)?;
+            self.inspect_package(&object.package, authorized, false)?;
+            crate::catalog::validate_origin(&object.receipt.origin)
+                .map_err(|_| InstallError::CorruptReceipt)?;
+            let manifest =
+                filesystem::open_child(&object.package, OsStr::new("manifest.json"), false)?;
+            let manifest_before = Stamp::from(&metadata(&manifest)?);
+            let bytes = read_immutable(
+                &manifest,
+                sdk::MAX_MANIFEST_BYTES,
+                InstallError::CorruptStore,
+            )?;
+            let parsed = sdk::parse_manifest(&bytes).map_err(|_| InstallError::CorruptStore)?;
+            if parsed.manifest().plugin != object.receipt.plugin {
+                return Err(InstallError::CorruptReceipt);
+            }
+            same_file(
+                &object.package,
+                OsStr::new("manifest.json"),
+                false,
+                filesystem::identity(&manifest)?,
+            )?;
+            self.inspect_package(&object.package, authorized, false)?;
+            let reopened =
+                filesystem::open_child(&object.directory, OsStr::new("receipt.json"), false)?;
+            if read_receipt(&reopened)? != object.receipt_bytes {
+                return Err(InstallError::StoreChanged);
+            }
+            self.check_object(digest, object, authorized)?;
+            same_file(
+                &object.package,
+                OsStr::new("manifest.json"),
+                false,
+                filesystem::identity(&manifest)?,
+            )?;
+            unchanged(&manifest, &manifest_before)
+        }
+
         pub(super) fn load(
             &self,
             approval: &PackageApproval,
@@ -1124,7 +1293,10 @@ mod platform {
             self.check(authorized)?;
             let objects_before = Stamp::from(&metadata(&self.objects)?);
             let runtimes_before = Stamp::from(&metadata(&self.runtimes)?);
-            let mut seen_actions = self.runtime_actions(action_id, authorized)?;
+            let mut index = PackageReceiptIndex {
+                actions: self.runtime_actions(action_id, authorized)?,
+                ..PackageReceiptIndex::default()
+            };
             let names = self.names(authorized)?;
             let receipt = InstallReceipt {
                 format_version: RECEIPT_VERSION,
@@ -1134,8 +1306,6 @@ mod platform {
                 origin: package.origin().clone(),
             };
             receipt.validate()?;
-            let mut seen_plugins = BTreeSet::new();
-            let mut origins: BTreeMap<String, (String, String, String)> = BTreeMap::new();
             let mut existing = None;
             let mut unrelated_pending = false;
             // Count and verify the complete bounded object set. A corrupt
@@ -1145,22 +1315,7 @@ mod platform {
                 let object = self.open_object(digest, authorized)?;
                 let image = self.capture_object(digest, &object, authorized)?;
                 let prior = &object.receipt;
-                if !seen_actions.insert(prior.action_id.clone())
-                    || !seen_plugins.insert(prior.plugin.clone())
-                {
-                    return Err(InstallError::CorruptStore);
-                }
-                let origin = (
-                    prior.origin.source_id.clone(),
-                    prior.origin.publisher_id.clone(),
-                    prior.plugin.publisher.clone(),
-                );
-                if origins
-                    .insert(prior.plugin.id.clone(), origin.clone())
-                    .is_some_and(|old| old != origin)
-                {
-                    return Err(InstallError::CorruptStore);
-                }
+                index.insert(prior)?;
                 if prior.action_id == action_id && prior != &receipt {
                     return Err(InstallError::ActionConflict);
                 }
@@ -1505,28 +1660,13 @@ mod platform {
             action: &str,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<BTreeSet<String>> {
-            let mut seen = BTreeSet::new();
-            let mut plugins = BTreeSet::new();
-            let mut origins = BTreeMap::new();
+            let mut index = PackageReceiptIndex::default();
             let mut pending = false;
             for digest in self.names(authorized)? {
                 let object = self.open_object(&digest, authorized)?;
                 self.capture_object(&digest, &object, authorized)?;
                 let prior = &object.receipt;
-                if !seen.insert(prior.action_id.clone()) || !plugins.insert(prior.plugin.clone()) {
-                    return Err(InstallError::CorruptStore);
-                }
-                let origin = (
-                    prior.origin.source_id.clone(),
-                    prior.origin.publisher_id.clone(),
-                    prior.plugin.publisher.clone(),
-                );
-                if origins
-                    .insert(prior.plugin.id.clone(), origin.clone())
-                    .is_some_and(|old| old != origin)
-                {
-                    return Err(InstallError::CorruptStore);
-                }
+                index.insert(prior)?;
                 if prior.action_id == action {
                     return Err(InstallError::ActionConflict);
                 }
@@ -1535,7 +1675,7 @@ mod platform {
             if pending {
                 return Err(InstallError::RecoveryRequired);
             }
-            Ok(seen)
+            Ok(index.actions)
         }
 
         pub(super) fn load_runtime(
@@ -1929,8 +2069,11 @@ mod platform {
             authorized: &impl Fn() -> bool,
             synchronize: bool,
         ) -> InstallResult<()> {
-            self.inspect_tree(package, PACKAGE_TREE, authorized, synchronize)
-                .map(|_| ())
+            let (_, bytes) = self.inspect_tree(package, PACKAGE_TREE, authorized, synchronize)?;
+            if bytes > super::super::MAX_PACKAGE_BYTES as u64 {
+                return Err(InstallError::CorruptStore);
+            }
+            Ok(())
         }
 
         fn inspect_tree(

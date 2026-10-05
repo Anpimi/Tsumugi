@@ -13,7 +13,8 @@ mod session;
 mod staging;
 mod tree;
 pub use package::installation::{
-    InstallError, InstallReceipt, InstallResult, InstalledPackage, InstalledRuntime,
+    InstallError, InstallReceipt, InstallResult, InstalledInventory, InstalledObjectState,
+    InstalledPackage, InstalledPackageRecord, InstalledRuntime, InstalledRuntimeRecord,
     MAX_INSTALLED_PACKAGES, MAX_INSTALLED_RUNTIMES, PackageStore, RuntimeApproval,
     RuntimeInstallReceipt,
 };

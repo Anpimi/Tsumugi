@@ -12,7 +12,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
-- The experimental local plugin store can provision a bounded private application directory using its existing descriptor and lock owner. It preserves existing permissions and rejects links, observed path replacement and revoked initialization; creating storage does not approve or enable a plugin.
+- The experimental local plugin store can provision a bounded private application directory using its existing descriptor and lock owner. It preserves existing permissions and rejects links, observed path replacement and revoked initialization; creating storage does not approve or enable a plugin. Its bounded metadata inventory lists installed package/runtime receipts and interrupted objects without executing, repairing or approving them; independent approval and complete byte verification remain mandatory for selected loading.
 
 - Experimental source checks capture required rules and the selected package before execution, using the existing check-result coverage contract. Content schema 2 retains original identity display evidence separately from canonical matching; a captured revision policy selects opaque domain evidence. Source and proposal each have a 2 MiB encoded limit; their combined check request has a separate 4 MiB limit. Process frames reserve space for worst-case JSON quoting and metadata, while raw payload and complete result-frame limits are enforced independently. Earlier experimental shapes are refused without conversion, within the same undistributed SDK alpha batch.
 

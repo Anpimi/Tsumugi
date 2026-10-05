@@ -88,7 +88,10 @@ refactor rather than converting earlier experimental snapshots.
 Bounded application-directory provisioning uses that same Host store and its
 existing on-disk layout. It adds no SDK/wire or project-format change, remains
 in this undistributed application batch, and does not establish desktop catalog
-controls, trusted runtime distribution or a new release boundary.
+controls, trusted runtime distribution or a new release boundary. Metadata-only
+package/runtime inventory extends this same store without changing its layout,
+SDK/wire profile or schema 18. It does not persist approval or enablement, and
+there is no additional version bump or earlier development-format migration.
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
 

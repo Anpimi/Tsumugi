@@ -139,6 +139,23 @@ with a live guard; its observed deadline is 60 seconds. Failure can leave privat
 empty directories or initialized namespaces, which the same suffix can safely
 reopen. This does not approve packages, enable a catalog entry or restore grants.
 
+`PackageStore::inventory` observes a deterministic list of at most 128 package
+and 128 runtime receipts under that same lock and live IO guard. It validates
+strict receipt fields, SDK manifest identity, origin syntax, readonly metadata,
+namespace consistency and the shared action/identity conflict index. Package
+metadata retains the 64 MiB limit; runtime metadata retains its existing complete
+tree limits. An interrupted promoted object is listed as `RecoveryRequired` and
+is not sealed or repaired. Unknown private candidates remain untouched.
+
+Inventory is metadata only. `Sealed` describes the wrapper, not authenticated
+provenance, verified executable bytes or readiness to run. A legal observed origin
+is not independent approval; readonly executable bytes can have changed before
+inspection. Callers must still obtain a trusted `PackageApproval` or
+`RuntimeApproval` and use selected `load`/`load_runtime` for complete capture and
+admission. Inventory creates no approval, enablement, process or Core grant.
+Like the other store APIs, it belongs on a blocking worker and is not an OS
+sandbox against software running as the same user.
+
 Installation accepts an already approved `RegisteredPackage` and a canonical
 non-nil UUID action. It writes captured bytes into a private candidate, synchronizes
 files and nested directories, then promotes the whole object exclusively under
