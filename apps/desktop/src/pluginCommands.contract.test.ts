@@ -1,12 +1,43 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
 import candidate from "../test/fixtures/pluginPackage.contract.json";
-import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup } from "./generated/plugins.validators";
+import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource } from "./generated/plugins.validators";
 import { pluginCommands } from "./pluginCommands";
 import runtime from "../test/fixtures/pluginRuntime.contract.json";
+import source from "../test/fixtures/pluginSource.contract.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+
+it("keeps the shared source recipe, exact providers and installed environment in one read snapshot", () => {
+  expect(validateRequestSource(source.request)).toBe(true);
+  expect(validateResponseSource(source.view)).toBe(true);
+  expect(source.view.extractor.provider.plugin).toEqual(source.request.package.plugin);
+  expect(source.view.checker.provider.packageDigest).toBe(source.request.package.packageDigest);
+  expect(source.view.extractor.provider.contributionId).not.toBe(source.view.checker.provider.contributionId);
+  expect(source.view.environmentDigest).toBe(source.request.environmentDigest);
+  expect(source.view.declaration.materials.map(material => material.logicalPath)).toEqual(["materials/raw.txt", "metadata/header.txt"]);
+});
+
+it("refuses caller source paths or grants and incomplete or unrecognized source observations", () => {
+  for (const field of ["directory", "origin", "environment", "approved", "grantId", "allowUnsandboxedExecution"]) {
+    expect(validateRequestSource({ ...source.request, [field]: true })).toBe(false);
+  }
+  expect(validateRequestSource({ ...source.request, package: { ...source.request.package, approved: true } })).toBe(false);
+  expect(validateResponseSource({ ...source.view, settingsRevision: 1 })).toBe(false);
+  expect(validateResponseSource({ ...source.view, settingsRevision: "01" })).toBe(false);
+  expect(validateResponseSource({ ...source.view, permissionGranted: true })).toBe(false);
+  expect(validateResponseSource({ ...source.view, checker: undefined })).toBe(false);
+  expect(validateResponseSource({ ...source.view, environment: { ...source.view.environment, launcherPath: "/untrusted" } })).toBe(false);
+});
+
+it("reads an exact source environment through the shared adapter and rejects malformed replies", async () => {
+  invoke.mockResolvedValueOnce(source.view);
+  await expect(pluginCommands.source(source.request)).resolves.toEqual(source.view);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_source", { request: source.request });
+  invoke.mockResolvedValueOnce({ ...source.view, runtimeOrigin: undefined });
+  await expect(pluginCommands.source(source.request)).rejects.toThrow("Invalid IPC response: read_plugin_source");
+});
 
 it("keeps the shared Serde fixture's installation and approval observations separate", () => {
   expect(validateRequestInventory(fixture.request)).toBe(true);

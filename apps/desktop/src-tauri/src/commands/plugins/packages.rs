@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use tsumugi_core::execution::ExecutionId;
 use tsumugi_plugin_host::{
-    ApprovedPackageSetting, PackageImage, PluginSettingsUpdate,
+    ApprovedPackageSetting, PackageImage, PluginSettings, PluginSettingsUpdate,
     catalog::{
         CatalogError, PackageApproval, PackageCatalog, RegisteredPackage, ResolvedCapability,
     },
@@ -131,7 +131,7 @@ fn at_stage(error: InstallError, stage: CommandStage) -> CommandError {
     error.stage = stage;
     error
 }
-fn catalog_error(error: CatalogError) -> CommandError {
+pub(super) fn catalog_error(error: CatalogError) -> CommandError {
     match error {
         CatalogError::DisabledPackage => failure(
             CommandErrorCode::PermissionDenied,
@@ -558,33 +558,53 @@ impl ApplicationPlugins {
         let allowed = || self.open.load(Ordering::Acquire);
         let store = manager.store.as_ref().expect("store provisioned");
         let settings = store.settings(allowed).map_err(map_store_error)?;
-        let decision = settings
-            .packages()
-            .iter()
-            .find(|entry| {
-                entry.approval.plugin == provider.plugin
-                    && entry.approval.package_digest == provider.package_digest
-            })
-            .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
-        if !decision.enabled {
-            return Err(catalog_error(CatalogError::DisabledPackage));
-        }
-        let loaded = store
-            .load(&decision.approval, allowed)
-            .map_err(map_store_error)?;
-        let mut catalog = PackageCatalog::new();
-        catalog
-            .register(loaded.image().clone(), decision.approval.clone())
-            .map_err(catalog_error)?;
-        catalog
-            .set_enabled(&provider.plugin, true)
-            .map_err(catalog_error)?;
+        let catalog = load_enabled_catalog(
+            store,
+            &settings,
+            &PluginPackageRequest {
+                plugin: provider.plugin.clone(),
+                package_digest: provider.package_digest.clone(),
+            },
+            allowed,
+        )?;
         let resolved = catalog.lookup(provider).map_err(catalog_error)?;
         if store.settings(allowed).map_err(map_store_error)? != settings {
             return Err(map_store_error(InstallError::RevisionConflict));
         }
         Ok(resolved)
     }
+}
+
+/// Shared eligibility/capture owner for a fresh exact capability or a complete
+/// source environment. Approval and enablement never grant execution rights.
+pub(super) fn load_enabled_catalog(
+    store: &PackageStore,
+    settings: &PluginSettings,
+    request: &PluginPackageRequest,
+    allowed: impl Fn() -> bool,
+) -> Result<PackageCatalog, CommandError> {
+    let decision = settings
+        .packages()
+        .iter()
+        .find(|entry| {
+            entry.approval.plugin == request.plugin
+                && entry.approval.package_digest == request.package_digest
+        })
+        .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
+    if !decision.enabled {
+        return Err(catalog_error(CatalogError::DisabledPackage));
+    }
+    let loaded = store
+        .load(&decision.approval, allowed)
+        .map_err(map_store_error)?;
+    let mut catalog = PackageCatalog::new();
+    catalog
+        .register(loaded.image().clone(), decision.approval.clone())
+        .map_err(catalog_error)?;
+    catalog
+        .set_enabled(&request.plugin, true)
+        .map_err(catalog_error)?;
+    Ok(catalog)
 }
 
 #[tauri::command]

@@ -17,6 +17,7 @@ use tsumugi_plugin_host::{
 use tsumugi_plugin_sdk as sdk;
 pub(super) mod packages;
 pub(super) mod runtimes;
+pub(super) mod sources;
 pub use packages::{
     PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
     PluginPackageDetailsView, PluginPackageRequest,
@@ -24,6 +25,7 @@ pub use packages::{
 pub use runtimes::{
     PluginRuntimeInstallRequest, PluginRuntimeLookupRequest, PluginRuntimeOfferView,
 };
+pub use sources::{PluginSourceRequest, PluginSourceView};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

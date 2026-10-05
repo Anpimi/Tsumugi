@@ -185,6 +185,7 @@ export interface Responses {
   inventory: PluginInventoryView;
   package: PluginPackageDetailsView;
   runtime: RuntimeEnvironmentDescriptor;
+  source: PluginSourceView;
 }
 /**
  * Captured declaration data for one selected capability. Requested permissions
@@ -396,4 +397,41 @@ export interface PluginPackageDetailsView {
   enabled: boolean;
   manifest: PluginManifest;
   packageDigest: string;
+}
+export interface PluginSourceView {
+  checker: CapabilityBinding;
+  declaration: SourceImportDeclaration;
+  environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
+  extractor: CapabilityBinding;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * All listed materials are required, relative to one user-selected directory.
+ * This first contract supports fixed files, not globs or discovery programs.
+ */
+export interface SourceImportDeclaration {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  materials: SourceMaterialDeclaration[];
+  profile: ContractRef;
+  revisionPolicy: SourceRevisionPolicy;
+  semanticRules: ContractRef[];
+}
+export interface SourceMaterialDeclaration {
+  logicalPath: string;
+  maxBytes: number;
+  role: string;
+}
+/**
+ * Captured by the trusted policy owner before a proposal is received. Only
+ * these exact block schemas contribute opaque bytes to source revisions.
+ */
+export interface SourceRevisionPolicy {
+  profile: ContractRef;
+  revisionBasis: ContractRef[];
 }

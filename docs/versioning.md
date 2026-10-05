@@ -77,6 +77,10 @@ The optional package source-import Resource has its own experimental contract
 It fixes a material recipe and independent extractor/checker declarations before
 execution. Host resource lookup and generic authorized material capture add no
 manifest fields, process/exchange version, Store layout or project schema change.
+Read-only Desktop source-environment resolution extends generated IPC using the
+same SDK types, current package enablement and independent installed-runtime
+approval. It creates no project mutation or execution grant and changes no
+application, SDK, process or data-format version.
 Existing static desktop source assembly has not been cut over by these APIs.
 Application `0.2.0-alpha.1`, SDK `0.1.0-alpha.1` and schema 18 remain in the same
 undistributed batch, with no additional bump or earlier development migration.

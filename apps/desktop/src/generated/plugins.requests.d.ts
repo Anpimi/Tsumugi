@@ -11,6 +11,7 @@ export interface Requests {
   package: PluginPackageRequest;
   runtimeInstall: PluginRuntimeInstallRequest;
   runtimeLookup: PluginRuntimeLookupRequest;
+  source: PluginSourceRequest;
 }
 export interface PluginEnableRequest {
   actionId: ExecutionId;
@@ -58,4 +59,9 @@ export interface PluginRuntimeInstallRequest {
 }
 export interface PluginRuntimeLookupRequest {
   environmentDigest: string;
+}
+export interface PluginSourceRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
 }

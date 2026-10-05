@@ -8,9 +8,11 @@ export declare function validateRequestLookup(value: unknown): value is Requests
 export declare function validateRequestPackage(value: unknown): value is Requests["package"];
 export declare function validateRequestRuntimeInstall(value: unknown): value is Requests["runtimeInstall"];
 export declare function validateRequestRuntimeLookup(value: unknown): value is Requests["runtimeLookup"];
+export declare function validateRequestSource(value: unknown): value is Requests["source"];
 export declare function validateResponseBinding(value: unknown): value is Responses["binding"];
 export declare function validateResponseCandidate(value: unknown): value is Responses["candidate"];
 export declare function validateResponseError(value: unknown): value is Responses["error"];
 export declare function validateResponseInventory(value: unknown): value is Responses["inventory"];
 export declare function validateResponsePackage(value: unknown): value is Responses["package"];
 export declare function validateResponseRuntime(value: unknown): value is Responses["runtime"];
+export declare function validateResponseSource(value: unknown): value is Responses["source"];

@@ -1,8 +1,8 @@
 import { checkedInvoke } from "./ipc";
-import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime } from "./generated/plugins.validators";
-import type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginRuntimeInstallRequest, PluginRuntimeLookupRequest } from "./generated/plugins.requests";
-export type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginRuntimeInstallRequest, PluginRuntimeLookupRequest } from "./generated/plugins.requests";
-export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest } from "./generated/plugins.responses";
+import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource } from "./generated/plugins.validators";
+import type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginRuntimeInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest } from "./generated/plugins.requests";
+export type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginRuntimeInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest } from "./generated/plugins.requests";
+export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView } from "./generated/plugins.responses";
 
 export const pluginCommands = {
   inventory: () => checkedInvoke("read_plugin_inventory", {}, validateResponseInventory),
@@ -13,4 +13,5 @@ export const pluginCommands = {
   lookup: (request: PluginLookupRequest) => checkedInvoke("lookup_plugin_capability", request, validateResponseBinding),
   installRuntime: (request: PluginRuntimeInstallRequest) => checkedInvoke("install_plugin_runtime", request, validateResponseInventory),
   lookupRuntime: (request: PluginRuntimeLookupRequest) => checkedInvoke("lookup_plugin_runtime", request, validateResponseRuntime),
+  source: (request: PluginSourceRequest) => checkedInvoke("read_plugin_source", request, validateResponseSource),
 };

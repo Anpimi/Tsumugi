@@ -3,7 +3,7 @@
 use super::*;
 use crate::runtime_bundle::{self, BundledRuntimeMetadata};
 use tsumugi_core::execution::ExecutionId;
-use tsumugi_plugin_host::{CapturedRuntime, RuntimeApproval};
+use tsumugi_plugin_host::{CapturedRuntime, PluginSettings, RuntimeApproval};
 
 include!(concat!(env!("OUT_DIR"), "/bundled-runtime.rs"));
 
@@ -191,29 +191,41 @@ impl ApplicationPlugins {
         let allowed = || self.open.load(Ordering::Acquire);
         let store = manager.store.as_ref().expect("store provisioned");
         let settings = store.settings(allowed).map_err(map_store_error)?;
-        let approval = settings
-            .runtimes()
-            .iter()
-            .find(|entry| entry.environment.digest().ok().as_deref() == Some(digest))
-            .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
-        let pin = runtime_bundle::node_pin().map_err(|_| unavailable())?;
-        // Deliberately selected older Host snapshots can coexist. Their complete
-        // descriptor and current independent decision must still match exactly.
-        if approval.origin != runtime_bundle::bundled_origin()
-            || !runtime_bundle::supported_tool(&approval.environment, &pin)
-            || availability(&approval.environment, &pin.minimum_system_version)
-                != RuntimeAvailability::Available
-        {
-            return Err(unavailable());
-        }
-        let loaded = store
-            .load_runtime(approval, allowed)
-            .map_err(map_store_error)?;
+        let (runtime, _) = load_approved_runtime(store, &settings, digest, allowed)?;
         if store.settings(allowed).map_err(map_store_error)? != settings {
             return Err(map_store_error(InstallError::RevisionConflict));
         }
-        Ok(loaded.runtime().clone())
+        Ok(runtime)
     }
+}
+
+/// Use the same current decision and platform policy for individual runtime
+/// inspection and complete source resolution; no descriptor comes from a caller.
+pub(super) fn load_approved_runtime(
+    store: &PackageStore,
+    settings: &PluginSettings,
+    digest: &str,
+    allowed: impl Fn() -> bool,
+) -> Result<(CapturedRuntime, PackageOrigin), CommandError> {
+    let approval = settings
+        .runtimes()
+        .iter()
+        .find(|entry| entry.environment.digest().ok().as_deref() == Some(digest))
+        .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
+    let pin = runtime_bundle::node_pin().map_err(|_| unavailable())?;
+    // Deliberately selected older Host snapshots can coexist. Their complete
+    // descriptor and current independent decision must still match exactly.
+    if approval.origin != runtime_bundle::bundled_origin()
+        || !runtime_bundle::supported_tool(&approval.environment, &pin)
+        || availability(&approval.environment, &pin.minimum_system_version)
+            != RuntimeAvailability::Available
+    {
+        return Err(unavailable());
+    }
+    let loaded = store
+        .load_runtime(approval, allowed)
+        .map_err(map_store_error)?;
+    Ok((loaded.runtime().clone(), approval.origin.clone()))
 }
 
 pub(super) fn capture_offer(

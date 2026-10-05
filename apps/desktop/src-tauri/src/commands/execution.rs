@@ -15,6 +15,7 @@ macro_rules! handlers {
         super::plugins::packages::select_plugin_package, super::plugins::packages::install_plugin_package,
         super::plugins::packages::set_plugin_enabled, super::plugins::packages::read_plugin_package,
         super::plugins::packages::lookup_plugin_capability,
+        super::plugins::sources::read_plugin_source,
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,

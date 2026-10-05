@@ -37,6 +37,7 @@ struct PluginRequests {
     lookup: plugins::PluginLookupRequest,
     runtime_install: plugins::PluginRuntimeInstallRequest,
     runtime_lookup: plugins::PluginRuntimeLookupRequest,
+    source: plugins::PluginSourceRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -47,6 +48,7 @@ struct PluginResponses {
     package: plugins::PluginPackageDetailsView,
     binding: tsumugi_plugin_sdk::CapabilityBinding,
     runtime: tsumugi_plugin_sdk::RuntimeEnvironmentDescriptor,
+    source: plugins::PluginSourceView,
     error: CommandError,
 }
 #[derive(JsonSchema)]
