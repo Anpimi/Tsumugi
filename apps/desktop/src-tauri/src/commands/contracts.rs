@@ -29,6 +29,19 @@ struct Responses {
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct PluginRequests {
+    inventory: plugins::PluginInventoryRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct PluginResponses {
+    inventory: plugins::PluginInventoryView,
+    error: CommandError,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct ExecutionRequests {
     session: execution::SessionRequest,
     list: execution::ListRequest,
@@ -358,6 +371,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         path,
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
+            "plugins": schemas::<PluginRequests, PluginResponses>(),
             "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
             "source": schemas::<SourceRequests, SourceResponses>(),
             "translation": schemas::<TranslationRequests, TranslationResponses>(),

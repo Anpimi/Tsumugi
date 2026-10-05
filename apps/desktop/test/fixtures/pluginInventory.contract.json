@@ -1,0 +1,101 @@
+{
+  "request": {},
+  "empty": {
+    "settingsRevision": "0",
+    "lastSettingsAction": null,
+    "packages": [],
+    "runtimes": [],
+    "packageDecisions": [],
+    "runtimeDecisions": []
+  },
+  "rich": {
+    "settingsRevision": "18446744073709551615",
+    "lastSettingsAction": "00000000-0000-4000-8000-000000000002",
+    "packages": [
+      {
+        "plugin": {
+          "publisher": "example",
+          "id": "inventory-only",
+          "version": "0.1.0"
+        },
+        "packageDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "origin": {
+          "sourceId": "synthetic-approved-source",
+          "publisherId": "synthetic-approved-key"
+        },
+        "state": "sealed"
+      }
+    ],
+    "runtimes": [
+      {
+        "environment": {
+          "protocolVersion": 1,
+          "platform": {
+            "operatingSystem": "macos",
+            "architecture": "aarch64"
+          },
+          "sdkVersion": "0.1.0-alpha.1",
+          "processProtocol": 1,
+          "profile": "node-system-libraries-v1",
+          "toolVersion": "26.10.0",
+          "tool": {
+            "treeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entrypoint": "bin/node"
+          },
+          "host": {
+            "treeDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "entrypoint": "dist/main.js"
+          }
+        },
+        "environmentDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "origin": {
+          "sourceId": "synthetic-approved-source",
+          "publisherId": "synthetic-approved-key"
+        },
+        "state": "recovery-required"
+      }
+    ],
+    "packageDecisions": [
+      {
+        "plugin": {
+          "publisher": "example",
+          "id": "not-installed",
+          "version": "0.1.0"
+        },
+        "packageDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "origin": {
+          "sourceId": "synthetic-approved-source",
+          "publisherId": "synthetic-approved-key"
+        },
+        "enabled": true
+      }
+    ],
+    "runtimeDecisions": [
+      {
+        "environment": {
+          "protocolVersion": 1,
+          "platform": {
+            "operatingSystem": "macos",
+            "architecture": "aarch64"
+          },
+          "sdkVersion": "0.1.0-alpha.1",
+          "processProtocol": 1,
+          "profile": "node-system-libraries-v1",
+          "toolVersion": "26.10.0",
+          "tool": {
+            "treeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "entrypoint": "bin/node"
+          },
+          "host": {
+            "treeDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "entrypoint": "dist/main.js"
+          }
+        },
+        "origin": {
+          "sourceId": "synthetic-approved-source",
+          "publisherId": "synthetic-approved-key"
+        }
+      }
+    ]
+  }
+}

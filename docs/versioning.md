@@ -101,6 +101,12 @@ callers must handle those classifications. These APIs remain in the same
 undistributed application/SDK alpha.1 batch, with no further bump or historical
 format migration. They do not establish production Desktop controls or a new
 runtime distribution.
+The desktop now owns that Store at its Tauri application-data location and exposes
+a generated read-only metadata projection, with installation records and trusted
+decisions kept distinct. This changes internal desktop IPC and dependency assembly
+within the same unreleased batch, without changing schema 18, Store formats,
+SDK contracts or version sources. It does not ship executable package selection,
+installation controls, bundled runtime artifacts or a new release boundary.
 
 Use [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html). Choose a normal release target relative to the preceding normal release, then advance prereleases within that target. During `0.y.z` development, apply this project convention:
 

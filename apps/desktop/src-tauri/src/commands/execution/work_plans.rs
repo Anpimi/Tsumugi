@@ -1365,6 +1365,7 @@ mod tests {
                         dispatch_token: dispatch.dispatch_token,
                         capability_id: tsumugi_core::ai::CAPABILITY.into(),
                         capability_version: "1".into(),
+                        plugin: None,
                         outcome: ExecutionState::Succeeded,
                         output: Some(
                             serde_json::to_value(tsumugi_core::ai::AiOutput {

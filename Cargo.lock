@@ -4288,6 +4288,8 @@ dependencies = [
  "tauri-plugin-dialog",
  "tempfile",
  "tsumugi-core",
+ "tsumugi-plugin-host",
+ "tsumugi-plugin-sdk",
  "windows-sys 0.61.2",
 ]
 

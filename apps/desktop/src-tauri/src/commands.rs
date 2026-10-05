@@ -10,6 +10,7 @@ mod changes;
 pub(crate) mod contracts;
 mod dispatch;
 mod execution;
+mod plugins;
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -370,6 +371,7 @@ pub struct AppState {
     io: dispatch::BlockingExecutor,
     dialogs: dispatch::BlockingExecutor,
     review_check_cancellations: ReviewCheckRegistry,
+    plugins: Arc<plugins::ApplicationPlugins>,
     #[cfg(test)]
     review_compute_probe: Mutex<Option<execution::ComputeProbe>>,
 }
@@ -394,9 +396,16 @@ impl Default for AppState {
             io: dispatch::BlockingExecutor::new(4),
             dialogs: dispatch::BlockingExecutor::new(1),
             review_check_cancellations: Arc::default(),
+            plugins: Arc::default(),
             #[cfg(test)]
             review_compute_probe: Mutex::default(),
         }
+    }
+}
+
+impl Drop for AppState {
+    fn drop(&mut self) {
+        self.plugins.close();
     }
 }
 
@@ -1027,6 +1036,11 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         use tauri::Manager;
         app.state::<AppState>()
             .connect_change_events(app.handle().clone());
+        // Resolving the application location does no IO. The existing blocking
+        // executor provisions and owns its private store on the first read.
+        if let Ok(directory) = app.path().app_data_dir() {
+            app.state::<AppState>().plugins.configure(directory)?;
+        }
         #[cfg(feature = "execution-test-host")]
         execution::initialize_test_host(&app.state::<AppState>())?;
         Ok(())

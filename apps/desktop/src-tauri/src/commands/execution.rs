@@ -11,6 +11,7 @@ macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
+        super::plugins::read_plugin_inventory,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,

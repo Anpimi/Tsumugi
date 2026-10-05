@@ -1,0 +1,326 @@
+//! Application-owned installation metadata and independent trusted decisions.
+//! Reading this projection does not load artifacts or grant execution rights.
+use super::{AppState, CommandError, CommandErrorCode, CommandStage};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::PathBuf,
+    sync::{
+        Mutex, TryLockError,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+use tauri::State;
+use tsumugi_core::execution::UnsignedDecimal;
+use tsumugi_plugin_host::{
+    HostError, InstallError, InstalledObjectState, PackageStore, catalog::PackageOrigin,
+};
+use tsumugi_plugin_sdk as sdk;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginInventoryRequest {}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginOriginView {
+    pub source_id: String,
+    pub publisher_id: String,
+}
+impl From<&PackageOrigin> for PluginOriginView {
+    fn from(origin: &PackageOrigin) -> Self {
+        Self {
+            source_id: origin.source_id.clone(),
+            publisher_id: origin.publisher_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum PluginObjectState {
+    Sealed,
+    RecoveryRequired,
+}
+impl From<InstalledObjectState> for PluginObjectState {
+    fn from(state: InstalledObjectState) -> Self {
+        match state {
+            InstalledObjectState::Sealed => Self::Sealed,
+            InstalledObjectState::RecoveryRequired => Self::RecoveryRequired,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginPackageView {
+    pub plugin: sdk::PluginIdentity,
+    pub package_digest: String,
+    pub origin: PluginOriginView,
+    pub state: PluginObjectState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginRuntimeView {
+    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub environment_digest: String,
+    pub origin: PluginOriginView,
+    pub state: PluginObjectState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginPackageDecisionView {
+    pub plugin: sdk::PluginIdentity,
+    pub package_digest: String,
+    pub origin: PluginOriginView,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginRuntimeDecisionView {
+    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub origin: PluginOriginView,
+}
+
+/// Installation and approval remain separate even when only one exists. These
+/// are metadata observations; Sealed and enabled are not runnable assertions.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginInventoryView {
+    pub settings_revision: UnsignedDecimal,
+    pub last_settings_action: Option<String>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_PACKAGES)))]
+    pub packages: Vec<PluginPackageView>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_RUNTIMES)))]
+    pub runtimes: Vec<PluginRuntimeView>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_PACKAGES)))]
+    pub package_decisions: Vec<PluginPackageDecisionView>,
+    #[cfg_attr(feature = "wire-schema", schemars(length(max = tsumugi_plugin_host::MAX_INSTALLED_RUNTIMES)))]
+    pub runtime_decisions: Vec<PluginRuntimeDecisionView>,
+}
+
+struct PluginDirectory {
+    anchor: PathBuf,
+    application: String,
+}
+impl PluginDirectory {
+    fn new(app_data: PathBuf) -> Result<Self, CommandError> {
+        let invalid = || map_store_error(InstallError::InvalidRoot);
+        if !app_data.is_absolute()
+            || app_data
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            anchor: app_data.parent().ok_or_else(invalid)?.to_path_buf(),
+            application: app_data
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(invalid)?
+                .to_owned(),
+        })
+    }
+
+    fn provision(&self, allowed: impl Fn() -> bool) -> Result<PackageStore, InstallError> {
+        let app_data = self.anchor.join(&self.application);
+        match std::fs::symlink_metadata(&app_data) {
+            // Tauri/WebView can already own an application directory with read
+            // permission for other users. Use it as an existing anchor; the
+            // Host still checks its owner, no links and no other-user writes.
+            // Only the plugins suffix must be private. Never repair permissions.
+            Ok(metadata) if metadata.is_dir() => {
+                PackageStore::provision(&app_data, &["plugins"], allowed)
+            }
+            Ok(_) => Err(InstallError::InvalidRoot),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                PackageStore::provision(&self.anchor, &[&self.application, "plugins"], allowed)
+            }
+            Err(_) => Err(InstallError::Io),
+        }
+    }
+}
+
+#[derive(Default)]
+struct PluginManager {
+    directory: Option<PluginDirectory>,
+    store: Option<PackageStore>,
+}
+
+/// The mutex serializes application operations; the Store retains its existing
+/// OS lock across reads. Contention rejects with Busy rather than parking an IO
+/// worker. AppState drop revokes in-flight read guards; accepted IO remains owned
+/// until its worker finishes, including when its reply receiver disappears.
+pub(super) struct ApplicationPlugins {
+    manager: Mutex<PluginManager>,
+    open: AtomicBool,
+}
+impl Default for ApplicationPlugins {
+    fn default() -> Self {
+        Self {
+            manager: Mutex::default(),
+            open: AtomicBool::new(true),
+        }
+    }
+}
+impl ApplicationPlugins {
+    pub(super) fn configure(&self, app_data: PathBuf) -> Result<(), CommandError> {
+        let directory = PluginDirectory::new(app_data)?;
+        let mut manager = self.try_manager()?;
+        if manager.directory.is_some() {
+            return Err(map_store_error(InstallError::StoreChanged));
+        }
+        manager.directory = Some(directory);
+        Ok(())
+    }
+
+    fn try_manager(&self) -> Result<std::sync::MutexGuard<'_, PluginManager>, CommandError> {
+        if !self.open.load(Ordering::Acquire) {
+            return Err(map_store_error(InstallError::AuthorityRevoked));
+        }
+        self.manager.try_lock().map_err(|error| match error {
+            TryLockError::WouldBlock => map_store_error(InstallError::Busy),
+            TryLockError::Poisoned(_) => map_store_error(InstallError::CorruptStore),
+        })
+    }
+
+    pub(super) fn close(&self) {
+        self.open.store(false, Ordering::Release);
+    }
+
+    fn inventory(&self) -> Result<PluginInventoryView, CommandError> {
+        let mut manager = self.try_manager()?;
+        let allowed = || self.open.load(Ordering::Acquire);
+        if manager.store.is_none() {
+            let directory = manager
+                .directory
+                .as_ref()
+                .ok_or_else(|| map_store_error(InstallError::InvalidRoot))?;
+            // Provision through the Host's existing filesystem and lock owner.
+            manager.store = Some(directory.provision(allowed).map_err(map_store_error)?);
+        }
+        let store = manager.store.as_ref().expect("store provisioned");
+        let settings = store.settings(allowed).map_err(map_store_error)?;
+        let inventory = store.inventory(allowed).map_err(map_store_error)?;
+        if !allowed() {
+            return Err(map_store_error(InstallError::AuthorityRevoked));
+        }
+        Ok(PluginInventoryView {
+            settings_revision: settings.revision().into(),
+            last_settings_action: settings.action_id().map(str::to_owned),
+            packages: inventory
+                .packages
+                .into_iter()
+                .map(|record| PluginPackageView {
+                    plugin: record.receipt.plugin().clone(),
+                    package_digest: record.receipt.package_digest().into(),
+                    origin: record.receipt.origin().into(),
+                    state: record.state.into(),
+                })
+                .collect(),
+            runtimes: inventory
+                .runtimes
+                .into_iter()
+                .map(|record| PluginRuntimeView {
+                    environment: record.receipt.approval().environment.clone(),
+                    environment_digest: record.receipt.environment_digest().into(),
+                    origin: (&record.receipt.approval().origin).into(),
+                    state: record.state.into(),
+                })
+                .collect(),
+            package_decisions: settings
+                .packages()
+                .iter()
+                .map(|decision| PluginPackageDecisionView {
+                    plugin: decision.approval.plugin.clone(),
+                    package_digest: decision.approval.package_digest.clone(),
+                    origin: (&decision.approval.origin).into(),
+                    enabled: decision.enabled,
+                })
+                .collect(),
+            runtime_decisions: settings
+                .runtimes()
+                .iter()
+                .map(|approval| PluginRuntimeDecisionView {
+                    environment: approval.environment.clone(),
+                    origin: (&approval.origin).into(),
+                })
+                .collect(),
+        })
+    }
+}
+
+fn map_store_error(error: InstallError) -> CommandError {
+    let (code, reason) = match error {
+        InstallError::UnsupportedPlatform => (
+            CommandErrorCode::DependencyConflict,
+            "plugin-platform-unavailable",
+        ),
+        InstallError::InvalidRoot => (
+            CommandErrorCode::PermissionDenied,
+            "plugin-directory-unavailable",
+        ),
+        InstallError::Busy => (CommandErrorCode::Busy, "plugin-store-busy"),
+        InstallError::StoreChanged => {
+            (CommandErrorCode::DependencyConflict, "plugin-store-changed")
+        }
+        InstallError::CorruptSettings => {
+            (CommandErrorCode::OutputInvalid, "plugin-settings-corrupt")
+        }
+        InstallError::CorruptStore | InstallError::CorruptReceipt => {
+            (CommandErrorCode::OutputInvalid, "plugin-store-corrupt")
+        }
+        InstallError::LimitExceeded => (CommandErrorCode::LimitExceeded, "plugin-store-limit"),
+        InstallError::AuthorityRevoked => (CommandErrorCode::Cancelled, "plugin-read-cancelled"),
+        InstallError::Io => (CommandErrorCode::StorageFailed, "plugin-store-io"),
+        InstallError::Host(HostError::Timeout) => {
+            (CommandErrorCode::LimitExceeded, "plugin-read-timeout")
+        }
+        InstallError::UnknownCommit => (
+            CommandErrorCode::OutcomeUnknown,
+            "plugin-store-outcome-unknown",
+        ),
+        InstallError::InvalidAction
+        | InstallError::RevisionConflict
+        | InstallError::MissingPackage
+        | InstallError::MissingRuntime
+        | InstallError::RecoveryRequired
+        | InstallError::ApprovalMismatch
+        | InstallError::ActionConflict
+        | InstallError::IdentityConflict
+        | InstallError::SourceConflict
+        | InstallError::PublisherConflict
+        | InstallError::Host(_)
+        | InstallError::Catalog(_) => (CommandErrorCode::OutputInvalid, "plugin-metadata-invalid"),
+    };
+    let mut error = CommandError::simple(code, CommandStage::Read);
+    error.reason = Some(reason.into());
+    error
+}
+
+#[tauri::command]
+pub async fn read_plugin_inventory(
+    state: State<'_, AppState>,
+    request: PluginInventoryRequest,
+) -> Result<PluginInventoryView, CommandError> {
+    let PluginInventoryRequest {} = request;
+    let plugins = state.plugins.clone();
+    state
+        .io
+        .run(CommandStage::Read, move || plugins.inventory())
+        .await
+}
+
+#[cfg(test)]
+mod tests;
