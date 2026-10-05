@@ -1397,3 +1397,306 @@ fn cancellation_preserves_committed_failed_and_undispatched_items_and_late_evide
         1
     );
 }
+
+#[test]
+fn verified_decoding_cache_rejects_changed_bytes_and_row_associations() {
+    let _schema = TestSchema::enable();
+    let temp = tempfile::tempdir().unwrap();
+    let mut store = store(&temp.path().join("project"));
+    install_targets(&store);
+    let input = fixture_input(&store, false);
+    store.enqueue_execution(&input).unwrap();
+    let result = produce(&mut store, &input, input.envelope().items[0].item_id);
+    store.save_execution_result(&result).unwrap();
+    let connection = store.execution_connection().unwrap();
+    assert_eq!(
+        load_input_cached(connection, input.envelope().attempt_id)
+            .unwrap()
+            .bytes(),
+        input.bytes()
+    );
+    check_stored_input(connection, &input).unwrap();
+    check_stored_result(connection, &result).unwrap();
+    let mut corrupt = input.bytes().to_vec();
+    corrupt[0] ^= 1;
+    connection
+        .execute(
+            "UPDATE execution_attempts SET input=?2 WHERE attempt_id=?1",
+            params![input.envelope().attempt_id.to_string(), &corrupt],
+        )
+        .unwrap();
+    assert!(
+        load_input_cached(connection, input.envelope().attempt_id).is_err(),
+        "same digest cannot authorize a changed cached input"
+    );
+    assert!(check_stored_input(connection, &input).is_err());
+    connection
+        .execute(
+            "UPDATE execution_attempts SET input=?2 WHERE attempt_id=?1",
+            params![input.envelope().attempt_id.to_string(), input.bytes()],
+        )
+        .unwrap();
+    load_input_cached(connection, input.envelope().attempt_id).unwrap();
+    let mut corrupt = result.bytes().to_vec();
+    corrupt[0] ^= 1;
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE result_id=?1",
+            params![result.envelope().result_id.to_string(), &corrupt],
+        )
+        .unwrap();
+    assert!(
+        check_stored_result(connection, &result).is_err(),
+        "same digest cannot authorize a changed cached result"
+    );
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE result_id=?1",
+            params![result.envelope().result_id.to_string(), result.bytes()],
+        )
+        .unwrap();
+    check_stored_result(connection, &result).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_attempts SET previous_attempt_id=?1 WHERE attempt_id=?1",
+            [input.envelope().attempt_id.to_string()],
+        )
+        .unwrap();
+    assert!(load_input_cached(connection, input.envelope().attempt_id).is_err());
+    assert!(check_stored_input(connection, &input).is_err());
+    assert!(
+        store
+            .note_execution_unknown(
+                input.envelope().attempt_id,
+                result.envelope().item_id,
+                "result-missing",
+            )
+            .is_err(),
+        "completed worker reconciliation must still reject changed input associations"
+    );
+}
+
+#[test]
+fn complete_projection_cache_rechecks_current_coverage_bytes_and_dispatch() {
+    // Exercise pure coverage independently; full origin authority is covered by
+    // the captured Host workflow and is never supplied by this decoding cache.
+    let projection: crate::content::TranslationProjection = serde_json::from_value(json!({
+        "version": 1,
+        "origin": {
+            "producerAttempt": ExecutionId::new(),
+            "producerResult": ExecutionId::new(),
+            "producerInputDigest": "a".repeat(64),
+            "producerResultDigest": "b".repeat(64),
+            "checkerAttempt": ExecutionId::new(),
+            "checkerResult": ExecutionId::new(),
+            "checkerInputDigest": "c".repeat(64),
+            "checkerResultDigest": "d".repeat(64)
+        },
+        "bundleId": ExecutionId::new(),
+        "sourceSnapshotId": ExecutionId::new(),
+        "targetLocale": "zh-CN",
+        "declaredLocale": "zh",
+        "nativeScope": {
+            "namespace": "Example.Mod",
+            "policy": crate::content::contract_ref("opaque-case-sensitive")
+        },
+        "file": crate::content::CapturedFile {
+            artifact_id: ExecutionId::new(),
+            logical_path: "i18n/zh.json".into(),
+            role: "translation".into(),
+            byte_length: 2,
+            sha256: codec::digest(b"xx"),
+            utf8: "xx".into(),
+        },
+        "entries": [
+            ["key-a", "Key A", "x", null, [0, 1]],
+            ["key-b", "Key B", "x", null, [1, 2]]
+        ]
+    }))
+    .unwrap();
+    let input = projection
+        .fixed_input(
+            ProjectMetadata::create("Coverage cache", "en-US", ["zh-CN"])
+                .unwrap()
+                .project_id(),
+        )
+        .unwrap();
+    let connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE execution_items (
+            attempt_id TEXT,item_id TEXT,current_result_id TEXT,execution TEXT,
+            validation TEXT,dispatch_token TEXT,retry_safe INTEGER,adoption TEXT);
+         CREATE TABLE execution_results (
+            result_id TEXT,attempt_id TEXT,item_id TEXT,dispatch_token TEXT,digest TEXT,bytes BLOB);
+         CREATE TABLE adoption_receipts (attempt_id TEXT,unit_id TEXT);",
+        )
+        .unwrap();
+    let mut results = Vec::new();
+    for item in &input.envelope().items {
+        let token = ExecutionId::new();
+        let (sender, receiver) = result_channel();
+        crate::content::TranslationProjectionRunner
+            .run(
+                DispatchRequest {
+                    input: input.clone(),
+                    item_id: item.item_id,
+                    dispatch_token: token,
+                    provider: None,
+                    plugin_permit: None,
+                },
+                Cancellation::default(),
+                sender,
+            )
+            .unwrap();
+        let result = receiver.recv().unwrap();
+        connection
+            .execute(
+                "INSERT INTO execution_items VALUES (?1,?2,?3,'succeeded','valid',?4,0,'unapplied')",
+                params![
+                    input.envelope().attempt_id.to_string(),
+                    item.item_id.to_string(),
+                    result.envelope().result_id.to_string(),
+                    token.to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO execution_results VALUES (?1,?2,?3,?4,?5,?6)",
+                params![
+                    result.envelope().result_id.to_string(),
+                    input.envelope().attempt_id.to_string(),
+                    item.item_id.to_string(),
+                    token.to_string(),
+                    result.digest(),
+                    result.bytes()
+                ],
+            )
+            .unwrap();
+        results.push(result);
+    }
+    complete_translation_projection(&connection, &input).unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    let result = &results[0];
+    let item = result.envelope().item_id.to_string();
+    connection
+        .execute(
+            "UPDATE execution_items SET validation='pending' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .code,
+        ErrorCode::DependencyConflict,
+    );
+    connection
+        .execute(
+            "UPDATE execution_items SET validation='valid' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    let mut corrupt = result.bytes().to_vec();
+    corrupt[0] ^= 1;
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE item_id=?1",
+            params![&item, &corrupt],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger,
+    );
+    connection
+        .execute(
+            "UPDATE execution_results SET bytes=?2 WHERE item_id=?1",
+            params![&item, result.bytes()],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET dispatch_token=?2 WHERE item_id=?1",
+            params![&item, ExecutionId::new().to_string()],
+        )
+        .unwrap();
+    assert!(complete_translation_projection(&connection, &input).is_err());
+    connection
+        .execute(
+            "UPDATE execution_items SET dispatch_token=?2 WHERE item_id=?1",
+            params![&item, result.envelope().dispatch_token.to_string()],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute(
+            "UPDATE execution_items SET retry_safe=1 WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .stage,
+        "result-state",
+    );
+    connection
+        .execute(
+            "UPDATE execution_items SET retry_safe=0,adoption='committed' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .stage,
+        "missing-receipt",
+    );
+    let unit = input
+        .envelope()
+        .units
+        .iter()
+        .find(|unit| unit.item_ids == [result.envelope().item_id])
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO adoption_receipts VALUES (?1,?2)",
+            params![
+                input.envelope().attempt_id.to_string(),
+                unit.unit_id.to_string()
+            ],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute("DELETE FROM adoption_receipts", [])
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .stage,
+        "missing-receipt",
+    );
+    connection
+        .execute(
+            "UPDATE execution_items SET adoption='unapplied' WHERE item_id=?1",
+            [&item],
+        )
+        .unwrap();
+    complete_translation_projection(&connection, &input).unwrap();
+    connection
+        .execute("DELETE FROM execution_items WHERE item_id=?1", [&item])
+        .unwrap();
+    assert_eq!(
+        complete_translation_projection(&connection, &input)
+            .unwrap_err()
+            .code,
+        ErrorCode::CorruptLedger,
+    );
+}

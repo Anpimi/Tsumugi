@@ -168,7 +168,7 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
     for row in rows {
         let (id, attempt, unit, bytes, digest) = row.map_err(sql_error)?;
         let action: AdoptionAction = codec::decode(&bytes, MAX_INPUT_BYTES)?;
-        let input = load_input(connection, parse_id(attempt.clone())?)?;
+        let input = load_input_cached(connection, parse_id(attempt.clone())?)?;
         if action.action_id.to_string() != id
             || action.attempt_id.to_string() != attempt
             || action.unit_id.to_string() != unit
@@ -309,18 +309,19 @@ fn check_input_association(
     Ok(())
 }
 
-fn load_input_cached(
+pub(super) fn load_input_cached(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
     use std::sync::{Mutex, OnceLock};
-    // Only the live execution path reuses decoded immutable inputs. Full ledger
-    // reads, reconciliation and reopen validation always verify persisted bytes.
+    // Reuse decoding, never the database's assertion of immutability. Each hit
+    // compares the complete stored bytes and row association with the already
+    // verified capture. A changed blob with an unchanged digest is still corrupt.
     static CACHE: OnceLock<Mutex<Option<(ExecutionId, String, FixedInput)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(None));
-    let (digest,task,project,previous): (String,String,String,Option<String>) = connection.query_row(
-        "SELECT digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", [attempt.to_string()],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+    let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
+        "SELECT CASE WHEN length(input)<=?2 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", params![attempt.to_string(), MAX_INPUT_BYTES as i64],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
     let cached = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -328,9 +329,12 @@ fn load_input_cached(
         .filter(|(id, hash, _)| *id == attempt && hash == &digest)
         .map(|(_, _, input)| input.clone());
     let input = if let Some(input) = cached {
+        if bytes != input.bytes() {
+            return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
+        }
         input
     } else {
-        let input = load_input(connection, attempt)?;
+        let input = FixedInput::restore(&bytes, &digest)?;
         *cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
@@ -397,6 +401,42 @@ pub(super) fn load_result(
         return Err(error(ErrorCode::CorruptLedger, "result-association"));
     }
     Ok(result_value)
+}
+// Comparing with a verified immutable frame is as strong as restoring its
+// digest again, while avoiding repeated SDK decoding/structural qualification.
+fn check_stored_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
+    let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
+        "SELECT CASE WHEN length(input)<=?2 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1",
+        params![input.envelope().attempt_id.to_string(),MAX_INPUT_BYTES as i64],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
+    if digest != input.digest() || bytes != input.bytes() {
+        return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
+    }
+    check_input_association(
+        input,
+        input.envelope().attempt_id,
+        &task,
+        &project,
+        previous.as_deref(),
+    )
+}
+fn check_stored_result(
+    connection: &Connection,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    let expected = result.envelope();
+    let (bytes,digest,item,token): (Vec<u8>,String,String,String) = connection.query_row(
+        "SELECT CASE WHEN length(bytes)<=?3 THEN bytes END,digest,item_id,dispatch_token FROM execution_results WHERE result_id=?1 AND attempt_id=?2",
+        params![expected.result_id.to_string(),expected.attempt_id.to_string(),MAX_RESULT_BYTES as i64],
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(sql_error)?;
+    if digest != result.digest()
+        || bytes != result.bytes()
+        || item != expected.item_id.to_string()
+        || token != expected.dispatch_token.to_string()
+    {
+        return Err(error(ErrorCode::CorruptLedger, "result-bytes"));
+    }
+    Ok(())
 }
 fn read_attempt(
     connection: &Connection,
@@ -633,46 +673,73 @@ pub(super) fn check_translation_projection(
     }
     let projection = crate::content::TranslationProjection::from_input(input)?;
     let origin = &projection.origin;
-    let producer = load_input(connection, origin.producer_attempt)?;
-    let result = load_result(connection, &producer, origin.producer_result)?;
-    let checker = load_input(connection, origin.checker_attempt)?;
-    let checked = load_result(connection, &checker, origin.checker_result)?;
-    if producer.envelope().project_id != input.envelope().project_id
-        || checker.envelope().project_id != input.envelope().project_id
-    {
-        return Err(error(
-            ErrorCode::Unauthorized,
-            "translation-projection-project",
-        ));
-    }
-    let rebuilt = crate::content::TranslationProjection::capture(
-        &producer,
-        &result,
-        &checker,
-        &checked,
-        projection.bundle_id,
-        projection.file.artifact_id,
-    )?;
-    if rebuilt != *projection {
-        return Err(error(
-            ErrorCode::ResultMismatch,
-            "translation-projection-origin",
-        ));
-    }
-    let prepared = TranslationValidationCapture::restore(
-        ResultValidationCapture {
-            input: producer.clone(),
-            result: result.clone(),
-        },
-        checker.clone(),
-    )?
-    .prepare(checked.clone())?;
-    if !prepared.proof.valid {
-        return Err(error(
-            ErrorCode::OutputInvalid,
-            "translation-projection-proof",
-        ));
-    }
+    use std::sync::{Mutex, OnceLock};
+    type Frames = (FixedInput, FixedResult, FixedInput, FixedResult);
+    // Bounded memoization of pure qualification. All four persisted byte frames
+    // and row associations are compared on every reuse; no permission, current
+    // result, link or cancellation state is cached.
+    static CACHE: OnceLock<Mutex<Option<(String, Frames)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|(digest, _)| digest == input.digest())
+        .map(|(_, frames)| frames.clone());
+    let (producer, result, checker, checked) = if let Some(frames) = cached {
+        check_stored_input(connection, &frames.0)?;
+        check_stored_result(connection, &frames.1)?;
+        check_stored_input(connection, &frames.2)?;
+        check_stored_result(connection, &frames.3)?;
+        frames
+    } else {
+        let producer = load_input(connection, origin.producer_attempt)?;
+        let result = load_result(connection, &producer, origin.producer_result)?;
+        let checker = load_input(connection, origin.checker_attempt)?;
+        let checked = load_result(connection, &checker, origin.checker_result)?;
+        if producer.envelope().project_id != input.envelope().project_id
+            || checker.envelope().project_id != input.envelope().project_id
+        {
+            return Err(error(
+                ErrorCode::Unauthorized,
+                "translation-projection-project",
+            ));
+        }
+        let rebuilt = crate::content::TranslationProjection::capture(
+            &producer,
+            &result,
+            &checker,
+            &checked,
+            projection.bundle_id,
+            projection.file.artifact_id,
+        )?;
+        if rebuilt != *projection {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "translation-projection-origin",
+            ));
+        }
+        let prepared = TranslationValidationCapture::restore(
+            ResultValidationCapture {
+                input: producer.clone(),
+                result: result.clone(),
+            },
+            checker.clone(),
+        )?
+        .prepare(checked.clone())?;
+        if !prepared.proof.valid {
+            return Err(error(
+                ErrorCode::OutputInvalid,
+                "translation-projection-proof",
+            ));
+        }
+        let frames = (producer, result, checker, checked);
+        *cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((input.digest().into(), frames.clone()));
+        frames
+    };
     if let Some(authority) = authority {
         for (input, result) in [(&producer, &result), (&checker, &checked)] {
             require_current_result(connection, input, result)?;
@@ -714,6 +781,140 @@ pub(super) fn check_translation_projection(
             ));
         }
     }
+    Ok(())
+}
+
+/// Complete Core projection coverage, with bounded decoding reuse. Every call
+/// reads all current row states, dispatch associations and complete result bytes;
+/// cached pure output validation is usable only for identical immutable frames.
+fn complete_translation_projection(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<Option<(String, Arc<Vec<FixedResult>>)>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|(digest, _)| digest == input.digest())
+        .map(|(_, results)| results.clone());
+    let units: std::collections::BTreeMap<_, _> = input
+        .envelope()
+        .units
+        .iter()
+        .flat_map(|unit| unit.item_ids.iter().map(move |item| (*item, unit.unit_id)))
+        .collect();
+    let mut statement = connection
+        .prepare("SELECT unit_id FROM adoption_receipts WHERE attempt_id=?1 LIMIT ?2")
+        .map_err(sql_error)?;
+    let receipts = statement
+        .query_map(
+            params![
+                input.envelope().attempt_id.to_string(),
+                (input.envelope().units.len() + 1) as i64
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(sql_error)?
+        .map(|row| parse_id(row.map_err(sql_error)?))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    if receipts.len() > input.envelope().units.len() {
+        return Err(error(ErrorCode::CorruptLedger, "receipt-coverage"));
+    }
+    let mut statement=connection.prepare(
+        "SELECT i.item_id,i.current_result_id,i.execution,i.validation,r.dispatch_token,r.digest,
+         CASE WHEN length(r.bytes)<=?2 THEN r.bytes END,i.retry_safe,i.adoption FROM execution_items i
+         LEFT JOIN execution_results r ON r.result_id=i.current_result_id AND r.attempt_id=i.attempt_id
+            AND r.item_id=i.item_id AND r.dispatch_token=i.dispatch_token
+         WHERE i.attempt_id=?1 ORDER BY i.item_id").map_err(sql_error)?;
+    let mut rows = statement
+        .query(params![
+            input.envelope().attempt_id.to_string(),
+            i64::from(input.envelope().limits.max_result_bytes)
+        ])
+        .map_err(sql_error)?;
+    let mut results = Vec::with_capacity(input.envelope().items.len());
+    let mut total = 0usize;
+    while let Some(row) = rows.next().map_err(sql_error)? {
+        let item: String = row.get(0).map_err(sql_error)?;
+        if input
+            .envelope()
+            .items
+            .get(results.len())
+            .is_none_or(|expected| expected.item_id.to_string() != item)
+        {
+            return Err(error(ErrorCode::CorruptLedger, "translation-coverage"));
+        }
+        let execution: String = row.get(2).map_err(sql_error)?;
+        let validation: String = row.get(3).map_err(sql_error)?;
+        if execution != "succeeded" || validation != "valid" {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "translation-incomplete",
+            ));
+        }
+        let id: String = row.get(1).map_err(sql_error)?;
+        let token: String = row.get(4).map_err(sql_error)?;
+        let digest: String = row.get(5).map_err(sql_error)?;
+        let bytes: Vec<u8> = row.get(6).map_err(sql_error)?;
+        total = total
+            .checked_add(bytes.len())
+            .ok_or_else(|| error(ErrorCode::LimitExceeded, "translation-results"))?;
+        if total > input.envelope().limits.max_attempt_result_bytes as usize {
+            return Err(error(ErrorCode::LimitExceeded, "translation-results"));
+        }
+        let previous = cached.as_ref().and_then(|values| values.get(results.len()));
+        let result = if let Some(previous) = previous.filter(|previous| {
+            previous.envelope().result_id.to_string() == id
+                && previous.digest() == digest
+                && previous.envelope().dispatch_token.to_string() == token
+        }) {
+            if bytes != previous.bytes() {
+                return Err(error(ErrorCode::CorruptLedger, "translation-result-bytes"));
+            }
+            previous.clone()
+        } else {
+            let result = FixedResult::restore(&bytes, &digest, input, parse_id(token)?)?;
+            if result.envelope().result_id.to_string() != id
+                || result.envelope().item_id.to_string() != item
+            {
+                return Err(error(
+                    ErrorCode::CorruptLedger,
+                    "translation-result-association",
+                ));
+            }
+            crate::content::validate_translation_output(input, &result)?;
+            result
+        };
+        let retry_safe: bool = row.get(7).map_err(sql_error)?;
+        if result
+            .envelope()
+            .diagnostic
+            .as_ref()
+            .is_some_and(|diagnostic| diagnostic.retry_safe)
+            != retry_safe
+        {
+            return Err(error(ErrorCode::CorruptLedger, "result-state"));
+        }
+        let adoption: AdoptionState = decode_enum(row.get(8).map_err(sql_error)?)?;
+        if adoption == AdoptionState::Committed
+            && units
+                .get(&result.envelope().item_id)
+                .is_none_or(|unit| !receipts.contains(unit))
+        {
+            return Err(error(ErrorCode::CorruptLedger, "missing-receipt"));
+        }
+        results.push(result);
+    }
+    if results.len() != input.envelope().items.len() {
+        return Err(error(ErrorCode::CorruptLedger, "translation-coverage"));
+    }
+    *cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        Some((input.digest().into(), Arc::new(results)));
     Ok(())
 }
 
@@ -1090,7 +1291,7 @@ impl ProjectStore {
         let tx = self.execution_write()?;
         let changed=tx.execute("UPDATE execution_items SET execution='unknown',diagnostic=?3 WHERE attempt_id=?1 AND item_id=?2 AND execution='dispatched'",params![attempt.to_string(),item.to_string(),reason]).map_err(sql_error)?;
         if changed == 0 {
-            load_input(&tx, attempt)?.item(item)?;
+            load_input_cached(&tx, attempt)?.item(item)?;
         }
         commit(tx)
     }
@@ -1764,8 +1965,9 @@ impl ProjectStore {
         attempt: ExecutionId,
         result: ExecutionId,
     ) -> Result<FixedResult, ExecutionError> {
-        let input = self.execution_input(attempt)?;
-        load_result(self.execution_connection()?, &input, result)
+        let connection = self.execution_connection()?;
+        let input = load_input_cached(connection, attempt)?;
+        load_result(connection, &input, result)
     }
     pub fn finish_execution_attempt(&mut self, attempt: ExecutionId) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
@@ -1862,7 +2064,7 @@ impl ProjectStore {
         parameters: serde_json::Value,
     ) -> Result<AdoptionAction, ExecutionError> {
         let tx = self.execution_write()?;
-        let input = load_input(&tx, attempt)?;
+        let input = load_input_cached(&tx, attempt)?;
         result_ids.sort();
         let existing: Option<Vec<u8>> = tx
             .query_row(
@@ -2035,7 +2237,7 @@ fn capture_adoption_in(
     action: &AdoptionAction,
     authority: &crate::execution::plugin_authority::PluginAuthority,
 ) -> Result<AdoptionCapture, ExecutionError> {
-    let input = load_input(connection, action.attempt_id)?;
+    let input = load_input_cached(connection, action.attempt_id)?;
     let digest = action.request_digest(&input)?;
     let persisted: (Vec<u8>, String) = connection
             .query_row(
@@ -2062,30 +2264,7 @@ fn capture_adoption_in(
         };
     }
     if crate::content::is_translation_projection(&input) {
-        // Complete ordered file coverage gates every entry adoption. Only Core
-        // projection data is inspected here, never a domain decoder.
-        for item in &input.envelope().items {
-            let (result_id, validation, execution): (Option<String>, String, String) = connection.query_row(
-                "SELECT current_result_id,validation,execution FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
-                params![input.envelope().attempt_id.to_string(), item.item_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            ).map_err(sql_error)?;
-            if validation != "valid" || execution != "succeeded" {
-                return Err(error(
-                    ErrorCode::DependencyConflict,
-                    "translation-incomplete",
-                ));
-            }
-            let result = load_result(
-                connection,
-                &input,
-                parse_id(
-                    result_id
-                        .ok_or_else(|| error(ErrorCode::CorruptLedger, "translation-result"))?,
-                )?,
-            )?;
-            crate::content::validate_translation_output(&input, &result)?;
-        }
+        complete_translation_projection(connection, &input)?;
     }
     super::application::check_input(connection, &input)?;
     check_translation_projection(connection, &input, Some(authority))?;
@@ -2118,27 +2297,35 @@ fn capture_adoption_in(
     if cancel_revision(connection, input.envelope().task_id)? != action.cancellation_revision {
         return Err(error(ErrorCode::Cancelled, "adoption"));
     }
-    let state = read_attempt(connection, action.attempt_id, true)?;
+    let state = if crate::content::is_translation_projection(&input) {
+        None
+    } else {
+        Some(read_attempt(connection, action.attempt_id, true)?)
+    };
     for result in &results {
         let newer:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![input.envelope().task_id.to_string(),result.envelope().item_id.to_string(),action.attempt_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
         if newer {
             return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
         }
-        let item = state
-            .items
-            .iter()
-            .find(|item| item.item_id == result.envelope().item_id)
-            .ok_or_else(|| error(ErrorCode::ResultMismatch, "item"))?;
-        let current: String = connection
-            .query_row(
-                "SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
-                params![action.attempt_id.to_string(), item.item_id.to_string()],
-                |r| r.get(0),
-            )
-            .map_err(sql_error)?;
+        let (current,validation,adoption):(String,String,String)=connection.query_row(
+            "SELECT current_result_id,validation,adoption FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+            params![action.attempt_id.to_string(),result.envelope().item_id.to_string()],
+            |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).map_err(sql_error)?;
+        let validation: ValidationState = decode_enum(validation)?;
+        let adoption: AdoptionState = decode_enum(adoption)?;
+        if let Some(state) = &state {
+            let item = state
+                .items
+                .iter()
+                .find(|item| item.item_id == result.envelope().item_id)
+                .ok_or_else(|| error(ErrorCode::ResultMismatch, "item"))?;
+            if item.validation != validation || item.adoption != adoption {
+                return Err(error(ErrorCode::CorruptLedger, "adoption-state"));
+            }
+        }
         if current != result.envelope().result_id.to_string()
-            || item.validation != ValidationState::Valid
-            || item.adoption == AdoptionState::Committed
+            || validation != ValidationState::Valid
+            || adoption == AdoptionState::Committed
         {
             return Err(error(ErrorCode::ResultMismatch, "adoption-result"));
         }
@@ -2163,7 +2350,7 @@ fn capture_adoption_in(
                 ));
             }
         }
-        let scope = &input.item(item.item_id)?.scope;
+        let scope = &input.item(result.envelope().item_id)?.scope;
         if let Some(locale) = &scope.locale {
             let metadata = super::read_metadata_from(connection)
                 .map_err(|_| error(ErrorCode::CorruptLedger, "scope"))?;

@@ -279,6 +279,16 @@ SDK `0.1.0-alpha.1` stay in the same undistributed batch, with no additional
 SemVer bump or publication. The 1 MiB fixed input, 2 MiB ledger result and 8 MiB
 attempt bounds remain independent complete encoded limits.
 
+Repeated translation projection execution and adoption now reuse bounded,
+verified decoding at the existing ledger owner. Every reuse compares complete
+persisted bytes and row associations; current result coverage, cancellation and
+live producer/checker authority are still checked for new writes. Worker
+completion and original-action reconciliation share that verified input path.
+This changes no persisted representation, schema 21, SDK/process/Store format,
+dependency or version source. The same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no additional version bump;
+both Unreleased changelogs record the bounded decoding improvement.
+
 The SDK's existing-translation input/proposal/check/Resource data contracts use
 their own schema/behavior 1/1 identities within the same undistributed SDK
 `0.1.0-alpha.1` batch. They reuse captured material/native reference and required
