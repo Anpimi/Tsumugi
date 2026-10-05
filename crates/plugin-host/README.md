@@ -472,6 +472,25 @@ To run only the build/check pairing with those same explicit selections, filter
 with `official_webvtt_generic_build_and_check_use_the_captured_package --exact`.
 The two pairing tests are separate; a filtered run does not cover source checking.
 
+The `smapi` pairing test selects a separately prepared SMAPI package using the
+same explicit package/runtime variables, and installs/reopens its fixed bytes
+through the shared Store harness:
+
+```sh
+cargo test -p tsumugi-plugin-host --features javascript-conformance --test smapi --locked -- --test-threads=1
+```
+
+It binds the captured source/build Resource declarations and executes four
+separate contributions through the real JavaScript Host. Independent literals
+cover JSONC/BOM/UTF-8 quoted ranges, native key identity, distinct equal-text units
+and canonical Unicode locale output. Duplicate native keys and stale revisions
+return typed failures; structurally valid forged source text and rehashed output
+text/formatting produce complete blocking check results bound to the fixed
+package and actual channel. Owned children close/reap and staging is cleaned.
+This pairing does not prove translation import/matching, project adoption,
+installed Mod compatibility or the complete desktop domain cutover. The shared
+harness changes no runtime grants or package approvals for other attempts.
+
 ```sh
 cargo test -p tsumugi-plugin-host --features conformance-worker --locked
 ```
