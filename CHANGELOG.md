@@ -12,7 +12,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
-- Experimental Core translation extraction now checks the current source set, snapshot, native scope and existing project language before recording a captured plugin attempt. Complete proposals require separately authorized domain checks through the existing durable proof owner; generic validators cannot approve them, and reopening verifies saved evidence without restoring permission. Per-entry matching/adoption and desktop integration remain under development.
+- Experimental Core translation extraction now checks the current source set, snapshot, native scope and existing project language before recording a captured plugin attempt. Complete proposals require separately authorized domain checks through the existing durable proof owner; generic validators cannot approve them, and reopening verifies saved evidence without restoring permission. Checked complete proposals now project into per-entry EX items and adoption units through the existing ledger. Matching compares exact namespace/policy/value identities, and the existing candidate/selection/receipt owner rechecks current proof and both execution grants. Original display ranges may be absent; desktop plugin import integration remains under development.
 
 - Experimental SDK existing-translation contracts retain complete captured material, explicit target-language evidence and original native identity references, with separately required domain checks. The Host binds their immutable single-file Resource metadata without executing code; project matching, adoption and desktop integration remain under development.
 

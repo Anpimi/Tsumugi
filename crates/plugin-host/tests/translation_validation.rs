@@ -1,12 +1,14 @@
 #![cfg(all(unix, feature = "core-adapter", feature = "javascript-conformance"))]
 //! Complete translation evidence reaches the actual Core ledger and independent
-//! Host checker. This does not stand in for per-entry or desktop adoption.
+//! Host checker and per-entry project adoption. Desktop acceptance is separate.
 use std::{path::PathBuf, sync::Arc};
 use tsumugi_core::{
-    ProjectMetadata, ProjectStore, TranslationAdoptionHandler,
+    ProjectMetadata, ProjectStore, SaveTranslationRevision, TranslationAdoptionConfirmation,
+    TranslationAdoptionHandler, TranslationMatch, TranslationSelectionDecision,
     content::{
         PluginTranslationSettings, SourceAdoptionHandler, SourceBundle, SourceSettings,
-        TRANSLATION_EXTRACTION_OPERATION, validate_plugin_translation_output,
+        TRANSLATION_EXTRACTION_OPERATION, TranslationProjectionRunner,
+        validate_plugin_translation_output,
     },
     execution::*,
 };
@@ -16,7 +18,7 @@ use tsumugi_plugin_sdk as sdk;
 mod core_execution;
 #[path = "support/runtime.rs"]
 mod runtime_fixture;
-use core_execution::{authorize, execute};
+use core_execution::{authorize, execute, execute_all};
 
 struct CannotApprove;
 impl ResultValidator for CannotApprove {
@@ -278,7 +280,7 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
         && r.targets == [proposal.import_id.clone()]
         && r.input_digest == input.digest()
         && r.scope_digest == result.digest()));
-    authorize(&runtime, &mut store, &checker_input);
+    let live_checker_grant = authorize(&runtime, &mut store, &checker_input);
     let checked = execute(&mut runtime, &mut store, &checker_input);
     store
         .commit_translation_validation(capture.prepare(checked).unwrap())
@@ -310,11 +312,355 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
             .translation_preview(input.envelope().attempt_id, 0, 100, None)
             .is_err()
     );
+    runtime
+        .register_read_only(Arc::new(TranslationProjectionRunner))
+        .unwrap();
+    let projected = store
+        .capture_translation_projection(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    assert_eq!(projected.envelope().items.len(), 4);
+    assert_eq!(projected.envelope().units.len(), 4);
+    assert!(projected.envelope().plugin.is_none());
+    assert_eq!(projected.envelope().settings["file"]["utf8"], raw);
+    assert!(
+        projected
+            .envelope()
+            .items
+            .iter()
+            .all(|item| item.payload.is_number())
+    );
+    // Recomputing a fixed-input digest cannot turn arbitrary projected data into
+    // checked plugin evidence. Rejection leaves no durable attempt.
+    for field in ["text", "nativeValue"] {
+        let mut forged = projected.envelope().clone();
+        forged.attempt_id = ExecutionId::new();
+        if field == "text" {
+            forged.settings["entries"][0][2] = "forged".into();
+        } else {
+            forged.settings["entries"][0][0] = "MIXA".into();
+        }
+        let forged = FixedInput::capture(forged).unwrap();
+        assert!(store.enqueue_execution(&forged).is_err());
+        assert!(store.execution_input(forged.envelope().attempt_id).is_err());
+    }
+    // Persist and validate one actual Core projection result while the other
+    // items remain queued. Neither preview nor entry adoption can accept it.
+    store.enqueue_read_only_execution(&projected).unwrap();
+    let first_item = &projected.envelope().items[0];
+    let request = store
+        .dispatch_execution_item(projected.envelope().attempt_id, first_item.item_id)
+        .unwrap();
+    let (sender, receiver) = result_channel();
+    TranslationProjectionRunner
+        .run(request, Cancellation::default(), sender)
+        .unwrap();
+    let first_result = receiver.recv().unwrap();
+    store.save_execution_result(&first_result).unwrap();
+    store
+        .validate_execution_result(
+            projected.envelope().attempt_id,
+            first_result.envelope().result_id,
+        )
+        .unwrap();
+    assert!(
+        store
+            .translation_preview(projected.envelope().attempt_id, 0, 100, None)
+            .is_err()
+    );
+    let first_unit = projected
+        .envelope()
+        .units
+        .iter()
+        .find(|unit| unit.item_ids == [first_item.item_id])
+        .unwrap();
+    let partial_action = store
+        .prepare_adoption(
+            projected.envelope().attempt_id,
+            first_unit.unit_id,
+            vec![first_result.envelope().result_id],
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .capture_execution_adoption(&partial_action)
+            .err()
+            .unwrap()
+            .code,
+        ErrorCode::DependencyConflict
+    );
+    let projected_results = execute_all(&mut runtime, &mut store, &projected);
+    assert_eq!(projected_results.len(), 4);
+    let preview = store
+        .translation_preview(projected.envelope().attempt_id, 0, 100, None)
+        .unwrap();
+    assert_eq!(
+        (preview.total, preview.unique, preview.unmatched),
+        (4, 3, 1)
+    );
+    assert_eq!(preview.rows[0].entry.native_key, "mIxA");
+    assert_eq!(preview.rows[0].source_text.as_deref(), Some("same"));
+    assert_eq!(preview.rows[1].source_text.as_deref(), Some("same"));
+    assert_ne!(preview.rows[0].unit_id, preview.rows[1].unit_id);
+    assert_eq!(preview.rows[2].entry.text, "");
+    assert_eq!(preview.rows[3].status, TranslationMatch::Unmatched);
+    let prepare = |store: &mut ProjectStore,
+                   projected: &FixedInput,
+                   row: &tsumugi_core::TranslationPreviewRow,
+                   decision| {
+        let unit = projected
+            .envelope()
+            .units
+            .iter()
+            .find(|unit| unit.item_ids == [row.item_id])
+            .unwrap();
+        store
+            .prepare_adoption(
+                projected.envelope().attempt_id,
+                unit.unit_id,
+                vec![row.result_id],
+                serde_json::to_value(TranslationAdoptionConfirmation {
+                    result_digest: row.result_digest.clone(),
+                    source_snapshot_id: snapshot,
+                    occurrence_id: row.occurrence_id.unwrap(),
+                    source_revision_id: row.source_revision_id.unwrap(),
+                    target_unit_id: row.unit_id.unwrap(),
+                    expected_selection_id: row.current_selection.as_ref().map(|s| s.event_id),
+                    decision,
+                })
+                .unwrap(),
+            )
+            .unwrap()
+    };
+    let candidate = prepare(
+        &mut store,
+        &projected,
+        &preview.rows[0],
+        TranslationSelectionDecision::CandidateOnly,
+    );
+    let receipt = store
+        .adopt_execution(&candidate, &TranslationAdoptionHandler)
+        .unwrap();
+    assert_eq!(receipt.changes.len(), 1);
+    assert_eq!(
+        store
+            .adopt_execution(&candidate, &TranslationAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    // A later user edit wins over an earlier import confirmation. The first
+    // committed candidate remains intact and the conflicting item stays unapplied.
+    let conflict = prepare(
+        &mut store,
+        &projected,
+        &preview.rows[1],
+        TranslationSelectionDecision::SelectIfEmpty,
+    );
+    let prepared_conflict = store
+        .capture_execution_adoption(&conflict)
+        .unwrap()
+        .prepare(&TranslationAdoptionHandler)
+        .unwrap();
+    store
+        .save_translation_revision(&SaveTranslationRevision {
+            project_id: projected.envelope().project_id,
+            action_id: ExecutionId::new(),
+            unit_id: preview.rows[1].unit_id.unwrap(),
+            locale: "zh-CN".into(),
+            source_revision_id: preview.rows[1].source_revision_id.unwrap(),
+            expected_selection_id: None,
+            text: "newer user edit".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .commit_execution_adoption(prepared_conflict)
+            .unwrap_err()
+            .code,
+        ErrorCode::DependencyConflict
+    );
+    assert!(
+        store
+            .adoption_receipt(conflict.action_id)
+            .unwrap()
+            .is_none()
+    );
+    let current = store
+        .translation_preview(projected.envelope().attempt_id, 0, 100, None)
+        .unwrap();
+    assert_eq!(current.rows[0].status, TranslationMatch::Applied);
+    assert_eq!(current.rows[1].status, TranslationMatch::SelectedConflict);
+    assert!(
+        store
+            .translation_preview(projected.envelope().attempt_id, 1, 1, Some(&preview.basis))
+            .is_err()
+    );
+    let replace = prepare(
+        &mut store,
+        &projected,
+        &current.rows[1],
+        TranslationSelectionDecision::Replace,
+    );
+    assert_eq!(
+        store
+            .adopt_execution(&replace, &TranslationAdoptionHandler)
+            .unwrap()
+            .changes
+            .len(),
+        2
+    );
+    let selected = prepare(
+        &mut store,
+        &projected,
+        &current.rows[2],
+        TranslationSelectionDecision::SelectIfEmpty,
+    );
+    assert_eq!(
+        store
+            .adopt_execution(&selected, &TranslationAdoptionHandler)
+            .unwrap()
+            .changes
+            .len(),
+        2
+    );
+    let empty_material = {
+        let mut material = material.clone();
+        material.import_id = ExecutionId::new().to_string();
+        material.artifacts[0].utf8 = "{}".into();
+        material.artifacts[0].sha256 = sdk::payload_digest("{}");
+        material
+    };
+    let empty_input = fixed(empty_material);
+    authorize(&runtime, &mut store, &empty_input);
+    let empty_result = execute(&mut runtime, &mut store, &empty_input);
+    let empty_capture = store
+        .capture_translation_validation(
+            empty_input.envelope().attempt_id,
+            empty_result.envelope().result_id,
+        )
+        .unwrap();
+    let empty_checker = empty_capture.check_input().clone();
+    authorize(&runtime, &mut store, &empty_checker);
+    let empty_checked = execute(&mut runtime, &mut store, &empty_checker);
+    store
+        .commit_translation_validation(empty_capture.prepare(empty_checked).unwrap())
+        .unwrap();
+    let empty_projected = store
+        .capture_translation_projection(
+            empty_input.envelope().attempt_id,
+            empty_result.envelope().result_id,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            empty_projected.envelope().items.len(),
+            empty_projected.envelope().units.len()
+        ),
+        (1, 1)
+    );
+    assert!(empty_projected.envelope().items[0].payload.is_null());
+    let empty_results = execute_all(&mut runtime, &mut store, &empty_projected);
+    store
+        .validate_execution_result(
+            empty_projected.envelope().attempt_id,
+            empty_results[0].envelope().result_id,
+        )
+        .unwrap();
+    let empty_preview = store
+        .translation_preview(empty_projected.envelope().attempt_id, 0, 100, None)
+        .unwrap();
+    assert_eq!(empty_preview.total, 0);
+    assert!(empty_preview.rows.is_empty());
+    let empty_action = store
+        .prepare_adoption(
+            empty_projected.envelope().attempt_id,
+            empty_projected.envelope().units[0].unit_id,
+            vec![empty_results[0].envelope().result_id],
+            serde_json::Value::Null,
+        )
+        .unwrap();
+    assert!(
+        store
+            .adopt_execution(&empty_action, &TranslationAdoptionHandler)
+            .is_err()
+    );
+    let second_projected = store
+        .capture_translation_projection(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    for result in execute_all(&mut runtime, &mut store, &second_projected) {
+        store
+            .validate_execution_result(
+                second_projected.envelope().attempt_id,
+                result.envelope().result_id,
+            )
+            .unwrap();
+    }
+    let second_preview = store
+        .translation_preview(second_projected.envelope().attempt_id, 0, 100, None)
+        .unwrap();
+    let revoked = prepare(
+        &mut store,
+        &second_projected,
+        &second_preview.rows[0],
+        TranslationSelectionDecision::CandidateOnly,
+    );
+    let prepared_revoked = store
+        .capture_execution_adoption(&revoked)
+        .unwrap()
+        .prepare(&TranslationAdoptionHandler)
+        .unwrap();
+    runtime
+        .revoke_plugin(&mut store, live_checker_grant)
+        .unwrap();
+    assert_eq!(
+        store
+            .commit_execution_adoption(prepared_revoked)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert!(store.adoption_receipt(revoked.action_id).unwrap().is_none());
+    // History remains readable after revocation, while new capture/enqueue and
+    // adoption require fresh independent authorization of the original proof.
+    assert!(
+        store
+            .capture_translation_projection(
+                input.envelope().attempt_id,
+                result.envelope().result_id
+            )
+            .is_err()
+    );
+    assert!(store.enqueue_execution(&projected).is_err());
+    assert_eq!(
+        store
+            .translation_preview(projected.envelope().attempt_id, 0, 100, None)
+            .unwrap()
+            .applied,
+        3
+    );
     runtime.begin_quiesce(&mut store).unwrap();
     runtime.finish_quiesce(&mut store).unwrap();
     drop(runtime);
     drop(store);
-    let reopened = ProjectStore::open(&path).unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .adopt_execution(&candidate, &TranslationAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        reopened
+            .translation_preview(projected.envelope().attempt_id, 0, 100, None)
+            .unwrap()
+            .applied,
+        3
+    );
+    assert!(
+        reopened
+            .adopt_execution(&revoked, &TranslationAdoptionHandler)
+            .is_err()
+    );
     assert_eq!(
         reopened
             .execution_attempt(input.envelope().attempt_id, false)

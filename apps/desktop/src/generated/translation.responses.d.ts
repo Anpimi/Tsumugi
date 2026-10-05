@@ -110,12 +110,12 @@ export interface TranslationPreviewRow {
 export interface TranslationEntry {
   artifactId: ExecutionId;
   /**
-   * Half-open UTF-8 byte offsets in the captured file, including JSON quotes.
+   * Optional half-open UTF-8 byte offsets for the original display evidence.
    *
    * @minItems 2
    * @maxItems 2
    */
-  keyByteRange: [number, number];
+  keyByteRange: [number, number] | null;
   nativeKey: string;
   ordinal: number;
   text: string;

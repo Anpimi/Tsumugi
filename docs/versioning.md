@@ -276,6 +276,15 @@ changing Desktop, process frames, Store layout or current schema 20. Application
 actual immutable SDK source artifact containing these additions; no compatibility
 conversion, production translation cutover or release is claimed.
 
+Core checked translations now project into per-entry EX items and adoption units
+through the existing ledger and revision/selection/receipt owner. The experimental
+translation preview's key range is required nullable because native display evidence
+may have no source location; consumers must preserve explicit absence. This adds
+no table or alternate persistence/proof owner, and does not change the SDK/process
+profile, Store format, current schema 20 or desktop import assembly. It remains
+in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+with no additional bump, release or historical development-format migration.
+
 1. Assess user-visible behavior, compatibility, project migrations and the application's release impact before completing a change. Check the existing unreleased entries and version target.
 2. Describe user-relevant additions, changes and fixes under `Unreleased` in [CHANGELOG.md](../CHANGELOG.md), using the appropriate Keep a Changelog category. State incompatible behavior and concrete migration steps. Consolidate related entries instead of copying commit subjects or listing merge commits.
 3. Update [CHANGELOG.zh-CN.md](../CHANGELOG.zh-CN.md) in the same change. English is authoritative; version headings, dates, categories, scope and migration facts must agree. A change without release impact needs no artificial entry or bump; record that assessment in its review or delivery notes.

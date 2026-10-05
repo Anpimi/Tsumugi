@@ -507,7 +507,7 @@
             "$ref": "#/definitions/ExecutionId"
           },
           "keyByteRange": {
-            "description": "Half-open UTF-8 byte offsets in the captured file, including JSON quotes.",
+            "description": "Optional half-open UTF-8 byte offsets for the original display evidence.",
             "items": {
               "format": "uint32",
               "maximum": 4294967295,
@@ -516,7 +516,10 @@
             },
             "maxItems": 2,
             "minItems": 2,
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "nativeKey": {
             "type": "string"

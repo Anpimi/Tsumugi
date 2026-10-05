@@ -443,8 +443,15 @@ to adopt its actual source, then qualify a complete translation proposal in the
 Core ledger. It checks existing project locale/current source/native scope,
 separate producer/checker grants, mandatory proof, revocation before commit and
 read-only reopening without renewed permission. The original material remains
-fixed and native values are not normalized by Core. This library conformance
-does not implement per-entry translation projection/adoption or desktop import.
+fixed and native values are not normalized by Core. Checked complete proposals
+project into one EX item/adoption unit per entry (one empty unit for zero entries).
+The same test verifies complete-result gating, exact native matching, equal-text
+sources with different keys, empty strings, unmatched retention, candidate-only,
+select-if-empty, explicit replacement, stale selection conflict, checker revocation
+between capture and commit, and original receipt replay after reopening. The
+projection shares the existing revision/selection/receipt owner. Optional original
+display evidence has nullable UTF-8 key coordinates; absence is never a fabricated
+range. Desktop plugin import integration and complete domain cutover remain pending.
 
 `PackageImage::translation_import` reads the SDK's translation Resource from
 captured bytes and binds its exact extractor/checker selections. The SDK binding

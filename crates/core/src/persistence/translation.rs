@@ -274,6 +274,73 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// One preview/adoption owner, with explicitly selected legacy and checked
+/// projection inputs. Unknown capabilities never fall back to a domain parser.
+struct TranslationImportView {
+    bundle_id: ExecutionId,
+    source_snapshot_id: ExecutionId,
+    target_locale: String,
+    declared_locale: String,
+    manifest_digest: String,
+    file: crate::content::CapturedFile,
+    entries: Vec<crate::content::TranslationEntry>,
+    namespace: Option<String>,
+    policy: tsumugi_plugin_sdk::ContractRef,
+    native_values: Vec<String>,
+}
+impl TranslationImportView {
+    fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
+        if crate::content::is_translation_projection(input) {
+            let projection = crate::content::TranslationProjection::from_input(input)?;
+            return Ok(Self {
+                bundle_id: projection.bundle_id,
+                source_snapshot_id: projection.source_snapshot_id,
+                target_locale: projection.target_locale.clone(),
+                declared_locale: projection.declared_locale.clone(),
+                manifest_digest: input.digest().into(),
+                file: projection.file.clone(),
+                entries: projection
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, entry)| {
+                        entry.entry(ordinal as u32, projection.file.artifact_id)
+                    })
+                    .collect(),
+                namespace: Some(projection.native_scope.namespace.clone()),
+                policy: projection.native_scope.policy.clone(),
+                native_values: projection
+                    .entries
+                    .iter()
+                    .map(|entry| entry.native_value().to_owned())
+                    .collect(),
+            });
+        }
+        // Explicit transition route until desktop imports use the plugin owner.
+        let bundle = crate::content::TranslationBundle::from_input(input)?;
+        let entries = crate::content::extract_translation(
+            &bundle,
+            &crate::execution::Cancellation::default(),
+        )?;
+        let native_values = entries
+            .iter()
+            .map(|entry| entry.native_key.to_ascii_lowercase())
+            .collect();
+        Ok(Self {
+            bundle_id: bundle.bundle_id,
+            source_snapshot_id: bundle.source_snapshot_id,
+            target_locale: bundle.target_locale,
+            declared_locale: bundle.declared_locale,
+            manifest_digest: bundle.manifest_digest,
+            file: bundle.file,
+            entries,
+            namespace: None,
+            policy: crate::content::contract_ref("smapi-native-key"),
+            native_values,
+        })
+    }
+}
+
 pub(super) fn record_input(
     connection: &Connection,
     input: &FixedInput,
@@ -283,6 +350,11 @@ pub(super) fn record_input(
     }
     if input.envelope().operation != crate::content::TRANSLATION_OPERATION {
         return Ok(());
+    }
+    if crate::content::is_translation_projection(input) {
+        let projection = crate::content::TranslationProjection::from_input(input)?;
+        let producer = super::ledger::load_input(connection, projection.origin.producer_attempt)?;
+        return record_plugin_input(connection, &producer);
     }
     let bundle = crate::content::TranslationBundle::from_input(input)?;
     check_target(
@@ -755,7 +827,7 @@ impl AdoptionHandler for TranslationAdoptionHandler {
         let entry = output
             .entry
             .ok_or_else(|| error(ErrorCode::InvalidInput, "translation-empty"))?;
-        let bundle = crate::content::TranslationBundle::from_input(input)?;
+        let bundle = TranslationImportView::from_input(input)?;
         let confirmation: TranslationAdoptionConfirmation =
             crate::content::from_value(&action.parameters)?;
         if confirmation.result_digest != result.digest()
@@ -816,16 +888,20 @@ impl AdoptionHandler for TranslationAdoptionHandler {
             )?;
             let occurrence: crate::content::SourceOccurrence =
                 codec::decode(&projection, MAX_INPUT_BYTES)?;
-            // This legacy importer only understands SMAPI's canonical-key policy.
-            // Other domain policies cannot be inferred from their display labels.
+            // Canonical values belong to the producer/checker. Display text,
+            // source text and coordinates cannot establish native identity.
             let identity = occurrence
                 .native_identity
                 .as_ref()
                 .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-match"))?;
             if unit != confirmation.target_unit_id.to_string()
                 || revision != confirmation.source_revision_id.to_string()
-                || identity.policy != crate::content::contract_ref("smapi-native-key")
-                || identity.value != entry.native_key.to_ascii_lowercase()
+                || bundle
+                    .namespace
+                    .as_ref()
+                    .is_some_and(|namespace| *namespace != identity.namespace)
+                || identity.policy != bundle.policy
+                || identity.value != bundle.native_values[entry.ordinal as usize]
             {
                 return Err(error(ErrorCode::DependencyConflict, "translation-match"));
             }
@@ -964,7 +1040,7 @@ impl ProjectStore {
         limit: u32,
         expected_basis: Option<&str>,
     ) -> Result<TranslationPreview, ExecutionError> {
-        use crate::content::{TranslationBundle, TranslationOutput, extract_translation};
+        use crate::content::TranslationOutput;
         use crate::execution::ExecutionState;
         use std::collections::BTreeMap;
 
@@ -975,13 +1051,14 @@ impl ProjectStore {
             .connection()
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
         let input = super::ledger::load_input(connection, attempt)?;
-        let bundle = TranslationBundle::from_input(&input)?;
+        let bundle = TranslationImportView::from_input(&input)?;
+        super::ledger::check_translation_projection(connection, &input, None)?;
         check_target(
             connection,
             input.envelope().project_id,
             &bundle.target_locale,
         )?;
-        let entries = extract_translation(&bundle, &crate::execution::Cancellation::default())?;
+        let entries = &bundle.entries;
         if after as usize > entries.len() {
             return Err(error(ErrorCode::InvalidInput, "translation-page"));
         }
@@ -990,8 +1067,10 @@ impl ProjectStore {
             .current_snapshot
             .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-source"))?;
         let source = self.source_content(current, 0, 1)?;
-        let mut matches: BTreeMap<String, Vec<(ExecutionId, ExecutionId, ExecutionId, String)>> =
-            BTreeMap::new();
+        let mut matches: BTreeMap<
+            (String, tsumugi_plugin_sdk::ContractRef, String),
+            Vec<(ExecutionId, ExecutionId, ExecutionId, String)>,
+        > = BTreeMap::new();
         let mut statement = connection
             .prepare(
                 "SELECT o.occurrence_id,o.unit_id,o.revision_id,o.projection,r.text
@@ -1015,12 +1094,14 @@ impl ProjectStore {
                 row.map_err(super::ledger::sql_error)?;
             let source: crate::content::SourceOccurrence =
                 codec::decode(&projection, MAX_INPUT_BYTES)?;
-            let Some(identity) = source.native_identity.as_ref().filter(|identity| {
-                identity.policy == crate::content::contract_ref("smapi-native-key")
-            }) else {
+            let Some(identity) = source.native_identity.as_ref() else {
                 continue;
             };
-            let key = identity.value.clone();
+            let key = (
+                identity.namespace.clone(),
+                identity.policy.clone(),
+                identity.value.clone(),
+            );
             matches
                 .entry(key)
                 .or_default()
@@ -1054,6 +1135,7 @@ impl ProjectStore {
             {
                 return Err(error(ErrorCode::CorruptLedger, "translation-result"));
             }
+            crate::content::validate_translation_output(&input, &result)?;
             let ordinal: Option<u32> = crate::content::from_value(&item.payload)?;
             let expected = TranslationOutput {
                 version: 1,
@@ -1077,7 +1159,16 @@ impl ProjectStore {
             let Some(entry) = expected.entry else {
                 continue;
             };
-            let candidates = matches.get(&entry.native_key.to_ascii_lowercase());
+            let key = (
+                bundle
+                    .namespace
+                    .as_ref()
+                    .unwrap_or(&source.namespace)
+                    .clone(),
+                bundle.policy.clone(),
+                bundle.native_values[entry.ordinal as usize].clone(),
+            );
+            let candidates = matches.get(&key);
             let only = candidates.and_then(|rows| (rows.len() == 1).then(|| &rows[0]));
             let (selection, selected_text) =
                 if let Some((_, unit, _, _)) = only {

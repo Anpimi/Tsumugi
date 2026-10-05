@@ -404,6 +404,7 @@ fn read_attempt(
     active: bool,
 ) -> Result<AttemptView, ExecutionError> {
     let input = load_input(connection, attempt)?;
+    check_translation_projection(connection, &input, None)?;
     let envelope = input.envelope();
     let cancellation_revision = cancel_revision(connection, envelope.task_id)?;
     let captured: i64 = connection
@@ -619,7 +620,136 @@ pub(super) fn validate_translation_link(
     Ok(prepared)
 }
 
+/// Restore immutable qualification independently of mutable current check links.
+/// Historical reads preserve exact original proof; new writes also require the
+/// current producer/checker results, link and both live execution grants.
+pub(super) fn check_translation_projection(
+    connection: &Connection,
+    input: &FixedInput,
+    authority: Option<&crate::execution::plugin_authority::PluginAuthority>,
+) -> Result<(), ExecutionError> {
+    if !crate::content::is_translation_projection(input) {
+        return Ok(());
+    }
+    let projection = crate::content::TranslationProjection::from_input(input)?;
+    let origin = &projection.origin;
+    let producer = load_input(connection, origin.producer_attempt)?;
+    let result = load_result(connection, &producer, origin.producer_result)?;
+    let checker = load_input(connection, origin.checker_attempt)?;
+    let checked = load_result(connection, &checker, origin.checker_result)?;
+    if producer.envelope().project_id != input.envelope().project_id
+        || checker.envelope().project_id != input.envelope().project_id
+    {
+        return Err(error(
+            ErrorCode::Unauthorized,
+            "translation-projection-project",
+        ));
+    }
+    let rebuilt = crate::content::TranslationProjection::capture(
+        &producer,
+        &result,
+        &checker,
+        &checked,
+        projection.bundle_id,
+        projection.file.artifact_id,
+    )?;
+    if rebuilt != *projection {
+        return Err(error(
+            ErrorCode::ResultMismatch,
+            "translation-projection-origin",
+        ));
+    }
+    let prepared = TranslationValidationCapture::restore(
+        ResultValidationCapture {
+            input: producer.clone(),
+            result: result.clone(),
+        },
+        checker.clone(),
+    )?
+    .prepare(checked.clone())?;
+    if !prepared.proof.valid {
+        return Err(error(
+            ErrorCode::OutputInvalid,
+            "translation-projection-proof",
+        ));
+    }
+    if let Some(authority) = authority {
+        for (input, result) in [(&producer, &result), (&checker, &checked)] {
+            require_current_result(connection, input, result)?;
+            let permit = super::plugin_execution::check_input_in(connection, input, authority)?;
+            if permit.as_ref().map(PluginPermit::grant_id)
+                != result
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .map(|e| e.authorization_id)
+            {
+                return Err(error(
+                    ErrorCode::Unauthorized,
+                    "translation-projection-grant",
+                ));
+            }
+            let captured_cancel: i64 = connection
+                .query_row(
+                    "SELECT cancellation_revision FROM execution_attempts WHERE attempt_id=?1",
+                    [input.envelope().attempt_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql_error)?;
+            if cancel_revision(connection, input.envelope().task_id)?.get()
+                != captured_cancel as u64
+            {
+                return Err(error(ErrorCode::Cancelled, "translation-projection-origin"));
+            }
+        }
+        let valid: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM plugin_validation_links l JOIN execution_items i ON i.current_result_id=l.producer_result_id
+             WHERE l.producer_result_id=?1 AND l.checker_result_id=?2 AND l.valid=1 AND i.validation='valid')",
+            params![origin.producer_result.to_string(), origin.checker_result.to_string()], |row| row.get(0),
+        ).map_err(sql_error)?;
+        if !valid {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "translation-projection-current-proof",
+            ));
+        }
+    }
+    Ok(())
+}
+
 impl ProjectStore {
+    /// Capture once and reuse this exact input for retries. It retains one whole
+    /// file and one compact entry set; each EX item only references its ordinal.
+    pub fn capture_translation_projection(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<FixedInput, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-projection"))?;
+        let producer = load_input(connection, attempt)?;
+        let result = load_result(connection, &producer, result)?;
+        let prepared = validate_translation_link(connection, &producer, &result, true)?;
+        let projection = crate::content::TranslationProjection::capture(
+            &producer,
+            &result,
+            &prepared.capture.check_input,
+            &prepared.check_result,
+            ExecutionId::new(),
+            ExecutionId::new(),
+        )?;
+        let project: crate::ProjectId = producer
+            .envelope()
+            .project_id
+            .to_string()
+            .parse()
+            .map_err(|_| error(ErrorCode::InvalidInput, "translation-project"))?;
+        let input = projection.fixed_input(project)?;
+        check_translation_projection(connection, &input, Some(&self.plugin_authority))?;
+        super::translation::record_input(connection, &producer)?;
+        Ok(input)
+    }
     #[cfg(feature = "execution-test-host")]
     pub fn install_execution_fixture(&mut self, ids: &[String]) -> Result<(), ExecutionError> {
         let tx = self.execution_write()?;
@@ -1036,6 +1166,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
         }
         super::plugin_execution::check_input_in(&tx, input, &authority)?;
+        check_translation_projection(&tx, input, Some(&authority))?;
         super::application::check_enqueue(&tx, input, parent)?;
         let existing: Option<String> = tx
             .query_row(
@@ -1439,8 +1570,10 @@ impl ProjectStore {
         attempt: ExecutionId,
         result: ExecutionId,
     ) -> Result<(), ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
+        check_translation_projection(&tx, &input, Some(&authority))?;
         if input.envelope().plugin.is_some() {
             return Err(error(ErrorCode::Unauthorized, "plugin-semantic-validation"));
         }
@@ -1497,6 +1630,10 @@ impl ProjectStore {
             ));
         }
         super::plugin_execution::check_input_in(&tx, &input, &authority)?;
+        check_translation_projection(&tx, &input, Some(&authority))?;
+        if crate::content::is_translation_projection(&input) {
+            crate::content::validate_translation_output(&input, &output)?;
+        }
         if !prepared.proof.matches(&input, &output)
             || input.digest() != prepared.capture.input.digest()
         {
@@ -1924,7 +2061,34 @@ fn capture_adoption_in(
             Err(error(ErrorCode::CorruptLedger, "receipt"))
         };
     }
+    if crate::content::is_translation_projection(&input) {
+        // Complete ordered file coverage gates every entry adoption. Only Core
+        // projection data is inspected here, never a domain decoder.
+        for item in &input.envelope().items {
+            let (result_id, validation, execution): (Option<String>, String, String) = connection.query_row(
+                "SELECT current_result_id,validation,execution FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![input.envelope().attempt_id.to_string(), item.item_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).map_err(sql_error)?;
+            if validation != "valid" || execution != "succeeded" {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "translation-incomplete",
+                ));
+            }
+            let result = load_result(
+                connection,
+                &input,
+                parse_id(
+                    result_id
+                        .ok_or_else(|| error(ErrorCode::CorruptLedger, "translation-result"))?,
+                )?,
+            )?;
+            crate::content::validate_translation_output(&input, &result)?;
+        }
+    }
     super::application::check_input(connection, &input)?;
+    check_translation_projection(connection, &input, Some(authority))?;
     if input.envelope().plugin.is_some()
         && input.envelope().operation == crate::content::BUILD_OPERATION
     {

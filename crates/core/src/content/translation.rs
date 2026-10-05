@@ -235,8 +235,8 @@ pub struct TranslationEntry {
     pub artifact_id: ExecutionId,
     pub native_key: String,
     pub text: String,
-    /// Half-open UTF-8 byte offsets in the captured file, including JSON quotes.
-    pub key_byte_range: [u32; 2],
+    /// Optional half-open UTF-8 byte offsets for the original display evidence.
+    pub key_byte_range: Option<[u32; 2]>,
     /// Half-open UTF-8 byte offsets before escape decoding or text normalization.
     pub value_byte_range: [u32; 2],
 }
@@ -308,10 +308,10 @@ fn parsed_translation(
             artifact_id: bundle.file.artifact_id,
             native_key: key.into(),
             text: text.value.to_string(),
-            key_byte_range: [
+            key_byte_range: Some([
                 offset + key_range.start as u32,
                 offset + key_range.end as u32,
-            ],
+            ]),
             value_byte_range: [
                 offset + text.range.start as u32,
                 offset + text.range.end as u32,
@@ -341,6 +341,9 @@ pub fn validate_translation_output(
     input: &FixedInput,
     result: &FixedResult,
 ) -> Result<TranslationOutput, ExecutionError> {
+    if super::is_translation_projection(input) {
+        return super::validate_projected_translation_output(input, result);
+    }
     let bundle = TranslationBundle::from_input(input)?;
     if result.envelope().outcome != ExecutionState::Succeeded {
         return Err(invalid("invalid-structure"));
@@ -507,7 +510,7 @@ mod tests {
             assert_eq!(entry.ordinal, expected["ordinal"].as_u64().unwrap() as u32);
             assert_eq!(entry.native_key, expected["key"].as_str().unwrap());
             assert_eq!(entry.text, expected["text"].as_str().unwrap());
-            for range in [entry.key_byte_range, entry.value_byte_range] {
+            for range in [entry.key_byte_range.unwrap(), entry.value_byte_range] {
                 assert!(range[0] < range[1]);
                 assert!(range[1] <= bytes.len() as u32);
             }

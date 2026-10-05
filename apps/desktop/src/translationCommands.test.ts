@@ -98,6 +98,16 @@ it("rejects missing fields, unknown states, imprecise integers and invalid ident
   expect(validators.validateRequestAdopt({ ...fixture.adopt, confirmation: { ...fixture.adopt.confirmation, decision: "overwrite" } })).toBe(false);
 });
 
+it("preserves explicitly absent display ranges and requires the nullable wire field", async () => {
+  const preview = structuredClone(fixture.preview);
+  Object.assign(preview.rows[0].entry, { keyByteRange: null });
+  expect(validators.validateResponsePreview(preview)).toBe(true);
+  invoke.mockResolvedValueOnce(preview);
+  expect((await translationCommands.preview(fixture.previewRequest)).rows[0].entry.keyByteRange).toBeNull();
+  const { keyByteRange: _range, ...entry } = preview.rows[0].entry;
+  expect(validators.validateResponsePreview({ ...preview, rows: [{ ...preview.rows[0], entry }] })).toBe(false);
+});
+
 it("keeps malformed mutation confirmations unknown and preserves structured rejections", async () => {
   invoke.mockResolvedValueOnce({ ...fixture.selected, sequence: 1 });
   await expect(translationCommands.select(fixture.select)).rejects.toSatisfy(hasUnknownOutcome);

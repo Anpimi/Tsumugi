@@ -3,6 +3,7 @@ mod build;
 mod plugin_translation;
 mod smapi;
 mod translation;
+mod translation_projection;
 pub mod webvtt;
 pub use crate::persistence::content::SourceAdoptionHandler;
 pub use build::{
@@ -35,6 +36,10 @@ pub fn supported_identity_policy(policy: &str) -> bool {
 pub use translation::{
     TRANSLATION_OPERATION, TranslationBundle, TranslationEntry, TranslationOutput,
     TranslationRunner, declared_locale, extract_translation, validate_translation_output,
+};
+pub use translation_projection::{TRANSLATION_PROJECTION_CAPABILITY, TranslationProjectionRunner};
+pub(crate) use translation_projection::{
+    TranslationProjection, is_translation_projection, validate_projected_translation_output,
 };
 
 use crate::{
