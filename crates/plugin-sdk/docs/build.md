@@ -66,8 +66,9 @@ deliberately accepts structurally valid bytes without establishing their domain
 syntax. Only an independent semantic check against actual output can supply
 domain evidence. Core must additionally verify actual channel identity, both
 current execution authorizations, complete check coverage and release eligibility
-before publishing. The desktop's production build path has not yet been switched
-to these contracts; this SDK/Host metadata unit does not claim that integration.
+before publishing. Desktop installed-builder/checker commands connect these
+contracts to Core execution and Release adoption. The native workbench and
+domain-package cutover are still being integrated.
 
 Schemas, JavaScript types and standalone structural validators are generated
 from Rust. The Rust receivers also check relationships, hashes, paths and UTF-8
@@ -114,8 +115,10 @@ explicit fallback decision.
 `find_plugin_build` reconciles the original attempt and exact request after later
 edits or reopening; it does not recapture newer choices or restore execution
 authority. These APIs have not yet replaced the desktop's built-in build runners.
-Actual desktop plugin execution and filesystem delivery remain integration
-requirements; Core artifact proof and immutable release adoption are described below. The existing release store remains the
+Desktop commands separately consent and execute the installed builder and checker
+through RunnerProxy, then commit Core proof before Release adoption. Native build
+controls, domain-package migration and generic filesystem delivery remain integration
+requirements. Core artifact proof and immutable release adoption are described below. The existing release store remains the
 owner; this capture adds no parallel database, planner or authorization mechanism.
 
 ## Current Core artifact-proof boundary
@@ -182,5 +185,5 @@ The current-only project format is schema 20. Schema 19 and earlier development
 directories are preserved and refused without migration. The still-running built-in
 build workflow has an explicit current-format manifest tag in the same store;
 it remains until desktop installed-builder/checker integration replaces it.
-Actual Host builder/checker execution, held-directory export, native UI acceptance
-and removal of the built-in production runners remain pending.
+Held-directory export, native UI acceptance, domain-package migration and removal
+of the built-in production runners remain pending.
