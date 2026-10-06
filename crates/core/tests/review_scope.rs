@@ -5,7 +5,7 @@ mod support;
 
 use rusqlite::{Connection, ffi};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     ffi::{CStr, c_char, c_int, c_uint, c_void},
     time::Instant,
 };
@@ -17,6 +17,7 @@ use tsumugi_core::{
 thread_local! {
     static STATEMENTS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
     static FRAME_ROWS: RefCell<usize> = const { RefCell::new(0) };
+    static MEASURED_CONNECTION: Cell<*mut ffi::sqlite3> = const { Cell::new(std::ptr::null_mut()) };
 }
 
 // Only this integration-test process registers the static callback. Capture is
@@ -33,6 +34,9 @@ unsafe extern "C" fn trace(
             let _ = STATEMENTS.try_with(|statements| {
                 if let Ok(mut statements) = statements.try_borrow_mut() {
                     if let Some(captured) = statements.as_mut() {
+                        let _ = MEASURED_CONNECTION.try_with(|connection| {
+                            connection.set(unsafe { ffi::sqlite3_db_handle(statement.cast()) });
+                        });
                         let sql = unsafe { CStr::from_ptr(sql) }.to_string_lossy();
                         if event == ffi::SQLITE_TRACE_STMT as c_uint {
                             captured.push(sql.into_owned());
@@ -86,6 +90,7 @@ impl Drop for TraceRegistration {
 }
 
 fn measured<T>(name: &str, read: impl FnOnce() -> T) -> (T, Vec<String>) {
+    MEASURED_CONNECTION.with(|connection| connection.set(std::ptr::null_mut()));
     FRAME_ROWS.with(|rows| *rows.borrow_mut() = 0);
     STATEMENTS.with(|statements| assert!(statements.borrow_mut().replace(Vec::new()).is_none()));
     let started = Instant::now();
@@ -100,6 +105,43 @@ fn measured<T>(name: &str, read: impl FnOnce() -> T) -> (T, Vec<String>) {
         })
     );
     (value, statements)
+}
+
+fn query_plans(store: &ProjectStore, statements: &[String]) -> Vec<serde_json::Value> {
+    let handle = MEASURED_CONNECTION.with(|connection| connection.replace(std::ptr::null_mut()));
+    assert!(!handle.is_null());
+    // The preceding measured call ran on this live, exclusively owned Store.
+    // Its borrow keeps the owner alive for all read-only EXPLAIN statements.
+    // from_handle does not own or close the connection; retain its real UDFs.
+    let db = unsafe { Connection::from_handle(handle) }.unwrap();
+    let path: String = db
+        .query_row("PRAGMA database_list", [], |row| row.get(2))
+        .unwrap();
+    assert_eq!(
+        std::path::Path::new(&path).canonicalize().unwrap(),
+        store
+            .directory()
+            .join("project.sqlite3")
+            .canonicalize()
+            .unwrap()
+    );
+    let mut plans = Vec::new();
+    for sql in statements {
+        if !sql.starts_with("SELECT") && !sql.starts_with("WITH") {
+            continue;
+        }
+        let mut plan = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let parameters = vec![rusqlite::types::Value::Null; plan.parameter_count()];
+        let details = plan
+            .query_map(rusqlite::params_from_iter(parameters), |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        plans.push(serde_json::json!({"sql":sql,"plan":details}));
+    }
+    plans
 }
 
 fn project(store: &ProjectStore) -> ExecutionId {
@@ -186,13 +228,26 @@ fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
         )
         .unwrap();
     assert_eq!(checks, 2000);
-    let (input_bytes, largest): (i64, i64) = db.query_row(
-        "SELECT SUM(length(a.input)),MAX(length(a.input)) FROM execution_attempts a JOIN execution_tasks t USING(task_id) WHERE t.operation=?1",
-        [tsumugi_core::execution::REVIEW_CHECK_OPERATION], |row| Ok((row.get(0)?, row.get(1)?)),
+    let (input_bytes, largest, references): (i64, i64, i64) = db.query_row(
+        "SELECT SUM(json_extract(CAST(a.input AS TEXT),'$.rawBytes')),MAX(json_extract(CAST(a.input AS TEXT),'$.rawBytes')),SUM(length(a.input)) FROM execution_attempts a JOIN execution_tasks t USING(task_id) WHERE t.operation=?1",
+        [tsumugi_core::execution::REVIEW_CHECK_OPERATION], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).unwrap();
+    let chunks: i64 = db
+        .query_row(
+            "SELECT SUM(length(bytes)) FROM execution_input_chunks WHERE digest IN
+         (SELECT part.value FROM execution_attempts a JOIN execution_tasks t USING(task_id)
+          JOIN json_each(CAST(a.input AS TEXT),'$.chunks') part WHERE t.operation=?1)",
+            [tsumugi_core::execution::REVIEW_CHECK_OPERATION],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        references + chunks < input_bytes / 4,
+        "shared storage must reduce actual QA bytes without reducing the complete logical inputs"
+    );
     println!(
         "REVIEW_SCOPE_MATERIAL {}",
-        serde_json::json!({"units":2000,"actualChecks":checks,"storedQaInputBytes":input_bytes,"largestQaInputBytes":largest})
+        serde_json::json!({"units":2000,"actualChecks":checks,"logicalQaInputBytes":input_bytes,"largestQaInputBytes":largest,"qaReferenceBytes":references,"distinctQaChunkBytes":chunks,"sharedQaStorageBytes":references+chunks})
     );
     let project = project(&store);
     let (first, first_sql) = measured("summary-first-50", || {
@@ -336,28 +391,11 @@ fn actual_qa_is_locale_scoped_and_keeps_original_history_after_edit_and_reopen()
     );
     assert_eq!(statements.first().unwrap(), "BEGIN DEFERRED");
     assert_eq!(statements.last().unwrap(), "COMMIT");
-    let db = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
-    let mut plans = Vec::new();
-    for sql in &statements {
-        if !sql.starts_with("SELECT") && !sql.starts_with("WITH") {
-            continue;
-        }
-        let mut plan = db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-        let parameters = vec![rusqlite::types::Value::Null; plan.parameter_count()];
-        let details = plan
-            .query_map(rusqlite::params_from_iter(parameters), |row| {
-                row.get::<_, String>(3)
-            })
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        plans.push(serde_json::json!({"sql":sql,"plan":details}));
-    }
+    let plans = query_plans(&store, &statements);
     println!(
         "REVIEW_SCOPE_QUERY_PLANS {}",
         serde_json::to_value(plans).unwrap()
     );
-    drop(db);
     assert!(ready.ready);
     assert!(ready.locales.iter().all(|locale| locale.checked_units == 4));
     assert_eq!(

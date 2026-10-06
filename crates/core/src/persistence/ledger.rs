@@ -2,6 +2,7 @@ use super::ProjectStore;
 use crate::execution::{codec, *};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+mod input_storage;
 pub(crate) mod provider;
 pub use provider::ProviderBudget;
 
@@ -11,13 +12,14 @@ const EXECUTION_RESULTS_TABLE: &str = "CREATE TABLE \"execution_results\" (
         FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))";
 
 pub(super) const TABLES: &[(&str, &str)] = &[
+    ("execution_input_chunks", input_storage::TABLE),
     ("execution_tasks", "CREATE TABLE execution_tasks (
         task_id TEXT PRIMARY KEY NOT NULL, project_id TEXT NOT NULL, operation TEXT NOT NULL,
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0), UNIQUE(task_id, project_id))"),
     ("execution_attempts", "CREATE TABLE execution_attempts (
         attempt_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, project_id TEXT NOT NULL,
         previous_attempt_id TEXT REFERENCES execution_attempts(attempt_id),
-        input BLOB NOT NULL CHECK(length(input) BETWEEN 1 AND 4194304), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        input BLOB NOT NULL CHECK(typeof(input)='blob' AND length(input) BETWEEN 1 AND 18432), digest TEXT NOT NULL CHECK(length(digest) = 64),
         cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision >= 0),
         sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0),
         FOREIGN KEY(task_id, project_id) REFERENCES execution_tasks(task_id, project_id))"),
@@ -116,6 +118,7 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
     {
         return Err(error(ErrorCode::CorruptLedger, "foreign-keys"));
     }
+    input_storage::validate_chunks(connection)?;
     let project = super::read_metadata_from(connection)
         .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
     let mut statement = connection
@@ -279,12 +282,92 @@ pub(super) fn load_input(
     connection: &Connection,
     attempt: ExecutionId,
 ) -> Result<FixedInput, ExecutionError> {
-    let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
-        "SELECT CASE WHEN length(input)<=?2 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", params![attempt.to_string(), MAX_INPUT_BYTES as i64],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
-    let input = FixedInput::restore(&bytes, &digest)?;
-    check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
-    Ok(input)
+    read_stored_input(connection, attempt)?.restore(attempt)
+}
+
+pub(super) fn register_input_reader(connection: &Connection) -> rusqlite::Result<()> {
+    input_storage::register(connection)
+}
+
+#[cfg(test)]
+pub(super) fn replace_test_input(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    // Failure-injection fixtures change a complete raw frame, not just its
+    // storage reference. Keep the same actual storage encoder and constraints.
+    let prepared = input_storage::PreparedInput::capture(input)?;
+    let stored = prepared.insert(connection)?;
+    connection
+        .execute(
+            "UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1",
+            params![
+                input.envelope().attempt_id.to_string(),
+                stored,
+                input.digest()
+            ],
+        )
+        .map_err(sql_error)?;
+    Ok(())
+}
+
+pub(super) struct StoredInputRow {
+    metadata: Option<Vec<u8>>,
+    bytes: Option<Vec<u8>>,
+    digest: String,
+    task: String,
+    project: String,
+    previous: Option<String>,
+}
+
+impl StoredInputRow {
+    pub(super) fn from_row(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            metadata: row.get(start)?,
+            bytes: row.get(start + 1)?,
+            digest: row.get(start + 2)?,
+            task: row.get(start + 3)?,
+            project: row.get(start + 4)?,
+            previous: row.get(start + 5)?,
+        })
+    }
+    pub(super) fn restore(self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
+        let input = input_storage::restore(self.metadata, self.bytes, &self.digest)?;
+        check_input_association(
+            &input,
+            attempt,
+            &self.task,
+            &self.project,
+            self.previous.as_deref(),
+        )?;
+        Ok(input)
+    }
+}
+
+/// Six bounded input columns for a caller's existing statement and snapshot.
+/// The execution_attempts table must use alias `a`; restoration owns integrity.
+pub(super) fn input_columns_sql() -> String {
+    format!(
+        "{},{},a.digest,a.task_id,a.project_id,a.previous_attempt_id",
+        input_storage::metadata_sql(),
+        input_storage::reconstruct_sql()
+    )
+}
+
+fn read_stored_input(
+    connection: &Connection,
+    attempt: ExecutionId,
+) -> Result<StoredInputRow, ExecutionError> {
+    connection
+        .query_row(
+            &format!(
+                "SELECT {} FROM execution_attempts a WHERE a.attempt_id=?1",
+                input_columns_sql()
+            ),
+            [attempt.to_string()],
+            |r| StoredInputRow::from_row(r, 0),
+        )
+        .map_err(sql_error)
 }
 
 fn check_input_association(
@@ -319,14 +402,13 @@ pub(super) fn load_input_cached(
     // verified capture. A changed blob with an unchanged digest is still corrupt.
     static CACHE: OnceLock<Mutex<Option<(ExecutionId, String, FixedInput)>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(None));
-    let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
-        "SELECT CASE WHEN length(input)<=?2 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1", params![attempt.to_string(), MAX_INPUT_BYTES as i64],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
+    let stored = read_stored_input(connection, attempt)?;
+    let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
     let cached = cache
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
-        .filter(|(id, hash, _)| *id == attempt && hash == &digest)
+        .filter(|(id, hash, _)| *id == attempt && hash == &stored.digest)
         .map(|(_, _, input)| input.clone());
     let input = if let Some(input) = cached {
         if bytes != input.bytes() {
@@ -334,14 +416,20 @@ pub(super) fn load_input_cached(
         }
         input
     } else {
-        let input = FixedInput::restore(&bytes, &digest)?;
+        let input = FixedInput::restore(&bytes, &stored.digest)?;
         *cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some((attempt, digest.clone(), input.clone()));
+            Some((attempt, stored.digest.clone(), input.clone()));
         input
     };
-    check_input_association(&input, attempt, &task, &project, previous.as_deref())?;
+    check_input_association(
+        &input,
+        attempt,
+        &stored.task,
+        &stored.project,
+        stored.previous.as_deref(),
+    )?;
     Ok(input)
 }
 /// A reused result remains bound to its original fixed input and permission.
@@ -420,32 +508,31 @@ pub(super) fn visit_result_pairs(
     }
     let wanted =
         serde_json::to_string(pairs).map_err(|_| error(ErrorCode::InvalidInput, "result-pairs"))?;
-    let mut statement = connection.prepare(
+    let mut statement = connection.prepare(&format!(
         "WITH wanted AS (SELECT json_extract(value,'$[0]') attempt,json_extract(value,'$[1]') result FROM json_each(?1))
-         SELECT a.attempt_id,CASE WHEN length(a.input)<=?2 THEN a.input END,a.digest,a.task_id,a.project_id,
-                a.previous_attempt_id,r.result_id,CASE WHEN length(r.bytes)<=?3 THEN r.bytes END,r.digest,r.item_id,r.dispatch_token
+         SELECT a.attempt_id,{},a.digest,a.task_id,a.project_id,
+                a.previous_attempt_id,r.result_id,CASE WHEN length(r.bytes)<=?2 THEN r.bytes END,r.digest,r.item_id,r.dispatch_token,{}
          FROM wanted w JOIN execution_attempts a ON a.attempt_id=w.attempt
-         JOIN execution_results r ON r.attempt_id=a.attempt_id AND r.result_id=w.result"
-    ).map_err(sql_error)?;
+         JOIN execution_results r ON r.attempt_id=a.attempt_id AND r.result_id=w.result",
+         input_storage::reconstruct_sql(), input_storage::metadata_sql()
+    )).map_err(sql_error)?;
     let rows = statement
-        .query_map(
-            params![wanted, MAX_INPUT_BYTES as i64, MAX_RESULT_BYTES as i64],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, Vec<u8>>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, Option<String>>(5)?,
-                    r.get::<_, String>(6)?,
-                    r.get::<_, Vec<u8>>(7)?,
-                    r.get::<_, String>(8)?,
-                    r.get::<_, String>(9)?,
-                    r.get::<_, String>(10)?,
-                ))
-            },
-        )
+        .query_map(params![wanted, MAX_RESULT_BYTES as i64], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<Vec<u8>>>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, Option<String>>(5)?,
+                r.get::<_, String>(6)?,
+                r.get::<_, Vec<u8>>(7)?,
+                r.get::<_, String>(8)?,
+                r.get::<_, String>(9)?,
+                r.get::<_, String>(10)?,
+                r.get::<_, Option<Vec<u8>>>(11)?,
+            ))
+        })
         .map_err(sql_error)?;
     let mut restored = 0;
     for row in rows {
@@ -461,8 +548,9 @@ pub(super) fn visit_result_pairs(
             result_digest,
             item,
             token,
+            metadata,
         ) = row.map_err(sql_error)?;
-        let input = FixedInput::restore(&bytes, &digest)?;
+        let input = input_storage::restore(metadata, bytes, &digest)?;
         check_input_association(
             &input,
             parse_id(attempt)?,
@@ -490,19 +578,17 @@ pub(super) fn visit_result_pairs(
 // Comparing with a verified immutable frame is as strong as restoring its
 // digest again, while avoiding repeated SDK decoding/structural qualification.
 fn check_stored_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
-    let (bytes,digest,task,project,previous): (Vec<u8>,String,String,String,Option<String>) = connection.query_row(
-        "SELECT CASE WHEN length(input)<=?2 THEN input END,digest,task_id,project_id,previous_attempt_id FROM execution_attempts WHERE attempt_id=?1",
-        params![input.envelope().attempt_id.to_string(),MAX_INPUT_BYTES as i64],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(sql_error)?;
-    if digest != input.digest() || bytes != input.bytes() {
+    let stored = read_stored_input(connection, input.envelope().attempt_id)?;
+    let bytes = input_storage::reconstructed_bytes(stored.metadata, stored.bytes)?;
+    if stored.digest != input.digest() || bytes != input.bytes() {
         return Err(error(ErrorCode::CorruptLedger, "input-bytes"));
     }
     check_input_association(
         input,
         input.envelope().attempt_id,
-        &task,
-        &project,
-        previous.as_deref(),
+        &stored.task,
+        &stored.project,
+        stored.previous.as_deref(),
     )
 }
 fn check_stored_result(
@@ -1563,6 +1649,7 @@ impl ProjectStore {
             return Err(error(ErrorCode::Unauthorized, "project"));
         }
         let prepared_build = super::release::prepare_input(self, input)?;
+        let prepared_input = input_storage::PreparedInput::capture(input)?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let verified_build =
@@ -1586,6 +1673,7 @@ impl ProjectStore {
                 && provider::recovery_policy(&tx, envelope.attempt_id)? == policy
                 && provider::matches_parent(&tx, envelope.task_id, parent)?
             {
+                check_stored_input(&tx, input)?;
                 Ok(())
             } else {
                 Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
@@ -1673,7 +1761,8 @@ impl ProjectStore {
             }
         }
         let cancelled = cancel_revision(&tx, envelope.task_id)?;
-        tx.execute("INSERT INTO execution_attempts VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_attempts))", params![envelope.attempt_id.to_string(),envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.previous_attempt_id.map(|id|id.to_string()),input.bytes(),input.digest(),cancelled.get() as i64]).map_err(sql_error)?;
+        let stored_input = prepared_input.insert(&tx)?;
+        tx.execute("INSERT INTO execution_attempts VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_attempts))", params![envelope.attempt_id.to_string(),envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.previous_attempt_id.map(|id|id.to_string()),stored_input,input.digest(),cancelled.get() as i64]).map_err(sql_error)?;
         for item in &envelope.items {
             if let Some(reference) = envelope
                 .reused_results

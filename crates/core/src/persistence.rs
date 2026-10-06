@@ -70,7 +70,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 27;
+pub(crate) const SCHEMA_VERSION: i64 = 28;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -781,6 +781,8 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
     connection
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
+    ledger::register_input_reader(connection)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Create))?;
     Ok(())
 }
 
@@ -811,6 +813,8 @@ fn validate_existing_connection(
             stage: PersistenceStage::Open,
         });
     }
+    ledger::register_input_reader(connection)
+        .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
     let journal_mode: String = connection
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;

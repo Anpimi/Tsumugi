@@ -1,4 +1,5 @@
 //! Durable authority is checked inside the existing execution transaction.
+use super::super::ledger;
 use super::*;
 use crate::{
     application::*,
@@ -288,8 +289,14 @@ fn matches_scope(input: &InputEnvelope, root: &InputEnvelope) -> bool {
             })
         })
 }
-fn fixed(bytes: &[u8]) -> Result<FixedInput, ExecutionError> {
-    FixedInput::restore(bytes, &codec::digest(bytes))
+fn latest_input(c: &Connection, task: ExecutionId) -> Result<FixedInput, ExecutionError> {
+    let (attempt, stored) = c.query_row(&format!(
+        "SELECT a.attempt_id,{} FROM execution_attempts a WHERE a.task_id=?1 ORDER BY a.sequence DESC LIMIT 1",
+        ledger::input_columns_sql()), [task.to_string()], |r| Ok((r.get::<_, String>(0)?, ledger::StoredInputRow::from_row(r, 1)?))).map_err(sql)?;
+    stored.restore(
+        ExecutionId::parse(&attempt)
+            .map_err(|_| err(ErrorCode::CorruptLedger, "work-plan-parent"))?,
+    )
 }
 pub(in crate::persistence) fn check_enqueue(
     c: &Connection,
@@ -298,8 +305,7 @@ pub(in crate::persistence) fn check_enqueue(
 ) -> Result<(), ExecutionError> {
     let stored = active(c, input)?;
     if let Some(parent) = parent {
-        let parent_bytes: Vec<u8> = c.query_row("SELECT input FROM execution_attempts WHERE task_id=?1 ORDER BY sequence DESC LIMIT 1", [parent.to_string()], |r|r.get(0)).map_err(sql)?;
-        let parent_input = fixed(&parent_bytes)?;
+        let parent_input = latest_input(c, parent)?;
         if let Some(parent_lease) = parent_input.envelope().automation {
             if input.envelope().automation.map(|l| l.plan_id) != Some(parent_lease.plan_id) {
                 return Err(err(ErrorCode::Unauthorized, "work-plan-parent"));
@@ -321,8 +327,7 @@ pub(in crate::persistence) fn check_enqueue(
         // A new generation may start only at the original budget anchor. An old
         // child cannot silently create another branch after a human stop.
         if parent != stored.plan.execution_input()?.task_id {
-            let bytes: Vec<u8> = c.query_row("SELECT input FROM execution_attempts WHERE task_id=?1 ORDER BY sequence DESC LIMIT 1", [parent.to_string()], |r|r.get(0)).map_err(sql)?;
-            if fixed(&bytes)?.envelope().automation != Some(stored.lease) {
+            if latest_input(c, parent)?.envelope().automation != Some(stored.lease) {
                 return Err(err(ErrorCode::Cancelled, "work-plan-parent-generation"));
             }
         }
@@ -922,19 +927,23 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
         }
         validate_receipt(&request, &receipt, &load(c, request.plan())?)?;
     }
-    let mut attempts=c.prepare("SELECT a.input,x.plan_id,x.generation FROM execution_attempts a LEFT JOIN application_executions x USING(attempt_id)").map_err(sql)?;
+    let mut attempts=c.prepare(&format!("SELECT a.attempt_id,x.plan_id,x.generation,{} FROM execution_attempts a LEFT JOIN application_executions x USING(attempt_id)", ledger::input_columns_sql())).map_err(sql)?;
     for row in attempts
         .query_map([], |r| {
             Ok((
-                r.get::<_, Vec<u8>>(0)?,
+                r.get::<_, String>(0)?,
                 r.get::<_, Option<String>>(1)?,
                 r.get::<_, Option<i64>>(2)?,
+                ledger::StoredInputRow::from_row(r, 3)?,
             ))
         })
         .map_err(sql)?
     {
-        let (bytes, plan, generation) = row.map_err(sql)?;
-        let input = fixed(&bytes)?;
+        let (attempt, plan, generation, stored_input) = row.map_err(sql)?;
+        let input = stored_input.restore(
+            ExecutionId::parse(&attempt)
+                .map_err(|_| err(ErrorCode::CorruptLedger, "work-plan-execution"))?,
+        )?;
         match (input.envelope().automation, plan, generation) {
             (None, None, None) => {}
             (Some(lease), Some(id), Some(generation))

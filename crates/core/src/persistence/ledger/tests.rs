@@ -1,4 +1,5 @@
 use super::*;
+mod input_chunks;
 use crate::{
     PersistenceErrorCode, ProjectMetadata,
     content::{SourceAdoptionHandler, SourceBundle, SourceRunner},
@@ -1430,12 +1431,7 @@ fn verified_decoding_cache_rejects_changed_bytes_and_row_associations() {
         "same digest cannot authorize a changed cached input"
     );
     assert!(check_stored_input(connection, &input).is_err());
-    connection
-        .execute(
-            "UPDATE execution_attempts SET input=?2 WHERE attempt_id=?1",
-            params![input.envelope().attempt_id.to_string(), input.bytes()],
-        )
-        .unwrap();
+    replace_test_input(connection, &input).unwrap();
     load_input_cached(connection, input.envelope().attempt_id).unwrap();
     let mut corrupt = result.bytes().to_vec();
     corrupt[0] ^= 1;

@@ -594,3 +594,17 @@ internal allocation only: project schema 27, settings format 2, SDK/process/rece
 formats, public DTOs and dependencies are unchanged. Both Unreleased changelogs
 are synchronized; the same undistributed application/SDK alpha.1 batch requires
 no additional bump or historical migration.
+
+Exact execution input storage now uses immutable 16 KiB byte chunks and bounded
+references in the original Core SQLite ledger. The input digest still identifies
+the complete original frame; SDK requests, full source material, result links,
+per-item proof and permission semantics retain their original contracts. Readers
+reconstruct exact bytes within the existing parent SELECT and read snapshot,
+including cache hits. Chunk insertion and attempt recording share the original
+enqueue transaction. This incompatible stored representation advances the
+current-only project format to schema 28. Schema 27 and earlier development
+directories are refused unchanged; no historical decoder or migration is added.
+The existing rusqlite 0.40.2 dependency enables its SQLite function interface;
+there is no new library or dependency version. Application 0.2.0-alpha.1 and SDK
+0.1.0-alpha.1 remain the same undistributed batch, so no additional version bump
+is required. Both Unreleased changelogs record the storage boundary.

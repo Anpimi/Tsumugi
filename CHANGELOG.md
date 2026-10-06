@@ -14,6 +14,12 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Exact execution inputs now share immutable byte chunks in the original SQLite
+  ledger. QA retains complete source material and independent per-item evidence;
+  reads reconstruct and validate original bytes in their existing snapshot.
+  The current project format advances to schema 28; earlier development
+  directories are refused unchanged without migration.
+
 - Execution envelope depth checks now traverse borrowed fields directly, avoiding
   a duplicate JSON payload tree during QA and ledger restoration. The same depth
   limit, exact stored bytes, digest checks and result associations remain required.

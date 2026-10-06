@@ -46,29 +46,37 @@ fn replace(store: &mut ProjectStore, input: &FixedInput, result: &FixedResult) {
 fn rehash_source_evidence(store: &ProjectStore, input: &FixedInput, result: bool) {
     let plan = ReleasePlan::from_input(input).unwrap();
     let connection = store.connection().unwrap();
-    let (query, update, id) = if result {
-        (
-            "SELECT bytes FROM execution_results WHERE result_id=?1",
-            "UPDATE execution_results SET bytes=?2,digest=?3 WHERE result_id=?1",
-            plan.source_result_id,
-        )
+    let mut bytes: Vec<u8> = if result {
+        connection
+            .query_row(
+                "SELECT bytes FROM execution_results WHERE result_id=?1",
+                [plan.source_result_id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap()
     } else {
-        (
-            "SELECT input FROM execution_attempts WHERE attempt_id=?1",
-            "UPDATE execution_attempts SET input=?2,digest=?3 WHERE attempt_id=?1",
-            plan.source_attempt_id,
-        )
+        store
+            .execution_input(plan.source_attempt_id)
+            .unwrap()
+            .bytes()
+            .to_vec()
     };
-    let mut bytes: Vec<u8> = connection
-        .query_row(query, [id.to_string()], |r| r.get(0))
-        .unwrap();
     bytes.push(b' '); // Structurally equivalent JSON still changes the frozen raw digest.
-    connection
-        .execute(
-            update,
-            rusqlite::params![id.to_string(), &bytes, codec::digest(&bytes)],
-        )
-        .unwrap();
+    if result {
+        connection
+            .execute(
+                "UPDATE execution_results SET bytes=?2,digest=?3 WHERE result_id=?1",
+                rusqlite::params![
+                    plan.source_result_id.to_string(),
+                    &bytes,
+                    codec::digest(&bytes)
+                ],
+            )
+            .unwrap();
+    } else {
+        let changed = FixedInput::restore(&bytes, &codec::digest(&bytes)).unwrap();
+        crate::persistence::ledger::replace_test_input(connection, &changed).unwrap();
+    }
 }
 
 #[test]
