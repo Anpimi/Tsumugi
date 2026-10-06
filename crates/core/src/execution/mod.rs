@@ -38,7 +38,10 @@ pub use translation_validation::{
     translation_check_payload,
 };
 pub use validation::{PreparedResultValidation, ResultValidationCapture, ResultValidator};
-pub(crate) use validation::{ValidationProof, requires_semantic_check};
+pub(crate) use validation::{ValidationProof, requires_semantic_check, restore_check_input};
+
+/// Read-only domain Review computation; QA adoption remains a separate boundary.
+pub const REVIEW_CHECK_OPERATION: &str = "review-semantic-check";
 
 pub const MAX_ITEMS: usize = 2000;
 pub const MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;

@@ -437,3 +437,13 @@ SDK/process/Store/dependency identity or desktop DTO. Application 0.2.0-alpha.1
 and SDK 0.1.0-alpha.1 remain the same undistributed batch, with no additional
 bump or historical migration. Actual domain execution and current-QA/automatic
 selection/ReleasePlan consumers still require production integration.
+
+The same Core Review plan now projects an action-bound domain input through the
+existing runtime and grant owner. A consistent ledger read requires the actual
+current, unsuperseded channel result and matching live authorization before
+owned receiving/coverage computation. Complete coverage retains findings and
+explicit N/A; it grants no durable current QA, waiver or release qualification.
+This additive library execution boundary changes no SQL shape, schema 24, SDK
+archive, process/Store/dependency or desktop DTO. The same undistributed app
+0.2.0-alpha.1 / SDK 0.1.0-alpha.1 batch needs no additional bump or migration;
+current-QA adoption and production consumers remain separate integration work.

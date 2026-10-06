@@ -67,6 +67,14 @@ impl ReviewCheckPlan {
         &self,
         cancellation: &Cancellation,
     ) -> Result<Vec<sdk::CheckResult>, ExecutionError> {
+        self.compute_core_evidence(cancellation)
+            .map(|(results, _)| results)
+    }
+
+    pub(super) fn compute_core_evidence(
+        &self,
+        cancellation: &Cancellation,
+    ) -> Result<(Vec<sdk::CheckResult>, Vec<CheckRuleResult>), ExecutionError> {
         let (required, terminology) = crate::review::check_core_rules(
             &CheckInput {
                 unit_id: self.target.unit_id,
@@ -77,18 +85,22 @@ impl ReviewCheckPlan {
             &self.terms,
             &core_validator(),
         )?;
-        self.checks
+        let mut rules = vec![required, terminology];
+        let results = self
+            .checks
             .set()
             .requirements
             .iter()
             .filter(|r| matches!(r.key.implementation, sdk::CheckImplementation::Core { .. }))
             .map(|requirement| {
-                let rule = match requirement.key.rule.id.as_str() {
-                    "required-translation" => &required,
-                    "terminology" => &terminology,
-                    _ => return Err(failure(ErrorCode::CorruptLedger, "review-core-rule")),
-                };
+                let rule = rules
+                    .iter_mut()
+                    .find(|rule| rule.rule == requirement.key.rule.id)
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-core-rule"))?;
                 let outcome = if cancellation.is_requested() {
+                    rule.status = "cancelled".into();
+                    rule.reason = Some("Cancelled before completion".into());
+                    rule.findings.clear();
                     sdk::CheckOutcome::Cancelled
                 } else if rule.status == "not-applicable" {
                     sdk::CheckOutcome::NotApplicable {
@@ -135,7 +147,8 @@ impl ReviewCheckPlan {
                     outcome,
                 })
             })
-            .collect()
+            .collect::<Result<Vec<_>, ExecutionError>>()?;
+        Ok((results, rules))
     }
 }
 

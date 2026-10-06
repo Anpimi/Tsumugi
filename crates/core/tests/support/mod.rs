@@ -217,7 +217,8 @@ impl Runner for FixtureRunner {
         )?)
     }
 }
-fn execute(
+#[allow(dead_code)]
+pub fn execute(
     runtime: &mut ExecutionRuntime,
     store: &mut ProjectStore,
     input: &FixedInput,
@@ -259,7 +260,7 @@ fn execute(
         }
         assert!(
             Instant::now() < deadline,
-            "synthetic source/check completion deadline"
+            "synthetic plugin completion deadline"
         );
         std::thread::sleep(Duration::from_millis(1));
     }

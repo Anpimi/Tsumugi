@@ -109,6 +109,7 @@ impl FixedInput {
                 | ARTIFACT_CHECK_OPERATION
                 | crate::content::TRANSLATION_EXTRACTION_OPERATION
                 | TRANSLATION_CHECK_OPERATION
+                | REVIEW_CHECK_OPERATION
         );
         // Content/check/build output is strict JSON with bounded integer/string fields.
         // Quoting its original JSON costs at most twice the raw bytes; the

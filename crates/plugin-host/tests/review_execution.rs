@@ -1,0 +1,275 @@
+#![cfg(all(unix, feature = "core-adapter", feature = "javascript-conformance"))]
+//! Complete adopted source and actual authorized Review results through Core.
+//! QA persistence/qualification is a subsequent boundary, never inferred here.
+use std::sync::Arc;
+use tsumugi_core::{
+    ProjectMetadata, ProjectStore, SaveTranslationRevision,
+    content::{SourceAdoptionHandler, SourceBundle, SourceReviewBinding, SourceSettings},
+    execution::*,
+};
+use tsumugi_plugin_host::{core::RunnerProxy, *};
+use tsumugi_plugin_sdk as sdk;
+#[path = "support/core_execution.rs"]
+mod core_execution;
+#[path = "support/official.rs"]
+mod package_fixture;
+#[path = "support/runtime.rs"]
+mod runtime_fixture;
+use core_execution::{authorize, execute};
+
+fn paired_core_review(plugin: &str, caption: bool) {
+    let directory = tempfile::tempdir().unwrap();
+    let image = package_fixture::installed(directory.path(), plugin);
+    let binding = image.source_import("source-profile").unwrap();
+    let staging = directory.path().join("workers");
+    std::fs::create_dir(&staging).unwrap();
+    let proxy = |contribution: &str| {
+        Arc::new(
+            RunnerProxy::new(
+                image.clone(),
+                contribution,
+                runtime_fixture::approved_runtime(),
+                &staging,
+                HostLimits::default(),
+            )
+            .unwrap(),
+        )
+    };
+    let extractor = proxy(&binding.declaration.extractor);
+    let source_checker = proxy(&binding.declaration.checker);
+    let review_checker = proxy(&binding.review.declaration.checker);
+    let path = directory.path().join("project");
+    let mut store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create("Actual domain review", "en-US", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(extractor.clone()).unwrap();
+    runtime.register(source_checker.clone()).unwrap();
+    runtime.register(review_checker.clone()).unwrap();
+    let original = if caption {
+        vec!["\u{feff}WEBVTT\r\n\r\nCue\r\n00:01.000 --> 00:02.000\r\nOriginal é 👩🏽‍💻\r\n\r\n"]
+    } else {
+        vec![
+            "{\"UniqueID\":\"Example.Mod\",\"Name\":\"Test\",\"Version\":\"1.0.0\",\"EntryDll\":\"Test.dll\"}",
+            "\u{feff}{\r\n\"first\":\"Hi {{name}} {{name}} é 👩🏽‍💻\"\r\n}\r\n",
+        ]
+    };
+    let bundle = SourceBundle::capture_declared(
+        &binding,
+        original.iter().map(|s| s.as_bytes().to_vec()).collect(),
+        "en-US",
+    )
+    .unwrap();
+    let producer = extractor
+        .execution_binding(Some(binding.declaration.profile.clone()))
+        .unwrap();
+    let review = SourceReviewBinding::capture(&binding.review, &producer.environment).unwrap();
+    assert_eq!(
+        review.checker,
+        review_checker
+            .execution_binding(Some(binding.declaration.profile.clone()))
+            .unwrap()
+    );
+    let input = bundle
+        .fixed_plugin_input(
+            store.metadata().unwrap().project_id(),
+            producer,
+            SourceSettings {
+                revision_policy: binding.declaration.revision_policy.clone(),
+                checker: Some(
+                    source_checker
+                        .execution_binding(Some(binding.declaration.profile.clone()))
+                        .unwrap(),
+                ),
+                semantic_rules: binding.declaration.semantic_rules.clone(),
+                review: Some(review),
+            },
+        )
+        .unwrap();
+    authorize(&runtime, &mut store, &input);
+    let result = execute(&mut runtime, &mut store, &input);
+    let source_check = store
+        .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let check_input = source_check.check_input().clone();
+    authorize(&runtime, &mut store, &check_input);
+    let checked = execute(&mut runtime, &mut store, &check_input);
+    store
+        .commit_source_validation(source_check.prepare(checked).unwrap())
+        .unwrap();
+    let preview = store
+        .source_preview(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            100,
+        )
+        .unwrap();
+    let action = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            serde_json::to_value(preview.confirmation).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&action, &SourceAdoptionHandler)
+        .unwrap();
+    let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let unit = store.source_content(snapshot, 0, 100).unwrap().rows[0]
+        .unit_id
+        .unwrap();
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let valid = if caption {
+        "译文 é 👩🏽‍💻\n第二行"
+    } else {
+        "你好 {{name}} {{name}} é 👩🏽‍💻"
+    };
+    let bad = if caption { "a\n\nb" } else { "你好 {{name}}" };
+    for (text, expected) in [
+        (None, None),
+        (Some(valid), None),
+        (
+            Some(bad),
+            Some(if caption {
+                "invalid-payload"
+            } else {
+                "marker-mismatch"
+            }),
+        ),
+    ] {
+        if let Some(text) = text {
+            let target = store.review_target(project, unit, "zh-CN").unwrap();
+            store
+                .save_translation_revision(&SaveTranslationRevision {
+                    project_id: project,
+                    action_id: ExecutionId::new(),
+                    unit_id: unit,
+                    locale: "zh-CN".into(),
+                    source_revision_id: target.source_revision_id,
+                    expected_selection_id: target.selection_id,
+                    text: text.into(),
+                })
+                .unwrap();
+        }
+        let target = store.review_target(project, unit, "zh-CN").unwrap();
+        let prepared = store
+            .prepare_review_check(project, unit, "zh-CN", &target.basis, ExecutionId::new())
+            .unwrap();
+        let plan = prepared.plan().unwrap();
+        assert_eq!(
+            plan.domain_input()
+                .source
+                .artifacts
+                .iter()
+                .map(|a| a.utf8.as_str())
+                .collect::<Vec<_>>(),
+            original
+        );
+        assert_eq!(
+            plan.binding().checker,
+            review_checker
+                .execution_binding(Some(binding.declaration.profile.clone()))
+                .unwrap()
+        );
+        let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+        assert_eq!(
+            runtime.submit(&mut store, &input).unwrap_err().code,
+            ErrorCode::Unauthorized
+        );
+        authorize(&runtime, &mut store, &input);
+        let result = execute(&mut runtime, &mut store, &input);
+        let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+        let computed = store
+            .capture_review_check_execution(
+                prepared,
+                input.envelope().attempt_id,
+                result.envelope().result_id,
+            )
+            .unwrap()
+            .compute(&Cancellation::default())
+            .unwrap();
+        assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), before);
+        assert!(computed.coverage().complete);
+        assert_eq!(
+            computed.results().len(),
+            computed.plan().fixed_checks().set().requirements.len()
+        );
+        assert_eq!(computed.domain_result().digest(), result.digest());
+        let domain: Vec<_> = computed
+            .results()
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r.key.implementation,
+                    sdk::CheckImplementation::Plugin { .. }
+                )
+            })
+            .collect();
+        assert_eq!(domain.len(), binding.review.declaration.rules.len());
+        if text.is_none() {
+            for (result, requirement) in domain
+                .iter()
+                .zip(&computed.plan().domain_input().requirements)
+            {
+                assert_eq!(
+                    result.outcome,
+                    requirement
+                        .not_applicable
+                        .clone()
+                        .map_or(sdk::CheckOutcome::Completed { findings: vec![] }, |basis| {
+                            sdk::CheckOutcome::NotApplicable { basis }
+                        })
+                );
+            }
+            assert_eq!(computed.core_rules()[0].findings[0].code, "missing");
+        } else {
+            let findings: Vec<_> = domain
+                .iter()
+                .flat_map(|r| match &r.outcome {
+                    sdk::CheckOutcome::Completed { findings } => findings.clone(),
+                    _ => panic!("present text must complete"),
+                })
+                .collect();
+            if let Some(expected) = expected {
+                assert!(
+                    findings
+                        .iter()
+                        .any(|f| f.code == expected && f.severity == sdk::FindingSeverity::Error)
+                );
+            } else {
+                assert!(findings.is_empty());
+            }
+            assert!(computed.core_rules().iter().all(|r| r.findings.is_empty()));
+        }
+        // A complete actual union, even a clean one, is not a saved QA receipt.
+        assert!(
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap()
+                .current_check
+                .is_none()
+        );
+    }
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert!(
+        reopened
+            .review_target(project, unit, "zh-CN")
+            .unwrap()
+            .current_check
+            .is_none()
+    );
+}
+
+#[test]
+fn stardew_smapi_core_review_uses_adopted_source_live_grant_and_actual_channel() {
+    paired_core_review("stardew-smapi", false);
+}
+#[test]
+fn webvtt_core_review_uses_adopted_source_live_grant_and_actual_channel() {
+    paired_core_review("webvtt", true);
+}

@@ -3,7 +3,9 @@ use super::*;
 use crate::review::{CheckInput, check_rules, interrupted_rules};
 
 mod capture;
+mod execution;
 pub use capture::ReviewCheckPlan;
+pub use execution::{CapturedReviewCheckExecution, ComputedReviewEvidence};
 
 #[derive(Debug)]
 struct Capture {

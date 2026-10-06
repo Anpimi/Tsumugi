@@ -37,8 +37,8 @@ pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskVi
 pub use release::BuildLocaleChoice;
 pub use release::{
     DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, PluginBuildLocaleChoice,
-    ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException,
-    ReleaseExceptionKind, ReleasePlan, ReleaseView, ReleasedArtifact,
+    ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException, ReleaseExceptionKind,
+    ReleasePlan, ReleaseView, ReleasedArtifact,
 };
 pub use resources::{
     CaptureContext, ContextCapture, ContextItem, ContextOmission, ContextRevision, GlossaryCapture,
@@ -49,12 +49,13 @@ pub use resources::{
     TmSuggestion,
 };
 pub use review::{
-    CheckFinding, CheckRuleResult, CheckRun, ComputedReviewCheck, Eligibility, EligibilityLocale,
-    EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
-    ReviewCheckOutcome, ReviewCheckPlan, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
-    ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewScopeUnit,
-    ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget,
-    ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
+    CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun, ComputedReviewCheck,
+    ComputedReviewEvidence, Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision,
+    FallbackWrite, PreparedReviewCheck, ReviewBasis, ReviewCheckOutcome, ReviewCheckPlan,
+    ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor,
+    ReviewPage, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,
+    ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite,
+    WorkItem, WorkPage,
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,

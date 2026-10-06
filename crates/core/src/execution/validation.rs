@@ -14,7 +14,7 @@ pub(crate) fn requires_semantic_check(input: &FixedInput) -> bool {
 
 /// Normalize only generated identities; every policy, payload, scope and
 /// selected environment must still equal the independently reconstructed input.
-pub(super) fn restore_check_input(
+pub(crate) fn restore_check_input(
     expected: &FixedInput,
     actual: &FixedInput,
 ) -> Result<(), ExecutionError> {

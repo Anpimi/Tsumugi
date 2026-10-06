@@ -2294,6 +2294,49 @@ fn require_current_result(
     Ok(())
 }
 
+fn require_unsuperseded_result(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    let newer: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id
+         WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",
+        params![input.envelope().task_id.to_string(), result.envelope().item_id.to_string(), input.envelope().attempt_id.to_string()],
+        |row| row.get(0),
+    ).map_err(sql_error)?;
+    if newer {
+        return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
+    }
+    Ok(())
+}
+
+/// A live, unsuperseded result from the ordinary plugin channel. Reading this
+/// evidence does not validate a domain contract or adopt business state.
+pub(super) fn capture_current_plugin_result_in(
+    connection: &Connection,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
+    attempt: ExecutionId,
+    result: ExecutionId,
+) -> Result<ResultValidationCapture, ExecutionError> {
+    let input = load_input_cached(connection, attempt)?;
+    let result = load_result(connection, &input, result)?;
+    let permit = super::plugin_execution::check_input_in(connection, &input, authority)?
+        .ok_or_else(|| error(ErrorCode::Unauthorized, "plugin-result-grant"))?;
+    require_current_result(connection, &input, &result)?;
+    require_unsuperseded_result(connection, &input, &result)?;
+    if result
+        .envelope()
+        .plugin
+        .as_ref()
+        .map(|e| e.authorization_id)
+        != Some(permit.grant_id())
+    {
+        return Err(error(ErrorCode::Unauthorized, "plugin-result-grant"));
+    }
+    Ok(ResultValidationCapture { input, result })
+}
+
 fn capture_adoption_in(
     connection: &Connection,
     action: &AdoptionAction,
@@ -2365,10 +2408,7 @@ fn capture_adoption_in(
         Some(read_attempt(connection, action.attempt_id, true)?)
     };
     for result in &results {
-        let newer:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON i.attempt_id=a.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![input.envelope().task_id.to_string(),result.envelope().item_id.to_string(),action.attempt_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
-        if newer {
-            return Err(error(ErrorCode::Unauthorized, "continued-in-new-attempt"));
-        }
+        require_unsuperseded_result(connection, &input, result)?;
         let (current,validation,adoption):(String,String,String)=connection.query_row(
             "SELECT current_result_id,validation,adoption FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
             params![action.attempt_id.to_string(),result.envelope().item_id.to_string()],
