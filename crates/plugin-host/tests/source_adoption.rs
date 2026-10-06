@@ -33,6 +33,11 @@ fn fixed(
     let checker = checker.execution_binding(Some(profile)).unwrap();
     assert_eq!(producer.capability, resource.extractor);
     assert_eq!(checker.capability, resource.checker);
+    let review = tsumugi_core::content::SourceReviewBinding::capture(
+        &resource.review,
+        &producer.environment,
+    )
+    .unwrap();
     bundle
         .fixed_plugin_input(
             store.metadata().unwrap().project_id(),
@@ -41,16 +46,7 @@ fn fixed(
                 revision_policy: resource.declaration.revision_policy.clone(),
                 checker: Some(checker),
                 semantic_rules: resource.declaration.semantic_rules.clone(),
-                review: Some(
-                    tsumugi_core::content::SourceReviewBinding::capture(
-                        &resource.review,
-                        &producer
-                            .execution_binding(Some(resource.declaration.profile.clone()))
-                            .unwrap()
-                            .environment,
-                    )
-                    .unwrap(),
-                ),
+                review: Some(review),
             },
         )
         .unwrap()
