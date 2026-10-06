@@ -1,6 +1,8 @@
 //! Saved releases bind exact frozen inputs, original results and adoption
 //! receipts. Reading historical plugin output needs no live process or grant.
 use super::*;
+#[cfg(any(test, feature = "execution-test-host"))]
+mod legacy;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -18,6 +20,7 @@ struct ReleaseManifest {
     deny_unknown_fields
 )]
 enum FrozenPlan {
+    #[cfg(any(test, feature = "execution-test-host"))]
     Builtin(BuildManifest),
     Plugin(ReleasePlan),
 }
@@ -44,42 +47,6 @@ pub(super) struct Artifact {
 pub(super) struct Record {
     pub view: ReleaseView,
     pub artifacts: Vec<Artifact>,
-}
-
-fn builtin_summary(manifest: &BuildManifest) -> ManifestSummary {
-    ManifestSummary {
-        project_id: manifest.project_id,
-        source_snapshot_id: manifest.source_snapshot_id,
-        policy_version: manifest.policy_version.clone(),
-        eligibility_basis: manifest.eligibility_basis.clone(),
-        builder_version: manifest.builder_version.clone(),
-        validator_version: manifest.validator_version.clone(),
-        source_files: manifest.source_files.clone(),
-        exceptions: manifest
-            .locales
-            .iter()
-            .flat_map(|locale| {
-                locale.entries.iter().flat_map(|entry| {
-                    let mut rows = Vec::new();
-                    if entry.fallback_id.is_some() {
-                        rows.push(ReleaseException {
-                            locale: locale.locale.clone(),
-                            native_key: entry.native_key.clone(),
-                            kind: ReleaseExceptionKind::SourceFallback,
-                        });
-                    }
-                    if !entry.waiver_ids.is_empty() {
-                        rows.push(ReleaseException {
-                            locale: locale.locale.clone(),
-                            native_key: entry.native_key.clone(),
-                            kind: ReleaseExceptionKind::QaWaiver,
-                        });
-                    }
-                    rows
-                })
-            })
-            .collect(),
-    }
 }
 
 fn prepare_data(
@@ -127,46 +94,14 @@ fn prepare_data(
         }
         (FrozenPlan::Plugin(plan), summary)
     } else {
-        // The current built-in workflow shares this store until the installed
-        // pipeline replaces it; this tag is not a historical-format decoder.
-        let manifest = BuildManifest::from_input(input)?;
-        let summary = builtin_summary(&manifest);
-        for result in results {
-            let item = input.item(result.envelope().item_id)?;
-            let index: usize = serde_json::from_value(item.payload.clone())
-                .map_err(|_| failure(ErrorCode::OutputInvalid, "build-item"))?;
-            let locale = manifest
-                .locales
-                .get(index)
-                .ok_or_else(|| failure(ErrorCode::OutputInvalid, "build-item"))?;
-            let output: BuildOutput = serde_json::from_value(
-                result
-                    .envelope()
-                    .output
-                    .clone()
-                    .ok_or_else(|| failure(ErrorCode::OutputInvalid, "build-output"))?,
-            )
-            .map_err(|_| failure(ErrorCode::OutputInvalid, "build-output"))?;
-            validate_build_output(locale, &output)?;
-            if !seen.insert(locale.locale.clone()) {
-                return Err(failure(ErrorCode::ResultMismatch, "build-duplicate"));
-            }
-            artifacts.push(Artifact {
-                id: output.file_name.clone(),
-                role: "locale".into(),
-                summary: ReleasedArtifact {
-                    locale: output.locale,
-                    file_name: output.file_name,
-                    sha256: output.sha256,
-                    entry_count: output.entry_count,
-                },
-                bytes: output.utf8.into_bytes(),
-            });
+        #[cfg(any(test, feature = "execution-test-host"))]
+        {
+            legacy::prepare(input, results, &mut seen, &mut artifacts)?
         }
-        if seen.len() != manifest.locales.len() {
-            return Err(failure(ErrorCode::ResultMismatch, "build-coverage"));
+        #[cfg(not(any(test, feature = "execution-test-host")))]
+        {
+            return Err(failure(ErrorCode::InvalidInput, "build-plugin-required"));
         }
-        (FrozenPlan::Builtin(manifest), summary)
     };
     artifacts.sort_by(|a, b| {
         (&a.summary.locale, &a.summary.file_name).cmp(&(&b.summary.locale, &b.summary.file_name))
@@ -287,8 +222,10 @@ pub(super) fn load(
         return Err(failure(ErrorCode::CorruptLedger, "release-fixed-input"));
     }
     if input.envelope().plugin.is_some() {
-        if let FrozenPlan::Plugin(plan) = &manifest.plan {
-            plan.validate_source_reference(connection)?;
+        match &manifest.plan {
+            FrozenPlan::Plugin(plan) => plan.validate_source_reference(connection)?,
+            #[cfg(any(test, feature = "execution-test-host"))]
+            FrozenPlan::Builtin(_) => {}
         }
         for result in &results {
             super::super::ledger::validate_plugin_link(connection, &input, result, true)?;

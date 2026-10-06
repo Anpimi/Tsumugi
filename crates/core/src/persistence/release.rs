@@ -1,11 +1,13 @@
 //! Fixed build inputs, verified locale artifacts and immutable local releases.
 
 use super::ProjectStore;
+#[cfg(any(test, feature = "execution-test-host"))]
+use crate::content::{
+    BUILDER_VERSION, BuildEntry, BuildLocale, BuildManifest, BuildOutput, VALIDATOR_VERSION,
+    validate_build_output,
+};
 use crate::{
-    content::{
-        BUILD_OPERATION, BUILDER_VERSION, BuildEntry, BuildLocale, BuildManifest, BuildOutput,
-        BuildSourceFile, VALIDATOR_VERSION, validate_build_output,
-    },
+    content::{BUILD_OPERATION, BuildSourceFile},
     execution::{
         AdoptionAction, AdoptionHandler, ChangeReference, ErrorCode, ExecutionError, ExecutionId,
         FixedInput, FixedResult, MAX_INPUT_BYTES, PreparedMutation, Revision, codec,
@@ -66,6 +68,19 @@ pub(super) fn record_input(
     if input.envelope().plugin.is_some() {
         return plan::record_input(input, verified);
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
+    {
+        record_builtin_input(connection, input)
+    }
+    #[cfg(not(any(test, feature = "execution-test-host")))]
+    {
+        let _ = connection;
+        Err(failure(ErrorCode::InvalidInput, "build-plugin-required"))
+    }
+}
+
+#[cfg(any(test, feature = "execution-test-host"))]
+fn record_builtin_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
     let manifest = BuildManifest::from_input(input)?;
     let (attempt, project): (String, String) = connection
         .query_row(
@@ -268,6 +283,7 @@ impl DeliveryState {
     }
 }
 
+#[cfg(any(test, feature = "execution-test-host"))]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -613,6 +629,7 @@ impl ProjectStore {
             .collect()
     }
 
+    #[cfg(any(test, feature = "execution-test-host"))]
     /// Resolve the original accepted input without recapturing current choices.
     pub fn find_locale_build(
         &self,
@@ -652,6 +669,7 @@ impl ProjectStore {
         Ok(Some(input))
     }
 
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn prepare_locale_build(
         &self,
         project_id: ExecutionId,

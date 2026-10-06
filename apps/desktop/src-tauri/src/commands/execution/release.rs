@@ -8,10 +8,10 @@ use std::{
     path::Path,
 };
 use tauri_plugin_dialog::DialogExt;
+#[cfg(any(test, feature = "execution-test-host"))]
+use tsumugi_core::BuildLocaleChoice;
 use tsumugi_core::content::artifact_digest;
-use tsumugi_core::{
-    BuildLocaleChoice, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, ReleaseView,
-};
+use tsumugi_core::{DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, ReleaseView};
 
 pub(in crate::commands) mod plugin;
 
@@ -77,6 +77,7 @@ pub struct DeliveryPreview {
     pub folder_name: String,
     pub files: Vec<PreviewFile>,
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] BuildRequest { attempt_id: ExecutionId, choices: Vec<BuildLocaleChoice>, expected_eligibility_basis: String });
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -117,6 +118,7 @@ fn invalid(stage: CommandStage, field: &str) -> CommandError {
     CommandError::invalid_input(stage, Some(field))
 }
 
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn start_locale_build(
     state: State<'_, AppState>,
@@ -178,6 +180,7 @@ pub async fn list_releases(
         .await
 }
 
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn read_locale_build_attempt(
     state: State<'_, AppState>,
@@ -1203,13 +1206,11 @@ mod contracts {
             };
         }
         round_trip!("requests", "session", SessionRequest);
-        round_trip!("requests", "build", BuildRequest);
         round_trip!("requests", "release", ReleaseRequest);
         round_trip!("requests", "preview", PreviewRequest);
         round_trip!("requests", "export", ExportRequest);
         round_trip!("requests", "reconcile", ReconcileRequest);
         round_trip!("responses", "identity", ExecutionId);
-        round_trip!("responses", "buildAttempt", Option<AttemptDetail>);
         round_trip!("responses", "deliveryAction", Option<DeliveryView>);
         assert!(
             serde_json::from_value::<Option<AttemptDetail>>(serde_json::Value::Null)

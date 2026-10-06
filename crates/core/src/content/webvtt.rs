@@ -318,6 +318,7 @@ pub fn extract(
     Ok(output)
 }
 
+#[cfg(any(test, feature = "execution-test-host"))]
 pub fn file_name(name: &str) -> bool {
     let Some(stem) = name.strip_suffix(".vtt") else {
         return false;
@@ -333,6 +334,7 @@ pub fn file_name(name: &str) -> bool {
             && (lower.starts_with("com") || lower.starts_with("lpt"))
             && lower.as_bytes()[3].is_ascii_digit())
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 pub fn build(locale: &BuildLocale, cancel: &Cancellation) -> Result<BuildOutput, ExecutionError> {
     let template = locale
         .source_template
@@ -388,6 +390,7 @@ pub fn build(locale: &BuildLocale, cancel: &Cancellation) -> Result<BuildOutput,
         builder_version: BUILDER.into(),
     })
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 pub fn check(locale: &BuildLocale, output: &BuildOutput) -> Result<(), ExecutionError> {
     if output.version != 1
         || output.locale != locale.locale

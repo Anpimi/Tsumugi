@@ -4,22 +4,6 @@
       "sessionToken": "synthetic-release-session",
       "projectId": "50000000-0000-4000-8000-000000000700"
     },
-    "build": {
-      "sessionToken": "synthetic-release-session",
-      "projectId": "50000000-0000-4000-8000-000000000700",
-      "attemptId": "50000000-0000-4000-8000-000000000701",
-      "choices": [
-        {
-          "locale": "zh-CN",
-          "fileName": "i18n/zh.json"
-        },
-        {
-          "locale": "fr-FR",
-          "fileName": "i18n/fr.json"
-        }
-      ],
-      "expectedEligibilityBasis": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-    },
     "release": {
       "sessionToken": "synthetic-release-session",
       "projectId": "50000000-0000-4000-8000-000000000700",
@@ -173,68 +157,6 @@
         "createdAt": "2026-10-04T00:00:01Z"
       }
     ],
-    "buildAttempt": {
-      "attemptId": "50000000-0000-4000-8000-000000000701",
-      "taskId": "10000000-0000-4000-8000-000000000007",
-      "operation": "locale-build",
-      "progress": {
-        "total": 1,
-        "queued": 0,
-        "running": 0,
-        "succeeded": 0,
-        "failed": 0,
-        "cancelled": 0,
-        "unknown": 1,
-        "adopted": 0
-      },
-      "items": [
-        {
-          "status": {
-            "itemId": "10000000-0000-4000-8000-000000000004",
-            "execution": "unknown",
-            "validation": "absent",
-            "adoption": "unapplied",
-            "cancellationRequested": true,
-            "retrySafe": false,
-            "diagnostic": "result-missing"
-          },
-          "scope": {
-            "kind": "sample",
-            "id": "Sample A",
-            "locale": "zh-CN"
-          },
-          "resultId": null
-        }
-      ],
-      "recovery": {
-        "attemptId": "50000000-0000-4000-8000-000000000701",
-        "units": [
-          {
-            "unitId": "10000000-0000-4000-8000-000000000003",
-            "itemIds": [
-              "10000000-0000-4000-8000-000000000004"
-            ],
-            "scopes": [
-              {
-                "kind": "sample",
-                "id": "Sample A",
-                "locale": "zh-CN"
-              }
-            ],
-            "remainingItemIds": [
-              "10000000-0000-4000-8000-000000000004"
-            ],
-            "resultIds": [],
-            "actions": [
-              "query-outcome"
-            ],
-            "blockedReason": "outcome-unknown",
-            "receiptId": null
-          }
-        ]
-      },
-      "nextOffset": null
-    },
     "deliveryAction": {
       "deliveryId": "50000000-0000-4000-8000-000000000708",
       "actionId": "50000000-0000-4000-8000-000000000703",

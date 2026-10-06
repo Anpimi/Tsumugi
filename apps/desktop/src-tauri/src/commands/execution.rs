@@ -46,7 +46,7 @@ macro_rules! handlers {
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
         review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,
-        release::start_locale_build,release::read_locale_build_attempt,release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
+        release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
         release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::retry_work_plan_effect,
         release::plugin::prepare_plugin_build,release::plugin::start_plugin_build,
@@ -70,7 +70,8 @@ pub(super) fn handler<R: tauri::Runtime>()
             source::start_source_import,
             source::translation::list_translation_files,
             source::translation::preflight_translation,
-            source::translation::start_translation_import
+            source::translation::start_translation_import,
+            release::start_locale_build, release::read_locale_build_attempt
         )
     }
     #[cfg(all(test, not(feature = "execution-test-host")))]
@@ -79,7 +80,8 @@ pub(super) fn handler<R: tauri::Runtime>()
             source::preflight_source, source::start_source_import,
             source::translation::list_translation_files,
             source::translation::preflight_translation,
-            source::translation::start_translation_import
+            source::translation::start_translation_import,
+            release::start_locale_build, release::read_locale_build_attempt
         )
     }
     #[cfg(not(any(test, feature = "execution-test-host")))]
@@ -189,6 +191,7 @@ impl ExecutionHost {
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::TranslationProjectionRunner))
             .map_err(map_read)?;
+        #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::BuildRunner))
             .map_err(map_read)?;
@@ -196,6 +199,7 @@ impl ExecutionHost {
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::WebvttSourceRunner))
             .map_err(map_read)?;
+        #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::WebvttBuildRunner))
             .map_err(map_read)?;

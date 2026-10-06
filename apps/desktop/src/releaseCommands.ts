@@ -1,8 +1,8 @@
 import { checkedInvoke } from "./ipc";
-import type { SessionRequest, BuildRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest, PluginBuildPrepareRequest, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest } from "./generated/release.requests";
+import type { SessionRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest, PluginBuildPrepareRequest, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest } from "./generated/release.requests";
 import * as validators from "./generated/release.validators";
 
-export type { BuildLocaleChoice, BuildRequest, ExportRequest } from "./generated/release.requests";
+export type { ExportRequest } from "./generated/release.requests";
 export type { PluginBuildPrepareRequest, PluginBuildLocaleChoice, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest } from "./generated/release.requests";
 export type { PluginBuildReview, ArtifactCheckReview, CheckedArtifact } from "./generated/release.responses";
 export type { ReleaseView, ReleasedArtifact, ReleaseException, ReleaseExceptionKind, BuildSourceFile as ReleaseSourceFile, DeliverySelection, PreviewFile, DeliveryPreview, DeliveryPreviewState, DeliveryFile, DeliveryFileState, DeliveryView, DeliveryState } from "./generated/release.responses";
@@ -49,16 +49,6 @@ export const releaseCommands = {
   },
   finishCheck: (request: ArtifactCheckFinishRequest) => checkedInvoke("finish_artifact_check", request, validators.validateResponseFinishArtifactCheck),
   cancelPluginPreparation: (request: SessionRequest) => checkedInvoke("cancel_plugin_build_preparation", request, validators.validateResponseCancelPluginBuild),
-  start: async (request: BuildRequest) => {
-    const result = await checkedInvoke("start_locale_build", request, validators.validateResponseIdentity);
-    requireConfirmation(result === request.attemptId);
-    return result;
-  },
-  buildAttempt: async (request: BuildRequest) => {
-    const result = await checkedInvoke("read_locale_build_attempt", request, validators.validateResponseBuildAttempt);
-    requireConfirmation(result === null || (result.attemptId === request.attemptId && result.operation === "locale-build"));
-    return result;
-  },
   deliveryAction: async (request: ReconcileRequest) => {
     const result = await checkedInvoke("read_delivery_action", request, validators.validateResponseDeliveryAction);
     requireConfirmation(result === null || result.actionId === request.actionId);

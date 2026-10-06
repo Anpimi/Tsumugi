@@ -47,11 +47,6 @@ export type CheckImplementation =
       kind: "plugin";
       provider: ProviderSelectionBinding;
     };
-export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
-export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
-export type ValidationState = "absent" | "pending" | "valid" | "invalid";
-export type RecoveryAction =
-  "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
 export type DeliveryFileState = "pending" | "succeeded" | "failed" | "unknown";
 export type DeliveryState = "pending" | "succeeded" | "partial" | "failed" | "unknown";
 export type DeliveryPreviewState = "absent" | "same" | "conflict";
@@ -59,7 +54,6 @@ export type ReleaseExceptionKind = "source-fallback" | "qa-waiver";
 
 export interface Responses {
   artifactCheck: ArtifactCheckReview;
-  buildAttempt: AttemptDetail | null;
   cancelPluginBuild: boolean;
   deliveries: DeliveryView[];
   delivery: DeliveryView;
@@ -219,58 +213,6 @@ export interface CheckKey {
 export interface NotApplicableBasis {
   basisDigest: string;
   code: string;
-}
-export interface AttemptDetail {
-  attemptId: ExecutionId;
-  items: ItemView[];
-  nextOffset: number | null;
-  operation: string;
-  progress: Progress;
-  recovery: RecoveryPlan;
-  taskId: ExecutionId;
-}
-export interface ItemView {
-  resultId: ExecutionId | null;
-  scope: Scope;
-  status: ItemStatus;
-}
-export interface Scope {
-  id: string;
-  kind: string;
-  locale: string | null;
-}
-export interface ItemStatus {
-  adoption: AdoptionState;
-  cancellationRequested: boolean;
-  diagnostic: string | null;
-  execution: ExecutionState;
-  itemId: ExecutionId;
-  retrySafe: boolean;
-  validation: ValidationState;
-}
-export interface Progress {
-  adopted: number;
-  cancelled: number;
-  failed: number;
-  queued: number;
-  running: number;
-  succeeded: number;
-  total: number;
-  unknown: number;
-}
-export interface RecoveryPlan {
-  attemptId: ExecutionId;
-  units: RecoveryUnit[];
-}
-export interface RecoveryUnit {
-  actions: RecoveryAction[];
-  blockedReason: string | null;
-  itemIds: ExecutionId[];
-  receiptId: ExecutionId | null;
-  remainingItemIds: ExecutionId[];
-  resultIds: ExecutionId[];
-  scopes: Scope[];
-  unitId: ExecutionId;
 }
 export interface DeliveryView {
   actionId: ExecutionId;

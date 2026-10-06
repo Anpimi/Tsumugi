@@ -247,7 +247,6 @@ struct ReviewResponses {
 #[allow(dead_code)]
 struct ReleaseRequests {
     session: execution::SessionRequest,
-    build: execution::release::BuildRequest,
     plugin_build: execution::release::plugin::PluginBuildPrepareRequest,
     plugin_start: execution::PluginStartRequest,
     artifact_check: execution::release::plugin::ArtifactCheckPrepareRequest,
@@ -261,7 +260,6 @@ struct ReleaseRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReleaseResponses {
-    build_attempt: Option<execution::AttemptDetail>,
     plugin_build: execution::release::plugin::PluginBuildReview,
     artifact_check: execution::release::plugin::ArtifactCheckReview,
     finish_artifact_check: (),

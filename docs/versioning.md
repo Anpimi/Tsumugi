@@ -377,3 +377,14 @@ Unreleased changelogs updated and no historical migration. Generic editor,
 history and original save receipts retain their existing owner. The filename
 decoder still required by the old build path now belongs to that build module;
 source and build domain owners await their separate production cutover.
+
+Normal Core build construction, domain artifact validation and desktop built-in
+build IPC now leave the production assembly. Their opt-in execution-test fixtures
+remain isolated. Removing the built-in frozen-plan variant advances the current-only
+project format to schema 22; schema 21 and earlier development directories are
+refused unchanged, without migration or compatibility decoders. Generic plugin
+release-plan serialization, artifact bytes, original receipts and delivery records
+retain their existing representation and owner. Application `0.2.0-alpha.1`, SDK
+`0.1.0-alpha.1`, SDK/process profiles, Store formats and dependencies remain in the
+same undistributed batch; no additional SemVer bump is needed. Both Unreleased
+changelogs record the removed experimental APIs and current schema boundary.

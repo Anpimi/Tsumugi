@@ -461,6 +461,20 @@ executing domain code or approving filesystem access. See the
 This metadata API does not complete translation matching/adoption or desktop
 migration.
 
+The `release_validation` test uses the same explicit SMAPI package/runtime
+configuration and `core-adapter,javascript-conformance` features. It adopts checked
+source, qualifies manual translations through the existing review policy, and
+runs the installed builder and independent artifact checker for two languages.
+Missing either proof blocks release adoption. Literal Unicode and deliberately
+empty source output, original receipts, frozen edits and reopening after grant
+revocation are checked against the actual Core store. Empty source output uses
+an explicit source-fallback decision. This does not verify plugin translation QA
+or desktop interaction. Run it with:
+
+```sh
+cargo test -p tsumugi-plugin-host --features core-adapter,javascript-conformance --test release_validation --locked
+```
+
 The `official` pairing tests consume an explicitly selected prebuilt WebVTT
 candidate from the independent
 [official plugin repository](https://github.com/Anpimi/tsumugi-plugins). They install

@@ -5,7 +5,6 @@ export type UnsignedDecimal = string;
 
 export interface Requests {
   artifactCheck: ArtifactCheckPrepareRequest;
-  build: BuildRequest;
   export: ExportRequest;
   finishArtifactCheck: ArtifactCheckFinishRequest;
   pluginBuild: PluginBuildPrepareRequest;
@@ -39,17 +38,6 @@ export interface PluginIdentity {
   id: string;
   publisher: string;
   version: string;
-}
-export interface BuildRequest {
-  attemptId: ExecutionId;
-  choices: BuildLocaleChoice[];
-  expectedEligibilityBasis: string;
-  projectId: ExecutionId;
-  sessionToken: string;
-}
-export interface BuildLocaleChoice {
-  fileName: string;
-  locale: string;
 }
 export interface ExportRequest {
   actionId: ExecutionId;

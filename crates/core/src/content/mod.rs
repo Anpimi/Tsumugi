@@ -1,6 +1,8 @@
 //! Immutable source bundles, native identity evidence and read-only projections.
 mod build;
 #[cfg(any(test, feature = "execution-test-host"))]
+mod legacy_build;
+#[cfg(any(test, feature = "execution-test-host"))]
 mod legacy_translation;
 mod plugin_translation;
 mod smapi;
@@ -8,10 +10,12 @@ mod translation;
 mod translation_projection;
 pub mod webvtt;
 pub use crate::persistence::content::SourceAdoptionHandler;
-pub use build::{
-    BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILD_OPERATION, BUILDER_VERSION, BuildEntry,
-    BuildLocale, BuildManifest, BuildOutput, BuildRunner, BuildSourceFile, VALIDATOR_VERSION,
-    WebvttBuildRunner, artifact_digest, build_locale, declared_locale, validate_build_output,
+pub use build::{BUILD_OPERATION, BuildSourceFile, artifact_digest};
+#[cfg(any(test, feature = "execution-test-host"))]
+pub use legacy_build::{
+    BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILDER_VERSION, BuildEntry, BuildLocale,
+    BuildManifest, BuildOutput, BuildRunner, VALIDATOR_VERSION, WebvttBuildRunner, build_locale,
+    declared_locale, validate_build_output,
 };
 #[cfg(any(test, feature = "execution-test-host"))]
 pub use legacy_translation::{TranslationBundle, TranslationRunner, extract_translation};

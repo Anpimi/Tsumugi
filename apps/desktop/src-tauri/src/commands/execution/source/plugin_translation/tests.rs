@@ -100,11 +100,13 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
         "list_translation_files",
         "preflight_translation",
         "start_translation_import",
+        "start_locale_build",
+        "read_locale_build_attempt",
     ] {
         let error = call(&window, command, json!({})).unwrap_err();
         assert!(
             error.as_str().is_some_and(|value| value.contains("not found")),
-            "legacy translation command remained registered: {command}: {error}"
+            "legacy domain command remained registered: {command}: {error}"
         );
     }
     let project = call(&window, "create_project", json!({

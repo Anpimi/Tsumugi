@@ -33,9 +33,11 @@ pub use arena::{
     ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
 pub use ledger::{AttemptView, ProviderBudget, RecoveryPlan, RecoveryUnit, TaskView};
+#[cfg(any(test, feature = "execution-test-host"))]
+pub use release::BuildLocaleChoice;
 pub use release::{
-    BuildLocaleChoice, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView,
-    PluginBuildLocaleChoice, ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException,
+    DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, PluginBuildLocaleChoice,
+    ReleaseAdoptionHandler, ReleaseBuildEnvironment, ReleaseException,
     ReleaseExceptionKind, ReleasePlan, ReleaseView, ReleasedArtifact,
 };
 pub use resources::{
@@ -65,7 +67,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 21;
+pub(crate) const SCHEMA_VERSION: i64 = 22;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\

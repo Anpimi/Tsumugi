@@ -11,13 +11,15 @@ mod persistence;
 mod project;
 mod review;
 
+#[cfg(any(test, feature = "execution-test-host"))]
+pub use persistence::BuildLocaleChoice;
 pub use persistence::{
     AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
     ComparisonView, MergeBasis,
 };
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 pub use persistence::{
-    AttemptView, BuildLocaleChoice, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,
+    AttemptView, CaptureContext, ChangeScope, ChangeSnapshot, CheckFinding,
     CheckRuleResult, CheckRun, ComputedAutomaticSelection, ComputedReviewCheck, ContextCapture, ContextItem, ContextOmission,
     ContextRevision, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView, Eligibility,
     EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite, GlossaryCapture,

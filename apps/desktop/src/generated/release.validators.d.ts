@@ -2,7 +2,6 @@
 import type { Requests } from "./release.requests";
 import type { Responses } from "./release.responses";
 export declare function validateRequestArtifactCheck(value: unknown): value is Requests["artifactCheck"];
-export declare function validateRequestBuild(value: unknown): value is Requests["build"];
 export declare function validateRequestExport(value: unknown): value is Requests["export"];
 export declare function validateRequestFinishArtifactCheck(value: unknown): value is Requests["finishArtifactCheck"];
 export declare function validateRequestPluginBuild(value: unknown): value is Requests["pluginBuild"];
@@ -12,7 +11,6 @@ export declare function validateRequestReconcile(value: unknown): value is Reque
 export declare function validateRequestRelease(value: unknown): value is Requests["release"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateResponseArtifactCheck(value: unknown): value is Responses["artifactCheck"];
-export declare function validateResponseBuildAttempt(value: unknown): value is Responses["buildAttempt"];
 export declare function validateResponseCancelPluginBuild(value: unknown): value is Responses["cancelPluginBuild"];
 export declare function validateResponseDeliveries(value: unknown): value is Responses["deliveries"];
 export declare function validateResponseDelivery(value: unknown): value is Responses["delivery"];
