@@ -63,10 +63,15 @@ fn selected(capability: sdk::CapabilityBinding) -> PluginExecutionBinding {
     }
 }
 pub fn source_input(store: &ProjectStore) -> FixedInput {
+    source_input_with_count(store, 2)
+}
+fn source_input_with_count(store: &ProjectStore, count: usize) -> FixedInput {
+    assert!((1..=2000).contains(&count));
+    let raw = vec!["same"; count].join("\n");
     let binding = declaration();
     let bundle = SourceBundle::capture_declared(
         &binding,
-        vec![b"same\nsame".to_vec(), b"opaque companion".to_vec()],
+        vec![raw.into_bytes(), b"opaque companion".to_vec()],
         "en",
     )
     .unwrap();
@@ -90,35 +95,47 @@ pub fn source_input(store: &ProjectStore) -> FixedInput {
         .unwrap()
 }
 fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
-    assert_eq!(source.artifacts[0].utf8, "same\nsame");
     assert_eq!(source.artifacts[1].utf8, "opaque companion");
-    let units = [("first", 0, 4), ("second", 5, 9)]
-        .into_iter()
-        .map(|(key, start, end)| sdk::ContentUnit {
-            id: format!("unit-{key}"),
-            source_revision_id: format!("source-{key}"),
-            text: "same".into(),
-            occurrences: vec![sdk::ContentOccurrence {
-                id: format!("occurrence-{key}"),
-                source: sdk::SourceReference {
-                    artifact_id: source.artifacts[0].id.clone(),
-                    range: sdk::TextRange {
-                        encoding: sdk::TextEncoding::Utf8Byte,
-                        start,
-                        end,
+    let lines: Vec<_> = source.artifacts[0].utf8.split('\n').collect();
+    assert!(lines.iter().all(|line| *line == "same"));
+    let count = lines.len();
+    let mut order = Vec::with_capacity(count);
+    let units = (0..count)
+        .map(|index| {
+            let key = if count == 2 {
+                ["first", "second"][index].to_owned()
+            } else {
+                format!("item-{index:04}")
+            };
+            order.push(format!("occurrence-{key}"));
+            let start = index as u32 * 5;
+            let end = start + 4;
+            sdk::ContentUnit {
+                id: format!("unit-{key}"),
+                source_revision_id: format!("source-{key}"),
+                text: "same".into(),
+                occurrences: vec![sdk::ContentOccurrence {
+                    id: format!("occurrence-{key}"),
+                    source: sdk::SourceReference {
+                        artifact_id: source.artifacts[0].id.clone(),
+                        range: sdk::TextRange {
+                            encoding: sdk::TextEncoding::Utf8Byte,
+                            start,
+                            end,
+                        },
                     },
-                },
-                native_identity: Some(sdk::NativeIdentityEvidence {
-                    namespace: "Synthetic.Source".into(),
-                    value: key.into(),
-                    policy: reference("example.case-sensitive-key"),
-                    display: sdk::NativeIdentityDisplay {
-                        value: key.into(),
-                        source: None,
-                    },
-                }),
-            }],
-            protected_fragments: vec![],
+                    native_identity: Some(sdk::NativeIdentityEvidence {
+                        namespace: "Synthetic.Source".into(),
+                        value: key.clone(),
+                        policy: reference("example.case-sensitive-key"),
+                        display: sdk::NativeIdentityDisplay {
+                            value: key.clone(),
+                            source: None,
+                        },
+                    }),
+                }],
+                protected_fragments: vec![],
+            }
         })
         .collect();
     sdk::ContentExchange {
@@ -127,7 +144,7 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
         source_language: source.source_language.clone(),
         artifacts: source.artifacts.clone(),
         units,
-        order: vec!["occurrence-first".into(), "occurrence-second".into()],
+        order,
         relations: vec![],
         domain_blocks: vec![],
     }
@@ -168,7 +185,28 @@ impl Runner for FixtureRunner {
             request
                 .input
                 .plugin_request(request.item_id, request.dispatch_token, &channel)?;
-        let output = if request.input.envelope().operation == tsumugi_core::content::OPERATION {
+        let output = if request.input.envelope().operation == REVIEW_CHECK_OPERATION {
+            let input: sdk::ReviewCheckInput =
+                serde_json::from_value(request.input.item(request.item_id)?.payload.clone())
+                    .unwrap();
+            input.validate().unwrap();
+            let checks: Vec<_> = input
+                .requirements
+                .into_iter()
+                .map(|r| sdk::CheckResult {
+                    key: r.key,
+                    input_digest: r.input_digest,
+                    scope_digest: r.scope_digest,
+                    covered_targets: r.targets,
+                    outcome: r
+                        .not_applicable
+                        .map_or(sdk::CheckOutcome::Completed { findings: vec![] }, |basis| {
+                            sdk::CheckOutcome::NotApplicable { basis }
+                        }),
+                })
+                .collect();
+            serde_json::to_value(checks).unwrap()
+        } else if request.input.envelope().operation == tsumugi_core::content::OPERATION {
             serde_json::to_value(proposal(
                 &SourceBundle::from_input(&request.input)?.source_input(),
             ))
@@ -296,14 +334,41 @@ fn source_fixture_with_rules(
     AdoptionAction,
     AdoptionReceipt,
 ) {
+    source_fixture_config(rules, 2, &["zh-CN"])
+}
+
+#[allow(dead_code)]
+pub fn source_fixture_with_scope(
+    count: usize,
+    locales: &[&str],
+) -> (tempfile::TempDir, ProjectStore, Vec<ContentRow>) {
+    let (directory, store, rows, _, _) = source_fixture_config(None, count, locales);
+    (directory, store, rows)
+}
+
+fn source_fixture_config(
+    rules: Option<Vec<sdk::ReviewRuleDeclaration>>,
+    count: usize,
+    locales: &[&str],
+) -> (
+    tempfile::TempDir,
+    ProjectStore,
+    Vec<ContentRow>,
+    AdoptionAction,
+    AdoptionReceipt,
+) {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(
         directory.path().join("project"),
-        ProjectMetadata::create("Production content", "en", ["zh-CN"]).unwrap(),
+        ProjectMetadata::create("Production content", "en", locales.iter().copied()).unwrap(),
     )
     .unwrap();
     let mut runtime = source_runtime(&store);
-    let mut input = source_input(&store);
+    let mut input = if count == 2 {
+        source_input(&store)
+    } else {
+        source_input_with_count(&store, count)
+    };
     if let Some(rules) = rules {
         let mut envelope = input.envelope().clone();
         envelope.settings["review"]["declaration"]["rules"] = serde_json::to_value(rules).unwrap();
@@ -351,9 +416,23 @@ fn source_fixture_with_rules(
     runtime.revoke_plugin(&mut store, producer_grant).unwrap();
     runtime.revoke_plugin(&mut store, checker_grant).unwrap();
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
-    let rows = store.source_content(snapshot, 0, 10).unwrap().rows;
-    assert_eq!(rows.len(), 2);
-    assert_ne!(rows[0].unit_id, rows[1].unit_id);
+    let mut rows = Vec::with_capacity(count);
+    let mut after = 0;
+    loop {
+        let page = store.source_content(snapshot, after, 100).unwrap();
+        rows.extend(page.rows);
+        match page.next_ordinal {
+            Some(next) => {
+                assert!(next > after);
+                after = next;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(rows.len(), count);
+    let identities: std::collections::BTreeSet<_> =
+        rows.iter().map(|r| r.unit_id.unwrap()).collect();
+    assert_eq!(identities.len(), count);
     (directory, store, rows, action, receipt)
 }
 
@@ -366,4 +445,48 @@ pub fn source_runtime(store: &ProjectStore) -> ExecutionRuntime {
             .unwrap();
     }
     runtime
+}
+
+#[allow(dead_code)]
+pub fn review_runtime(
+    store: &ProjectStore,
+    prepared: &tsumugi_core::PreparedReviewCheck,
+) -> ExecutionRuntime {
+    let mut runtime = ExecutionRuntime::new(store).unwrap();
+    runtime
+        .register_read_only(Arc::new(FixtureRunner(
+            prepared.plan().unwrap().binding().checker.clone(),
+        )))
+        .unwrap();
+    runtime
+}
+
+#[allow(dead_code)]
+pub fn review_check(
+    store: &mut ProjectStore,
+    runtime: &mut ExecutionRuntime,
+    unit: ExecutionId,
+    locale: &str,
+) -> tsumugi_core::CheckRun {
+    let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let target = store.review_target(project, unit, locale).unwrap();
+    let prepared = store
+        .prepare_review_check(project, unit, locale, &target.basis, ExecutionId::new())
+        .unwrap();
+    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let (grant, result) = execute(runtime, store, &input);
+    let captured = store
+        .capture_review_check_execution(
+            prepared,
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+        )
+        .unwrap();
+    let computed = captured.compute(&Cancellation::default()).unwrap();
+    assert!(computed.coverage().complete);
+    let run = store
+        .commit_review_evidence(computed, &Cancellation::default())
+        .unwrap();
+    runtime.revoke_plugin(store, grant).unwrap();
+    run
 }

@@ -206,79 +206,78 @@ pub(in crate::persistence) fn targets_in(
         ),
         &[&project, &locale, &bases],
     )?;
-    let pairs: Vec<_> = checks
-        .iter()
-        .filter_map(|r| r.evidence.as_ref().map(|e| (e.attempt_id, e.result_id)))
-        .collect();
-    let originals = super::super::ledger::load_result_pairs(connection, &pairs)?;
-    let originals: BTreeMap<_, _> = originals
-        .into_iter()
-        .map(|capture| {
-            (
-                (
-                    capture.input.envelope().attempt_id,
-                    capture.result.envelope().result_id,
-                ),
-                capture,
-            )
-        })
-        .collect();
-    let mut materials = BTreeMap::new();
+    // Keep only the small saved QA projections. The ledger validates one full
+    // original frame at a time within this same read snapshot.
+    let mut recorded = BTreeMap::new();
     for mut check in checks {
         if basis_digest(&check.basis_evidence)? != check.basis {
             return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
         }
         check.outcome = check_outcome(&check.rules).to_owned();
+        checks::validate_projection(&check)?;
+        if let Some(evidence) = &check.evidence {
+            let pair = (evidence.attempt_id, evidence.result_id);
+            if recorded.insert(pair, check).is_some() {
+                return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
+            }
+        } else {
+            #[cfg(any(test, feature = "execution-test-host"))]
+            if check.validator_version == CHECK_VERSION {
+                let target = targets
+                    .get_mut(&check.unit_id)
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
+                target.current_check = Some(check);
+            }
+        }
+    }
+    let pairs: Vec<_> = recorded.keys().copied().collect();
+    let mut materials = BTreeMap::new();
+    super::super::ledger::visit_result_pairs(connection, &pairs, |original| {
+        let pair = (
+            original.input.envelope().attempt_id,
+            original.result.envelope().result_id,
+        );
+        let check = recorded
+            .remove(&pair)
+            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+        let evidence = check
+            .evidence
+            .as_ref()
+            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
         let target = targets
             .get_mut(&check.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
-        checks::validate_projection(&check)?;
-        let current = if let Some(evidence) = &check.evidence {
-            let original = originals
-                .get(&(evidence.attempt_id, evidence.result_id))
-                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
-            let request = digest(&(
-                project_id,
-                check.unit_id,
-                check.locale.as_str(),
-                check.basis.as_str(),
-                check.action_id,
-            ))?;
-            checks::validate_saved_frames(
-                project_id,
-                &check,
-                &request,
-                &original.input,
-                &original.result,
-            )?;
-            if !materials.contains_key(&target.source_snapshot_id) {
-                materials.insert(
-                    target.source_snapshot_id,
-                    checks::ReviewMaterial::load(
-                        connection,
-                        project_id,
-                        target.source_snapshot_id,
-                    )?,
-                );
-            }
-            materials[&target.source_snapshot_id].matches(
-                target,
-                &resolutions[&target.unit_id],
-                evidence,
-            )?
-        } else {
-            #[cfg(any(test, feature = "execution-test-host"))]
-            {
-                check.validator_version == CHECK_VERSION
-            }
-            #[cfg(not(any(test, feature = "execution-test-host")))]
-            {
-                false
-            }
-        };
-        if current {
+        let request = digest(&(
+            project_id,
+            check.unit_id,
+            check.locale.as_str(),
+            check.basis.as_str(),
+            check.action_id,
+        ))?;
+        checks::validate_saved_frames(
+            project_id,
+            &check,
+            &request,
+            &original.input,
+            &original.result,
+        )?;
+        if !materials.contains_key(&target.source_snapshot_id) {
+            materials.insert(
+                target.source_snapshot_id,
+                checks::ReviewMaterial::load(connection, project_id, target.source_snapshot_id)?,
+            );
+        }
+        if materials[&target.source_snapshot_id].matches(
+            target,
+            &resolutions[&target.unit_id],
+            evidence,
+        )? {
             target.current_check = Some(check);
         }
+        Ok(())
+    })?;
+    if !recorded.is_empty() {
+        return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
     }
     let fallbacks: Vec<FallbackDecision> = json_rows(connection,
         "WITH wanted AS MATERIALIZED (SELECT value unit_id FROM json_each(?3)),

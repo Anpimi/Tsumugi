@@ -502,3 +502,11 @@ This changes experimental Core API availability, not stored fields, schema 26,
 SDK/process/Store profiles or dependencies. The same undistributed application
 `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no extra bump or development
 migration. Both Unreleased changelogs record the behavior.
+
+Current QA batch reads now stream original immutable ledger frames within their
+existing SQLite snapshot. Release qualification batches requested units and all
+locales inside one read snapshot. This reduces retained decoded input memory without
+changing any persisted frame, digest, profile, coverage or application-facing
+API. Project schema 26, SDK/process/Store formats and dependencies are unchanged.
+The same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
+needs no extra bump or migration; both Unreleased changelogs record the change.

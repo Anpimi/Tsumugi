@@ -16,11 +16,11 @@ mod core_execution;
 mod package_fixture;
 #[path = "support/runtime.rs"]
 mod runtime_fixture;
-use core_execution::{authorize, execute};
+use core_execution::{authorize, execute, execute_all};
 #[path = "../../core/tests/support/automatic.rs"]
 mod automatic;
 
-fn paired_core_review(plugin: &str, caption: bool) {
+fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
     let directory = tempfile::tempdir().unwrap();
     let image = package_fixture::installed(directory.path(), plugin);
     let binding = image.source_import("source-profile").unwrap();
@@ -42,9 +42,15 @@ fn paired_core_review(plugin: &str, caption: bool) {
     let source_checker = proxy(&binding.declaration.checker);
     let review_checker = proxy(&binding.review.declaration.checker);
     let path = directory.path().join("project");
+    let languages = if multiple {
+        vec!["zh-CN", "de", "fr"]
+    } else {
+        vec!["zh-CN"]
+    };
     let mut store = ProjectStore::create(
         &path,
-        ProjectMetadata::create("Actual domain review", "en-US", ["zh-CN"]).unwrap(),
+        ProjectMetadata::create("Actual domain review", "en-US", languages.iter().copied())
+            .unwrap(),
     )
     .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
@@ -392,14 +398,39 @@ fn paired_core_review(plugin: &str, caption: bool) {
     } else {
         "i18n/zh.json"
     };
-    let choices = vec![PluginBuildLocaleChoice {
-        locale: "zh-CN".into(),
-        output_paths: vec![output.into()],
-        configuration: vec![],
-    }];
-    let eligibility = store
-        .review_eligibility(project, &["zh-CN".into()])
-        .unwrap();
+    let mut expected_outputs = vec![(
+        "zh-CN",
+        valid,
+        output,
+        if caption {
+            "\u{feff}WEBVTT\r\n\r\nCue\r\n00:01.000 --> 00:02.000\r\n译文 é 👩🏽‍💻\r\n第二行\r\n\r\n"
+        } else {
+            "{\n  \"first\": \"你好 {{name}} {{name}} é 👩🏽‍💻\"\n}\n"
+        },
+    )];
+    if multiple {
+        expected_outputs.extend(if caption {
+            vec![
+                ("de", "Deutsch é 👩🏽‍💻\nZweite Zeile", "translated-de.vtt", "\u{feff}WEBVTT\r\n\r\nCue\r\n00:01.000 --> 00:02.000\r\nDeutsch é 👩🏽‍💻\r\nZweite Zeile\r\n\r\n"),
+                ("fr", "Français é 👩🏽‍💻\nDeuxième ligne", "translated-fr.vtt", "\u{feff}WEBVTT\r\n\r\nCue\r\n00:01.000 --> 00:02.000\r\nFrançais é 👩🏽‍💻\r\nDeuxième ligne\r\n\r\n"),
+            ]
+        } else {
+            vec![
+                ("de", "Deutsch {{name}} {{name}} é 👩🏽‍💻", "i18n/de.json", "{\n  \"first\": \"Deutsch {{name}} {{name}} é 👩🏽‍💻\"\n}\n"),
+                ("fr", "Français {{name}} {{name}} é 👩🏽‍💻", "i18n/fr.json", "{\n  \"first\": \"Français {{name}} {{name}} é 👩🏽‍💻\"\n}\n"),
+            ]
+        });
+    }
+    let choices: Vec<_> = expected_outputs
+        .iter()
+        .map(|(locale, _, path, _)| PluginBuildLocaleChoice {
+            locale: (*locale).into(),
+            output_paths: vec![(*path).into()],
+            configuration: vec![],
+        })
+        .collect();
+    let languages: Vec<String> = languages.into_iter().map(str::to_owned).collect();
+    let eligibility = store.review_eligibility(project, &languages).unwrap();
     assert!(!eligibility.ready);
     assert!(
         store
@@ -426,9 +457,62 @@ fn paired_core_review(plugin: &str, caption: bool) {
             reason: "Approve the exact checked translation".into(),
         })
         .unwrap();
-    let eligibility = store
-        .review_eligibility(project, &["zh-CN".into()])
-        .unwrap();
+    for (locale, text, _, _) in expected_outputs.iter().skip(1) {
+        let target = store.review_target(project, unit, locale).unwrap();
+        store
+            .save_translation_revision(&SaveTranslationRevision {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: (*locale).into(),
+                source_revision_id: target.source_revision_id,
+                expected_selection_id: target.selection_id,
+                text: (*text).into(),
+            })
+            .unwrap();
+        let target = store.review_target(project, unit, locale).unwrap();
+        let prepared = store
+            .prepare_review_check(project, unit, locale, &target.basis, ExecutionId::new())
+            .unwrap();
+        let domain = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+        authorize(&runtime, &mut store, &domain);
+        let checked = execute(&mut runtime, &mut store, &domain);
+        let computed = store
+            .capture_review_check_execution(
+                prepared,
+                domain.envelope().attempt_id,
+                checked.envelope().result_id,
+            )
+            .unwrap()
+            .compute(&Cancellation::default())
+            .unwrap();
+        assert!(computed.coverage().complete);
+        store
+            .commit_review_evidence(computed, &Cancellation::default())
+            .unwrap();
+        assert!(
+            !store
+                .review_eligibility(project, &[(*locale).into()])
+                .unwrap()
+                .ready,
+            "QA does not grant human approval"
+        );
+        let target = store.review_target(project, unit, locale).unwrap();
+        store
+            .write_review(&tsumugi_core::ReviewWrite {
+                project_id: project,
+                action_id: ExecutionId::new(),
+                unit_id: unit,
+                locale: (*locale).into(),
+                expected_basis: target.basis,
+                expected_decision_id: None,
+                actor: "Synthetic reviewer".into(),
+                kind: tsumugi_core::ReviewDecisionKind::Approve,
+                reason: "Approve this exact locale".into(),
+            })
+            .unwrap();
+    }
+    let eligibility = store.review_eligibility(project, &languages).unwrap();
     assert!(eligibility.ready, "{eligibility:?}");
     let input = store
         .prepare_plugin_build(
@@ -441,14 +525,21 @@ fn paired_core_review(plugin: &str, caption: bool) {
         .unwrap();
     let frozen = ReleasePlan::from_input(&input).unwrap();
     assert_eq!(frozen.eligibility_basis(), eligibility.basis);
-    assert_eq!(frozen.plugin_input("zh-CN").unwrap().targets[0].text, valid);
+    assert_eq!(frozen.choices(), choices);
+    for (locale, text, _, _) in &expected_outputs {
+        assert_eq!(frozen.plugin_input(locale).unwrap().targets[0].text, *text);
+    }
     let producer_grant = authorize(&runtime, &mut store, &input);
-    let result = execute(&mut runtime, &mut store, &input);
+    let results = execute_all(&mut runtime, &mut store, &input);
+    assert_eq!(results.len(), expected_outputs.len());
     let action = store
         .prepare_adoption(
             input.envelope().attempt_id,
             input.envelope().units[0].unit_id,
-            vec![result.envelope().result_id],
+            results
+                .iter()
+                .map(|result| result.envelope().result_id)
+                .collect(),
             serde_json::json!({}),
         )
         .unwrap();
@@ -459,34 +550,45 @@ fn paired_core_review(plugin: &str, caption: bool) {
     );
     assert!(store.adoption_receipt(action.action_id).unwrap().is_none());
     assert!(store.list_releases(project).unwrap().is_empty());
-    let capture = store
-        .capture_artifact_validation(input.envelope().attempt_id, result.envelope().result_id)
-        .unwrap();
-    let check_input = capture.check_input().clone();
-    let check_grant = authorize(&runtime, &mut store, &check_input);
-    assert_ne!(producer_grant, check_grant);
-    let checked = execute(&mut runtime, &mut store, &check_input);
-    store
-        .commit_artifact_validation(capture.prepare(checked).unwrap())
-        .unwrap();
+    let mut check_grants = Vec::new();
+    for (index, result) in results.iter().enumerate() {
+        let capture = store
+            .capture_artifact_validation(input.envelope().attempt_id, result.envelope().result_id)
+            .unwrap();
+        let check_input = capture.check_input().clone();
+        let grant = authorize(&runtime, &mut store, &check_input);
+        assert_ne!(producer_grant, grant);
+        check_grants.push(grant);
+        let checked = execute(&mut runtime, &mut store, &check_input);
+        store
+            .commit_artifact_validation(capture.prepare(checked).unwrap())
+            .unwrap();
+        if index + 1 < results.len() {
+            assert!(
+                store
+                    .adopt_execution(&action, &ReleaseAdoptionHandler)
+                    .is_err(),
+                "missing one locale's proof blocks the whole release"
+            );
+            assert!(store.adoption_receipt(action.action_id).unwrap().is_none());
+            assert!(store.list_releases(project).unwrap().is_empty());
+        }
+    }
     let receipt = store
         .adopt_execution(&action, &ReleaseAdoptionHandler)
         .unwrap();
     let release = ExecutionId::parse(&receipt.changes[0].id).unwrap();
     let released = store.release_view(release).unwrap();
-    assert_eq!(released.artifacts.len(), 1);
-    let expected = if caption {
-        "\u{feff}WEBVTT\r\n\r\nCue\r\n00:01.000 --> 00:02.000\r\n译文 é 👩🏽‍💻\r\n第二行\r\n\r\n"
-    } else {
-        "{\n  \"first\": \"你好 {{name}} {{name}} é 👩🏽‍💻\"\n}\n"
-    };
-    assert_eq!(
-        store
-            .release_artifact_by_path(release, "zh-CN", output)
-            .unwrap()
-            .1,
-        expected.as_bytes()
-    );
+    assert_eq!(released.artifacts.len(), expected_outputs.len());
+    for (locale, _, path, expected) in &expected_outputs {
+        assert_eq!(
+            store
+                .release_artifact_by_path(release, locale, path)
+                .unwrap()
+                .1,
+            expected.as_bytes()
+        );
+    }
     // Later edits expire current QA without changing the frozen plan or release.
     let target = store.review_target(project, unit, "zh-CN").unwrap();
     store
@@ -518,10 +620,21 @@ fn paired_core_review(plugin: &str, caption: bool) {
             )
             .is_err()
     );
-    assert_eq!(frozen.plugin_input("zh-CN").unwrap().targets[0].text, valid);
+    let current = store.review_eligibility(project, &languages).unwrap();
+    assert!(
+        current
+            .locales
+            .iter()
+            .all(|locale| locale.ready == (locale.locale != "zh-CN"))
+    );
+    for (locale, text, _, _) in &expected_outputs {
+        assert_eq!(frozen.plugin_input(locale).unwrap().targets[0].text, *text);
+    }
     assert_eq!(store.release_view(release).unwrap(), released);
     runtime.revoke_plugin(&mut store, producer_grant).unwrap();
-    runtime.revoke_plugin(&mut store, check_grant).unwrap();
+    for grant in check_grants {
+        runtime.revoke_plugin(&mut store, grant).unwrap();
+    }
     runtime.begin_quiesce(&mut store).unwrap();
     runtime.finish_quiesce(&mut store).unwrap();
     drop(runtime);
@@ -535,6 +648,19 @@ fn paired_core_review(plugin: &str, caption: bool) {
             .is_none()
     );
     assert_eq!(reopened.release_view(release).unwrap(), released);
+    assert_eq!(
+        reopened.review_eligibility(project, &languages).unwrap(),
+        current
+    );
+    for (locale, _, path, expected) in &expected_outputs {
+        assert_eq!(
+            reopened
+                .release_artifact_by_path(release, locale, path)
+                .unwrap()
+                .1,
+            expected.as_bytes()
+        );
+    }
     assert_eq!(
         reopened
             .adopt_execution(&action, &ReleaseAdoptionHandler)
@@ -552,9 +678,19 @@ fn paired_core_review(plugin: &str, caption: bool) {
 
 #[test]
 fn stardew_smapi_core_review_uses_adopted_source_live_grant_and_actual_channel() {
-    paired_core_review("stardew-smapi", false);
+    paired_core_review("stardew-smapi", false, false);
 }
 #[test]
 fn webvtt_core_review_uses_adopted_source_live_grant_and_actual_channel() {
-    paired_core_review("webvtt", true);
+    paired_core_review("webvtt", true, false);
+}
+
+#[test]
+fn stardew_smapi_multi_locale_release_keeps_independent_qa_and_complete_artifact_proof() {
+    paired_core_review("stardew-smapi", false, true);
+}
+
+#[test]
+fn webvtt_multi_locale_release_keeps_independent_qa_and_complete_artifact_proof() {
+    paired_core_review("webvtt", true, true);
 }

@@ -1563,79 +1563,81 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?;
-        for locale in &requested {
-            check_project(connection, project_id, locale)?;
-        }
-        let (source_snapshot_id, units) = all_units(connection, project_id)?;
-        let mut outcomes = Vec::new();
-        let mut bases = Vec::new();
-        for locale in &requested {
-            let impacts = self.impact_map(project_id, locale)?;
-            let mut blockers = Vec::new();
-            let mut exceptions = Vec::new();
-            let mut blocker_count = 0u32;
-            let mut exception_count = 0u32;
-            for unit_id in &units {
-                let target = target_in(connection, project_id, *unit_id, locale)?;
-                let (unit_blockers, unit_exceptions) =
-                    assess(&target, impacts.contains_key(unit_id));
-                blocker_count += unit_blockers.len() as u32;
-                exception_count += unit_exceptions.len() as u32;
-                let decision_id = target
-                    .current_decision
-                    .as_ref()
-                    .map(|value| value.decision_id);
-                let check_id = target.current_check.as_ref().map(|value| value.run_id);
-                let fallback_id = target
-                    .current_fallback
-                    .as_ref()
-                    .map(|value| value.fallback_id);
-                let waiver_ids: Vec<_> = target
-                    .current_waivers
-                    .iter()
-                    .map(|value| value.waiver_id)
-                    .collect();
-                let impact_ids = impacts.get(unit_id).cloned();
-                bases.push((
-                    locale.clone(),
-                    *unit_id,
-                    target.basis.clone(),
-                    decision_id,
-                    check_id,
-                    fallback_id,
-                    waiver_ids,
-                    impact_ids,
-                    unit_blockers.clone(),
-                    unit_exceptions.clone(),
-                ));
-                for reason in unit_blockers {
-                    if blockers.len() < 100 {
-                        blockers.push(eligibility_reason(&target, &reason));
-                    }
-                }
-                for reason in unit_exceptions {
-                    if exceptions.len() < 100 {
-                        exceptions.push(eligibility_reason(&target, &reason));
-                    }
-                }
+        queries::read_snapshot(connection, |connection| {
+            for locale in &requested {
+                check_project(connection, project_id, locale)?;
             }
-            outcomes.push(EligibilityLocale {
-                locale: locale.clone(),
-                ready: blocker_count == 0,
-                blockers,
-                exceptions,
-                checked_units: units.len() as u32,
-                blocker_count,
-                exception_count,
-            });
-        }
-        let ready = outcomes.iter().all(|item| item.ready);
-        Ok(Eligibility {
-            policy_version: POLICY_VERSION.to_owned(),
-            source_snapshot_id,
-            basis: digest(&(POLICY_VERSION, source_snapshot_id, &bases))?,
-            ready,
-            locales: outcomes,
+            let (source_snapshot_id, units) = all_units(connection, project_id)?;
+            let mut outcomes = Vec::new();
+            let mut bases = Vec::new();
+            for locale in &requested {
+                let impacts = self.impact_map(project_id, locale)?;
+                let mut blockers = Vec::new();
+                let mut exceptions = Vec::new();
+                let mut blocker_count = 0u32;
+                let mut exception_count = 0u32;
+                for target in queries::targets_in(connection, project_id, &units, locale)? {
+                    let unit_id = target.unit_id;
+                    let (unit_blockers, unit_exceptions) =
+                        assess(&target, impacts.contains_key(&unit_id));
+                    blocker_count += unit_blockers.len() as u32;
+                    exception_count += unit_exceptions.len() as u32;
+                    let decision_id = target
+                        .current_decision
+                        .as_ref()
+                        .map(|value| value.decision_id);
+                    let check_id = target.current_check.as_ref().map(|value| value.run_id);
+                    let fallback_id = target
+                        .current_fallback
+                        .as_ref()
+                        .map(|value| value.fallback_id);
+                    let waiver_ids: Vec<_> = target
+                        .current_waivers
+                        .iter()
+                        .map(|value| value.waiver_id)
+                        .collect();
+                    let impact_ids = impacts.get(&unit_id).cloned();
+                    bases.push((
+                        locale.clone(),
+                        unit_id,
+                        target.basis.clone(),
+                        decision_id,
+                        check_id,
+                        fallback_id,
+                        waiver_ids,
+                        impact_ids,
+                        unit_blockers.clone(),
+                        unit_exceptions.clone(),
+                    ));
+                    for reason in unit_blockers {
+                        if blockers.len() < 100 {
+                            blockers.push(eligibility_reason(&target, &reason));
+                        }
+                    }
+                    for reason in unit_exceptions {
+                        if exceptions.len() < 100 {
+                            exceptions.push(eligibility_reason(&target, &reason));
+                        }
+                    }
+                }
+                outcomes.push(EligibilityLocale {
+                    locale: locale.clone(),
+                    ready: blocker_count == 0,
+                    blockers,
+                    exceptions,
+                    checked_units: units.len() as u32,
+                    blocker_count,
+                    exception_count,
+                });
+            }
+            let ready = outcomes.iter().all(|item| item.ready);
+            Ok(Eligibility {
+                policy_version: POLICY_VERSION.to_owned(),
+                source_snapshot_id,
+                basis: digest(&(POLICY_VERSION, source_snapshot_id, &bases))?,
+                ready,
+                locales: outcomes,
+            })
         })
     }
 

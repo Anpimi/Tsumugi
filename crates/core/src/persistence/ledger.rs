@@ -404,13 +404,16 @@ pub(super) fn load_result(
 }
 
 /// Restores associated immutable result pairs in one bounded history read.
-/// No grant is issued or required by a historical read.
-pub(super) fn load_result_pairs(
+/// Each full frame is released before the next row rather than retaining the
+/// product of scope size and complete plugin input size. Historical reads issue
+/// no grant; a failed visit discards the caller's read projection.
+pub(super) fn visit_result_pairs(
     connection: &Connection,
     pairs: &[(ExecutionId, ExecutionId)],
-) -> Result<Vec<ResultValidationCapture>, ExecutionError> {
+    mut visit: impl FnMut(ResultValidationCapture) -> Result<(), ExecutionError>,
+) -> Result<(), ExecutionError> {
     if pairs.is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
     if pairs.len() > 10_000 {
         return Err(error(ErrorCode::LimitExceeded, "result-pairs"));
@@ -443,49 +446,46 @@ pub(super) fn load_result_pairs(
                 ))
             },
         )
-        .map_err(sql_error)?
-        .collect::<Result<Vec<_>, _>>()
         .map_err(sql_error)?;
-    if rows.len() != pairs.len() {
+    let mut restored = 0;
+    for row in rows {
+        let (
+            attempt,
+            bytes,
+            digest,
+            task,
+            project,
+            previous,
+            result,
+            result_bytes,
+            result_digest,
+            item,
+            token,
+        ) = row.map_err(sql_error)?;
+        let input = FixedInput::restore(&bytes, &digest)?;
+        check_input_association(
+            &input,
+            parse_id(attempt)?,
+            &task,
+            &project,
+            previous.as_deref(),
+        )?;
+        let fixed = FixedResult::restore(&result_bytes, &result_digest, &input, parse_id(token)?)?;
+        if fixed.envelope().result_id.to_string() != result
+            || fixed.envelope().item_id.to_string() != item
+        {
+            return Err(error(ErrorCode::CorruptLedger, "result-association"));
+        }
+        visit(ResultValidationCapture {
+            input,
+            result: fixed,
+        })?;
+        restored += 1;
+    }
+    if restored != pairs.len() {
         return Err(error(ErrorCode::CorruptLedger, "result-pairs"));
     }
-    rows.into_iter()
-        .map(
-            |(
-                attempt,
-                bytes,
-                digest,
-                task,
-                project,
-                previous,
-                result,
-                result_bytes,
-                result_digest,
-                item,
-                token,
-            )| {
-                let input = FixedInput::restore(&bytes, &digest)?;
-                check_input_association(
-                    &input,
-                    parse_id(attempt)?,
-                    &task,
-                    &project,
-                    previous.as_deref(),
-                )?;
-                let fixed =
-                    FixedResult::restore(&result_bytes, &result_digest, &input, parse_id(token)?)?;
-                if fixed.envelope().result_id.to_string() != result
-                    || fixed.envelope().item_id.to_string() != item
-                {
-                    return Err(error(ErrorCode::CorruptLedger, "result-association"));
-                }
-                Ok(ResultValidationCapture {
-                    input,
-                    result: fixed,
-                })
-            },
-        )
-        .collect()
+    Ok(())
 }
 // Comparing with a verified immutable frame is as strong as restoring its
 // digest again, while avoiding repeated SDK decoding/structural qualification.
