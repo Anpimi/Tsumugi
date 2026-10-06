@@ -12,16 +12,10 @@ fn source_wire_fixture_matches_rust_types() {
         );
     }
     round_trip::<SessionRequest>(&fixture["session"]);
-    round_trip::<SourceSelection>(&fixture["selection"]);
-    round_trip::<CaptureRequest>(&fixture["capture"]);
-    round_trip::<StartRequest>(&fixture["start"]);
     round_trip::<PreviewRequest>(&fixture["preview"]);
     round_trip::<ContentRequest>(&fixture["content"]);
     round_trip::<SourceAdoptRequest>(&fixture["prepare"]);
     round_trip::<ContentPage>(&fixture["page"]);
-    round_trip::<Preflight>(&fixture["preflight"]);
-    round_trip::<content::IntegrationDescriptor>(&fixture["integration"]);
-    assert_eq!(serde_json::to_value(content::integration_descriptor(true)).unwrap(), fixture["integration"]);
     round_trip::<HistoryRequest>(&fixture["historyRequest"]);
     round_trip::<ComparisonRequest>(&fixture["comparisonRequest"]);
     round_trip::<HistoryContentRequest>(&fixture["historyContent"]);

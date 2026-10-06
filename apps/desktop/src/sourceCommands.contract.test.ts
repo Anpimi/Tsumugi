@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/sourceCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import unicodeFixture from "../../../crates/core/tests/fixtures/source-unicode.contract.json";
-import { sourceCommands, type StartRequest, type SourceAdoptRequest } from "./sourceCommands";
+import { sourceCommands, type SourceAdoptRequest } from "./sourceCommands";
 import * as validators from "./generated/source.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
@@ -12,19 +12,16 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
 
 it("preserves bounded source requests, decimal revisions and explicit confirmation across IPC", async () => {
-  const start: StartRequest = fixture.start;
   const prepare: SourceAdoptRequest = fixture.prepare;
   const page = sourcePageFixture();
   for (const [validate, value] of [
-    [validators.validateRequestSession, fixture.session], [validators.validateRequestCapture, fixture.capture],
-    [validators.validateRequestStart, start], [validators.validateRequestPreview, fixture.preview],
+    [validators.validateRequestSession, fixture.session],
+    [validators.validateRequestPreview, fixture.preview],
     [validators.validateRequestContent, fixture.content], [validators.validateRequestComparison, fixture.comparisonRequest],
     [validators.validateRequestHistory, fixture.historyRequest], [validators.validateRequestHistoryContent, fixture.historyContent],
     [validators.validateRequestLineage, fixture.lineageRequest], [validators.validateRequestImpact, fixture.impactRequest],
     [validators.validateRequestAdopt, prepare],
-    [validators.validateResponseIntegration, fixture.integration], [validators.validateResponseSelection, fixture.selection],
-    [validators.validateResponseSelection, null], [validators.validateResponsePreflight, fixture.preflight],
-    [validators.validateResponseAttempt, start.attemptId], [validators.validateResponseCancelled, null],
+    [validators.validateResponseAttempt, fixture.preview.attemptId], [validators.validateResponseCancelled, null],
     [validators.validateResponseScope, page.scope], [validators.validateResponsePage, page],
     [validators.validateResponseComparison, fixture.comparison], [validators.validateResponseHistory, fixture.history],
     [validators.validateResponseLineage, fixture.lineage], [validators.validateResponseEstimates, fixture.estimates],
@@ -33,9 +30,6 @@ it("preserves bounded source requests, decimal revisions and explicit confirmati
   invoke.mockResolvedValueOnce(page);
   expect(await sourceCommands.preview(fixture.preview)).toEqual(page);
   expect(invoke).toHaveBeenLastCalledWith("read_source_preview", { request: fixture.preview });
-  invoke.mockResolvedValueOnce(start.attemptId);
-  expect(await sourceCommands.start(start)).toBe(start.attemptId);
-  expect(invoke).toHaveBeenLastCalledWith("start_source_import", { request: start });
   invoke.mockResolvedValueOnce(executionFixture.action);
   expect(await sourceCommands.prepare(prepare)).toEqual(executionFixture.action);
   expect(invoke).toHaveBeenLastCalledWith("prepare_source_adoption", { request: prepare });
@@ -70,7 +64,6 @@ it("rejects lossy counters, invalid source references, unknown decisions and mis
     nativeIdentity: { ...nativeIdentity, display: { value: nativeIdentity.display.value } } } }] })).toBe(false);
   expect(validators.validateRequestAdopt({ ...fixture.prepare, confirmation: { ...fixture.prepare.confirmation,
     lineage: [{ newOrdinal: 0, oldOccurrenceId: fixture.content.snapshotId, decision: "guess", reason: "unknown" }] } })).toBe(false);
-  expect(validators.validateResponseIntegration({ id: "webvtt" })).toBe(false);
   expect(validators.validateResponseCancelled({})).toBe(false);
   expect(validators.validateResponseComparison({ ...fixture.comparison, rows: [{ ...fixture.comparison.rows[0], kind: "future-kind" }] })).toBe(false);
   expect(validators.validateResponseImpact({ ...fixture.impact, rows: [{ ...fixture.impact.rows[0], status: "future-status" }] })).toBe(false);

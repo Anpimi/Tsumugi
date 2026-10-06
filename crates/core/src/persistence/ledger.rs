@@ -1843,6 +1843,7 @@ impl ProjectStore {
         if output.envelope().outcome != ExecutionState::Succeeded {
             return Err(error(ErrorCode::OutputInvalid, "validation"));
         }
+        #[cfg(any(test, feature = "execution-test-host"))]
         if input.envelope().operation == crate::content::OPERATION {
             if let Err(failure) = crate::content::validate_builtin_output(&input, &output) {
                 tx.execute("UPDATE execution_items SET validation='invalid' WHERE attempt_id=?1 AND item_id=?2 AND current_result_id=?3",params![attempt.to_string(),output.envelope().item_id.to_string(),result.to_string()]).map_err(sql_error)?;

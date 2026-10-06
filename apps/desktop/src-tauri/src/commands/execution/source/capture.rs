@@ -8,12 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{
-    content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, SourceBundle},
+    content::SourceBundle,
     execution::{Cancellation, ErrorCode, ExecutionError, ExecutionId},
 };
 
 #[cfg(any(test, feature = "execution-test-host"))]
-use tsumugi_core::content::TranslationBundle;
+use tsumugi_core::content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, TranslationBundle};
 
 mod destination;
 pub(crate) use destination::Destination;
@@ -119,6 +119,7 @@ pub(crate) mod platform;
 
 #[cfg(any(windows, target_os = "macos"))]
 pub struct Selection {
+    #[cfg(any(test, feature = "execution-test-host"))]
     webvtt: bool,
     root: PathBuf,
     root_file: File,
@@ -145,6 +146,7 @@ impl Selection {
         let root = platform::final_path(&root_file)?;
         let identity = platform::identity(&root_file)?;
         Ok(Self {
+            #[cfg(any(test, feature = "execution-test-host"))]
             webvtt: false,
             root,
             root_file,
@@ -159,6 +161,7 @@ impl Selection {
             .to_string_lossy()
             .into()
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
         let mut selected = Self::authorize(path)?;
         selected.webvtt = true;
@@ -413,6 +416,7 @@ impl Selection {
         }
         Ok(())
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn capture(
         &self,
         language: &str,
@@ -420,6 +424,7 @@ impl Selection {
     ) -> Result<SourceBundle, ExecutionError> {
         self.capture_inner(language, cancel, || {})
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     fn capture_inner(
         &self,
         language: &str,
@@ -784,6 +789,7 @@ impl Selection {
     pub fn authorize(_: PathBuf) -> Result<Self, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn authorize_webvtt(path: PathBuf) -> Result<Self, ExecutionError> {
         Self::authorize(path)
     }
@@ -796,6 +802,7 @@ impl Selection {
     pub fn label(&self) -> String {
         String::new()
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn capture(&self, _: &str, _: &Cancellation) -> Result<SourceBundle, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }

@@ -19,6 +19,7 @@ pub(super) struct SourceSession {
     pub(super) resource_picker: Option<ExecutionId>,
     job: Option<ExecutionId>,
     cancel: Cancellation,
+    #[cfg(any(test, feature = "execution-test-host"))]
     last_start: Option<(ExecutionId, ExecutionId, String)>,
     #[cfg(any(test, feature = "execution-test-host"))]
     translation_last_start: Option<(
@@ -44,6 +45,7 @@ impl SourceSession {
         self.translation.discard_capture();
     }
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -51,6 +53,7 @@ pub struct SourceSelection {
     pub selection_id: ExecutionId,
     pub folder_name: String,
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -61,10 +64,12 @@ pub struct Preflight {
     pub diagnostics: Vec<String>,
     pub files: Vec<content::FileCoverage>,
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] CaptureRequest {
     selection_id: ExecutionId,
     source_language: String
 });
+#[cfg(any(test, feature = "execution-test-host"))]
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] StartRequest {
     selection_id: ExecutionId,
     source_language: String,
@@ -126,6 +131,7 @@ fn stale() -> CommandError {
     ))
 }
 
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn select_source<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -134,6 +140,7 @@ pub async fn select_source<R: tauri::Runtime>(
 ) -> Result<Option<SourceSelection>, CommandError> {
     select_source_kind(app, state, request, false).await
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn select_webvtt_source<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -142,6 +149,7 @@ pub async fn select_webvtt_source<R: tauri::Runtime>(
 ) -> Result<Option<SourceSelection>, CommandError> {
     select_source_kind(app, state, request, true).await
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 async fn select_source_kind<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
@@ -458,6 +466,7 @@ pub async fn cancel_source_capture(
         )
         .await
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn read_source_integration(
     state: State<'_, AppState>,
@@ -496,6 +505,7 @@ pub async fn read_source_integration(
         )
         .await
 }
+#[cfg(any(test, feature = "execution-test-host"))]
 #[tauri::command]
 pub async fn read_webvtt_integration(
     state: State<'_, AppState>,

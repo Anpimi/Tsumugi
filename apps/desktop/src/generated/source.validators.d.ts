@@ -2,7 +2,6 @@
 import type { Requests } from "./source.requests";
 import type { Responses } from "./source.responses";
 export declare function validateRequestAdopt(value: unknown): value is Requests["adopt"];
-export declare function validateRequestCapture(value: unknown): value is Requests["capture"];
 export declare function validateRequestCheckFinish(value: unknown): value is Requests["checkFinish"];
 export declare function validateRequestCheckPrepare(value: unknown): value is Requests["checkPrepare"];
 export declare function validateRequestComparison(value: unknown): value is Requests["comparison"];
@@ -16,7 +15,6 @@ export declare function validateRequestPluginSelect(value: unknown): value is Re
 export declare function validateRequestPluginStart(value: unknown): value is Requests["pluginStart"];
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
-export declare function validateRequestStart(value: unknown): value is Requests["start"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
 export declare function validateResponseCancelled(value: unknown): value is Responses["cancelled"];
@@ -25,11 +23,8 @@ export declare function validateResponseComparison(value: unknown): value is Res
 export declare function validateResponseEstimates(value: unknown): value is Responses["estimates"];
 export declare function validateResponseHistory(value: unknown): value is Responses["history"];
 export declare function validateResponseImpact(value: unknown): value is Responses["impact"];
-export declare function validateResponseIntegration(value: unknown): value is Responses["integration"];
 export declare function validateResponseLineage(value: unknown): value is Responses["lineage"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
 export declare function validateResponsePluginPreflight(value: unknown): value is Responses["pluginPreflight"];
 export declare function validateResponsePluginSelection(value: unknown): value is Responses["pluginSelection"];
-export declare function validateResponsePreflight(value: unknown): value is Responses["preflight"];
 export declare function validateResponseScope(value: unknown): value is Responses["scope"];
-export declare function validateResponseSelection(value: unknown): value is Responses["selection"];

@@ -54,14 +54,11 @@ export interface Responses {
   estimates: SourceImpactSummary[];
   history: SourceHistory;
   impact: SourceImpactPage;
-  integration: IntegrationDescriptor;
   lineage: LineageEvidence[];
   page: ContentPage;
   pluginPreflight: PluginSourcePreflight;
   pluginSelection: PluginSourceSelection | null;
-  preflight: Preflight;
   scope: ContentScope;
-  selection: SourceSelection | null;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;
@@ -388,19 +385,6 @@ export interface ReviewBasis {
   sourceSnapshotId: ExecutionId;
   termRevisionIds: ExecutionId[];
 }
-export interface IntegrationDescriptor {
-  available: boolean;
-  capabilityId: string;
-  capabilityVersion: string;
-  formatProfiles: string[];
-  id: string;
-  inputVersion: number;
-  outputVersion: number;
-  permissions: string[];
-  reason: string | null;
-  requiredFiles: string[];
-  version: string;
-}
 export interface ContentPage {
   attemptId: ExecutionId;
   confirmation: SourceConfirmation;
@@ -431,15 +415,4 @@ export interface PluginSourceSelection {
   folderName: string;
   selectionId: ExecutionId;
   source: PluginSourceView;
-}
-export interface Preflight {
-  count: number;
-  diagnostics: string[];
-  files: FileCoverage[];
-  namespace: string;
-  sourceLanguage: string;
-}
-export interface SourceSelection {
-  folderName: string;
-  selectionId: ExecutionId;
 }

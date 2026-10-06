@@ -159,10 +159,10 @@ pnpm --dir apps/desktop tauri dev
 Run the normal Core content regressions separately:
 
 ```text
-cargo test -p tsumugi-core --test translation_production --test build_production
+cargo test -p tsumugi-core --test source_production --test translation_production --test build_production
 ```
 
-This checks production translation/build input rejection, schema 22 refusal of
+This checks production source/translation/build input rejection, schema 23 refusal of
 previous formats, manual history and original save receipts.
 Workspace tests enable the explicit `execution-test-host` fixture through
 development dependencies; this focused command uses normal Core features.
@@ -204,7 +204,7 @@ AI translation supports an editable OpenAI-compatible Chat Completions endpoint,
 
 Arena comparison generates two to four schemes under a shared round budget or compares saved revisions offline. Optional blind comparison keeps fixed anonymous labels until an explicit reveal. Save candidates, select a revision or edit an atomic manual merge with contributing provenance, then continue normal Review and QA. See [AI translation and Arena comparison](docs/ai-translation.md).
 
-The current development build supports database schema 22 only. Previous development databases are not upgraded. Other schema versions are explicitly refused, preserving the directory and its contents. Keep those directories intact; create a new project and reimport source files for this build. The application remains in the unreleased `0.2.0-alpha.1` development batch. See the [changelog](CHANGELOG.md) and [versioning policy](docs/versioning.md) for changes, compatibility and future version decisions.
+The current development build supports database schema 23 only. Previous development databases are not upgraded. Other schema versions are explicitly refused, preserving the directory and its contents. Keep those directories intact; create a new project and reimport source files for this build. The application remains in the unreleased `0.2.0-alpha.1` development batch. See the [changelog](CHANGELOG.md) and [versioning policy](docs/versioning.md) for changes, compatibility and future version decisions.
 
 Current projects use SQLite DELETE journaling and FULL synchronization. Unsupported storage settings are refused separately from corrupt schemas, broken references or altered artifacts; Tsumugi preserves the directory and does not convert the storage mode or reset its contents. Keep a refused directory intact and select another supported project in the opening dialog to continue. Do not change SQLite settings manually as a substitute for a supported storage profile. Saved releases remain available after a failed delivery and export uses their verified original bytes. Uncertain deliveries must be reconciled before another delivery to the same destination; explicit retries use the existing action identity, or a fresh confirmed destination preview for a new delivery.
 

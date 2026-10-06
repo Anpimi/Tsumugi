@@ -7,7 +7,6 @@ export type UnsignedDecimal = string;
 
 export interface Requests {
   adopt: SourceAdoptRequest;
-  capture: CaptureRequest;
   checkFinish: SourceCheckFinishRequest;
   checkPrepare: SourceCheckPrepareRequest;
   comparison: ComparisonRequest;
@@ -21,7 +20,6 @@ export interface Requests {
   pluginStart: PluginStartRequest;
   preview: PreviewRequest;
   session: SessionRequest;
-  start: StartRequest;
 }
 export interface SourceAdoptRequest {
   actionId: ExecutionId;
@@ -46,12 +44,6 @@ export interface LineageChoice {
   newOrdinal: number;
   oldOccurrenceId: ExecutionId;
   reason: string;
-}
-export interface CaptureRequest {
-  projectId: ExecutionId;
-  selectionId: ExecutionId;
-  sessionToken: string;
-  sourceLanguage: string;
 }
 export interface SourceCheckFinishRequest {
   attemptId: ExecutionId;
@@ -161,11 +153,4 @@ export interface PreviewRequest {
 export interface SessionRequest {
   projectId: ExecutionId;
   sessionToken: string;
-}
-export interface StartRequest {
-  attemptId: ExecutionId;
-  projectId: ExecutionId;
-  selectionId: ExecutionId;
-  sessionToken: string;
-  sourceLanguage: string;
 }

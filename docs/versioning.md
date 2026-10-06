@@ -371,8 +371,8 @@ opt into that existing Core feature through a development dependency; normal
 desktop assembly does not enable it. Experimental Rust consumers must use the
 declared extraction, independent check and projection APIs. This removes earlier
 development APIs without changing current project tables, proof or receipt
-shapes, SDK/process/Store formats, dependencies or version sources. The same
-undistributed application/SDK alpha.1 batch and schema 21 remain, with both
+shapes, SDK/process/Store formats, dependencies or version sources. The translation cutover originally retained schema 21 in the same
+undistributed application/SDK alpha.1 batch, with both
 Unreleased changelogs updated and no historical migration. Generic editor,
 history and original save receipts retain their existing owner. The filename
 decoder still required by the old build path now belongs to that build module;
@@ -381,10 +381,24 @@ source and build domain owners await their separate production cutover.
 Normal Core build construction, domain artifact validation and desktop built-in
 build IPC now leave the production assembly. Their opt-in execution-test fixtures
 remain isolated. Removing the built-in frozen-plan variant advances the current-only
-project format to schema 22; schema 21 and earlier development directories are
+project format initially to schema 22; schema 21 and earlier development directories were
 refused unchanged, without migration or compatibility decoders. Generic plugin
 release-plan serialization, artifact bytes, original receipts and delivery records
 retain their existing representation and owner. Application `0.2.0-alpha.1`, SDK
 `0.1.0-alpha.1`, SDK/process profiles, Store formats and dependencies remain in the
 same undistributed batch; no additional SemVer bump is needed. Both Unreleased
 changelogs record the removed experimental APIs and current schema boundary.
+
+Normal Core source imports now require the declared extractor and an independently
+selected checker. Former SMAPI/WebVTT source parsers, default capability selection,
+built-in capture APIs and source selection/integration IPC compile only for tests
+or the explicit execution-test-host feature. Production schemas and frontend
+adapters expose declared plugin capture and generic history/adoption commands.
+Experimental callers must regenerate contracts and select the declared pipeline.
+Removing the supported built-in source record channel advances the current-only
+project format to schema 23, even though plugin source bytes, identities, revision
+projection, proof and receipt shapes remain unchanged. Earlier development
+directories are refused unchanged. Application and SDK alpha.1, SDK/process/Store
+formats, dependencies and version sources remain in the same undistributed batch;
+no additional SemVer bump or historical migration is introduced. Both Unreleased
+changelogs record the source cutoff and current schema boundary.

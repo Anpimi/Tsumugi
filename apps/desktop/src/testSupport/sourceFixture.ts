@@ -1,5 +1,5 @@
 import fixture from "../../test/fixtures/sourceCommands.contract.json";
-import type { ContentPage, ContentRow, IntegrationDescriptor, SourceOccurrence } from "../sourceCommands";
+import type { ContentPage, ContentRow, SourceOccurrence } from "../sourceCommands";
 import { validateResponsePage } from "../generated/source.validators";
 
 function contractPage(): ContentPage {
@@ -23,8 +23,3 @@ export function sourceRowFixture(row: Partial<ContentRow> = {}, occurrence: Part
 export function sourcePageFixture(overrides: Partial<ContentPage> = {}): ContentPage {
   return { ...contractPage(), rows: [sourceRowFixture()], ...overrides };
 }
-
-export const sourceIntegrationFixture: IntegrationDescriptor = fixture.integration;
-export const captionIntegrationFixture: IntegrationDescriptor = { ...fixture.integration,
-  id: "webvtt", capabilityId: "webvtt.extract", formatProfiles: ["webvtt-captions"],
-  requiredFiles: ["source.vtt"], permissions: ["captured-input-only"] };

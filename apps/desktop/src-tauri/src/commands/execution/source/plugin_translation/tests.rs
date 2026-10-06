@@ -100,6 +100,12 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
         "list_translation_files",
         "preflight_translation",
         "start_translation_import",
+        "select_source",
+        "select_webvtt_source",
+        "read_source_integration",
+        "read_webvtt_integration",
+        "preflight_source",
+        "start_source_import",
         "start_locale_build",
         "read_locale_build_attempt",
     ] {

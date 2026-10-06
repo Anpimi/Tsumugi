@@ -3,23 +3,6 @@
     "sessionToken": "fixture-session",
     "projectId": "00000000-0000-4000-8000-000000000001"
   },
-  "selection": {
-    "selectionId": "00000000-0000-4000-8000-000000000002",
-    "folderName": "Fixture Mod"
-  },
-  "capture": {
-    "sessionToken": "fixture-session",
-    "projectId": "00000000-0000-4000-8000-000000000001",
-    "selectionId": "00000000-0000-4000-8000-000000000002",
-    "sourceLanguage": "en"
-  },
-  "start": {
-    "sessionToken": "fixture-session",
-    "projectId": "00000000-0000-4000-8000-000000000001",
-    "selectionId": "00000000-0000-4000-8000-000000000002",
-    "sourceLanguage": "en",
-    "attemptId": "00000000-0000-4000-8000-000000000003"
-  },
   "preview": {
     "sessionToken": "fixture-session",
     "projectId": "00000000-0000-4000-8000-000000000001",
@@ -164,40 +147,6 @@
     "projectId": "00000000-0000-4000-8000-000000000001",
     "offset": 0,
     "limit": 100
-  },
-  "preflight": {
-    "namespace": "Fixture.Mod",
-    "count": 1,
-    "sourceLanguage": "en",
-    "diagnostics": [],
-    "files": [
-      {
-        "artifactId": "00000000-0000-4000-8000-000000000007",
-        "logicalPath": "i18n/default.json",
-        "role": "source",
-        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-      }
-    ]
-  },
-  "integration": {
-    "id": "stardew-smapi",
-    "version": "0.1.0",
-    "capabilityId": "stardew-smapi.extract",
-    "capabilityVersion": "1",
-    "inputVersion": 1,
-    "outputVersion": 1,
-    "formatProfiles": [
-      "smapi-i18n-flat"
-    ],
-    "requiredFiles": [
-      "manifest.json",
-      "i18n/default.json"
-    ],
-    "permissions": [
-      "captured-input-only"
-    ],
-    "available": true,
-    "reason": null
   },
   "comparisonRequest": {
     "sessionToken": "fixture-session",

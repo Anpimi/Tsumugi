@@ -91,8 +91,6 @@ struct ExecutionResponses {
 #[allow(dead_code)]
 struct SourceRequests {
     session: execution::SessionRequest,
-    capture: execution::source::CaptureRequest,
-    start: execution::source::StartRequest,
     preview: execution::source::PreviewRequest,
     content: execution::source::ContentRequest,
     comparison: execution::source::ComparisonRequest,
@@ -111,9 +109,6 @@ struct SourceRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct SourceResponses {
-    integration: tsumugi_core::content::IntegrationDescriptor,
-    selection: Option<execution::source::SourceSelection>,
-    preflight: execution::source::Preflight,
     attempt: tsumugi_core::execution::ExecutionId,
     cancelled: (),
     scope: tsumugi_core::content::ContentScope,

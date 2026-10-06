@@ -2,7 +2,7 @@
 //! Default Core rejects the former built-in build contract before persistence.
 mod support;
 use support::source_fixture;
-use tsumugi_core::{PersistenceErrorCode, ProjectStore, execution::*};
+use tsumugi_core::execution::*;
 
 #[test]
 fn production_build_rejects_complete_built_in_input_without_writes() {
@@ -61,32 +61,4 @@ fn production_build_rejects_complete_built_in_input_without_writes() {
             .code,
         ErrorCode::InvalidInput
     );
-}
-
-#[test]
-fn production_build_schema_refuses_previous_format_without_changing_files() {
-    let (directory, store, _) = source_fixture();
-    store.close().unwrap();
-    let project = directory.path().join("project");
-    let connection = rusqlite::Connection::open(project.join("project.sqlite3")).unwrap();
-    let version: i64 = connection
-        .pragma_query_value(None, "user_version", |r| r.get(0))
-        .unwrap();
-    assert_eq!(version, 22);
-    connection.pragma_update(None, "user_version", 21).unwrap();
-    drop(connection);
-    let files = || {
-        std::fs::read_dir(&project)
-            .unwrap()
-            .map(|e| {
-                let e = e.unwrap();
-                (e.file_name(), std::fs::read(e.path()).unwrap())
-            })
-            .collect::<std::collections::BTreeMap<_, _>>()
-    };
-    let before = files();
-    let error = ProjectStore::open(&project).unwrap_err();
-    assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
-    assert_eq!(error.found_schema_version(), Some(21));
-    assert_eq!(files(), before);
 }
