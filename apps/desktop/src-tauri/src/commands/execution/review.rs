@@ -65,6 +65,13 @@ mod contracts {
         let mut unknown = fixture["responses"]["check"].clone();
         unknown["outcome"] = serde_json::json!("passed");
         assert!(serde_json::from_value::<CheckRun>(unknown).is_err());
+        let mut extra = fixture["responses"]["check"].clone();
+        extra["evidence"]["results"][0]["key"]["implementation"]["permission"] =
+            serde_json::json!("granted");
+        assert!(serde_json::from_value::<CheckRun>(extra).is_err());
+        let mut unknown_result = fixture["responses"]["check"].clone();
+        unknown_result["evidence"]["results"][0]["outcome"]["kind"] = serde_json::json!("passed");
+        assert!(serde_json::from_value::<CheckRun>(unknown_result).is_err());
         let mut unknown = fixture["requests"]["decision"].clone();
         unknown["decision"]["kind"] = serde_json::json!("accept-all");
         assert!(serde_json::from_value::<ReviewWriteRequest>(unknown).is_err());

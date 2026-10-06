@@ -152,125 +152,202 @@ impl ReviewCheckPlan {
     }
 }
 
+/// One validated complete source snapshot, shared by bounded current queries.
+/// Per-unit policy hashing never reparses or clones the whole source exchange.
+pub(in crate::persistence::review) struct ReviewMaterial {
+    project_id: ExecutionId,
+    binding: Option<SourceReviewBinding>,
+    source: sdk::ContentExchange,
+    source_digest: String,
+    mappings: BTreeMap<ExecutionId, BTreeSet<(ExecutionId, String, String)>>,
+    units: BTreeMap<String, (String, String)>,
+}
+impl ReviewMaterial {
+    pub(in crate::persistence::review) fn load(
+        connection: &Connection,
+        project_id: ExecutionId,
+        snapshot: ExecutionId,
+    ) -> Result<Self, ExecutionError> {
+        let (_, (source_input, _, source, rows)) =
+            crate::persistence::content::snapshot_rows(connection, snapshot, true)?;
+        if source_input.envelope().project_id != project_id {
+            return Err(failure(ErrorCode::Unauthorized, "review-check-project"));
+        }
+        let binding = SourceSettings::from_input(&source_input)?.review;
+        #[cfg(not(any(test, feature = "execution-test-host")))]
+        if binding.is_none() {
+            return Err(failure(ErrorCode::InvalidInput, "review-checker-required"));
+        }
+        let source_digest = digest(&("review-source-material-1", &source.exchange, &binding))?;
+        let mut mappings: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
+        for row in rows {
+            if let Some(unit) = row.unit_id {
+                mappings.entry(unit).or_default().insert((
+                    row.source_revision_id.ok_or_else(|| {
+                        failure(ErrorCode::CorruptLedger, "review-source-mapping")
+                    })?,
+                    row.occurrence.operation_unit_id,
+                    row.occurrence.operation_source_revision_id,
+                ));
+            }
+        }
+        let units = source
+            .exchange
+            .units
+            .iter()
+            .map(|u| (u.id.clone(), (u.source_revision_id.clone(), u.text.clone())))
+            .collect();
+        Ok(Self {
+            project_id,
+            binding,
+            source: source.exchange,
+            source_digest,
+            mappings,
+            units,
+        })
+    }
+    fn requirements(
+        &self,
+        target: &ReviewTarget,
+        terms: &resources::TermResolution,
+    ) -> Result<(sdk::ReviewSelection, sdk::FixedCheckSet, String), ExecutionError> {
+        let binding = self
+            .binding
+            .as_ref()
+            .ok_or_else(|| failure(ErrorCode::InvalidInput, "review-checker-required"))?;
+        let mappings = self
+            .mappings
+            .get(&target.unit_id)
+            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-source-mapping"))?;
+        if mappings.len() != 1 {
+            return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
+        }
+        let (revision, unit_id, source_revision_id) = mappings.iter().next().unwrap();
+        if *revision != target.source_revision_id
+            || self.units.get(unit_id)
+                != Some(&(source_revision_id.clone(), target.source_text.clone()))
+        {
+            return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
+        }
+        let unit_id = unit_id.clone();
+        let source_revision_id = source_revision_id.clone();
+        let selection = sdk::ReviewSelection {
+            unit_id,
+            source_revision_id,
+            translation_text: target.translation_text.clone(),
+        };
+        let input_digest = digest(&(
+            "review-check-material-2",
+            self.project_id,
+            &self.source_digest,
+            &selection,
+            &target.basis_evidence,
+            &target.locale,
+            terms,
+            POLICY_VERSION,
+        ))?;
+        let scope_digest = digest(&(
+            self.project_id,
+            target.unit_id,
+            &selection.unit_id,
+            &selection.source_revision_id,
+            &target.locale,
+        ))?;
+        let missing = selection.translation_text.is_none();
+        let not_applicable = || sdk::NotApplicableBasis {
+            code: sdk::MISSING_REVIEW_TRANSLATION.into(),
+            basis_digest: input_digest.clone(),
+        };
+        let requirement = |key, waivable, not_applicable| sdk::CheckRequirement {
+            key,
+            input_digest: input_digest.clone(),
+            scope_digest: scope_digest.clone(),
+            targets: vec![selection.unit_id.clone()],
+            mandatory: true,
+            waivable,
+            not_applicable,
+        };
+        let core = ["required-translation", "terminology"]
+            .into_iter()
+            .map(|id| {
+                requirement(
+                    sdk::CheckKey {
+                        rule: reference(id),
+                        implementation: sdk::CheckImplementation::Core {
+                            validator: core_validator(),
+                        },
+                    },
+                    id == "terminology",
+                    (id == "terminology" && missing).then(not_applicable),
+                )
+            })
+            .collect();
+        let domain = binding
+            .declaration
+            .rules
+            .iter()
+            .map(|r| {
+                requirement(
+                    sdk::CheckKey {
+                        rule: r.rule.clone(),
+                        implementation: sdk::CheckImplementation::Plugin {
+                            provider: binding.checker.capability.provider.clone(),
+                        },
+                    },
+                    false,
+                    (r.requires_translation && missing).then(not_applicable),
+                )
+            })
+            .collect::<Vec<_>>();
+        let checks =
+            sdk::capture_required_checks(reference("tsumugi.policy.balanced"), core, domain)
+                .map_err(contract_error)?;
+        let basis = digest(&(
+            "review-check-capture-1",
+            &target.basis,
+            binding,
+            checks.set(),
+        ))?;
+        Ok((selection, checks, basis))
+    }
+    pub(in crate::persistence::review) fn matches(
+        &self,
+        target: &ReviewTarget,
+        terms: &resources::TermResolution,
+        evidence: &ReviewCheckEvidence,
+    ) -> Result<bool, ExecutionError> {
+        let (_, checks, basis) = self.requirements(target, terms)?;
+        Ok(basis == evidence.qa_basis && checks.set() == &evidence.required_checks)
+    }
+}
+
 pub(super) fn capture_in(
     connection: &Connection,
     project_id: ExecutionId,
     target: &ReviewTarget,
     terms: &resources::TermResolution,
 ) -> Result<Option<ReviewCheckPlan>, ExecutionError> {
-    // Reuse the snapshot/proof/mapping authority, inside the caller's read view.
-    let (_, (source_input, _, source, rows)) =
-        crate::persistence::content::snapshot_rows(connection, target.source_snapshot_id, true)?;
-    if source_input.envelope().project_id != project_id {
-        return Err(failure(ErrorCode::Unauthorized, "review-check-project"));
-    }
-    let Some(binding) = SourceSettings::from_input(&source_input)?.review else {
-        #[cfg(any(test, feature = "execution-test-host"))]
+    let material = ReviewMaterial::load(connection, project_id, target.source_snapshot_id)?;
+    let Some(binding) = material.binding.clone() else {
         return Ok(None);
-        #[cfg(not(any(test, feature = "execution-test-host")))]
-        return Err(failure(ErrorCode::InvalidInput, "review-checker-required"));
     };
-    let mappings: BTreeSet<_> = rows
-        .iter()
-        .filter(|row| row.unit_id == Some(target.unit_id))
-        .map(|row| {
-            if row.source_revision_id != Some(target.source_revision_id) {
-                return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
-            }
-            Ok((
-                row.occurrence.operation_unit_id.clone(),
-                row.occurrence.operation_source_revision_id.clone(),
-            ))
-        })
-        .collect::<Result<_, _>>()?;
-    if mappings.len() != 1 {
-        return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
-    }
-    let (unit_id, source_revision_id) = mappings
-        .into_iter()
-        .next()
-        .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-source-mapping"))?;
-    if !source.exchange.units.iter().any(|u| {
-        u.id == unit_id
-            && u.source_revision_id == source_revision_id
-            && u.text == target.source_text
-    }) {
-        return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
-    }
-    let selection = sdk::ReviewSelection {
-        unit_id,
-        source_revision_id,
-        translation_text: target.translation_text.clone(),
-    };
-    let input_digest = digest(&(
-        "review-check-material-1",
-        project_id,
-        &source.exchange,
-        &selection,
-        &target.basis_evidence,
-        &target.locale,
-        terms,
-        &binding,
-        POLICY_VERSION,
-    ))?;
-    let scope_digest = digest(&(
-        project_id,
-        target.unit_id,
-        &selection.unit_id,
-        &selection.source_revision_id,
-        &target.locale,
-    ))?;
-    let missing = selection.translation_text.is_none();
-    let not_applicable = || sdk::NotApplicableBasis {
-        code: sdk::MISSING_REVIEW_TRANSLATION.into(),
-        basis_digest: input_digest.clone(),
-    };
-    let requirement = |key, waivable, not_applicable| sdk::CheckRequirement {
-        key,
-        input_digest: input_digest.clone(),
-        scope_digest: scope_digest.clone(),
-        targets: vec![selection.unit_id.clone()],
-        mandatory: true,
-        waivable,
-        not_applicable,
-    };
-    let core = ["required-translation", "terminology"]
-        .into_iter()
-        .map(|id| {
-            requirement(
-                sdk::CheckKey {
-                    rule: reference(id),
-                    implementation: sdk::CheckImplementation::Core {
-                        validator: core_validator(),
-                    },
-                },
-                id == "terminology",
-                (id == "terminology" && missing).then(not_applicable),
-            )
-        })
-        .collect();
-    let domain = binding
-        .declaration
-        .rules
-        .iter()
-        .map(|r| {
-            requirement(
-                sdk::CheckKey {
-                    rule: r.rule.clone(),
-                    implementation: sdk::CheckImplementation::Plugin {
-                        provider: binding.checker.capability.provider.clone(),
-                    },
-                },
-                false,
-                (r.requires_translation && missing).then(not_applicable),
-            )
-        })
-        .collect::<Vec<_>>();
+    let (selection, checks, basis) = material.requirements(target, terms)?;
     let input = sdk::ReviewCheckInput {
-        source: source.exchange,
+        source: material.source,
         target_language: target.locale.clone(),
         selections: vec![selection],
-        requirements: domain.clone(),
+        requirements: checks
+            .set()
+            .requirements
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r.key.implementation,
+                    sdk::CheckImplementation::Plugin { .. }
+                )
+            })
+            .cloned()
+            .collect(),
     };
     sdk::ReviewBinding {
         declaration: binding.declaration.clone(),
@@ -287,14 +364,6 @@ pub(super) fn capture_in(
             .limits
             .max_input_bytes as usize,
     )?;
-    let checks = sdk::capture_required_checks(reference("tsumugi.policy.balanced"), core, domain)
-        .map_err(contract_error)?;
-    let basis = digest(&(
-        "review-check-capture-1",
-        &target.basis,
-        &binding,
-        checks.set(),
-    ))?;
     Ok(Some(ReviewCheckPlan {
         target: target.clone(),
         binding,

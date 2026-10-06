@@ -1323,7 +1323,27 @@ fn apply_update(
         .map(|f| (f.logical_path.clone(), f.sha256.clone()))
         .collect();
     if previous_files == new_files && confirmation.lineage.is_empty() {
-        return Err(failure(ErrorCode::DependencyConflict, "source-unchanged"));
+        // Identical material can carry a newly adopted checker/profile. Keep
+        // source revision identity stable while recording its new QA authority.
+        // This is bounded generic metadata validation, never a domain parser.
+        let (bytes, digest, attempt): (Vec<u8>, String, String) = tx.query_row(
+            "SELECT CASE WHEN length(a.input)<=?2 THEN a.input END,a.digest,a.attempt_id
+             FROM source_snapshots s JOIN execution_attempts a ON a.attempt_id=s.attempt_id
+             WHERE s.snapshot_id=?1",
+            params![previous.to_string(), MAX_INPUT_BYTES as i64],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let original = FixedInput::restore(&bytes, &digest)?;
+        if original.envelope().attempt_id.to_string() != attempt
+            || original.envelope().project_id != input.envelope().project_id
+        {
+            return Err(failure(ErrorCode::CorruptLedger, "source-review-binding"));
+        }
+        if SourceSettings::from_input(&original)?.review
+            == SourceSettings::from_input(input)?.review
+        {
+            return Err(failure(ErrorCode::DependencyConflict, "source-unchanged"));
+        }
     }
     let mut choices = std::collections::BTreeMap::new();
     let actor = confirmation.actor.as_deref();

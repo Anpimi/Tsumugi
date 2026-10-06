@@ -447,3 +447,18 @@ This additive library execution boundary changes no SQL shape, schema 24, SDK
 archive, process/Store/dependency or desktop DTO. The same undistributed app
 0.2.0-alpha.1 / SDK 0.1.0-alpha.1 batch needs no additional bump or migration;
 current-QA adoption and production consumers remain separate integration work.
+
+Core's current QA adoption now persists its captured required-check union,
+actual results and original execution identities in the existing immutable
+Review table. The current-only project format advances to schema 25; schema 24
+and earlier development directories are refused unchanged without migration.
+Current Review reads and eligibility use this evidence independently of manual
+approval. Re-adopting unchanged source bytes records a changed Review binding,
+while an identical binding remains an unchanged-source rejection. Experimental
+CheckRun IPC includes the strict nullable evidence projection; generated
+consumers must accept that shape. Legacy synchronous checks refuse plugin-bound
+QA; callers must execute and adopt the authorized checker evidence. The SDK, process,
+installed Store and dependencies are unchanged. This remains the same
+undistributed application 0.2.0-alpha.1 / SDK 0.1.0-alpha.1 batch and requires
+no additional version bump or historical conversion. Desktop execution,
+automatic-selection and full release consumers still require integration.

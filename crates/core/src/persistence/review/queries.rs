@@ -99,6 +99,7 @@ pub(in crate::persistence) fn targets_in(
         .collect::<Result<Vec<_>, _>>()
         .map_err(sql)?;
     let mut targets = BTreeMap::new();
+    let mut resolutions = BTreeMap::new();
     for (unit, snapshot, source_revision, key, source, selection, revision, text, context) in raw {
         let unit_id = parse_id(unit)?;
         let source_revision_id = parse_id(source_revision)?;
@@ -137,6 +138,7 @@ pub(in crate::persistence) fn targets_in(
             context_revision_id: context.map(parse_id).transpose()?,
             term_revision_ids,
         };
+        resolutions.insert(unit_id, resolved);
         targets.insert(
             unit_id,
             ReviewTarget {
@@ -196,14 +198,32 @@ pub(in crate::persistence) fn targets_in(
             "{WANTED}, latest AS (
          SELECT r.*,ROW_NUMBER() OVER(PARTITION BY r.unit_id ORDER BY r.rowid DESC) position
          FROM review_checks r JOIN wanted w ON w.unit_id=r.unit_id AND w.basis=r.basis
-         WHERE r.project_id=?1 AND r.locale=?2 AND r.validator_version=?4)
+         WHERE r.project_id=?1 AND r.locale=?2)
          SELECT json_object('runId',run_id,'actionId',action_id,'unitId',unit_id,
             'locale',locale,'basis',basis,'basisEvidence',json(basis_json),
             'validatorVersion',validator_version,'outcome','completed','rules',json(rules_json),
-            'createdAt',created_at) FROM latest WHERE position=1"
+            'evidence',json(evidence_json),'createdAt',created_at) FROM latest WHERE position=1"
         ),
-        &[&project, &locale, &bases, &CHECK_VERSION],
+        &[&project, &locale, &bases],
     )?;
+    let pairs: Vec<_> = checks
+        .iter()
+        .filter_map(|r| r.evidence.as_ref().map(|e| (e.attempt_id, e.result_id)))
+        .collect();
+    let originals = super::super::ledger::load_result_pairs(connection, &pairs)?;
+    let originals: BTreeMap<_, _> = originals
+        .into_iter()
+        .map(|capture| {
+            (
+                (
+                    capture.input.envelope().attempt_id,
+                    capture.result.envelope().result_id,
+                ),
+                capture,
+            )
+        })
+        .collect();
+    let mut materials = BTreeMap::new();
     for mut check in checks {
         if basis_digest(&check.basis_evidence)? != check.basis {
             return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
@@ -212,7 +232,47 @@ pub(in crate::persistence) fn targets_in(
         let target = targets
             .get_mut(&check.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
-        target.current_check = Some(check);
+        checks::validate_projection(&check)?;
+        let current = if let Some(evidence) = &check.evidence {
+            let original = originals
+                .get(&(evidence.attempt_id, evidence.result_id))
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let request = digest(&(
+                project_id,
+                check.unit_id,
+                check.locale.as_str(),
+                check.basis.as_str(),
+                check.action_id,
+            ))?;
+            checks::validate_saved_frames(
+                project_id,
+                &check,
+                &request,
+                &original.input,
+                &original.result,
+            )?;
+            if !materials.contains_key(&target.source_snapshot_id) {
+                materials.insert(
+                    target.source_snapshot_id,
+                    checks::ReviewMaterial::load(
+                        connection,
+                        project_id,
+                        target.source_snapshot_id,
+                    )?,
+                );
+            }
+            materials[&target.source_snapshot_id].matches(
+                target,
+                &resolutions[&target.unit_id],
+                evidence,
+            )?
+        } else {
+            cfg!(any(test, feature = "execution-test-host"))
+                && check.validator_version == CHECK_VERSION
+        };
+        if current {
+            target.current_check = Some(check);
+        }
     }
     let fallbacks: Vec<FallbackDecision> = json_rows(connection,
         "WITH wanted AS MATERIALIZED (SELECT value unit_id FROM json_each(?3)),

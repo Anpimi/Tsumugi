@@ -14,7 +14,7 @@ mod checks;
 pub(super) use checks::record_check_in;
 pub use checks::{
     CapturedReviewCheckExecution, ComputedReviewCheck, ComputedReviewEvidence, PreparedReviewCheck,
-    ReviewCheckPlan,
+    ReviewCheckEvidence, ReviewCheckPlan,
 };
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
@@ -31,9 +31,12 @@ pub use views::{
 };
 
 fn check_outcome(rules: &[CheckRuleResult]) -> ReviewCheckOutcome {
-    if rules.iter().all(|rule| rule.status == "cancelled") {
+    if rules.iter().any(|rule| rule.status == "cancelled") {
         ReviewCheckOutcome::Cancelled
-    } else if rules.iter().all(|rule| rule.status == "failed") {
+    } else if rules
+        .iter()
+        .any(|rule| matches!(rule.status.as_str(), "failed" | "missing" | "unavailable"))
+    {
         ReviewCheckOutcome::Failed
     } else {
         ReviewCheckOutcome::Completed
@@ -187,6 +190,7 @@ pub struct CheckRun {
     pub validator_version: String,
     pub outcome: ReviewCheckOutcome,
     pub rules: Vec<CheckRuleResult>,
+    pub evidence: Option<ReviewCheckEvidence>,
     pub created_at: String,
 }
 
@@ -385,8 +389,11 @@ const TABLES: &[(&str, &str)] = &[
         basis_json TEXT NOT NULL,
         validator_version TEXT NOT NULL,
         rules_json TEXT NOT NULL,
+        qa_basis TEXT CHECK(qa_basis IS NULL OR length(qa_basis)=64),
+        evidence_json TEXT,
         request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))",
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        CHECK((qa_basis IS NULL)=(evidence_json IS NULL)))",
     ),
     (
         "review_waivers",
@@ -470,6 +477,19 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
         if rules.is_empty() {
             return Err(rusqlite::Error::InvalidQuery);
         }
+    }
+    let mut statement = connection.prepare("SELECT project_id,action_id FROM review_checks")?;
+    let identities = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (project, action) in identities {
+        let project = parse_id(project).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let action = parse_id(action).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        check_by_action(connection, project, action)
+            .map_err(|_| rusqlite::Error::InvalidQuery)?
+            .ok_or(rusqlite::Error::InvalidQuery)?;
     }
     Ok(())
 }
@@ -562,38 +582,17 @@ fn decision_by_action(
     .transpose()
 }
 
-fn latest_decision(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    basis: &str,
-) -> Result<Option<ReviewDecision>, ExecutionError> {
-    let action: Option<String> = connection.query_row(
-        "SELECT action_id FROM review_decisions WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND basis=?4
-         ORDER BY rowid DESC LIMIT 1",
-        params![project_id.to_string(), unit_id.to_string(), locale, basis], |row| row.get(0)
-    ).optional().map_err(sql)?;
-    action
-        .map(|value| {
-            decision_by_action(connection, project_id, parse_id(value)?)
-                .map(|row| row.map(|item| item.0))
-        })
-        .transpose()
-        .map(Option::flatten)
-}
-
 pub(super) fn check_by_action(
     connection: &Connection,
     project_id: ExecutionId,
     action_id: ExecutionId,
 ) -> Result<Option<(CheckRun, String)>, ExecutionError> {
-    let row: Option<(String,String,String,String,String,String,String,String,String,String)> = connection.query_row(
-        "SELECT run_id,action_id,unit_id,locale,basis,basis_json,validator_version,rules_json,created_at,request_digest
+    let row: Option<(String,String,String,String,String,String,String,String,String,String,Option<String>,Option<String>)> = connection.query_row(
+        "SELECT run_id,action_id,unit_id,locale,basis,basis_json,validator_version,rules_json,created_at,request_digest,evidence_json,qa_basis
          FROM review_checks WHERE project_id=?1 AND action_id=?2",
         params![project_id.to_string(), action_id.to_string()],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
-                  row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+                  row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?)),
     ).optional().map_err(sql)?;
     row.map(
         |(
@@ -607,6 +606,8 @@ pub(super) fn check_by_action(
             rules_json,
             created_at,
             request_digest,
+            evidence_json,
+            qa_basis,
         )| {
             let basis_evidence: ReviewBasis = serde_json::from_str(&basis_json)
                 .map_err(|_| failure(ErrorCode::CorruptLedger, "review-basis"))?;
@@ -616,151 +617,32 @@ pub(super) fn check_by_action(
             let rules: Vec<CheckRuleResult> = serde_json::from_str(&rules_json)
                 .map_err(|_| failure(ErrorCode::CorruptLedger, "review-checks"))?;
             let outcome = check_outcome(&rules);
-            Ok((
-                CheckRun {
-                    run_id: parse_id(run_id)?,
-                    action_id: parse_id(action_id)?,
-                    unit_id: parse_id(unit_id)?,
-                    locale,
-                    basis,
-                    basis_evidence,
-                    validator_version,
-                    outcome: outcome.to_owned(),
-                    rules,
-                    created_at,
-                },
-                request_digest,
-            ))
-        },
-    )
-    .transpose()
-}
-
-fn latest_check(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    basis: &str,
-) -> Result<Option<CheckRun>, ExecutionError> {
-    let action: Option<String> = connection
-        .query_row(
-            "SELECT action_id FROM review_checks WHERE project_id=?1 AND unit_id=?2 AND locale=?3
-         AND basis=?4 AND validator_version=?5 ORDER BY rowid DESC LIMIT 1",
-            params![
-                project_id.to_string(),
-                unit_id.to_string(),
-                locale,
-                basis,
-                CHECK_VERSION
-            ],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(sql)?;
-    action
-        .map(|value| {
-            check_by_action(connection, project_id, parse_id(value)?)
-                .map(|row| row.map(|item| item.0))
-        })
-        .transpose()
-        .map(Option::flatten)
-}
-
-fn current_fallback(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    source_revision_id: ExecutionId,
-) -> Result<Option<FallbackDecision>, ExecutionError> {
-    let row: Option<(String,String,String,String,String,String,Option<String>)> = connection.query_row(
-        "SELECT fallback_id,action_id,actor,reason,created_at,kind,previous_fallback_id FROM review_fallbacks
-         WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND source_revision_id=?4
-           AND policy_version=?5 ORDER BY rowid DESC LIMIT 1",
-        params![project_id.to_string(), unit_id.to_string(), locale, source_revision_id.to_string(), POLICY_VERSION],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
-    ).optional().map_err(sql)?;
-    row.map(
-        |(fallback_id, action_id, actor, reason, created_at, kind, previous)| {
-            Ok(FallbackDecision {
-                fallback_id: parse_id(fallback_id)?,
+            let evidence: Option<ReviewCheckEvidence> = evidence_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(|_| failure(ErrorCode::CorruptLedger, "review-check-evidence"))?;
+            if evidence.as_ref().map(|e| e.qa_basis.as_str()) != qa_basis.as_deref() {
+                return Err(failure(ErrorCode::CorruptLedger, "review-check-evidence"));
+            }
+            let run = CheckRun {
+                run_id: parse_id(run_id)?,
                 action_id: parse_id(action_id)?,
-                unit_id,
-                locale: locale.to_owned(),
-                source_revision_id,
-                allow: kind == "allow",
-                previous_fallback_id: previous.map(parse_id).transpose()?,
-                policy_version: POLICY_VERSION.to_owned(),
-                actor,
-                reason,
+                unit_id: parse_id(unit_id)?,
+                locale,
+                basis,
+                basis_evidence,
+                validator_version,
+                outcome: outcome.to_owned(),
+                rules,
+                evidence,
                 created_at,
-            })
+            };
+            checks::validate_saved(connection, project_id, &run, &request_digest)?;
+            Ok((run, request_digest))
         },
     )
     .transpose()
-    .map(|item| item.filter(|value| value.allow))
-}
-
-fn current_waivers(
-    connection: &Connection,
-    project_id: ExecutionId,
-    unit_id: ExecutionId,
-    locale: &str,
-    basis: &str,
-) -> Result<Vec<Waiver>, ExecutionError> {
-    let mut statement = connection.prepare(
-        "SELECT waiver_id,action_id,issue_id,actor,reason,created_at,kind,previous_waiver_id FROM review_waivers
-         WHERE project_id=?1 AND unit_id=?2 AND locale=?3 AND basis=?4 AND policy_version=?5 ORDER BY rowid"
-    ).map_err(sql)?;
-    let rows = statement
-        .query_map(
-            params![
-                project_id.to_string(),
-                unit_id.to_string(),
-                locale,
-                basis,
-                POLICY_VERSION
-            ],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, Option<String>>(7)?,
-                ))
-            },
-        )
-        .map_err(sql)?;
-    let mut current = BTreeMap::new();
-    for row in rows {
-        let (waiver_id, action_id, issue_id, actor, reason, created_at, kind, previous) =
-            row.map_err(sql)?;
-        let waiver = Waiver {
-            waiver_id: parse_id(waiver_id)?,
-            action_id: parse_id(action_id)?,
-            unit_id,
-            locale: locale.to_owned(),
-            basis: basis.to_owned(),
-            issue_id: issue_id.clone(),
-            grant: kind == "grant",
-            previous_waiver_id: previous.map(parse_id).transpose()?,
-            policy_version: POLICY_VERSION.to_owned(),
-            actor,
-            reason,
-            created_at,
-        };
-        if waiver.grant {
-            current.insert(issue_id, waiver);
-        } else {
-            current.remove(&issue_id);
-        }
-    }
-    Ok(current.into_values().collect())
 }
 
 pub(super) fn target_in(
@@ -769,100 +651,9 @@ pub(super) fn target_in(
     unit_id: ExecutionId,
     locale: &str,
 ) -> Result<ReviewTarget, ExecutionError> {
-    check_project(connection, project_id, locale)?;
-    let row: Option<(String,String,String,String,Option<String>,Option<String>,Option<String>)> = connection.query_row(
-        "SELECT o.snapshot_id,o.revision_id,o.native_key,r.text,s.event_id,s.revision_id,tr.text
-         FROM source_occurrences o
-         JOIN source_units u ON u.unit_id=o.unit_id
-         JOIN source_revisions r ON r.revision_id=o.revision_id
-         JOIN content_scope c ON c.current_snapshot=o.snapshot_id
-         LEFT JOIN translation_selections s ON s.unit_id=o.unit_id AND s.locale=?3
-           AND s.sequence=(SELECT MAX(t.sequence) FROM translation_selections t WHERE t.unit_id=o.unit_id AND t.locale=?3)
-         LEFT JOIN translation_revisions tr ON tr.revision_id=s.revision_id
-         WHERE u.project_id=?1 AND o.unit_id=?2 ORDER BY o.ordinal LIMIT 1",
-        params![project_id.to_string(), unit_id.to_string(), locale],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
-    ).optional().map_err(sql)?;
-    let Some((snapshot, source_revision, native_key, source_text, selection, revision, text)) = row
-    else {
-        return Err(failure(ErrorCode::DependencyConflict, "review-unit"));
-    };
-    let source_snapshot_id = parse_id(snapshot)?;
-    let source_revision_id = parse_id(source_revision)?;
-    let selection_id = selection.map(parse_id).transpose()?;
-    let revision_id = revision.map(parse_id).transpose()?;
-    if selection_id.is_some() != revision_id.is_some() || revision_id.is_some() != text.is_some() {
-        return Err(failure(ErrorCode::CorruptLedger, "review-selection"));
-    }
-    let terms = resources::resolve_terms_in(connection, project_id, unit_id, locale)?;
-    let context = resources::current_context(connection, project_id, unit_id, locale)?;
-    let term_conflict = terms
-        .entries
-        .iter()
-        .any(|item| !item.conflicting.is_empty());
-    let mut term_revision_ids: Vec<ExecutionId> = terms
-        .entries
-        .iter()
-        .flat_map(|entry| {
-            entry
-                .selected
-                .iter()
-                .chain(entry.conflicting.iter())
-                .map(|term| term.revision_id)
-        })
-        .collect();
-    term_revision_ids.sort();
-    term_revision_ids.dedup();
-    let basis_evidence = ReviewBasis {
-        source_snapshot_id,
-        source_revision_id,
-        selection_id,
-        revision_id,
-        context_revision_id: context.as_ref().map(|item| item.revision_id),
-        term_revision_ids,
-    };
-    let basis = basis_digest(&basis_evidence)?;
-    let current_decision = latest_decision(connection, project_id, unit_id, locale, &basis)?;
-    let current_check = latest_check(connection, project_id, unit_id, locale, &basis)?;
-    let current_fallback = if selection_id.is_none() {
-        current_fallback(connection, project_id, unit_id, locale, source_revision_id)?
-    } else {
-        None
-    };
-    let waivers = current_waivers(connection, project_id, unit_id, locale, &basis)?;
-    let current_waivers = if let Some(check) = &current_check {
-        let current_issues: BTreeSet<&str> = check
-            .rules
-            .iter()
-            .flat_map(|rule| &rule.findings)
-            .filter(|finding| finding.waivable)
-            .map(|finding| finding.issue_id.as_str())
-            .collect();
-        waivers
-            .into_iter()
-            .filter(|waiver| current_issues.contains(waiver.issue_id.as_str()))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    Ok(ReviewTarget {
-        unit_id,
-        locale: locale.to_owned(),
-        native_key,
-        source_snapshot_id,
-        source_revision_id,
-        source_text,
-        selection_id,
-        revision_id,
-        translation_text: text,
-        basis,
-        basis_evidence,
-        term_conflict,
-        current_decision,
-        current_check,
-        current_fallback,
-        current_waivers,
-    })
+    queries::targets_in(connection, project_id, &[unit_id], locale)?
+        .pop()
+        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "review-unit"))
 }
 
 impl ProjectStore {
@@ -1629,15 +1420,20 @@ pub(super) fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec
         None => blockers.push("qa-missing-or-stale".to_owned()),
         Some(check) => {
             let rules: BTreeSet<&str> = check.rules.iter().map(|rule| rule.rule.as_str()).collect();
-            if rules
-                != BTreeSet::from([
-                    "required-translation",
-                    "placeholders",
-                    "format",
-                    "terminology",
-                ])
-                || check.rules.len() != 4
-            {
+            let complete = if check.evidence.is_some() {
+                checks::coverage_complete(check)
+            } else {
+                cfg!(any(test, feature = "execution-test-host"))
+                    && rules
+                        == BTreeSet::from([
+                            "required-translation",
+                            "placeholders",
+                            "format",
+                            "terminology",
+                        ])
+                    && check.rules.len() == 4
+            };
+            if !complete {
                 blockers.push("qa-incomplete-coverage".to_owned());
             }
             let waivers: BTreeSet<&str> = target

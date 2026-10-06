@@ -110,3 +110,13 @@ it("keeps Serde None semantics and preserves explicit backend rejections", async
   invoke.mockRejectedValueOnce(rejected);
   await expect(reviewCommands.decide(session, decision.decision)).rejects.toBe(rejected);
 });
+
+it("strictly receives the saved policy union and nested actual result projection", () => {
+  expect(validators.validateResponseCheck(fixture.responses.check)).toBe(true);
+  const extra = structuredClone(fixture.responses.check) as unknown as { evidence: { results: Array<{ key: { implementation: Record<string, unknown> } }> } };
+  extra.evidence.results[0].key.implementation.permission = "granted";
+  expect(validators.validateResponseCheck(extra)).toBe(false);
+  const unknown = structuredClone(fixture.responses.check) as unknown as { evidence: { results: Array<{ outcome: { kind: string } }> } };
+  unknown.evidence.results[0].outcome.kind = "passed";
+  expect(validators.validateResponseCheck(unknown)).toBe(false);
+});

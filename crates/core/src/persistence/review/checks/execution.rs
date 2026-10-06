@@ -95,15 +95,16 @@ pub struct CapturedReviewCheckExecution {
 /// waiver eligibility, a current durable check, or release qualification.
 #[derive(Debug)]
 pub struct ComputedReviewEvidence {
-    project_id: ExecutionId,
-    action_id: ExecutionId,
-    request_digest: String,
-    plan: ReviewCheckPlan,
-    input: FixedInput,
-    result: FixedResult,
-    core_rules: Vec<CheckRuleResult>,
-    results: Vec<sdk::CheckResult>,
+    pub(super) project_id: ExecutionId,
+    pub(super) action_id: ExecutionId,
+    pub(super) request_digest: String,
+    pub(super) plan: ReviewCheckPlan,
+    pub(super) input: FixedInput,
+    pub(super) result: FixedResult,
+    pub(super) core_rules: Vec<CheckRuleResult>,
+    pub(super) results: Vec<sdk::CheckResult>,
     coverage: sdk::CheckCoverage,
+    pub(super) expected_check_id: Option<ExecutionId>,
 }
 
 impl CapturedReviewCheckExecution {
@@ -169,6 +170,7 @@ impl CapturedReviewCheckExecution {
             core_rules,
             results,
             coverage,
+            expected_check_id: self.capture.target.current_check.as_ref().map(|r| r.run_id),
         })
     }
 }

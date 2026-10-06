@@ -240,7 +240,8 @@
           "runId": "40000000-0000-4000-8000-000000000010",
           "locale": "zh-CN",
           "unitId": "40000000-0000-4000-8000-000000000002",
-          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence": null
         },
         "basisEvidence": {
           "termRevisionIds": [
@@ -418,7 +419,8 @@
             "runId": "40000000-0000-4000-8000-000000000010",
             "locale": "zh-CN",
             "unitId": "40000000-0000-4000-8000-000000000002",
-            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "evidence": null
           },
           "basisEvidence": {
             "termRevisionIds": [
@@ -570,7 +572,8 @@
         "runId": "40000000-0000-4000-8000-000000000010",
         "locale": "zh-CN",
         "unitId": "40000000-0000-4000-8000-000000000002",
-        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "evidence": null
       },
       "basisEvidence": {
         "termRevisionIds": [
@@ -696,7 +699,8 @@
           "runId": "40000000-0000-4000-8000-000000000010",
           "locale": "zh-CN",
           "unitId": "40000000-0000-4000-8000-000000000002",
-          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "evidence": null
         }
       ],
       "decisions": [
@@ -773,27 +777,211 @@
       "createdAt": "2026-10-03T00:00:00Z",
       "rules": [
         {
-          "status": "findings",
-          "findings": [
-            {
-              "waivable": true,
-              "code": "protected-term",
-              "severity": "error",
-              "issueId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-              "rule": "terms",
-              "detail": "保留 木桶 👩🏽‍💻 é"
-            }
-          ],
-          "rule": "terms",
-          "reason": null
+          "rule": "required-translation",
+          "status": "passed",
+          "reason": null,
+          "findings": []
+        },
+        {
+          "rule": "terminology",
+          "status": "passed",
+          "reason": null,
+          "findings": []
+        },
+        {
+          "rule": "plugin:synthetic-domain-rule",
+          "status": "passed",
+          "reason": null,
+          "findings": []
         }
       ],
       "actionId": "40000000-0000-4000-8000-000000000022",
-      "validatorVersion": "smapi-prebuild-2",
+      "validatorVersion": "tsumugi.core-review:1:1",
       "runId": "40000000-0000-4000-8000-000000000010",
       "locale": "zh-CN",
       "unitId": "40000000-0000-4000-8000-000000000002",
-      "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": {
+        "qaBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "requiredChecks": {
+          "policy": {
+            "id": "tsumugi.policy.balanced",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "requirements": [
+            {
+              "key": {
+                "rule": {
+                  "id": "required-translation",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "implementation": {
+                  "kind": "core",
+                  "validator": {
+                    "id": "tsumugi.core-review",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  }
+                }
+              },
+              "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "targets": [
+                "synthetic-unit"
+              ],
+              "mandatory": true,
+              "waivable": false,
+              "notApplicable": null
+            },
+            {
+              "key": {
+                "rule": {
+                  "id": "terminology",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "implementation": {
+                  "kind": "core",
+                  "validator": {
+                    "id": "tsumugi.core-review",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  }
+                }
+              },
+              "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "targets": [
+                "synthetic-unit"
+              ],
+              "mandatory": true,
+              "waivable": true,
+              "notApplicable": null
+            },
+            {
+              "key": {
+                "rule": {
+                  "id": "synthetic-domain-rule",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "implementation": {
+                  "kind": "plugin",
+                  "provider": {
+                    "plugin": {
+                      "id": "example.review",
+                      "publisher": "example",
+                      "version": "0.1.0-alpha.1"
+                    },
+                    "componentId": "review",
+                    "contributionId": "checker",
+                    "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "targets": [
+                "synthetic-unit"
+              ],
+              "mandatory": true,
+              "waivable": false,
+              "notApplicable": null
+            }
+          ]
+        },
+        "results": [
+          {
+            "key": {
+              "rule": {
+                "id": "required-translation",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "implementation": {
+                "kind": "core",
+                "validator": {
+                  "id": "tsumugi.core-review",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              }
+            },
+            "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "coveredTargets": [
+              "synthetic-unit"
+            ],
+            "outcome": {
+              "kind": "completed",
+              "findings": []
+            }
+          },
+          {
+            "key": {
+              "rule": {
+                "id": "terminology",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "implementation": {
+                "kind": "core",
+                "validator": {
+                  "id": "tsumugi.core-review",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              }
+            },
+            "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "coveredTargets": [
+              "synthetic-unit"
+            ],
+            "outcome": {
+              "kind": "completed",
+              "findings": []
+            }
+          },
+          {
+            "key": {
+              "rule": {
+                "id": "synthetic-domain-rule",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "implementation": {
+                "kind": "plugin",
+                "provider": {
+                  "plugin": {
+                    "id": "example.review",
+                    "publisher": "example",
+                    "version": "0.1.0-alpha.1"
+                  },
+                  "componentId": "review",
+                  "contributionId": "checker",
+                  "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              }
+            },
+            "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "coveredTargets": [
+              "synthetic-unit"
+            ],
+            "outcome": {
+              "kind": "completed",
+              "findings": []
+            }
+          }
+        ],
+        "attemptId": "00000000-0000-4000-8000-000000000051",
+        "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "resultId": "00000000-0000-4000-8000-000000000052",
+        "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
     },
     "neighbor": {
       "unitId": null,

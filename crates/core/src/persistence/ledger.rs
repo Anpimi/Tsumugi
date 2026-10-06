@@ -402,6 +402,91 @@ pub(super) fn load_result(
     }
     Ok(result_value)
 }
+
+/// Restores associated immutable result pairs in one bounded history read.
+/// No grant is issued or required by a historical read.
+pub(super) fn load_result_pairs(
+    connection: &Connection,
+    pairs: &[(ExecutionId, ExecutionId)],
+) -> Result<Vec<ResultValidationCapture>, ExecutionError> {
+    if pairs.is_empty() {
+        return Ok(Vec::new());
+    }
+    if pairs.len() > 10_000 {
+        return Err(error(ErrorCode::LimitExceeded, "result-pairs"));
+    }
+    let wanted =
+        serde_json::to_string(pairs).map_err(|_| error(ErrorCode::InvalidInput, "result-pairs"))?;
+    let mut statement = connection.prepare(
+        "WITH wanted AS (SELECT json_extract(value,'$[0]') attempt,json_extract(value,'$[1]') result FROM json_each(?1))
+         SELECT a.attempt_id,CASE WHEN length(a.input)<=?2 THEN a.input END,a.digest,a.task_id,a.project_id,
+                a.previous_attempt_id,r.result_id,CASE WHEN length(r.bytes)<=?3 THEN r.bytes END,r.digest,r.item_id,r.dispatch_token
+         FROM wanted w JOIN execution_attempts a ON a.attempt_id=w.attempt
+         JOIN execution_results r ON r.attempt_id=a.attempt_id AND r.result_id=w.result"
+    ).map_err(sql_error)?;
+    let rows = statement
+        .query_map(
+            params![wanted, MAX_INPUT_BYTES as i64, MAX_RESULT_BYTES as i64],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, Vec<u8>>(7)?,
+                    r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
+                    r.get::<_, String>(10)?,
+                ))
+            },
+        )
+        .map_err(sql_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(sql_error)?;
+    if rows.len() != pairs.len() {
+        return Err(error(ErrorCode::CorruptLedger, "result-pairs"));
+    }
+    rows.into_iter()
+        .map(
+            |(
+                attempt,
+                bytes,
+                digest,
+                task,
+                project,
+                previous,
+                result,
+                result_bytes,
+                result_digest,
+                item,
+                token,
+            )| {
+                let input = FixedInput::restore(&bytes, &digest)?;
+                check_input_association(
+                    &input,
+                    parse_id(attempt)?,
+                    &task,
+                    &project,
+                    previous.as_deref(),
+                )?;
+                let fixed =
+                    FixedResult::restore(&result_bytes, &result_digest, &input, parse_id(token)?)?;
+                if fixed.envelope().result_id.to_string() != result
+                    || fixed.envelope().item_id.to_string() != item
+                {
+                    return Err(error(ErrorCode::CorruptLedger, "result-association"));
+                }
+                Ok(ResultValidationCapture {
+                    input,
+                    result: fixed,
+                })
+            },
+        )
+        .collect()
+}
 // Comparing with a verified immutable frame is as strong as restoring its
 // digest again, while avoiding repeated SDK decoding/structural qualification.
 fn check_stored_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
@@ -2335,6 +2420,32 @@ pub(super) fn capture_current_plugin_result_in(
         return Err(error(ErrorCode::Unauthorized, "plugin-result-grant"));
     }
     Ok(ResultValidationCapture { input, result })
+}
+
+/// Rechecks owned immutable frames without repeating worker/domain receiving.
+/// The actual grant and current result are still checked at the write boundary.
+pub(super) fn recheck_current_plugin_result_in(
+    connection: &Connection,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    check_stored_input(connection, input)?;
+    check_stored_result(connection, result)?;
+    let permit = super::plugin_execution::check_input_in(connection, input, authority)?
+        .ok_or_else(|| error(ErrorCode::Unauthorized, "plugin-result-grant"))?;
+    require_current_result(connection, input, result)?;
+    require_unsuperseded_result(connection, input, result)?;
+    if result
+        .envelope()
+        .plugin
+        .as_ref()
+        .map(|e| e.authorization_id)
+        != Some(permit.grant_id())
+    {
+        return Err(error(ErrorCode::Unauthorized, "plugin-result-grant"));
+    }
+    Ok(())
 }
 
 fn capture_adoption_in(

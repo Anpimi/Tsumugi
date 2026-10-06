@@ -253,6 +253,51 @@ fn paired_core_review(plugin: &str, caption: bool) {
                 .current_check
                 .is_none()
         );
+        if text.is_some() {
+            let target = store.review_target(project, unit, "zh-CN").unwrap();
+            store
+                .write_review(&tsumugi_core::ReviewWrite {
+                    project_id: project,
+                    action_id: ExecutionId::new(),
+                    unit_id: unit,
+                    locale: "zh-CN".into(),
+                    expected_basis: target.basis,
+                    expected_decision_id: target.current_decision.map(|d| d.decision_id),
+                    actor: "Synthetic reviewer".into(),
+                    kind: tsumugi_core::ReviewDecisionKind::Approve,
+                    reason: "QA fixture".into(),
+                })
+                .unwrap();
+        }
+        let run = store
+            .commit_review_evidence(computed, &Cancellation::default())
+            .unwrap();
+        assert_eq!(
+            run.evidence.as_ref().unwrap().result_digest,
+            result.digest()
+        );
+        assert_eq!(
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap()
+                .current_check,
+            Some(run)
+        );
+        let eligibility = store
+            .review_eligibility(project, &["zh-CN".into()])
+            .unwrap();
+        if text.is_some() {
+            let blockers: Vec<_> = eligibility.locales[0]
+                .blockers
+                .iter()
+                .filter(|b| b.unit_id == unit)
+                .collect();
+            if expected.is_some() {
+                assert!(blockers.iter().any(|b| b.code == "qa-issue"));
+            } else {
+                assert!(blockers.is_empty());
+            }
+        }
     }
     store.close().unwrap();
     let reopened = ProjectStore::open(&path).unwrap();
@@ -261,7 +306,7 @@ fn paired_core_review(plugin: &str, caption: bool) {
             .review_target(project, unit, "zh-CN")
             .unwrap()
             .current_check
-            .is_none()
+            .is_some()
     );
 }
 

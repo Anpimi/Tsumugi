@@ -29,5 +29,5 @@ export function reviewDecisionFixture(request: ReviewWrite, target: ReviewTarget
 }
 export function reviewCheckFixture(target: ReviewTarget, actionId: string, outcome: ReviewCheckOutcome = "completed", overrides: Partial<CheckRun> = {}): CheckRun {
   return { runId: fixtureIdentity(620), actionId, unitId: target.unitId, locale: target.locale, basis: target.basis, basisEvidence: target.basisEvidence,
-    validatorVersion: "smapi-prebuild-2", outcome, rules: [], createdAt: "2026-10-03T00:00:00Z", ...overrides };
+    validatorVersion: "smapi-prebuild-2", outcome, rules: [], evidence: null, createdAt: "2026-10-03T00:00:00Z", ...overrides };
 }

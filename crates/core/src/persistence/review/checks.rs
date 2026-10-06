@@ -2,9 +2,14 @@
 use super::*;
 use crate::review::{CheckInput, check_rules, interrupted_rules};
 
+mod adoption;
 mod capture;
 mod execution;
+pub use adoption::ReviewCheckEvidence;
+pub(super) use adoption::coverage_complete;
+pub(super) use adoption::{validate_projection, validate_saved, validate_saved_frames};
 pub use capture::ReviewCheckPlan;
+pub(super) use capture::ReviewMaterial;
 pub use execution::{CapturedReviewCheckExecution, ComputedReviewEvidence};
 
 #[derive(Debug)]
@@ -176,6 +181,12 @@ impl ProjectStore {
                 };
             }
         };
+        if capture.plan.is_some() {
+            return Err(failure(
+                ErrorCode::InvalidInput,
+                "review-plugin-evidence-required",
+            ));
+        }
         let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let transaction = self
