@@ -8,7 +8,11 @@
     "packageDecisions": [],
     "runtimeDecisions": [],
     "runtimeOffers": [],
-    "defaultsOffer": null
+    "defaultsOffer": null,
+    "nativeHostOffer": {
+      "availability": "unavailable",
+      "reason": "identity-unavailable"
+    }
   },
   "rich": {
     "settingsRevision": "18446744073709551615",
@@ -101,6 +105,10 @@
       }
     ],
     "runtimeOffers": [],
-    "defaultsOffer": null
+    "defaultsOffer": null,
+    "nativeHostOffer": {
+      "availability": "unavailable",
+      "reason": "identity-unavailable"
+    }
   }
 }

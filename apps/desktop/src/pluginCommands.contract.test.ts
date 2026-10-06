@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/pluginInventory.contract.json";
 import candidate from "../test/fixtures/pluginPackage.contract.json";
-import { validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild, validateRequestTranslation, validateResponseTranslation } from "./generated/plugins.validators";
+import { validateRequestNativeHostApproval, validateRequestInventory, validateResponseInventory, validateResponseCandidate, validateRequestInstall, validateRequestEnable, validateRequestRuntimeInstall, validateRequestRuntimeLookup, validateRequestSource, validateResponseSource, validateRequestBuild, validateResponseBuild, validateRequestTranslation, validateResponseTranslation } from "./generated/plugins.validators";
 import { pluginCommands } from "./pluginCommands";
 import runtime from "../test/fixtures/pluginRuntime.contract.json";
 import source from "../test/fixtures/pluginSource.contract.json";
@@ -181,4 +181,33 @@ it("reads strict Native decisions without treating them as installed Node enviro
   expect(invoke).toHaveBeenLastCalledWith("read_plugin_inventory", { request: {} });
   invoke.mockResolvedValueOnce({ ...view, runtimeDecisions: [{ ...decision, environment: { ...environment, toolVersion: "26.10.0" } }] });
   await expect(pluginCommands.inventory()).rejects.toThrow("Invalid IPC response: read_plugin_inventory");
+});
+
+it("keeps current Native offers separate from installed Node files and refuses polluted offers", () => {
+  const environment = { protocolVersion: 1, platform: runtime.environment.platform,
+    sdkVersion: "0.1.0-alpha.1", processProtocol: 1, profile: "native-application-host-v1",
+    hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) } };
+  const offer = { availability: "available", environment, environmentDigest: "b".repeat(64), origin: runtime.origin };
+  expect(validateResponseInventory({ ...fixture.empty, nativeHostOffer: offer })).toBe(true);
+  for (const altered of [{ ...offer, fileCount: 1 }, { ...offer, environment: runtime.environment }, { ...offer, environmentDigest: undefined },
+    { availability: "unavailable", reason: "identity-unavailable", environment }, { availability: "unavailable", reason: "ready" }]) {
+    expect(validateResponseInventory({ ...fixture.empty, nativeHostOffer: altered })).toBe(false);
+  }
+  expect(validateResponseInventory({ ...fixture.empty, nativeHostOffer: undefined })).toBe(false);
+});
+
+it("uses the strict Native approval request and existing inventory decoder", async () => {
+  const request = { environmentDigest: "b".repeat(64), approved: true, expectedRevision: "0", actionId: "00000000-0000-4000-8000-000000000031" };
+  expect(validateRequestNativeHostApproval(request)).toBe(true);
+  expect(validateRequestNativeHostApproval({ ...request, approved: false })).toBe(true);
+  for (const field of ["directory", "origin", "environment", "grantId", "allowUnsandboxedExecution"]) {
+    expect(validateRequestNativeHostApproval({ ...request, [field]: true })).toBe(false);
+  }
+  expect(validateRequestNativeHostApproval({ ...request, expectedRevision: 0 })).toBe(false);
+  expect(validateRequestNativeHostApproval({ ...request, approved: undefined })).toBe(false);
+  invoke.mockResolvedValueOnce(fixture.empty);
+  await expect(pluginCommands.nativeHostApproval(request)).resolves.toEqual(fixture.empty);
+  expect(invoke).toHaveBeenLastCalledWith("set_plugin_native_host_approval", { request });
+  invoke.mockResolvedValueOnce({ ...fixture.empty, nativeHostOffer: undefined });
+  await expect(pluginCommands.nativeHostApproval(request)).rejects.toThrow("Invalid IPC response: set_plugin_native_host_approval");
 });

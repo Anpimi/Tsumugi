@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { PluginManager } from "./PluginManager";
+import { validateResponseInventory } from "./generated/plugins.validators";
 import type { PluginInventoryView } from "./pluginCommands";
 import { i18n } from "./i18n";
 import inventory from "../test/fixtures/pluginInventory.contract.json";
@@ -10,7 +11,8 @@ import candidate from "../test/fixtures/pluginPackage.contract.json";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const onBusy = vi.fn();
-const empty: PluginInventoryView = { ...inventory.empty, runtimeOffers: [] };
+const empty = { ...inventory.empty, runtimeOffers: [] };
+if (!validateResponseInventory(empty)) throw new Error("Invalid plugin inventory fixture");
 const installed: PluginInventoryView = { ...empty, settingsRevision: "1", lastSettingsAction: "00000000-0000-4000-8000-000000000020",
   packages: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, state: "sealed" }],
   packageDecisions: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, enabled: false }],

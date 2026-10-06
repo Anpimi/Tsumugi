@@ -7,6 +7,7 @@ export declare function validateRequestEnable(value: unknown): value is Requests
 export declare function validateRequestInstall(value: unknown): value is Requests["install"];
 export declare function validateRequestInventory(value: unknown): value is Requests["inventory"];
 export declare function validateRequestLookup(value: unknown): value is Requests["lookup"];
+export declare function validateRequestNativeHostApproval(value: unknown): value is Requests["nativeHostApproval"];
 export declare function validateRequestPackage(value: unknown): value is Requests["package"];
 export declare function validateRequestRuntimeInstall(value: unknown): value is Requests["runtimeInstall"];
 export declare function validateRequestRuntimeLookup(value: unknown): value is Requests["runtimeLookup"];

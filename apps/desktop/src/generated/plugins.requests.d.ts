@@ -10,6 +10,7 @@ export interface Requests {
   install: PluginInstallRequest;
   inventory: PluginInventoryRequest;
   lookup: PluginLookupRequest;
+  nativeHostApproval: PluginNativeHostApprovalRequest;
   package: PluginPackageRequest;
   runtimeInstall: PluginRuntimeInstallRequest;
   runtimeLookup: PluginRuntimeLookupRequest;
@@ -64,6 +65,12 @@ export interface ProviderSelectionBinding {
   contributionId: string;
   packageDigest: string;
   plugin: PluginIdentity;
+}
+export interface PluginNativeHostApprovalRequest {
+  actionId: ExecutionId;
+  approved: boolean;
+  environmentDigest: string;
+  expectedRevision: UnsignedDecimal;
 }
 export interface PluginRuntimeInstallRequest {
   actionId: ExecutionId;

@@ -89,6 +89,7 @@ pub(super) enum MutationRequest {
     Install(PluginInstallRequest),
     Enable(PluginEnableRequest),
     Runtime(PluginRuntimeInstallRequest),
+    NativeHost(PluginNativeHostApprovalRequest),
     Defaults(PluginDefaultsInstallRequest),
 }
 
@@ -118,6 +119,7 @@ impl PendingMutation {
             MutationRequest::Install(request) => request.action_id.to_string(),
             MutationRequest::Enable(request) => request.action_id.to_string(),
             MutationRequest::Runtime(request) => request.action_id.to_string(),
+            MutationRequest::NativeHost(request) => request.action_id.to_string(),
             MutationRequest::Defaults(request) => request.action_id.to_string(),
         }
     }
@@ -126,6 +128,7 @@ impl PendingMutation {
             MutationRequest::Install(request) => request.expected_revision.get(),
             MutationRequest::Enable(request) => request.expected_revision.get(),
             MutationRequest::Runtime(request) => request.expected_revision.get(),
+            MutationRequest::NativeHost(request) => request.expected_revision.get(),
             MutationRequest::Defaults(request) => request.expected_revision.get(),
         }
     }
@@ -297,7 +300,9 @@ impl ApplicationPlugins {
             MutationRequest::Runtime(_) | MutationRequest::Defaults(_) => {
                 CommandStage::PluginInstall
             }
-            MutationRequest::Enable(_) => CommandStage::PluginSettings,
+            MutationRequest::Enable(_) | MutationRequest::NativeHost(_) => {
+                CommandStage::PluginSettings
+            }
         };
         let mut manager = self.try_manager().map_err(|mut error| {
             error.stage = stage;
@@ -346,6 +351,7 @@ impl ApplicationPlugins {
                 MutationRequest::Install(request) => request.expected_revision.get(),
                 MutationRequest::Enable(request) => request.expected_revision.get(),
                 MutationRequest::Runtime(request) => request.expected_revision.get(),
+                MutationRequest::NativeHost(request) => request.expected_revision.get(),
                 MutationRequest::Defaults(request) => request.expected_revision.get(),
             };
             if expected != settings.revision() {
@@ -453,6 +459,44 @@ impl ApplicationPlugins {
                     runtime = Some(captured);
                     None
                 }
+                MutationRequest::NativeHost(request) => {
+                    sdk::validate_package_digest(&request.environment_digest)
+                        .map_err(|_| at_stage(InstallError::ApprovalMismatch, stage))?;
+                    if request.approved {
+                        let approval =
+                            runtimes::capture_native_approval(&request.environment_digest, allowed)
+                                .map_err(|mut error| {
+                                    error.stage = stage;
+                                    error
+                                })?;
+                        if let Some(prior) = desired.runtimes.iter().find(|prior| {
+                            prior.environment.digest().ok().as_deref()
+                                == Some(&request.environment_digest)
+                        }) {
+                            if prior != &approval {
+                                return Err(at_stage(InstallError::ApprovalMismatch, stage));
+                            }
+                        } else {
+                            desired.runtimes.push(approval);
+                        }
+                    } else {
+                        // An obsolete application decision remains removable.
+                        // A Native action cannot revoke an installed Node identity.
+                        let index = desired
+                            .runtimes
+                            .iter()
+                            .position(|prior| {
+                                matches!(
+                                    prior.environment,
+                                    sdk::ExecutionEnvironmentDescriptor::Native(_)
+                                ) && prior.environment.digest().ok().as_deref()
+                                    == Some(&request.environment_digest)
+                            })
+                            .ok_or_else(|| at_stage(InstallError::ApprovalMismatch, stage))?;
+                        desired.runtimes.remove(index);
+                    }
+                    None
+                }
                 MutationRequest::Defaults(request) => {
                     let captured = defaults::capture_offer(&manager, request, allowed)?;
                     for package in &captured.0 {
@@ -498,6 +542,7 @@ impl ApplicationPlugins {
                 MutationRequest::Install(r) => r.action_id.to_string(),
                 MutationRequest::Enable(r) => r.action_id.to_string(),
                 MutationRequest::Runtime(r) => r.action_id.to_string(),
+                MutationRequest::NativeHost(r) => r.action_id.to_string(),
                 MutationRequest::Defaults(r) => r.action_id.to_string(),
             };
             let mut package_steps = Vec::new();

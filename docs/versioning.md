@@ -175,8 +175,9 @@ the current local plugin-settings format to 2. Format 1 settings are refused
 unchanged without migration; Node runtime receipts and artifact trees, SDK wire
 profiles, process protocol, schema 27 and dependency metadata are unchanged.
 The desktop inventory exposes the same strict decision union and displays Native
-Host approval as metadata, separately from installed Node trees. Native desktop
-approval controls and execution selection remain in development. This stays in
+Host approval as metadata, separately from installed Node trees. The desktop now
+observes its current Host and exposes explicit approval/revocation through that
+same settings owner; native execution selection remains in development. This stays in
 the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
 with synchronized Unreleased changelogs and no additional SemVer bump or release.
 
@@ -193,8 +194,9 @@ This remains the same undistributed application `0.2.0-alpha.1` / SDK
 `0.1.0-alpha.1` batch, so no additional SemVer bump or release is implied. Both
 Unreleased changelogs are synchronized. The public Host's independent Rust catalog
 tests separately cover extraction/check/build through real Native channels and
-normal Core source/review/release gates. Native Desktop approval/discovery and
-complete independent-domain acceptance remain separate work; test tooling adds
+normal Core source/review/release gates. Desktop approval/discovery uses the
+current Host; Native execution selection and complete independent-domain
+acceptance remain separate work; test tooling adds
 no version, stored shape or production domain branch.
 
 The initial package source-import Resource used the experimental contract
@@ -565,3 +567,15 @@ command details retain their original reason or field. This changes presentation
 only, with no SDK/process/Store/IPC or schema 26 change and no new dependency.
 Both Unreleased changelogs are synchronized. The same undistributed application
 `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no extra bump or migration.
+
+Native application Host discovery and explicit approval/revocation now use the
+existing application settings action, revision CAS and pending-result recovery.
+The experimental inventory includes a required strict current-Host availability
+union; callers must regenerate IPC and confirm the exact offered digest.
+Caller-provided descriptors, paths, origins and execution grants are refused.
+Obsolete Native approvals remain removable while Node decisions are preserved.
+No runtime tree is installed and no worker or attempt grant is created. Native
+execution selection remains separate integration work. Project schema 27, settings
+format 2, SDK/process/receipt formats, dependencies and the same undistributed
+application/SDK alpha.1 batch remain unchanged; no extra bump or historical
+migration is required. Both Unreleased changelogs describe the behavior.

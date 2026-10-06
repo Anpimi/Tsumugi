@@ -6,6 +6,7 @@ export const ComponentScopeValues = ["application","project","attempt"] as const
 export const DefaultsAvailabilityValues = ["available","resources-unavailable","runtime-unavailable"] as const;
 export const EffectKindValues = ["read-only","proposal","external"] as const;
 export const NativeHostProfileValues = ["native-application-host-v1"] as const;
+export const NativeHostUnavailableReasonValues = ["unsupported-platform","identity-unavailable"] as const;
 export const PluginObjectStateValues = ["sealed","recovery-required"] as const;
 export const ProviderSelectionValues = ["single","collect-independent"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;

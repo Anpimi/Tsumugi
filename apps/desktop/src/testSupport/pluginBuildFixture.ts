@@ -9,6 +9,7 @@ export const pluginBuildRequest = contract.request;
 export const pluginBuildWorkflow = workflow;
 export const pluginBuildInventory: PluginInventoryView = {
   settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
+  nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ ...contract.request.package, origin: contract.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ ...contract.request.package, origin: contract.view.packageOrigin, enabled: true }],
   runtimes: [{ environment: pluginBuildView.environment, environmentDigest: contract.view.environmentDigest, origin: contract.view.runtimeOrigin, state: "sealed" }],

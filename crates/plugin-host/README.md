@@ -320,8 +320,11 @@ The current-only local settings format is 2. Earlier development settings are
 refused unchanged, without conversion, implicit approval or receipt-derived
 replacement. Preserve old settings when creating a new development profile.
 Node runtime object and receipt formats remain unchanged. Desktop observation of
-recorded Native decisions is metadata only; Native approval controls and execution
-selection remain in development.
+recorded Native decisions is metadata only. The desktop separately observes its
+actual current application identity and accepts an explicit digest-bound decision
+through the same settings revision/action owner. Old Native approvals can be
+removed without changing Node decisions; no Native runtime tree is installed.
+Native execution selection remains in development.
 
 ### Reopening an approved runtime
 

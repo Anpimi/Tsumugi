@@ -32,7 +32,8 @@ pub use packages::{
     PluginPackageDetailsView, PluginPackageRequest,
 };
 pub use runtimes::{
-    PluginRuntimeInstallRequest, PluginRuntimeLookupRequest, PluginRuntimeOfferView,
+    PluginNativeHostApprovalRequest, PluginNativeHostOfferView, PluginRuntimeInstallRequest,
+    PluginRuntimeLookupRequest, PluginRuntimeOfferView,
 };
 pub use sources::{PluginSourceRequest, PluginSourceView};
 pub use translations::{PluginTranslationRequest, PluginTranslationView};
@@ -131,6 +132,7 @@ pub struct PluginInventoryView {
     pub runtime_decisions: Vec<PluginRuntimeDecisionView>,
     #[cfg_attr(feature = "wire-schema", schemars(length(max = 1)))]
     pub runtime_offers: Vec<PluginRuntimeOfferView>,
+    pub native_host_offer: PluginNativeHostOfferView,
     pub defaults_offer: Option<PluginDefaultsOfferView>,
 }
 
@@ -328,6 +330,7 @@ impl ApplicationPlugins {
                 .transpose()?
                 .into_iter()
                 .collect(),
+            native_host_offer: runtimes::native_host_offer(),
         })
     }
 }

@@ -251,7 +251,15 @@ mod unix {
             "../../../../test/fixtures/pluginInventory.contract.json"
         ))
         .unwrap();
-        assert_eq!(serde_json::to_value(&view).unwrap(), fixture_json["empty"]);
+        let mut expected = fixture_json["empty"].clone();
+        let environment = tsumugi_plugin_host::CapturedNativeRuntime::inspect_current().unwrap();
+        expected["nativeHostOffer"] = serde_json::json!({
+            "availability": "available",
+            "environmentDigest": environment.digest().unwrap(),
+            "environment": environment,
+            "origin": {"sourceId":"application-host", "publisherId":"tsumugi-application"},
+        });
+        assert_eq!(serde_json::to_value(&view).unwrap(), expected);
         assert!(view.last_settings_action.is_none());
         assert!(view.packages.is_empty() && view.runtimes.is_empty());
         assert!(view.package_decisions.is_empty() && view.runtime_decisions.is_empty());

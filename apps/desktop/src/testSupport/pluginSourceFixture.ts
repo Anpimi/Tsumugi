@@ -8,6 +8,7 @@ export const pluginSourceRequest = source.request;
 export const pluginSourceWorkflow = workflow;
 export const pluginSourceInventory: PluginInventoryView = {
   settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
+  nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, enabled: true }],
   runtimes: [{ environment: pluginSourceView.environment, environmentDigest: source.view.environmentDigest, origin: source.view.runtimeOrigin, state: "sealed" }],

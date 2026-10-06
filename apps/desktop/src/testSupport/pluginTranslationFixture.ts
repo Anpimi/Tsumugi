@@ -18,6 +18,7 @@ export const translationView = translationCapture.translation;
 const packageRequest = { plugin: translationView.extractor.provider.plugin, packageDigest: translationView.extractor.provider.packageDigest };
 export const translationInventory: PluginInventoryView = checked({
   settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
+  nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ ...packageRequest, origin: translationView.packageOrigin, state: "sealed" }],
   packageDecisions: [{ ...packageRequest, origin: translationView.packageOrigin, enabled: true }],
   runtimes: [{ environment: translationView.environment, environmentDigest: translationView.environmentDigest, origin: translationView.runtimeOrigin, state: "sealed" }],

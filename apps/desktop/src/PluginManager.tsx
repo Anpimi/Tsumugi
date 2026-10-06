@@ -4,12 +4,12 @@ import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, Dial
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
 import { isCommandError } from "./projectCommands";
-import { pluginCommands, type PluginCandidateView, type PluginInstallRequest, type PluginEnableRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
+import { pluginCommands, type PluginCandidateView, type PluginInstallRequest, type PluginEnableRequest, type PluginNativeHostApprovalRequest, type PluginRuntimeInstallRequest, type PluginDefaultsInstallRequest, type PluginPackageDetailsView, type PermissionRequest } from "./pluginCommands";
 import "./PluginManager.css";
 import type { TranslationKey } from "./i18n/types";
 
 const inventoryKey = ["application", "plugins", "inventory"] as const;
-type Intent = { kind: "defaults"; request: PluginDefaultsInstallRequest } | { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
+type Intent = { kind: "native-host"; request: PluginNativeHostApprovalRequest } | { kind: "defaults"; request: PluginDefaultsInstallRequest } | { kind: "install"; request: PluginInstallRequest } | { kind: "enable"; request: PluginEnableRequest } | { kind: "runtime"; request: PluginRuntimeInstallRequest };
 const reasonMessages: Partial<Record<string, TranslationKey>> = {
   "plugin-defaults-unavailable": "plugins.defaultsUnavailable",
   "plugin-defaults-changed": "plugins.defaultsChanged",
@@ -59,6 +59,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
   const [candidate, setCandidate] = useState<PluginCandidateView | null>(null);
   const [consent, setConsent] = useState(false);
   // Bind consent to the complete environment, rather than an old checkbox.
+  const [nativeHostConsent, setNativeHostConsent] = useState<string | null>(null);
   const [runtimeConsent, setRuntimeConsent] = useState<string | null>(null);
   const [defaultsConsent, setDefaultsConsent] = useState<string | null>(null);
   const [verifiedRuntime, setVerifiedRuntime] = useState<string | null>(null);
@@ -91,7 +92,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
       setIntent(next);
       await client.cancelQueries({ queryKey: inventoryKey });
       try {
-        const result = next.kind === "defaults" ? await pluginCommands.installDefaults(next.request) : next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : await pluginCommands.enable(next.request);
+        const result = next.kind === "defaults" ? await pluginCommands.installDefaults(next.request) : next.kind === "install" ? await pluginCommands.install(next.request) : next.kind === "runtime" ? await pluginCommands.installRuntime(next.request) : next.kind === "native-host" ? await pluginCommands.nativeHostApproval(next.request) : await pluginCommands.enable(next.request);
         if (!mounted.current) return;
         client.setQueryData(inventoryKey, result);
         setIntent(null);
@@ -99,6 +100,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
         setCandidate(null);
         setConsent(false);
         setRuntimeConsent(null);
+        setNativeHostConsent(null);
         setDefaultsConsent(null);
         setVerifiedRuntime(null);
         setDetails(null);
@@ -128,7 +130,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
       {saved ? <p role="status">{t("plugins.saved")}</p> : null}
       {failure ? <div role="alert"><p>{t(failureMessage(failure, unknown))}</p>
         <CommandFailureDetails failure={failure}/>{intent ? <button type="button" className="secondary-button" disabled={busy || query.isFetching} onClick={() => void submit(intent)}>{t("plugins.retryOriginal")}</button> : null}
-        {!unknown && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCandidate(null); setConsent(false); setRuntimeConsent(null); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
+        {!unknown && intent ? <button type="button" className="text-button" disabled={busy} onClick={() => { setIntent(null); setFailure(null); setCandidate(null); setConsent(false); setRuntimeConsent(null); setNativeHostConsent(null); void query.refetch(); }}>{t("plugins.reviewCurrent")}</button> : null}
       </div> : null}
       {inventory?.defaultsOffer ? <section className="plugin-section" aria-label={t("plugins.defaultsTitle")}>
         <h3>{t("plugins.defaultsTitle")}</h3><p>{t("plugins.defaultsDescription")}</p>
@@ -179,6 +181,34 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
         {inventory.packageDecisions.filter(decision => !inventory.packages.some(record => record.packageDigest === decision.packageDigest)).map(decision => <div key={decision.packageDigest}><p>{t("plugins.approvedMissing", { name: decision.plugin.id, version: decision.plugin.version })}</p>
           {decision.enabled ? <button type="button" disabled={blocked || intent !== null} onClick={() => { if (query.data) void submit({ kind: "enable", request: { package: { plugin: decision.plugin, packageDigest: decision.packageDigest }, enabled: false, expectedRevision: query.data.settingsRevision, actionId: crypto.randomUUID() } }); }}>{t("plugins.disable")}</button> : null}</div>)}
       </section> : null}
+      {inventory ? <section className="plugin-section" aria-label={t("plugins.nativeHostTitle")}>
+        <h3>{t("plugins.nativeHostTitle")}</h3>
+        {inventory.nativeHostOffer.availability === "available" ? (() => {
+          const offer = inventory.nativeHostOffer;
+          const approved = inventory.runtimeDecisions.some(decision => decision.environmentDigest === offer.environmentDigest
+            && decision.origin.sourceId === offer.origin.sourceId && decision.origin.publisherId === offer.origin.publisherId);
+          return <>
+            <h4>{t("plugins.nativeHostVersion", { version: offer.environment.hostVersion })}</h4>
+            <p>{t("plugins.nativeHostEffect")}</p>
+            <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{offer.environmentDigest}</code><p>{offer.environment.executable.kind}: <code>{offer.environment.executable.value}</code></p></details>
+            {approved ? <p>{t("plugins.nativeHostCurrentApproved")}</p> : <>
+              <label className="plugin-consent"><input type="checkbox" checked={nativeHostConsent === offer.environmentDigest} disabled={blocked || intent !== null}
+                onChange={event => setNativeHostConsent(event.target.checked ? offer.environmentDigest : null)}/>{t("plugins.nativeHostConsent")}</label>
+              <button type="button" className="primary-button" disabled={blocked || intent !== null || nativeHostConsent !== offer.environmentDigest} onClick={() => {
+                void submit({ kind: "native-host", request: { environmentDigest: offer.environmentDigest, approved: true, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID() } });
+              }}>{t("plugins.nativeHostApprove")}</button>
+            </>}
+          </>;
+        })() : <p>{t(`plugins.nativeHostAvailability.${inventory.nativeHostOffer.reason}`)}</p>}
+        {inventory.runtimeDecisions.filter(decision => decision.environment.profile === "native-application-host-v1").map(decision => <div key={decision.environmentDigest}>
+          <p>{decision.environment.profile === "native-application-host-v1" ? t("plugins.nativeHostApproved", { version: decision.environment.hostVersion }) : null}</p>
+          <details><summary>{t("plugins.runtimeFingerprint")}</summary><code>{decision.environmentDigest}</code></details>
+          <p>{t("plugins.nativeHostRevokeEffect")}</p>
+          <button type="button" className="text-button" disabled={blocked || intent !== null} onClick={() => {
+            void submit({ kind: "native-host", request: { environmentDigest: decision.environmentDigest, approved: false, expectedRevision: inventory.settingsRevision, actionId: crypto.randomUUID() } });
+          }}>{t("plugins.nativeHostRevoke")}</button>
+        </div>)}
+      </section> : null}
       {inventory ? <section className="plugin-section" aria-label={t("plugins.runtimeTitle")}><h3>{t("plugins.runtimeTitle")}</h3>
         {!inventory.runtimeOffers.length ? <p>{t("plugins.runtimeNotBundled")}</p> : inventory.runtimeOffers.map(offer => {
           const record = inventory.runtimes.find(record => record.environmentDigest === offer.environmentDigest);
@@ -206,7 +236,8 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
             {verifiedRuntime === record.environmentDigest ? <p role="status">{t("plugins.runtimeVerified")}</p> : null}
           </li>;
         })}</ul>}
-        {inventory.runtimeDecisions.filter(decision => !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)).map(decision => <p key={decision.environmentDigest}>{decision.environment.profile === "native-application-host-v1" ? t("plugins.nativeHostApproved", { version: decision.environment.hostVersion }) : t("plugins.runtimeApprovedMissing", { version: decision.environment.toolVersion })}</p>)}
+        {inventory.runtimeDecisions.map(decision => decision.environment.profile === "node-system-libraries-v1" && !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)
+          ? <p key={decision.environmentDigest}>{t("plugins.runtimeApprovedMissing", { version: decision.environment.toolVersion })}</p> : null)}
       </section> : null}
       {details ? <section className="plugin-section" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><PluginPermissions permissions={details.manifest.permissions}/>
         <ul>{details.manifest.contributions.map(contribution => <li key={contribution.id}>{contribution.id} · {t(`plugins.contributions.${contribution.contribution.kind}`)}</li>)}</ul>

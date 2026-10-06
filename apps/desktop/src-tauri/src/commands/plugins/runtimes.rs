@@ -3,7 +3,9 @@
 use super::*;
 use crate::runtime_bundle::{self, BundledRuntimeMetadata};
 use tsumugi_core::execution::ExecutionId;
-use tsumugi_plugin_host::{CapturedRuntime, PluginSettings, RuntimeApproval};
+use tsumugi_plugin_host::{
+    CapturedNativeRuntime, CapturedRuntime, PluginSettings, RuntimeApproval,
+};
 
 include!(concat!(env!("OUT_DIR"), "/bundled-runtime.rs"));
 
@@ -47,6 +49,95 @@ pub struct PluginRuntimeInstallRequest {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PluginRuntimeLookupRequest {
     pub environment_digest: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum NativeHostUnavailableReason {
+    UnsupportedPlatform,
+    IdentityUnavailable,
+}
+
+/// Current application observation, independent of an installation or approval.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "availability", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum PluginNativeHostOfferView {
+    Available {
+        environment: sdk::NativeHostEnvironmentDescriptor,
+        #[serde(rename = "environmentDigest")]
+        environment_digest: String,
+        origin: PluginOriginView,
+    },
+    Unavailable {
+        reason: NativeHostUnavailableReason,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginNativeHostApprovalRequest {
+    pub environment_digest: String,
+    pub approved: bool,
+    pub expected_revision: UnsignedDecimal,
+    pub action_id: ExecutionId,
+}
+
+pub(super) fn native_host_origin() -> PackageOrigin {
+    PackageOrigin {
+        source_id: "application-host".into(),
+        publisher_id: "tsumugi-application".into(),
+    }
+}
+
+pub(super) fn native_host_offer() -> PluginNativeHostOfferView {
+    match CapturedNativeRuntime::inspect_current().and_then(|environment| {
+        let environment_digest = environment
+            .digest()
+            .map_err(|_| HostError::InvalidContract)?;
+        Ok((environment, environment_digest))
+    }) {
+        Ok((environment, environment_digest)) => PluginNativeHostOfferView::Available {
+            environment,
+            environment_digest,
+            origin: (&native_host_origin()).into(),
+        },
+        Err(error) => PluginNativeHostOfferView::Unavailable {
+            reason: if error == HostError::UnsupportedPlatform {
+                NativeHostUnavailableReason::UnsupportedPlatform
+            } else {
+                NativeHostUnavailableReason::IdentityUnavailable
+            },
+        },
+    }
+}
+
+/// A caller supplies only a confirmed identity, never executable metadata or a
+/// path. Re-observe this Host at the mutation boundary before saving a decision.
+pub(super) fn capture_native_approval(
+    digest: &str,
+    allowed: impl Fn() -> bool,
+) -> Result<RuntimeApproval, CommandError> {
+    sdk::validate_package_digest(digest)
+        .map_err(|_| map_store_error(InstallError::ApprovalMismatch))?;
+    if !allowed() {
+        return Err(map_store_error(InstallError::AuthorityRevoked));
+    }
+    let environment =
+        CapturedNativeRuntime::inspect_current().map_err(|error| map_store_error(error.into()))?;
+    if environment.digest().ok().as_deref() != Some(digest) {
+        return Err(map_store_error(InstallError::ApprovalMismatch));
+    }
+    CapturedNativeRuntime::capture(&environment).map_err(|error| map_store_error(error.into()))?;
+    if !allowed() {
+        return Err(map_store_error(InstallError::AuthorityRevoked));
+    }
+    Ok(RuntimeApproval {
+        environment: environment.into(),
+        origin: native_host_origin(),
+    })
 }
 
 pub(super) struct Bundle {
@@ -179,6 +270,13 @@ impl ApplicationPlugins {
         request: PluginRuntimeInstallRequest,
     ) -> Result<PluginInventoryView, CommandError> {
         self.mutate(packages::MutationRequest::Runtime(request))
+    }
+
+    fn set_native_host_approval(
+        &self,
+        request: PluginNativeHostApprovalRequest,
+    ) -> Result<PluginInventoryView, CommandError> {
+        self.mutate(packages::MutationRequest::NativeHost(request))
     }
 
     pub(in crate::commands) fn lookup_runtime(
@@ -321,6 +419,20 @@ pub async fn install_plugin_runtime(
         })
         .await
 }
+#[tauri::command]
+pub async fn set_plugin_native_host_approval(
+    state: State<'_, AppState>,
+    request: PluginNativeHostApprovalRequest,
+) -> Result<PluginInventoryView, CommandError> {
+    let plugins = state.plugins.clone();
+    state
+        .io
+        .run(CommandStage::PluginSettings, move || {
+            plugins.set_native_host_approval(request)
+        })
+        .await
+}
+
 #[tauri::command]
 pub async fn lookup_plugin_runtime(
     state: State<'_, AppState>,

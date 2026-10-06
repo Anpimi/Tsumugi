@@ -36,6 +36,7 @@ struct PluginRequests {
     package: plugins::PluginPackageRequest,
     lookup: plugins::PluginLookupRequest,
     runtime_install: plugins::PluginRuntimeInstallRequest,
+    native_host_approval: plugins::PluginNativeHostApprovalRequest,
     defaults_install: plugins::PluginDefaultsInstallRequest,
     runtime_lookup: plugins::PluginRuntimeLookupRequest,
     source: plugins::PluginSourceRequest,

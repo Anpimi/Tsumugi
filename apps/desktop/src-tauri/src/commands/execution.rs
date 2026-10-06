@@ -19,6 +19,7 @@ macro_rules! handlers {
         super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
         super::plugins::translations::read_plugin_translation,
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
+        super::plugins::runtimes::set_plugin_native_host_approval,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,

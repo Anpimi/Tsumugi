@@ -130,6 +130,30 @@
         ],
         "type": "object"
       },
+      "PluginNativeHostApprovalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "approved": {
+            "type": "boolean"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "environmentDigest",
+          "approved",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "PluginPackageRequest": {
         "additionalProperties": false,
         "properties": {
@@ -271,6 +295,9 @@
       "lookup": {
         "$ref": "#/definitions/PluginLookupRequest"
       },
+      "nativeHostApproval": {
+        "$ref": "#/definitions/PluginNativeHostApprovalRequest"
+      },
       "package": {
         "$ref": "#/definitions/PluginPackageRequest"
       },
@@ -294,6 +321,7 @@
       "package",
       "lookup",
       "runtimeInstall",
+      "nativeHostApproval",
       "defaultsInstall",
       "runtimeLookup",
       "source",
@@ -1305,6 +1333,13 @@
         ],
         "type": "string"
       },
+      "NativeHostUnavailableReason": {
+        "enum": [
+          "unsupported-platform",
+          "identity-unavailable"
+        ],
+        "type": "string"
+      },
       "PermissionRequest": {
         "description": "These are requested permissions, never an authorization token.",
         "oneOf": [
@@ -1570,6 +1605,9 @@
               "null"
             ]
           },
+          "nativeHostOffer": {
+            "$ref": "#/definitions/PluginNativeHostOfferView"
+          },
           "packageDecisions": {
             "items": {
               "$ref": "#/definitions/PluginPackageDecisionView"
@@ -1617,6 +1655,7 @@
           "packageDecisions",
           "runtimeDecisions",
           "runtimeOffers",
+          "nativeHostOffer",
           "defaultsOffer"
         ],
         "type": "object"
@@ -1658,6 +1697,53 @@
           "contributions"
         ],
         "type": "object"
+      },
+      "PluginNativeHostOfferView": {
+        "description": "Current application observation, independent of an installation or approval.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "availability": {
+                "const": "available",
+                "type": "string"
+              },
+              "environment": {
+                "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+              },
+              "environmentDigest": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/definitions/PluginOriginView"
+              }
+            },
+            "required": [
+              "availability",
+              "environment",
+              "environmentDigest",
+              "origin"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "availability": {
+                "const": "unavailable",
+                "type": "string"
+              },
+              "reason": {
+                "$ref": "#/definitions/NativeHostUnavailableReason"
+              }
+            },
+            "required": [
+              "availability",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "PluginObjectState": {
         "enum": [
