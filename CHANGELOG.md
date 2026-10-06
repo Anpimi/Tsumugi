@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Core can capture a read-only Review plan from the adopted source and current selection, preserving complete original evidence, exact local identity mappings, resource dependencies, checker/runtime selection and the policy/domain required-check union. Core choice and terminology computation shares its existing validator and runs over owned values outside SQLite. This plan creates no check receipt, execution grant or release qualification; production domain execution and current-QA consumers remain in development.
+
 - Source declarations now require an exact immutable Review Resource and capture its complete domain rules, checker and runtime with the adopted source. Missing or substituted bindings refuse source adoption; reading stored bindings grants no execution or approval. This breaks the experimental source-declaration API (schema/behavior 2/2) and advances current projects to schema 24; earlier development directories are refused unchanged, without migration. Core Review execution and qualification integration remain in development.
 
 - Experimental SDK review contracts now capture complete original source evidence, an explicit selected-text scope and exact mandatory domain rules, with missing text distinguished from empty text. Host inspection binds a captured review Resource to its exact package/checker. Generated JavaScript structure and Rust receiving checks share the same definitions; results reuse the existing Core/domain coverage union. These APIs do not run checkers or grant approval, waivers or release eligibility. Production Review integration remains in development.

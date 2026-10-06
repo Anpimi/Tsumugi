@@ -2,6 +2,9 @@
 use super::*;
 use crate::review::{CheckInput, check_rules, interrupted_rules};
 
+mod capture;
+pub use capture::ReviewCheckPlan;
+
 #[derive(Debug)]
 struct Capture {
     project_id: ExecutionId,
@@ -9,6 +12,7 @@ struct Capture {
     request_digest: String,
     target: ReviewTarget,
     terms: resources::TermResolution,
+    plan: Option<ReviewCheckPlan>,
 }
 
 /// An immutable, store-created input. Callers cannot substitute its scope or basis.
@@ -35,6 +39,14 @@ pub struct ComputedReviewCheck {
 }
 
 impl PreparedReviewCheck {
+    /// Original policy/domain capture; recorded retries create no new plan.
+    pub fn plan(&self) -> Option<&ReviewCheckPlan> {
+        match &self.state {
+            PreparedState::Pending(capture) => capture.plan.as_ref(),
+            PreparedState::Recorded { .. } => None,
+        }
+    }
+
     /// Runs with owned values only, without holding a connection or transaction.
     pub fn compute(self, cancellation: &Cancellation) -> ComputedReviewCheck {
         let rules = match &self.state {
@@ -119,6 +131,7 @@ impl ProjectStore {
                     }));
             }
             let terms = resources::resolve_terms_in(connection, project_id, unit_id, locale)?;
+            let plan = capture::capture_in(connection, project_id, &target, &terms)?;
             Ok(PreparedReviewCheck {
                 state: PreparedState::Pending(Capture {
                     project_id,
@@ -126,6 +139,7 @@ impl ProjectStore {
                     request_digest,
                     target,
                     terms,
+                    plan,
                 }),
             })
         })

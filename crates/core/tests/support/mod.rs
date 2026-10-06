@@ -275,6 +275,26 @@ pub fn source_fixture_with_receipt() -> (
     AdoptionAction,
     AdoptionReceipt,
 ) {
+    source_fixture_with_rules(None)
+}
+
+#[allow(dead_code)]
+pub fn source_fixture_with_review_rules(
+    rules: Vec<sdk::ReviewRuleDeclaration>,
+) -> (tempfile::TempDir, ProjectStore, Vec<ContentRow>) {
+    let (directory, store, rows, _, _) = source_fixture_with_rules(Some(rules));
+    (directory, store, rows)
+}
+
+fn source_fixture_with_rules(
+    rules: Option<Vec<sdk::ReviewRuleDeclaration>>,
+) -> (
+    tempfile::TempDir,
+    ProjectStore,
+    Vec<ContentRow>,
+    AdoptionAction,
+    AdoptionReceipt,
+) {
     let directory = tempfile::tempdir().unwrap();
     let mut store = ProjectStore::create(
         directory.path().join("project"),
@@ -282,7 +302,12 @@ pub fn source_fixture_with_receipt() -> (
     )
     .unwrap();
     let mut runtime = source_runtime(&store);
-    let input = source_input(&store);
+    let mut input = source_input(&store);
+    if let Some(rules) = rules {
+        let mut envelope = input.envelope().clone();
+        envelope.settings["review"]["declaration"]["rules"] = serde_json::to_value(rules).unwrap();
+        input = FixedInput::capture(envelope).unwrap();
+    }
     let (producer_grant, result) = execute(&mut runtime, &mut store, &input);
     let capture = store
         .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)

@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::review::CHECK_VERSION;
 mod checks;
 pub(super) use checks::record_check_in;
-pub use checks::{ComputedReviewCheck, PreparedReviewCheck};
+pub use checks::{ComputedReviewCheck, PreparedReviewCheck, ReviewCheckPlan};
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
 

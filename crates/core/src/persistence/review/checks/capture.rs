@@ -1,0 +1,325 @@
+//! The policy owner captures QA independently of the human decision basis.
+//! This owned plan contains no execution grant and creates no durable check.
+use super::*;
+use crate::content::{SourceReviewBinding, SourceSettings};
+use tsumugi_plugin_sdk as sdk;
+
+/// Store-created policy and original source material for one current target.
+/// Domain results must still come from an authorized, associated execution;
+/// evaluating this plan alone does not record QA or qualify a release.
+#[derive(Debug)]
+pub struct ReviewCheckPlan {
+    target: ReviewTarget,
+    binding: SourceReviewBinding,
+    input: sdk::ReviewCheckInput,
+    checks: sdk::FixedCheckSet,
+    terms: resources::TermResolution,
+    basis: String,
+}
+
+fn reference(id: &str) -> sdk::ContractRef {
+    sdk::ContractRef {
+        id: id.into(),
+        schema_version: 1,
+        behavior_version: 1,
+    }
+}
+fn core_validator() -> sdk::ContractRef {
+    reference("tsumugi.core-review")
+}
+
+fn contract_error(error: sdk::ContractError) -> ExecutionError {
+    failure(
+        if error.code == sdk::ContractErrorCode::LimitExceeded {
+            ErrorCode::LimitExceeded
+        } else {
+            ErrorCode::OutputInvalid
+        },
+        "review-check-contract",
+    )
+}
+
+impl ReviewCheckPlan {
+    pub fn unit_id(&self) -> ExecutionId {
+        self.target.unit_id
+    }
+    /// The manual decision basis deliberately excludes checker configuration.
+    pub fn review_basis(&self) -> &str {
+        &self.target.basis
+    }
+    /// Includes original bytes, selected text, resources, policy and runtime.
+    pub fn basis(&self) -> &str {
+        &self.basis
+    }
+    pub fn binding(&self) -> &SourceReviewBinding {
+        &self.binding
+    }
+    pub fn domain_input(&self) -> &sdk::ReviewCheckInput {
+        &self.input
+    }
+    pub fn fixed_checks(&self) -> &sdk::FixedCheckSet {
+        &self.checks
+    }
+
+    /// Computes only Core-owned choice and terminology policy over owned data.
+    /// No domain syntax is parsed, no database connection or worker is held.
+    pub fn compute_core_checks(
+        &self,
+        cancellation: &Cancellation,
+    ) -> Result<Vec<sdk::CheckResult>, ExecutionError> {
+        let (required, terminology) = crate::review::check_core_rules(
+            &CheckInput {
+                unit_id: self.target.unit_id,
+                locale: self.target.locale.clone(),
+                source_text: self.target.source_text.clone(),
+                translation_text: self.target.translation_text.clone(),
+            },
+            &self.terms,
+            &core_validator(),
+        )?;
+        self.checks
+            .set()
+            .requirements
+            .iter()
+            .filter(|r| matches!(r.key.implementation, sdk::CheckImplementation::Core { .. }))
+            .map(|requirement| {
+                let rule = match requirement.key.rule.id.as_str() {
+                    "required-translation" => &required,
+                    "terminology" => &terminology,
+                    _ => return Err(failure(ErrorCode::CorruptLedger, "review-core-rule")),
+                };
+                let outcome = if cancellation.is_requested() {
+                    sdk::CheckOutcome::Cancelled
+                } else if rule.status == "not-applicable" {
+                    sdk::CheckOutcome::NotApplicable {
+                        basis: requirement.not_applicable.clone().ok_or_else(|| {
+                            failure(ErrorCode::ResultMismatch, "review-core-applicability")
+                        })?,
+                    }
+                } else {
+                    sdk::CheckOutcome::Completed {
+                        findings: rule
+                            .findings
+                            .iter()
+                            .map(|f| {
+                                Ok(sdk::CheckFinding {
+                                    // The SDK identifies a finding by (code,target).
+                                    // Preserve each existing terminology cause;
+                                    // never collapse distinct waiver candidates.
+                                    code: if f.rule == "terminology" {
+                                        format!("{}.{}", f.code, f.issue_id)
+                                    } else {
+                                        f.code.clone()
+                                    },
+                                    target: self.input.selections[0].unit_id.clone(),
+                                    severity: match f.severity.as_str() {
+                                        "error" => sdk::FindingSeverity::Error,
+                                        "warning" => sdk::FindingSeverity::Warning,
+                                        _ => {
+                                            return Err(failure(
+                                                ErrorCode::CorruptLedger,
+                                                "review-core-severity",
+                                            ));
+                                        }
+                                    },
+                                })
+                            })
+                            .collect::<Result<_, ExecutionError>>()?,
+                    }
+                };
+                Ok(sdk::CheckResult {
+                    key: requirement.key.clone(),
+                    input_digest: requirement.input_digest.clone(),
+                    scope_digest: requirement.scope_digest.clone(),
+                    covered_targets: requirement.targets.clone(),
+                    outcome,
+                })
+            })
+            .collect()
+    }
+}
+
+pub(super) fn capture_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    target: &ReviewTarget,
+    terms: &resources::TermResolution,
+) -> Result<Option<ReviewCheckPlan>, ExecutionError> {
+    // Reuse the snapshot/proof/mapping authority, inside the caller's read view.
+    let (_, (source_input, _, source, rows)) =
+        crate::persistence::content::snapshot_rows(connection, target.source_snapshot_id, true)?;
+    if source_input.envelope().project_id != project_id {
+        return Err(failure(ErrorCode::Unauthorized, "review-check-project"));
+    }
+    let Some(binding) = SourceSettings::from_input(&source_input)?.review else {
+        #[cfg(any(test, feature = "execution-test-host"))]
+        return Ok(None);
+        #[cfg(not(any(test, feature = "execution-test-host")))]
+        return Err(failure(ErrorCode::InvalidInput, "review-checker-required"));
+    };
+    let mappings: BTreeSet<_> = rows
+        .iter()
+        .filter(|row| row.unit_id == Some(target.unit_id))
+        .map(|row| {
+            if row.source_revision_id != Some(target.source_revision_id) {
+                return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
+            }
+            Ok((
+                row.occurrence.operation_unit_id.clone(),
+                row.occurrence.operation_source_revision_id.clone(),
+            ))
+        })
+        .collect::<Result<_, _>>()?;
+    if mappings.len() != 1 {
+        return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
+    }
+    let (unit_id, source_revision_id) = mappings
+        .into_iter()
+        .next()
+        .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-source-mapping"))?;
+    if !source.exchange.units.iter().any(|u| {
+        u.id == unit_id
+            && u.source_revision_id == source_revision_id
+            && u.text == target.source_text
+    }) {
+        return Err(failure(ErrorCode::CorruptLedger, "review-source-mapping"));
+    }
+    let selection = sdk::ReviewSelection {
+        unit_id,
+        source_revision_id,
+        translation_text: target.translation_text.clone(),
+    };
+    let input_digest = digest(&(
+        "review-check-material-1",
+        project_id,
+        &source.exchange,
+        &selection,
+        &target.basis_evidence,
+        &target.locale,
+        terms,
+        &binding,
+        POLICY_VERSION,
+    ))?;
+    let scope_digest = digest(&(
+        project_id,
+        target.unit_id,
+        &selection.unit_id,
+        &selection.source_revision_id,
+        &target.locale,
+    ))?;
+    let missing = selection.translation_text.is_none();
+    let not_applicable = || sdk::NotApplicableBasis {
+        code: sdk::MISSING_REVIEW_TRANSLATION.into(),
+        basis_digest: input_digest.clone(),
+    };
+    let requirement = |key, waivable, not_applicable| sdk::CheckRequirement {
+        key,
+        input_digest: input_digest.clone(),
+        scope_digest: scope_digest.clone(),
+        targets: vec![selection.unit_id.clone()],
+        mandatory: true,
+        waivable,
+        not_applicable,
+    };
+    let core = ["required-translation", "terminology"]
+        .into_iter()
+        .map(|id| {
+            requirement(
+                sdk::CheckKey {
+                    rule: reference(id),
+                    implementation: sdk::CheckImplementation::Core {
+                        validator: core_validator(),
+                    },
+                },
+                id == "terminology",
+                (id == "terminology" && missing).then(not_applicable),
+            )
+        })
+        .collect();
+    let domain = binding
+        .declaration
+        .rules
+        .iter()
+        .map(|r| {
+            requirement(
+                sdk::CheckKey {
+                    rule: r.rule.clone(),
+                    implementation: sdk::CheckImplementation::Plugin {
+                        provider: binding.checker.capability.provider.clone(),
+                    },
+                },
+                false,
+                (r.requires_translation && missing).then(not_applicable),
+            )
+        })
+        .collect::<Vec<_>>();
+    let input = sdk::ReviewCheckInput {
+        source: source.exchange,
+        target_language: target.locale.clone(),
+        selections: vec![selection],
+        requirements: domain.clone(),
+    };
+    sdk::ReviewBinding {
+        declaration: binding.declaration.clone(),
+        checker: binding.checker.capability.clone(),
+    }
+    .validate_input(&input)
+    .map_err(contract_error)?;
+    codec::encode(
+        &input,
+        binding
+            .checker
+            .capability
+            .declaration
+            .limits
+            .max_input_bytes as usize,
+    )?;
+    let checks = sdk::capture_required_checks(reference("tsumugi.policy.balanced"), core, domain)
+        .map_err(contract_error)?;
+    let basis = digest(&(
+        "review-check-capture-1",
+        &target.basis,
+        &binding,
+        checks.set(),
+    ))?;
+    Ok(Some(ReviewCheckPlan {
+        target: target.clone(),
+        binding,
+        input,
+        checks,
+        terms: terms.clone(),
+        basis,
+    }))
+}
+
+impl ProjectStore {
+    /// Read-only capture of the current policy and adopted domain requirements.
+    /// Original proof and local-to-project identity mappings remain mandatory.
+    pub fn capture_review_check_plan(
+        &self,
+        project_id: ExecutionId,
+        unit_id: ExecutionId,
+        locale: &str,
+        expected_basis: &str,
+    ) -> Result<ReviewCheckPlan, ExecutionError> {
+        if self.is_reconciling() {
+            return Err(failure(ErrorCode::OutcomeUnknown, "review-session"));
+        }
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?;
+        queries::read_snapshot(connection, |connection| {
+            let target = target_in(connection, project_id, unit_id, locale)?;
+            if target.basis != expected_basis {
+                return Err(failure(ErrorCode::DependencyConflict, "review-current")
+                    .with_conflict(ConflictEvidence::ReviewBasis {
+                        expected: expected_basis.into(),
+                        current: target.basis,
+                    }));
+            }
+            let terms = resources::resolve_terms_in(connection, project_id, unit_id, locale)?;
+            capture_in(connection, project_id, &target, &terms)?
+                .ok_or_else(|| failure(ErrorCode::InvalidInput, "review-checker-required"))
+        })
+    }
+}

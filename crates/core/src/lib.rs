@@ -28,7 +28,7 @@ pub use persistence::{
     ProviderBudget, RecoveryPlan, RecoveryUnit, ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind,
     ReleaseView, ReleasedArtifact, ResourceChangeKind, ResourceDecision, ResourceDecisionKind,
     ResourceDecisionResult, ResourceImpactConfidence, ResourceImpactKind, ResourceImpactStatus,
-    ResourcePreview, ResourcePreviewRow, ReviewBasis, ReviewCheckOutcome, ReviewDecision,
+    ResourcePreview, ResourcePreviewRow, ReviewBasis, ReviewCheckOutcome, ReviewCheckPlan, ReviewDecision,
     ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor, ReviewPage,
     ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision,
     ReviewSummaryPage, ReviewTarget, ReviewWrite, SaveContext, SaveTerm, SaveTranslationRevision,

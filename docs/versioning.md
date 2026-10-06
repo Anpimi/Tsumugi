@@ -425,3 +425,15 @@ unchanged without migration. SDK 0.1.0-alpha.1, application 0.2.0-alpha.1 and
 process/Store/dependency versions remain the same undistributed batch. Binding
 inspection and reading add no execution grant, approval or release eligibility;
 production Review policy/execution cutover remains separate integration work.
+
+Core's read-only Review plan capture reuses the adopted snapshot/proof/mapping
+owner and existing consistent Review reads. Its owned SDK required-check union
+fixes complete original material, current selected text, resource dependencies
+and exact checker/runtime metadata independently of the manual decision basis.
+Core choice and terminology logic shares the existing validator; no check is
+recorded and no execution grant or release qualification is created by capture.
+This additive library boundary changes no stored shape, project schema 24,
+SDK/process/Store/dependency identity or desktop DTO. Application 0.2.0-alpha.1
+and SDK 0.1.0-alpha.1 remain the same undistributed batch, with no additional
+bump or historical migration. Actual domain execution and current-QA/automatic
+selection/ReleasePlan consumers still require production integration.

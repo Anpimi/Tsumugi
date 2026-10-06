@@ -40,9 +40,29 @@ fn finding(
     severity: &str,
     waivable: bool,
 ) -> Result<CheckFinding, ExecutionError> {
+    finding_for(
+        &CHECK_VERSION,
+        target,
+        rule,
+        code,
+        detail,
+        severity,
+        waivable,
+    )
+}
+
+fn finding_for<V: Serialize>(
+    validator: &V,
+    target: &CheckInput,
+    rule: &str,
+    code: &str,
+    detail: &str,
+    severity: &str,
+    waivable: bool,
+) -> Result<CheckFinding, ExecutionError> {
     Ok(CheckFinding {
         issue_id: digest(&(
-            CHECK_VERSION,
+            validator,
             target.unit_id,
             &target.locale,
             rule,
@@ -119,10 +139,87 @@ fn markers(value: &str) -> Result<BTreeMap<String, u32>, ()> {
     Ok(found)
 }
 
+/// Core policy is shared by the captured union and the existing review path.
+/// Domain marker and format interpretation belongs to the adopted checker.
+pub(crate) fn check_core_rules<V: Serialize>(
+    target: &CheckInput,
+    terms: &TermResolution,
+    validator: &V,
+) -> Result<(CheckRuleResult, CheckRuleResult), ExecutionError> {
+    let Some(text) = target.translation_text.as_deref() else {
+        return Ok((
+            result(
+                "required-translation",
+                vec![finding_for(
+                    validator,
+                    target,
+                    "required-translation",
+                    "missing",
+                    "No selected translation",
+                    "error",
+                    false,
+                )?],
+                None,
+            ),
+            result("terminology", Vec::new(), Some("No selected translation")),
+        ));
+    };
+    let mut required = Vec::new();
+    if text.is_empty() {
+        required.push(finding_for(
+            validator,
+            target,
+            "required-translation",
+            "empty",
+            "Selected translation is empty",
+            "error",
+            false,
+        )?);
+    }
+    let mut terminology = Vec::new();
+    for entry in &terms.entries {
+        if !entry.conflicting.is_empty() {
+            terminology.push(finding_for(
+                validator,
+                target,
+                "terminology",
+                "conflict",
+                &entry.source,
+                "error",
+                false,
+            )?);
+        } else if let Some(term) = &entry.selected {
+            if term.protected
+                && (target.source_text.contains(&entry.source)
+                    || term
+                        .aliases
+                        .iter()
+                        .any(|alias| target.source_text.contains(alias)))
+                && !text.contains(&term.target)
+            {
+                terminology.push(finding_for(
+                    validator,
+                    target,
+                    "terminology",
+                    "protected-form",
+                    &entry.source,
+                    "warning",
+                    true,
+                )?);
+            }
+        }
+    }
+    Ok((
+        result("required-translation", required, None),
+        result("terminology", terminology, None),
+    ))
+}
+
 pub(crate) fn check_rules(
     target: &CheckInput,
     terms: &TermResolution,
 ) -> Result<Vec<CheckRuleResult>, ExecutionError> {
+    let (required, terminology) = check_core_rules(target, terms, &CHECK_VERSION)?;
     let source_markers = markers(&target.source_text);
     let mut format = Vec::new();
     if source_markers.is_err() {
@@ -151,34 +248,12 @@ pub(crate) fn check_rules(
     }
     let Some(text) = target.translation_text.as_deref() else {
         return Ok(vec![
-            result(
-                "required-translation",
-                vec![finding(
-                    target,
-                    "required-translation",
-                    "missing",
-                    "No selected translation",
-                    "error",
-                    false,
-                )?],
-                None,
-            ),
+            required,
             result("placeholders", Vec::new(), Some("No selected translation")),
             result("format", format, None),
-            result("terminology", Vec::new(), Some("No selected translation")),
+            terminology,
         ]);
     };
-    let mut required = Vec::new();
-    if text.is_empty() {
-        required.push(finding(
-            target,
-            "required-translation",
-            "empty",
-            "Selected translation is empty",
-            "error",
-            false,
-        )?);
-    }
     let target_markers = markers(text);
     if target_markers.is_err() {
         format.push(finding(
@@ -216,37 +291,6 @@ pub(crate) fn check_rules(
             )?);
         }
     }
-    let mut terminology = Vec::new();
-    for entry in &terms.entries {
-        if !entry.conflicting.is_empty() {
-            terminology.push(finding(
-                target,
-                "terminology",
-                "conflict",
-                &entry.source,
-                "error",
-                false,
-            )?);
-        } else if let Some(term) = &entry.selected {
-            if term.protected
-                && (target.source_text.contains(&entry.source)
-                    || term
-                        .aliases
-                        .iter()
-                        .any(|alias| target.source_text.contains(alias)))
-                && !text.contains(&term.target)
-            {
-                terminology.push(finding(
-                    target,
-                    "terminology",
-                    "protected-form",
-                    &entry.source,
-                    "warning",
-                    true,
-                )?);
-            }
-        }
-    }
     let placeholder_result = if source_markers.is_err() || target_markers.is_err() {
         CheckRuleResult {
             rule: "placeholders".into(),
@@ -258,10 +302,10 @@ pub(crate) fn check_rules(
         result("placeholders", placeholders, None)
     };
     Ok(vec![
-        result("required-translation", required, None),
+        required,
         placeholder_result,
         result("format", format, None),
-        result("terminology", terminology, None),
+        terminology,
     ])
 }
 

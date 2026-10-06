@@ -51,7 +51,7 @@ pub use resources::{
 pub use review::{
     CheckFinding, CheckRuleResult, CheckRun, ComputedReviewCheck, Eligibility, EligibilityLocale,
     EligibilityReason, FallbackDecision, FallbackWrite, PreparedReviewCheck, ReviewBasis,
-    ReviewCheckOutcome, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
+    ReviewCheckOutcome, ReviewCheckPlan, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
     ReviewHistoryPage, ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewScopeUnit,
     ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget,
     ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
