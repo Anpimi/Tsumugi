@@ -8,9 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{
-    content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, SourceBundle, TranslationBundle},
+    content::{self, MAX_MANIFEST_BYTES, MAX_SOURCE_BYTES, SourceBundle},
     execution::{Cancellation, ErrorCode, ExecutionError, ExecutionId},
 };
+
+#[cfg(any(test, feature = "execution-test-host"))]
+use tsumugi_core::content::TranslationBundle;
 
 mod destination;
 pub(crate) use destination::Destination;
@@ -281,6 +284,7 @@ impl Selection {
             .map(|(name, _)| name)
             .collect())
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
         Ok(self
             .translation_file_listing("i18n", "json")?
@@ -325,6 +329,7 @@ impl Selection {
             utf8,
         })
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn capture_translation(
         &self,
         file_name: &str,
@@ -334,6 +339,7 @@ impl Selection {
     ) -> Result<TranslationBundle, ExecutionError> {
         self.capture_translation_inner(file_name, target_locale, source_snapshot_id, cancel, || {})
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     fn capture_translation_inner(
         &self,
         file_name: &str,
@@ -815,9 +821,11 @@ impl Selection {
     ) -> Result<tsumugi_plugin_sdk::CapturedTextArtifact, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn translation_files(&self) -> Result<Vec<String>, ExecutionError> {
         Err(error(ErrorCode::InvalidInput, "unsupported-platform"))
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn capture_translation(
         &self,
         _: &str,

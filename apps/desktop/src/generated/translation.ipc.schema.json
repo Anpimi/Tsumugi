@@ -297,34 +297,6 @@
         ],
         "type": "object"
       },
-      "TranslationCaptureRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "fileName": {
-            "type": "string"
-          },
-          "projectId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "selectionId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "sessionToken": {
-            "type": "string"
-          },
-          "targetLocale": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "sessionToken",
-          "projectId",
-          "selectionId",
-          "fileName",
-          "targetLocale"
-        ],
-        "type": "object"
-      },
       "TranslationCheckFinishRequest": {
         "additionalProperties": false,
         "properties": {
@@ -673,50 +645,6 @@
         ],
         "type": "object"
       },
-      "TranslationStartRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "expectedFileDigest": {
-            "type": "string"
-          },
-          "expectedSourceSnapshotId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "fileName": {
-            "type": "string"
-          },
-          "languageConfirmed": {
-            "type": "boolean"
-          },
-          "projectId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "selectionId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "sessionToken": {
-            "type": "string"
-          },
-          "targetLocale": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "sessionToken",
-          "projectId",
-          "selectionId",
-          "fileName",
-          "targetLocale",
-          "languageConfirmed",
-          "expectedFileDigest",
-          "expectedSourceSnapshotId",
-          "attemptId"
-        ],
-        "type": "object"
-      },
       "UnsignedDecimal": {
         "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
         "type": "string"
@@ -728,9 +656,6 @@
       },
       "adopt": {
         "$ref": "#/definitions/TranslationAdoptRequest"
-      },
-      "capture": {
-        "$ref": "#/definitions/TranslationCaptureRequest"
       },
       "checkFinish": {
         "$ref": "#/definitions/TranslationCheckFinishRequest"
@@ -770,9 +695,6 @@
       },
       "source": {
         "$ref": "#/definitions/TranslationSourceRequest"
-      },
-      "start": {
-        "$ref": "#/definitions/TranslationStartRequest"
       }
     },
     "required": [
@@ -785,8 +707,6 @@
       "projectionPrepare",
       "projectionStart",
       "files",
-      "capture",
-      "start",
       "preview",
       "adopt",
       "history",
@@ -1631,41 +1551,6 @@
         ],
         "type": "string"
       },
-      "TranslationPreflight": {
-        "additionalProperties": false,
-        "properties": {
-          "count": {
-            "format": "uint32",
-            "maximum": 4294967295,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "declaredLocale": {
-            "type": "string"
-          },
-          "fileDigest": {
-            "type": "string"
-          },
-          "fileName": {
-            "type": "string"
-          },
-          "sourceSnapshotId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
-          "targetLocale": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "fileName",
-          "fileDigest",
-          "declaredLocale",
-          "targetLocale",
-          "count",
-          "sourceSnapshotId"
-        ],
-        "type": "object"
-      },
       "TranslationPreview": {
         "additionalProperties": false,
         "properties": {
@@ -2179,9 +2064,6 @@
           }
         ]
       },
-      "preflight": {
-        "$ref": "#/definitions/TranslationPreflight"
-      },
       "prepared": {
         "$ref": "#/definitions/AdoptionAction"
       },
@@ -2209,7 +2091,6 @@
       "projectionReview",
       "checked",
       "files",
-      "preflight",
       "attempt",
       "preview",
       "prepared",

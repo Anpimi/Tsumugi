@@ -29,13 +29,12 @@ macro_rules! handlers {
         source::read_content_scope,source::prepare_source_adoption,source::read_source_integration,
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
         source::estimate_source_update,source::read_source_impact,
-        source::translation::list_translation_files,source::translation::preflight_translation,
         source::plugin_translation::read_plugin_translation_source,source::plugin_translation::select_plugin_translation,
         source::plugin_translation::list_plugin_translation_files,source::plugin_translation::preflight_plugin_translation,
         source::plugin_translation::start_plugin_translation,source::plugin_translation::prepare_translation_check,
         source::plugin_translation::start_translation_check,source::plugin_translation::finish_translation_check,
         source::plugin_translation::prepare_translation_projection,source::plugin_translation::start_translation_projection,
-        source::translation::start_translation_import,source::translation::read_translation_preview,
+        source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
         source::translation::read_translation_action,
         source::translation::save_translation_revision,source::translation::select_translation_revision,
@@ -68,12 +67,20 @@ pub(super) fn handler<R: tauri::Runtime>()
         handlers!(
             seed_execution_fixture,
             source::preflight_source,
-            source::start_source_import
+            source::start_source_import,
+            source::translation::list_translation_files,
+            source::translation::preflight_translation,
+            source::translation::start_translation_import
         )
     }
     #[cfg(all(test, not(feature = "execution-test-host")))]
     {
-        handlers!(source::preflight_source, source::start_source_import)
+        handlers!(
+            source::preflight_source, source::start_source_import,
+            source::translation::list_translation_files,
+            source::translation::preflight_translation,
+            source::translation::start_translation_import
+        )
     }
     #[cfg(not(any(test, feature = "execution-test-host")))]
     {
@@ -175,6 +182,7 @@ impl ExecutionHost {
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::SourceRunner))
             .map_err(map_read)?;
+        #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::TranslationRunner))
             .map_err(map_read)?;

@@ -52,7 +52,6 @@ export interface Responses {
   history: TranslationHistory;
   pluginPreflight: PluginTranslationPreflight;
   pluginSelection: PluginTranslationSelection | null;
-  preflight: TranslationPreflight;
   prepared: AdoptionAction;
   preview: TranslationPreview;
   projectionReview: TranslationProjectionReview;
@@ -264,14 +263,6 @@ export interface PluginTranslationSelection {
   source: TranslationSourceContext;
   targetLocale: string;
   translation: PluginTranslationView;
-}
-export interface TranslationPreflight {
-  count: number;
-  declaredLocale: string;
-  fileDigest: string;
-  fileName: string;
-  sourceSnapshotId: ExecutionId;
-  targetLocale: string;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;

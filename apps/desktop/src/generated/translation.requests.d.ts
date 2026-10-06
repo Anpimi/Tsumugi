@@ -8,7 +8,6 @@ export type UnsignedDecimal = string;
 export interface Requests {
   action: TranslationActionRequest;
   adopt: TranslationAdoptRequest;
-  capture: TranslationCaptureRequest;
   checkFinish: TranslationCheckFinishRequest;
   checkPrepare: TranslationCheckPrepareRequest;
   files: TranslationFilesRequest;
@@ -22,7 +21,6 @@ export interface Requests {
   save: TranslationSaveRequest;
   select: TranslationSelectRequest;
   source: TranslationSourceRequest;
-  start: TranslationStartRequest;
 }
 export interface TranslationActionRequest {
   actionId: ExecutionId;
@@ -48,13 +46,6 @@ export interface TranslationAdoptionConfirmation {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   targetUnitId: ExecutionId;
-}
-export interface TranslationCaptureRequest {
-  fileName: string;
-  projectId: ExecutionId;
-  selectionId: ExecutionId;
-  sessionToken: string;
-  targetLocale: string;
 }
 export interface TranslationCheckFinishRequest {
   attemptId: ExecutionId;
@@ -187,17 +178,6 @@ export interface TranslationSelectRequest {
 }
 export interface TranslationSourceRequest {
   projectId: ExecutionId;
-  sessionToken: string;
-  targetLocale: string;
-}
-export interface TranslationStartRequest {
-  attemptId: ExecutionId;
-  expectedFileDigest: string;
-  expectedSourceSnapshotId: ExecutionId;
-  fileName: string;
-  languageConfirmed: boolean;
-  projectId: ExecutionId;
-  selectionId: ExecutionId;
   sessionToken: string;
   targetLocale: string;
 }

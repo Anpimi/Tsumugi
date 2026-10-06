@@ -81,6 +81,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
+- Desktop translation imports use declared installed plugin capabilities only. Built-in file listing, preflight and import commands and their extractor runner are excluded from production; regenerate earlier development IPC consumers. Generic editing, history, preview and adoption remain available.
+
 - Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization; uncertain external requests retain their recorded budget exposure and do not replay automatically.
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically. Experimental plugin source adoption fixes mandatory semantic checks to the original source, proposal and selected checker, stores their exact result link and rechecks both permissions at commit. Core maps generic SDK units to project identities and derives revisions from the captured policy's opaque evidence. Source history displays original names and encoded references, with local retry when file details are unavailable.

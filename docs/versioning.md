@@ -351,4 +351,13 @@ while preserving the existing editor and per-entry adoption owner. Pending check
 report incomplete qualification; missing proof for a qualified result remains a
 corruption error. This changes desktop behavior without new DTOs, SDK/process/Store
 formats, schema, dependencies or version sources. Complete native interaction
-acceptance and removal of legacy production translation entry points remain pending.
+acceptance remains pending. Production Desktop IPC now excludes the built-in
+translation listing/preflight/import commands and extractor runner. Their baseline
+is compiled and registered only for tests or the explicit execution-test-host
+feature; the frontend and generated production contracts contain only declared
+plugin import and generic preview/adoption/editor commands. This removes earlier
+development IPC shapes; consumers must regenerate and use the declared plugin
+workflow. No project/SDK/process/Store format, dependency or version source changes
+are introduced. It remains in the same undistributed alpha.1 batch with both
+Unreleased changelogs synchronized and no historical migration. Core still has
+other legacy domain owners awaiting their separate cutover.

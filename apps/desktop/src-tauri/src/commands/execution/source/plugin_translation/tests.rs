@@ -89,12 +89,24 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
     fs::write(directory.join("i18n/zh.json"), "{}").unwrap();
     fs::write(directory.join("i18n/ignored.JSON"), "{}").unwrap();
     let app = crate::commands::register_commands(tauri::test::mock_builder())
+        .invoke_handler(crate::commands::execution::production_handler())
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .unwrap();
     let window =
         tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::App("index.html".into()))
             .build()
             .unwrap();
+    for command in [
+        "list_translation_files",
+        "preflight_translation",
+        "start_translation_import",
+    ] {
+        let error = call(&window, command, json!({})).unwrap_err();
+        assert!(
+            error.as_str().is_some_and(|value| value.contains("not found")),
+            "legacy translation command remained registered: {command}: {error}"
+        );
+    }
     let project = call(&window, "create_project", json!({
         "destination":temporary.path().join("project"), "displayName":"Translation capture", "sourceLocale":"en", "targetLocales":["zh-CN","ja"]
     })).unwrap();

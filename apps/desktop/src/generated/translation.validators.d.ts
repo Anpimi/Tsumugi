@@ -3,7 +3,6 @@ import type { Requests } from "./translation.requests";
 import type { Responses } from "./translation.responses";
 export declare function validateRequestAction(value: unknown): value is Requests["action"];
 export declare function validateRequestAdopt(value: unknown): value is Requests["adopt"];
-export declare function validateRequestCapture(value: unknown): value is Requests["capture"];
 export declare function validateRequestCheckFinish(value: unknown): value is Requests["checkFinish"];
 export declare function validateRequestCheckPrepare(value: unknown): value is Requests["checkPrepare"];
 export declare function validateRequestFiles(value: unknown): value is Requests["files"];
@@ -17,7 +16,6 @@ export declare function validateRequestProjectionStart(value: unknown): value is
 export declare function validateRequestSave(value: unknown): value is Requests["save"];
 export declare function validateRequestSelect(value: unknown): value is Requests["select"];
 export declare function validateRequestSource(value: unknown): value is Requests["source"];
-export declare function validateRequestStart(value: unknown): value is Requests["start"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
 export declare function validateResponseCheckReview(value: unknown): value is Responses["checkReview"];
@@ -26,7 +24,6 @@ export declare function validateResponseFiles(value: unknown): value is Response
 export declare function validateResponseHistory(value: unknown): value is Responses["history"];
 export declare function validateResponsePluginPreflight(value: unknown): value is Responses["pluginPreflight"];
 export declare function validateResponsePluginSelection(value: unknown): value is Responses["pluginSelection"];
-export declare function validateResponsePreflight(value: unknown): value is Responses["preflight"];
 export declare function validateResponsePrepared(value: unknown): value is Responses["prepared"];
 export declare function validateResponsePreview(value: unknown): value is Responses["preview"];
 export declare function validateResponseProjectionReview(value: unknown): value is Responses["projectionReview"];

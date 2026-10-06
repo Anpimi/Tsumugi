@@ -20,6 +20,7 @@ pub(super) struct SourceSession {
     job: Option<ExecutionId>,
     cancel: Cancellation,
     last_start: Option<(ExecutionId, ExecutionId, String)>,
+    #[cfg(any(test, feature = "execution-test-host"))]
     translation_last_start: Option<(
         ExecutionId,
         ExecutionId,

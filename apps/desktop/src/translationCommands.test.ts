@@ -5,7 +5,7 @@ import captureFixture from "../test/fixtures/pluginTranslationCapture.contract.j
 import * as validators from "./generated/translation.validators";
 import unicodeFixture from "../../../crates/core/tests/fixtures/source-unicode.contract.json";
 import { hasUnknownOutcome } from "./projectCommands";
-import { translationCommands, translationHistoryAfter, validateSaveReceipt, type TranslationSaveRequest, type TranslationStartRequest } from "./translationCommands";
+import { translationCommands, translationHistoryAfter, validateSaveReceipt, type TranslationSaveRequest } from "./translationCommands";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -45,16 +45,11 @@ it("keeps source counters exact and refuses added capture authority or invalid o
   expect((await translationCommands.pluginSource(captureFixture.sourceRequest)).contentRevision).toBe("9223372036854775807");
 });
 
-it("sends the shared translation command fixture without changing field names or values", async () => {
-  const start: TranslationStartRequest = fixture.start;
+it("sends the retained manual save fixture without changing field names or values", async () => {
   const save: TranslationSaveRequest = fixture.save;
-  invoke.mockResolvedValueOnce(fixture.start.attemptId).mockResolvedValueOnce(fixture.receipt);
-  await translationCommands.start(start);
+  invoke.mockResolvedValueOnce(fixture.receipt);
   await translationCommands.save(save);
-  expect(invoke.mock.calls).toEqual([
-    ["start_translation_import", { request: fixture.start }],
-    ["save_translation_revision", { request: fixture.save }],
-  ]);
+  expect(invoke.mock.calls).toEqual([["save_translation_revision", { request: fixture.save }]]);
 });
 
 it("round trips exact decimal counters and Unicode text in a confirmed save", async () => {
@@ -86,24 +81,21 @@ it.each([
   expect(() => validateSaveReceipt(value, fixture.save)).toThrow("Invalid save receipt");
 });
 
-it("validates every translation request and response from the shared Rust fixture", async () => {
+it("validates retained translation requests and responses from the shared Rust fixture", async () => {
   const adopt = fixture.adopt;
   if (!validators.validateRequestAdopt(adopt)) throw new Error("Invalid translation fixture");
   for (const [validate, value] of [
-    [validators.validateRequestFiles, fixture.filesRequest], [validators.validateRequestCapture, fixture.capture],
-    [validators.validateRequestStart, fixture.start], [validators.validateRequestPreview, fixture.previewRequest],
+    [validators.validateRequestFiles, fixture.filesRequest], [validators.validateRequestPreview, fixture.previewRequest],
     [validators.validateRequestAdopt, fixture.adopt], [validators.validateRequestHistory, fixture.history],
     [validators.validateRequestSave, fixture.save], [validators.validateRequestAction, fixture.actionRequest],
     [validators.validateRequestSelect, fixture.select], [validators.validateResponseFiles, fixture.files],
-    [validators.validateResponsePreflight, fixture.preflight], [validators.validateResponseAttempt, fixture.start.attemptId],
+    [validators.validateResponseAttempt, fixture.start.attemptId],
     [validators.validateResponsePreview, fixture.preview], [validators.validateResponsePrepared, fixture.prepared],
     [validators.validateResponseHistory, fixture.historyResponse], [validators.validateResponseAction, fixture.selected],
     [validators.validateResponseAction, null], [validators.validateResponseSaved, fixture.receipt],
     [validators.validateResponseSelected, fixture.selected],
   ] as const) expect(validate(value), validate.name).toBe(true);
   for (const [command, request, response, method] of [
-    ["list_translation_files", fixture.filesRequest, fixture.files, () => translationCommands.files(fixture.filesRequest)],
-    ["preflight_translation", fixture.capture, fixture.preflight, () => translationCommands.preflight(fixture.capture)],
     ["read_translation_preview", fixture.previewRequest, fixture.preview, () => translationCommands.preview(fixture.previewRequest)],
     ["prepare_translation_adoption", fixture.adopt, fixture.prepared, () => translationCommands.prepare(adopt)],
     ["read_translation_action", fixture.actionRequest, null, () => translationCommands.action(fixture.actionRequest)],
