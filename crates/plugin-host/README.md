@@ -423,7 +423,9 @@ With `core-adapter`, `RunnerProxy` captures a package contribution and the trust
 installer's `CapturedRuntime` or approved `CapturedNativeRuntime`, selected by
 `RunnerRuntime` and checked against the component runtime kind. Core's fixed
 input retains the complete SDK `ExecutionEnvironmentDescriptor`
-descriptor and derives its digest. Registration and host policy use the exact
+descriptor and derives its digest. `RunnerRuntime::environment()` exposes that
+complete strict SDK value without granting execution. Registration and host
+policy use the exact
 provider/environment pair, so A/B environments for the same package coexist;
 registration order does not choose between them. The adapter
 checks that selection again before staging and sends only the selected item's
@@ -617,3 +619,27 @@ oversized frames, blocked input, crashes, duplicate output, authority revocation
 uncooperative exit and A/B instance cleanup. They do not invoke a paid model or
 open a developer project. The worker is a conformance peer, not a production
 domain implementation or evidence of an accepted desktop plugin flow.
+
+## Desktop Native environment integration
+
+Desktop source, build, translation and adopted Review resolution use the same
+installed catalog, revisioned settings and `RunnerRuntime` owner. All providers
+selected by a declaration must share the approved environment's executable
+runtime family. Native resolution rechecks the independently approved exact
+current application Host; it never installs or borrows a Node tree. Node
+resolution retains complete approved installed-byte and origin checks.
+Read-only environment inspection starts no worker and grants no attempt.
+The desktop controls display approved current Native Host choices and sealed
+approved Node choices for the selected package's runtime types; the backend
+resolves and checks the exact declaration providers before execution.
+
+The desktop's ignored `actual_native_desktop_source_review_and_build_use_independent_grants_and_proofs`
+test accepts an explicit independently built macOS arm64 `examples/flat-json`
+package through `TSUMUGI_TEST_NATIVE_PACKAGE` and its independent expected digest
+through `TSUMUGI_TEST_NATIVE_DIGEST`. It uses production registered IPC with a mock
+window and a synthetic picker selection. Actual Native worker processes, source
+capture/check/adoption, manual translation saving, QA, build/artifact proof,
+release adoption and project reopen remain real. The fixture verifies Host
+revocation, independent grants and exact preserved output bytes without an
+installed Node runtime. It is an IPC/process test, not a native GUI observation.
+No model call, network request or user project is part of that fixture.

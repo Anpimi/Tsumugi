@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { PluginPermissions } from "./PluginManager";
+import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
 import { pluginCommands, type PluginTranslationRequest, type PluginTranslationView } from "./pluginCommands";
 import { translationCommands as commands, type PluginTranslationCaptureRequest, type PluginTranslationPreflight, type PluginTranslationSelection, type PluginStartRequest, type TranslationCheckPrepareRequest, type TranslationCheckFinishRequest, type TranslationCheckReview, type TranslationProjectionPrepareRequest, type TranslationProjectionReview, type TranslationProjectionStartRequest } from "./translationCommands";
 import { executionCommands, executionContext, type AttemptDetail, type CancelRequest } from "./executionCommands";
@@ -29,7 +30,7 @@ function ExecutionReview({ view, checker }: { view: PluginTranslationView; check
   const { t } = useTranslation(), capability = checker ? view.checker : view.extractor;
   return <section aria-label={t(checker ? "translationPlugin.checkReview" : "translationPlugin.producerReview")}>
     <p>{view.declaration.displayName} · {capability.provider.plugin.id} {capability.provider.plugin.version}</p>
-    <p>{t("sourcePlugin.runtimeDetails", { version: view.environment.toolVersion, system: view.environment.platform.operatingSystem, architecture: view.environment.platform.architecture })}</p>
+    <p>{t(view.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", { version: pluginEnvironmentVersion(view.environment), system: view.environment.platform.operatingSystem, architecture: view.environment.platform.architecture })}</p>
     <PluginPermissions permissions={capability.declaration.permissions} /><p>{t("sourcePlugin.unsandboxed")}</p>
     <details><summary>{t("sourcePlugin.fixedDetails")}</summary><dl>
       <dt>{t("sourcePlugin.packageDigest")}</dt><dd><code>{capability.provider.packageDigest}</code></dd>
@@ -67,16 +68,18 @@ export function PluginTranslationControls({ project, open, targetLocale, disable
       const value = await pluginCommands.inventory();
       const enabled = value.packages.filter(item => item.state === "sealed" && value.packageDecisions.some(decision => decision.enabled && decision.packageDigest === item.packageDigest && decision.plugin.id === item.plugin.id && decision.plugin.version === item.plugin.version && decision.plugin.publisher === item.plugin.publisher));
       const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
-      const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.translation-import-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id }] : []));
-      return { choices, runtimes: value.runtimes.filter(item => item.state === "sealed" && value.runtimeDecisions.some(decision => decision.environmentDigest === item.environmentDigest)) };
+      const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.translation-import-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
+      return { choices, runtimes: approvedPluginEnvironments(value) };
     } });
-  const choices = inventory.data?.choices ?? [], runtimes = inventory.data?.runtimes ?? [];
-  const effectiveChoice = choiceKey || choices[0]?.key || "", effectiveRuntime = runtimeDigest || runtimes[0]?.environmentDigest || "";
+  const choices = inventory.data?.choices ?? [], environments = inventory.data?.runtimes ?? [];
+  const effectiveChoice = choiceKey || choices[0]?.key || "";
   const choice = choices.find(item => item.key === effectiveChoice);
+  const runtimes = matchingPluginEnvironments(environments, choice?.runtimeKinds ?? []);
+  const effectiveRuntime = runtimeDigest || runtimes[0]?.environmentDigest || "";
   const translation: PluginTranslationRequest | null = choice && effectiveRuntime ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: effectiveRuntime } : null;
   const source = useSessionQuery({ key: ["translation-plugin-source", targetLocale], scopes: ["source"], enabled: open && !!targetLocale,
     read: () => commands.pluginSource({ ...context, targetLocale }) });
-  const environment = useSessionQuery({ key: ["translation-plugin-environment", effectiveChoice, effectiveRuntime, refresh, inventory.dataUpdatedAt], scopes: [], enabled: open && !disabled && !!translation && !inventory.error && !inventory.isFetching,
+  const environment = useSessionQuery({ key: ["translation-plugin-environment", effectiveChoice, effectiveRuntime, refresh, inventory.dataUpdatedAt], scopes: [], enabled: open && !disabled && !!translation && runtimes.some(item => item.environmentDigest === effectiveRuntime) && !inventory.error && !inventory.isFetching,
     read: async () => { const value = await pluginCommands.translation(translation!); if (!matchesEnvironment(value, translation!)) throw new Error("Translation environment identity changed"); return value; } });
   const nativeScope = source.data?.nativeScopes[Number(scopeIndex)];
   const unavailable = !!inventory.error || !!environment.error || !choice || !effectiveRuntime || !runtimes.some(item => item.environmentDigest === effectiveRuntime) || !environment.data || !source.data || !sameProfile(environment.data.declaration.profile, source.data.profile) || !nativeScope;
@@ -181,12 +184,12 @@ export function PluginTranslationControls({ project, open, targetLocale, disable
       <h3>{t("translationPlugin.controls")}</h3>
       {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("translationPlugin.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
       {inventory.isFetching || environment.isFetching || busy || working ? <p role="status">{t("execution.working")}</p> : null}
-      <label className="source-field">{t("translationPlugin.package")}<select value={effectiveChoice} disabled={draftLocked} onChange={event => { setChoiceKey(event.target.value); setLanguageConfirmed(false); }}>
+      <label className="source-field">{t("translationPlugin.package")}<select value={effectiveChoice} disabled={draftLocked} onChange={event => { setChoiceKey(event.target.value); setRuntimeDigest(""); setLanguageConfirmed(false); }}>
         {!choice ? <option value={effectiveChoice}>{t("translationPlugin.choosePackage")}</option> : null}{choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}
       </select></label>
       <label className="source-field">{t("sourcePlugin.runtime")}<select value={effectiveRuntime} disabled={draftLocked} onChange={event => { setRuntimeDigest(event.target.value); setLanguageConfirmed(false); }}>
         {!runtimes.some(value => value.environmentDigest === effectiveRuntime) ? <option value={effectiveRuntime}>{t("sourcePlugin.chooseRuntime")}</option> : null}
-        {runtimes.map(value => <option key={value.environmentDigest} value={value.environmentDigest}>{t("sourcePlugin.runtimeOption", { version: value.environment.toolVersion, system: value.environment.platform.operatingSystem, architecture: value.environment.platform.architecture })}</option>)}
+        {runtimes.map(value => <option key={value.environmentDigest} value={value.environmentDigest}>{t(value.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(value.environment), system: value.environment.platform.operatingSystem, architecture: value.environment.platform.architecture })}</option>)}
       </select></label>
       <button className="secondary-button" disabled={locked} onClick={() => { setFailure(null); setRefresh(value => value + 1); reads.invalidate(["execution", "source"]); }}>{t("translationPlugin.refresh")}</button>
       {sourceChanged ? <p role="alert">{t("translation.sourceChanged")}</p> : null}

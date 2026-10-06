@@ -373,7 +373,7 @@ fn actual_installed_build_and_checker_ipc_commit_a_complete_release() {
     )
     .unwrap();
     let runtime_approval = RuntimeApproval {
-        environment: descriptor,
+        environment: descriptor.into(),
         origin: crate::runtime_bundle::bundled_origin(),
     };
     let mut catalog = PackageCatalog::new();

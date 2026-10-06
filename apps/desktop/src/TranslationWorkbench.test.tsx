@@ -966,3 +966,29 @@ it("preserves captured input when installed settings change and blocks new autho
   expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible(); expect(screen.getByRole("button", { name: "Import for review" })).toBeDisabled();
   expect(invoke.mock.calls.some(([name]) => name === "start_plugin_translation")).toBe(false);
 });
+
+
+it("prepares Native translation input with the approved Host and unchecked separate consent", async () => {
+  const { nativeInventory, nativePackage, nativeEnvironment, nativeDigest, nativeOrigin } = await import("./testSupport/pluginNativeFixture");
+  const base = invoke.getMockImplementation()!;
+  const nativeView = { ...translationView, environment: nativeEnvironment, environmentDigest: nativeDigest, runtimeOrigin: nativeOrigin };
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_plugin_inventory") return nativeInventory(translationInventory);
+    if (command === "read_plugin_package") return nativePackage(translationPackage);
+    if (command === "read_plugin_translation") return nativeView;
+    const value = await base(command, args);
+    return command === "select_plugin_translation" || command === "preflight_plugin_translation" ? { ...value, translation: nativeView } : value;
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(screen.getByRole("button", { name: "Import file" }));
+  await captureDeclaredTranslation(user);
+  expect(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") })).toHaveValue(nativeDigest);
+  expect(screen.queryByRole("option", { name: /^Node / })).not.toBeInTheDocument();
+  expect(screen.getByText(i18n.t("sourcePlugin.nativeRuntimeDetails", { version: nativeEnvironment.hostVersion, system: "macos", architecture: "aarch64" }))).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: i18n.t("translationPlugin.producerConsent") })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Import for review" })).toBeDisabled();
+  expect(invoke.mock.calls.find(([command]) => command === "read_plugin_translation")![1].request.environmentDigest).toBe(nativeDigest);
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_translation")).toBe(false);
+});

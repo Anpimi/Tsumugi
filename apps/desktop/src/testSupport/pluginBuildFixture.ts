@@ -4,7 +4,10 @@ import packageFixture from "../../test/fixtures/pluginPackage.contract.json";
 import type { PluginBuildView, PluginInventoryView, PluginPackageDetailsView } from "../pluginCommands";
 import { validateResponseBuild, validateResponseInventory, validateResponsePackage } from "../generated/plugins.validators";
 
-export const pluginBuildView = contract.view as PluginBuildView;
+if (!validateResponseBuild(contract.view)) throw new Error("Invalid canonical build fixture");
+export const pluginBuildView: PluginBuildView = contract.view;
+const nodeEnvironment = pluginBuildView.environment;
+if (nodeEnvironment.profile !== "node-system-libraries-v1") throw new Error("Expected the canonical Node environment");
 export const pluginBuildRequest = contract.request;
 export const pluginBuildWorkflow = workflow;
 export const pluginBuildInventory: PluginInventoryView = {
@@ -12,8 +15,8 @@ export const pluginBuildInventory: PluginInventoryView = {
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ ...contract.request.package, origin: contract.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ ...contract.request.package, origin: contract.view.packageOrigin, enabled: true }],
-  runtimes: [{ environment: pluginBuildView.environment, environmentDigest: contract.view.environmentDigest, origin: contract.view.runtimeOrigin, state: "sealed" }],
-  runtimeDecisions: [{ environment: pluginBuildView.environment, environmentDigest: contract.view.environmentDigest, origin: contract.view.runtimeOrigin }],
+  runtimes: [{ environment: nodeEnvironment, environmentDigest: contract.view.environmentDigest, origin: contract.view.runtimeOrigin, state: "sealed" }],
+  runtimeDecisions: [{ environment: nodeEnvironment, environmentDigest: contract.view.environmentDigest, origin: contract.view.runtimeOrigin }],
 };
 export const pluginBuildPackage: PluginPackageDetailsView = {
   enabled: true, packageDigest: contract.request.package.packageDigest,

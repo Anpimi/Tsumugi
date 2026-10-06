@@ -574,8 +574,15 @@ The experimental inventory includes a required strict current-Host availability
 union; callers must regenerate IPC and confirm the exact offered digest.
 Caller-provided descriptors, paths, origins and execution grants are refused.
 Obsolete Native approvals remain removable while Node decisions are preserved.
-No runtime tree is installed and no worker or attempt grant is created. Native
-execution selection remains separate integration work. Project schema 27, settings
+No runtime tree is installed and no worker or attempt grant is created. Desktop
+source/build/translation resolution now uses the same strict SDK
+execution-environment union and existing RunnerRuntime. Native choices require
+the independently approved exact current application Host and no installed Node
+tree; every selected executable provider must match its runtime family.
+Receiving an environment view creates no worker or Core grant. Experimental
+source/build/translation DTO consumers must regenerate the union fields;
+per-attempt execution consent and independent proof remain mandatory. Project
+schema 27, settings
 format 2, SDK/process/receipt formats, dependencies and the same undistributed
 application/SDK alpha.1 batch remain unchanged; no extra bump or historical
 migration is required. Both Unreleased changelogs describe the behavior.

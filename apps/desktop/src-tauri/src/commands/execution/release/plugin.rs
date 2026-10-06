@@ -135,7 +135,7 @@ fn finish<'a>(
 fn selected(environment: &BuildEnvironment) -> Result<ReleaseBuildEnvironment, CommandError> {
     ReleaseBuildEnvironment::new(
         environment.binding.clone(),
-        environment.runtime.descriptor().clone(),
+        environment.runtime.environment(),
     )
     .map_err(map_read)
 }
@@ -147,7 +147,7 @@ fn binding(environment: &BuildEnvironment, checker: bool) -> PluginExecutionBind
             environment.binding.builder.clone()
         },
         profile: Some(environment.binding.declaration.profile.clone()),
-        environment: environment.runtime.descriptor().clone().into(),
+        environment: environment.runtime.environment(),
     }
 }
 fn matches_build(input: &FixedInput, environment: &BuildEnvironment) -> Result<(), CommandError> {

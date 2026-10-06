@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { PluginPermissions } from "./PluginManager";
-import { pluginCommands, type PluginBuildRequest, type PluginBuildView, type PluginInventoryView } from "./pluginCommands";
+import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion, type PluginComponentRuntime, type PluginEnvironmentChoice } from "./pluginEnvironments";
+import { pluginCommands, type PluginBuildRequest, type PluginBuildView } from "./pluginCommands";
 import { releaseCommands, type PluginBuildPrepareRequest, type PluginBuildReview, type ArtifactCheckPrepareRequest, type ArtifactCheckReview, type ArtifactCheckFinishRequest, type PluginStartRequest } from "./releaseCommands";
 import { executionCommands, executionContext, type AttemptDetail, type PrepareRequest, type CancelRequest, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, projectCommands, type ProjectView } from "./projectCommands";
@@ -13,7 +14,7 @@ import { reviewReasonKey } from "./reviewLabels";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { EditorTarget } from "./TranslationWorkbench";
 
-interface BuildChoice { key: string; label: string; package: PluginBuildRequest["package"]; resourceId: string }
+interface BuildChoice { key: string; label: string; package: PluginBuildRequest["package"]; resourceId: string; runtimeKinds: PluginComponentRuntime[] }
 export interface PluginBuildState { busy: boolean; pending: boolean }
 export interface PluginBuildHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
 type Intent =
@@ -29,7 +30,7 @@ function BuildExecutionReview({ build, checker }: { build: PluginBuildView; chec
   const capability = checker ? build.checker : build.builder;
   return <section aria-label={t(checker ? "releasePlugin.checkReview" : "releasePlugin.buildReview")}>
     <p>{build.declaration.displayName} · {capability.provider.plugin.id} {capability.provider.plugin.version}</p>
-    <p>{t("sourcePlugin.runtimeDetails", { version: build.environment.toolVersion, system: build.environment.platform.operatingSystem, architecture: build.environment.platform.architecture })}</p>
+    <p>{t(build.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", { version: pluginEnvironmentVersion(build.environment), system: build.environment.platform.operatingSystem, architecture: build.environment.platform.architecture })}</p>
     <PluginPermissions permissions={capability.declaration.permissions} />
     <p>{t("sourcePlugin.unsandboxed")}</p>
     <details><summary>{t("sourcePlugin.fixedDetails")}</summary><dl>
@@ -50,7 +51,7 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   const { t } = useTranslation();
   const context = executionContext(project), reads = useSessionReads();
   const [choices, setChoices] = useState<BuildChoice[]>([]);
-  const [runtimes, setRuntimes] = useState<PluginInventoryView["runtimes"]>([]);
+  const [environments, setEnvironments] = useState<PluginEnvironmentChoice[]>([]);
   const [choiceKey, setChoiceKey] = useState("");
   const [runtimeDigest, setRuntimeDigest] = useState("");
   const [environment, setEnvironment] = useState<PluginBuildView | null>(null);
@@ -79,6 +80,8 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   const running = useRef(false), mounted = useRef(true), sequence = useRef(0);
   const errorRegion = useRef<HTMLDivElement>(null);
   const choice = choices.find(item => item.key === choiceKey);
+  const runtimes = matchingPluginEnvironments(environments, choice?.runtimeKinds ?? []);
+  const environmentAvailable = runtimes.some(item => item.environmentDigest === runtimeDigest);
   const buildChoice: PluginBuildRequest | null = choice && runtimeDigest ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest } : null;
   const buildRead = useSessionQuery({ key: ["release-plugin-build", attempt], scopes: ["execution"], enabled: open && !!attempt && !busy,
     read: () => attempt ? readCompleteAttempt(context, attempt, "locale-build") : Promise.resolve(null) });
@@ -90,7 +93,7 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   const locked = disabled || busy || !!pending;
   const draftLocked = locked || !!prepared || !!attempt;
   const hasDraft = !attempt && (languages.length > 0 || Object.values(paths).some(value => value.length > 0) || !!prepared);
-  const unavailable = !loading && (!inventoryReady || !choice || !runtimeDigest || !runtimes.some(item => item.environmentDigest === runtimeDigest));
+  const unavailable = !loading && (!inventoryReady || !choice || !environmentAvailable);
   const outputPaths = (locale: string) => (paths[locale] ?? "").split(/\r?\n/).filter(path => path.length > 0);
   const mappingReady = languages.length > 0 && languages.every(locale => outputPaths(locale).length > 0);
   const unit = detail?.recovery.units.length === 1 ? detail.recovery.units[0] : null;
@@ -113,9 +116,9 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
         const inventory = await pluginCommands.inventory();
         const enabled = inventory.packages.filter(item => item.state === "sealed" && inventory.packageDecisions.some(decision => decision.enabled && decision.packageDigest === item.packageDigest && decision.plugin.id === item.plugin.id && decision.plugin.version === item.plugin.version && decision.plugin.publisher === item.plugin.publisher));
         const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
-        const next = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.build-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id }] : []));
-        const environments = inventory.runtimes.filter(item => item.state === "sealed" && inventory.runtimeDecisions.some(decision => decision.environmentDigest === item.environmentDigest));
-        if (!stale) { setChoices(next); setRuntimes(environments); setInventoryReady(true); setChoiceKey(value => value || next[0]?.key || ""); setRuntimeDigest(value => value || environments[0]?.environmentDigest || ""); }
+        const next = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.build-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
+        const environments = approvedPluginEnvironments(inventory);
+        if (!stale) { setChoices(next); setEnvironments(environments); setInventoryReady(true); setChoiceKey(value => value || next[0]?.key || ""); setRuntimeDigest(value => value || matchingPluginEnvironments(environments, next[0]?.runtimeKinds ?? [])[0]?.environmentDigest || ""); }
       } catch (error) { if (!stale) setFailure(commandFailure(error)); }
       finally { if (!stale) setLoading(false); }
     })();
@@ -123,14 +126,14 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   }, [open, project.sessionToken, refresh]);
   useEffect(() => {
     setEnvironment(null);
-    if (!open || !choice || !runtimeDigest || unavailable) return;
+    if (!open || !choice || !environmentAvailable || unavailable) return;
     let stale = false;
     void pluginCommands.build({ package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest }).then(value => {
       if (value.resourceId !== choice.resourceId || value.environmentDigest !== runtimeDigest || [value.builder.provider, value.checker.provider].some(provider => provider.packageDigest !== choice.package.packageDigest || provider.plugin.id !== choice.package.plugin.id || provider.plugin.version !== choice.package.plugin.version || provider.plugin.publisher !== choice.package.plugin.publisher)) throw new Error("Build environment identity changed");
       if (!stale) setEnvironment(value);
     }).catch(error => { if (!stale) setFailure(commandFailure(error)); });
     return () => { stale = true; };
-  }, [open, project.sessionToken, choice?.key, runtimeDigest, refresh, unavailable]);
+  }, [open, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, refresh, unavailable]);
 
   function updatePending(value: Intent | null) { pendingRef.current = value; setPending(value); setReceiptChecked(false); }
   async function perform(work: (current: () => boolean) => Promise<void>) {
@@ -226,13 +229,13 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
       <h3>{t("release.prepare")}</h3><p>{t("release.scope")}</p>
       {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("releasePlugin.failed")}</p><CommandFailureDetails failure={failure} />{typeof failure === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
       {busy || loading ? <p role="status">{t("execution.working")}</p> : null}
-      <label className="source-field">{t("releasePlugin.builder")}<select value={choiceKey} disabled={draftLocked || loading} onChange={event => { setChoiceKey(event.target.value); setEligibility(null); setBuildConsent(null); }}>
+      <label className="source-field">{t("releasePlugin.builder")}<select value={choiceKey} disabled={draftLocked || loading} onChange={event => { const key = event.target.value; setChoiceKey(key); const matching = matchingPluginEnvironments(environments, choices.find(item => item.key === key)?.runtimeKinds ?? []); setRuntimeDigest(current => matching.some(item => item.environmentDigest === current) ? current : matching[0]?.environmentDigest ?? ""); setEligibility(null); setBuildConsent(null); }}>
         {!choice ? <option value={choiceKey}>{t("releasePlugin.chooseBuilder")}</option> : null}
         {choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
       </select></label>
       <label className="source-field">{t("sourcePlugin.runtime")}<select value={runtimeDigest} disabled={draftLocked || loading} onChange={event => { setRuntimeDigest(event.target.value); setEligibility(null); setBuildConsent(null); }}>
         {!runtimes.some(item => item.environmentDigest === runtimeDigest) ? <option value={runtimeDigest}>{t("sourcePlugin.chooseRuntime")}</option> : null}
-        {runtimes.map(item => <option key={item.environmentDigest} value={item.environmentDigest}>{t("sourcePlugin.runtimeOption", { version: item.environment.toolVersion, system: item.environment.platform.operatingSystem, architecture: item.environment.platform.architecture })}</option>)}
+        {runtimes.map(item => <option key={item.environmentDigest} value={item.environmentDigest}>{t(item.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(item.environment), system: item.environment.platform.operatingSystem, architecture: item.environment.platform.architecture })}</option>)}
       </select></label>
       <button className="secondary-button" disabled={locked || !!prepared || !!attempt} onClick={() => { setFailure(null); setEligibility(null); setRefresh(value => value + 1); }}>{t("releasePlugin.refresh")}</button>
       {unavailable ? <p role="status">{t("releasePlugin.unavailable")}</p> : null}

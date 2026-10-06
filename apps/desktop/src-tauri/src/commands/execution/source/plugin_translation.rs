@@ -130,7 +130,7 @@ fn execution_binding(
             environment.binding.extractor.clone()
         },
         profile: Some(environment.binding.declaration.profile.clone()),
-        environment: environment.runtime.descriptor().clone().into(),
+        environment: environment.runtime.environment(),
     }
 }
 fn choice_and_selection(

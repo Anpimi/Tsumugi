@@ -173,7 +173,7 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
     )
     .unwrap();
     let approval = RuntimeApproval {
-        environment: metadata.environment,
+        environment: metadata.environment.into(),
         origin: crate::runtime_bundle::bundled_origin(),
     };
     fixture.install_runtime(&runtime, &approval);

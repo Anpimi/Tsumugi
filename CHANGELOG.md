@@ -6,7 +6,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
-- Experimental environment decisions now retain complete Node and Native application Host descriptions in one revisioned local snapshot. Native decisions do not install runtime trees or grant execution permission. Current development settings use format 2; earlier settings are refused unchanged without migration. The extension inventory distinguishes recorded Native approval from missing Node installations. The Extensions panel observes the actual current application Host and saves or revokes its exact approval through the existing revisioned settings action. Stale application approvals remain removable; execution selection remains in development.
+- Experimental environment decisions now retain complete Node and Native application Host descriptions in one revisioned local snapshot. Native decisions do not install runtime trees or grant execution permission. Current development settings use format 2; earlier settings are refused unchanged without migration. The extension inventory distinguishes recorded Native approval from missing Node installations. The Extensions panel observes the actual current application Host and saves or revokes its exact approval through the existing revisioned settings action. Stale application approvals remain removable. Source, build and translation choices resolve the exact approved current Native Host or sealed approved Node environment, match executable component runtime families and retain separate per-attempt consent.
 
 Development target: **0.2.0-alpha.1**.
 
@@ -14,7 +14,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
-- The experimental Host/Core adapter now runs captured Native Worker packages with an independently approved identity of the actual application Host, exact live consent and original channel evidence. Core stores the strict Native or Node environment in the existing ledger and reopens historical results without restoring execution grants. Native environments carry no artificial Node artifacts; desktop discovery and approval use the current application Host; native execution selection remains separate work. The experimental Rust environment port now uses `ExecutionEnvironmentDescriptor`, and current project schema 27 refuses earlier development directories unchanged, without migration.
+- The experimental Host/Core adapter now runs captured Native Worker packages with an independently approved identity of the actual application Host, exact live consent and original channel evidence. Core stores the strict Native or Node environment in the existing ledger and reopens historical results without restoring execution grants. Native environments carry no artificial Node artifacts; desktop discovery and approval use the current application Host; desktop capability selection resolves the same strict SDK environment union and refuses mixed or mismatched provider runtime families. The experimental Rust environment port now uses `ExecutionEnvironmentDescriptor`, and current project schema 27 refuses earlier development directories unchanged, without migration.
 
 - The experimental public SDK offers an optional Rust native component entry point that owns strict framing, exact request/result identity, cooperative cancellation and cleanup. Authors return opaque capability output through the existing protocol; captured package/channel authorization and complete Native/Core environment binding remain Host responsibilities.
 

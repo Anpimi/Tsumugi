@@ -1435,7 +1435,7 @@
             "$ref": "#/definitions/BuildDeclaration"
           },
           "environment": {
-            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
           },
           "environmentDigest": {
             "type": "string"
@@ -1933,7 +1933,7 @@
             "$ref": "#/definitions/SourceImportDeclaration"
           },
           "environment": {
-            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
           },
           "environmentDigest": {
             "type": "string"
@@ -1981,7 +1981,7 @@
             "$ref": "#/definitions/TranslationImportDeclaration"
           },
           "environment": {
-            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
           },
           "environmentDigest": {
             "type": "string"

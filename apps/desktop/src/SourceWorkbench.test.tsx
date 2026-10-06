@@ -406,7 +406,7 @@ it.each([[1, 1], [1, 2], [2, 1], [3, 2], [2, 3]])("keeps unsupported source decl
   render(<SourceWorkbench project={project} disabled={false} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));
-  await screen.findByText(/independently approve and install/);
+  await screen.findByText(i18n.t("sourcePlugin.unavailable"));
   expect(screen.getByRole("button", { name: "Choose source folder" })).toBeDisabled();
   expect(invoke.mock.calls.filter(([name]) => name === "read_plugin_source" || name === "select_plugin_source")).toHaveLength(0);
 });
@@ -417,7 +417,7 @@ it("keeps source controls unavailable without an independently approved installe
   render(<SourceWorkbench project={project} disabled={false} />);
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));
-  await screen.findByText(/independently approve and install/);
+  await screen.findByText(i18n.t("sourcePlugin.unavailable"));
   expect(screen.getByRole("button", { name: "Choose source folder" })).toBeDisabled();
   expect(invoke.mock.calls.some(([name]) => name === "select_plugin_source")).toBe(false);
 });
@@ -550,4 +550,39 @@ it("shows every captured source diagnostic without interpreting a domain profile
   expect(screen.getByText("source-template")).toBeVisible();
   expect(screen.getByText("catalog.incomplete-metadata")).toBeVisible();
   expect(invoke.mock.calls.some(([name]) => name === "adopt_execution")).toBe(false);
+});
+
+
+it("selects the approved current Native Host for a Native source without borrowing Node", async () => {
+  const { nativeInventory, nativePackage, nativeEnvironment, nativeDigest, nativeOrigin } = await import("./testSupport/pluginNativeFixture");
+  const base = invoke.getMockImplementation()!;
+  const nativeView = { ...pluginSourceView, environment: nativeEnvironment, environmentDigest: nativeDigest, runtimeOrigin: nativeOrigin };
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_plugin_inventory") return nativeInventory(pluginSourceInventory);
+    if (command === "read_plugin_package") return nativePackage(pluginSourcePackage);
+    if (command === "read_plugin_source") return nativeView;
+    const value = await base(command, args);
+    return command === "preflight_plugin_source" ? { ...value, source: nativeView } : value;
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  expect(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") })).toHaveValue(nativeDigest);
+  expect(screen.queryByRole("option", { name: /^Node / })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.find(([command]) => command === "read_plugin_source")![1].request.environmentDigest).toBe(nativeDigest);
+  await user.click(screen.getByRole("checkbox", { name: /^I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  expect(await screen.findByText(i18n.t("sourcePlugin.nativeRuntimeDetails", { version: nativeEnvironment.hostVersion, system: "macos", architecture: "aarch64" }))).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: i18n.t("sourcePlugin.producerConsent") })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Import for preview" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_source")).toBe(false);
+});
+it("keeps a Native source unavailable while only Node has an approval", async () => {
+  const { nativeInventory, nativePackage } = await import("./testSupport/pluginNativeFixture");
+  const base = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "read_plugin_inventory" ? Promise.resolve(nativeInventory(pluginSourceInventory, false)) : command === "read_plugin_package" ? Promise.resolve(nativePackage(pluginSourcePackage)) : base(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Source content" }));
+  await screen.findByText(i18n.t("sourcePlugin.unavailable"));
+  expect(screen.getByRole("button", { name: "Choose source folder" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_source" || command === "start_plugin_source")).toBe(false);
 });

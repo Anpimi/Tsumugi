@@ -22,7 +22,7 @@ pub struct PluginBuildView {
     pub builder: sdk::CapabilityBinding,
     pub checker: sdk::CapabilityBinding,
     pub package_origin: PluginOriginView,
-    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub environment: sdk::ExecutionEnvironmentDescriptor,
     pub environment_digest: String,
     pub runtime_origin: PluginOriginView,
 }
@@ -38,8 +38,8 @@ impl BuildEnvironment {
             builder: self.binding.builder.clone(),
             checker: self.binding.checker.clone(),
             package_origin: self.package.origin().into(),
-            environment: self.runtime.descriptor().clone(),
-            environment_digest: self.runtime.descriptor().digest().map_err(|_| invalid())?,
+            environment: self.runtime.environment(),
+            environment_digest: self.runtime.environment().digest().map_err(|_| invalid())?,
             runtime_origin: (&self.runtime_origin).into(),
         })
     }

@@ -299,6 +299,39 @@ impl ApplicationPlugins {
 
 /// Use the same current decision and platform policy for individual runtime
 /// inspection and complete source resolution; no descriptor comes from a caller.
+pub(super) fn load_approved_environment(
+    store: &PackageStore,
+    settings: &PluginSettings,
+    digest: &str,
+    allowed: impl Fn() -> bool,
+) -> Result<(tsumugi_plugin_host::core::RunnerRuntime, PackageOrigin), CommandError> {
+    if !allowed() {
+        return Err(map_store_error(InstallError::AuthorityRevoked));
+    }
+    let approval = settings
+        .runtimes()
+        .iter()
+        .find(|entry| entry.environment.digest().ok().as_deref() == Some(digest))
+        .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
+    match &approval.environment {
+        sdk::ExecutionEnvironmentDescriptor::Captured(_) => {
+            let (runtime, origin) = load_approved_runtime(store, settings, digest, &allowed)?;
+            Ok((runtime.into(), origin))
+        }
+        sdk::ExecutionEnvironmentDescriptor::Native(environment) => {
+            if approval.origin != native_host_origin() {
+                return Err(map_store_error(InstallError::ApprovalMismatch));
+            }
+            let runtime = CapturedNativeRuntime::capture(environment)
+                .map_err(|error| map_store_error(error.into()))?;
+            if !allowed() {
+                return Err(map_store_error(InstallError::AuthorityRevoked));
+            }
+            Ok((runtime.into(), approval.origin.clone()))
+        }
+    }
+}
+
 pub(super) fn load_approved_runtime(
     store: &PackageStore,
     settings: &PluginSettings,

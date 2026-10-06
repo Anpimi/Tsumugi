@@ -1,13 +1,13 @@
 //! Resolve a declared capability pair and its independently approved runtime
 //! from one installed-settings snapshot. This capture grants no execution.
 use super::*;
-use tsumugi_plugin_host::{CapturedRuntime, PackageImage, catalog::RegisteredPackage};
+use tsumugi_plugin_host::{PackageImage, catalog::RegisteredPackage, core::RunnerRuntime};
 
 #[derive(Clone)]
 pub(in crate::commands) struct DeclaredEnvironment<B> {
     pub package: RegisteredPackage,
     pub binding: B,
-    pub runtime: CapturedRuntime,
+    pub runtime: RunnerRuntime,
     pub staging_parent: PathBuf,
     pub resource_id: Option<String>,
     pub settings_revision: UnsignedDecimal,
@@ -77,6 +77,7 @@ impl ApplicationPlugins {
             .map_err(packages::catalog_error)?;
         let (binding, capabilities) =
             resolve(package.image()).map_err(|error| map_store_error(InstallError::Host(error)))?;
+        let mut runtime_kind = None;
         for capability in capabilities {
             let resolved = catalog
                 .lookup(&capability.provider)
@@ -84,8 +85,6 @@ impl ApplicationPlugins {
             if resolved.binding() != &capability {
                 return Err(invalid());
             }
-            // The approved environment currently runs JavaScript components.
-            // A native worker cannot borrow that environment's approval.
             let component = package
                 .image()
                 .manifest()
@@ -94,12 +93,31 @@ impl ApplicationPlugins {
                 .iter()
                 .find(|component| component.id == capability.provider.component_id)
                 .ok_or_else(invalid)?;
-            if component.runtime != sdk::RuntimeKind::JavaScript {
+            if !matches!(
+                component.runtime,
+                sdk::RuntimeKind::JavaScript | sdk::RuntimeKind::NativeWorker
+            ) || runtime_kind.is_some_and(|kind| kind != component.runtime)
+            {
                 return Err(invalid());
             }
+            runtime_kind = Some(component.runtime);
         }
         let (runtime, runtime_origin) =
-            runtimes::load_approved_runtime(store, &settings, environment_digest, allowed)?;
+            runtimes::load_approved_environment(store, &settings, environment_digest, allowed)?;
+        // All selected executable providers share one exact environment family.
+        // A native component cannot borrow an installed Node approval or vice versa.
+        if !matches!(
+            (runtime_kind, &runtime),
+            (
+                Some(sdk::RuntimeKind::JavaScript),
+                RunnerRuntime::JavaScript(_)
+            ) | (
+                Some(sdk::RuntimeKind::NativeWorker),
+                RunnerRuntime::Native(_)
+            )
+        ) {
+            return Err(invalid());
+        }
         if store.settings(allowed).map_err(map_store_error)? != settings {
             return Err(map_store_error(InstallError::RevisionConflict));
         }
@@ -125,3 +143,6 @@ impl ApplicationPlugins {
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(super) mod test_support;
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests;

@@ -3,7 +3,10 @@ import workflow from "../../test/fixtures/pluginSourceWorkflow.contract.json";
 import packageFixture from "../../test/fixtures/pluginPackage.contract.json";
 import type { PluginInventoryView, PluginPackageDetailsView, PluginSourceView } from "../pluginCommands";
 
-export const pluginSourceView = source.view as PluginSourceView;
+if (!validateResponseSource(source.view)) throw new Error("Invalid canonical source fixture");
+export const pluginSourceView: PluginSourceView = source.view;
+const nodeEnvironment = pluginSourceView.environment;
+if (nodeEnvironment.profile !== "node-system-libraries-v1") throw new Error("Expected the canonical Node environment");
 export const pluginSourceRequest = source.request;
 export const pluginSourceWorkflow = workflow;
 export const pluginSourceInventory: PluginInventoryView = {
@@ -11,8 +14,8 @@ export const pluginSourceInventory: PluginInventoryView = {
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
   packages: [{ plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, enabled: true }],
-  runtimes: [{ environment: pluginSourceView.environment, environmentDigest: source.view.environmentDigest, origin: source.view.runtimeOrigin, state: "sealed" }],
-  runtimeDecisions: [{ environment: pluginSourceView.environment, environmentDigest: source.view.environmentDigest, origin: source.view.runtimeOrigin }],
+  runtimes: [{ environment: nodeEnvironment, environmentDigest: source.view.environmentDigest, origin: source.view.runtimeOrigin, state: "sealed" }],
+  runtimeDecisions: [{ environment: nodeEnvironment, environmentDigest: source.view.environmentDigest, origin: source.view.runtimeOrigin }],
 };
 export const pluginSourcePackage: PluginPackageDetailsView = {
   enabled: true, packageDigest: source.request.package.packageDigest,

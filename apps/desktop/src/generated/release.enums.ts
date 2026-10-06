@@ -3,6 +3,7 @@ export const DeliveryFileStateValues = ["pending","succeeded","failed","unknown"
 export const DeliveryPreviewStateValues = ["absent","same","conflict"] as const;
 export const DeliveryStateValues = ["pending","succeeded","partial","failed","unknown"] as const;
 export const EffectKindValues = ["read-only","proposal","external"] as const;
+export const NativeHostProfileValues = ["native-application-host-v1"] as const;
 export const ReleaseExceptionKindValues = ["source-fallback","qa-waiver"] as const;
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;

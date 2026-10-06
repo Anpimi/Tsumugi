@@ -120,8 +120,7 @@ mod unix {
     }
 
     #[test]
-    fn source_resolution_rejects_nonresources_changed_policy_executable_data_and_native_components()
-    {
+    fn source_resolution_rejects_invalid_resources_mixed_runtimes_and_unapproved_native_host() {
         for scenario in 0..5 {
             let fixture = Fixture::new(|manifest, files| match scenario {
                 0 => {}
@@ -164,11 +163,18 @@ mod unix {
                 request.resource_id = "extract".into();
             }
             let error = fixture.owner.capture_source(&request).err().unwrap();
-            assert_ne!(error.reason.as_deref(), Some("plugin-approval-mismatch"));
-            assert!(matches!(
-                error.code,
-                CommandErrorCode::OutputInvalid | CommandErrorCode::InvalidInput
-            ));
+            if scenario == 3 {
+                // Native providers are supported, but installation/enablement
+                // without an independent current Host approval cannot run them.
+                assert_eq!(error.reason.as_deref(), Some("plugin-approval-mismatch"));
+                assert_eq!(error.code, CommandErrorCode::PermissionDenied);
+            } else {
+                assert_ne!(error.reason.as_deref(), Some("plugin-approval-mismatch"));
+                assert!(matches!(
+                    error.code,
+                    CommandErrorCode::OutputInvalid | CommandErrorCode::InvalidInput
+                ));
+            }
         }
     }
 
@@ -244,7 +250,11 @@ mod unix {
             view.extractor.provider.package_digest,
             fixture.approval.package_digest
         );
-        assert_eq!(&view.environment, approval.captured_environment().unwrap());
+        assert_eq!(view.environment, approval.environment);
+        assert!(matches!(
+            view.environment,
+            sdk::ExecutionEnvironmentDescriptor::Captured(_)
+        ));
         assert_eq!(view.settings_revision.get(), 1);
         assert_eq!(
             fs::read(fixture.root().join("settings.json")).unwrap(),

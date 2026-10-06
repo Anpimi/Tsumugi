@@ -126,7 +126,7 @@ fn binding(environment: &SourceEnvironment, checker: bool) -> PluginExecutionBin
             environment.binding.extractor.clone()
         },
         profile: Some(environment.binding.declaration.profile.clone()),
-        environment: environment.runtime.descriptor().clone().into(),
+        environment: environment.runtime.environment(),
     }
 }
 fn matches_source(input: &FixedInput, environment: &SourceEnvironment) -> Result<(), CommandError> {
@@ -345,7 +345,7 @@ pub async fn preflight_plugin_source(
                             review: Some(
                                 tsumugi_core::content::SourceReviewBinding::capture(
                                     &environment.binding.review,
-                                    environment.runtime.descriptor(),
+                                    &environment.runtime.environment(),
                                 )
                                 .map_err(map_source)?,
                             ),

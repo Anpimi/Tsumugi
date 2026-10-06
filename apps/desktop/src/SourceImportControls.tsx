@@ -2,13 +2,14 @@ import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "reac
 import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { PluginPermissions } from "./PluginManager";
-import { pluginCommands, type PluginSourceRequest, type PluginSourceView, type PluginInventoryView } from "./pluginCommands";
+import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion, type PluginComponentRuntime, type PluginEnvironmentChoice } from "./pluginEnvironments";
+import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
 import { sourceCommands, type PluginCaptureRequest, type PluginSourceSelection, type PluginSourcePreflight, type PluginStartRequest, type SourceCheckPrepareRequest, type SourceCheckReview, type SourceCheckFinishRequest } from "./sourceCommands";
 import { executionCommands, executionContext, type AttemptDetail } from "./executionCommands";
 import { useSessionQuery } from "./SessionReadProvider";
 import type { ProjectView } from "./projectCommands";
 
-interface SourceChoice { key: string; label: string; package: PluginSourceRequest["package"]; resourceId: string }
+interface SourceChoice { key: string; label: string; package: PluginSourceRequest["package"]; resourceId: string; runtimeKinds: PluginComponentRuntime[] }
 export interface SourceImportState { busy: boolean; pending: boolean; hasDraft: boolean }
 export interface SourceImportHandle { discard: () => Promise<void> }
 function uncertain(error: unknown) {
@@ -20,7 +21,7 @@ function ExecutionReview({ source, checker }: { source: PluginSourceView; checke
   const capability = checker ? source.checker : source.extractor;
   return <section aria-label={t("sourcePlugin.executionReview")}>
     <p>{source.declaration.displayName} · {capability.provider.plugin.id} {capability.provider.plugin.version}</p>
-    <p>{t("sourcePlugin.runtimeDetails", { version: source.environment.toolVersion, system: source.environment.platform.operatingSystem, architecture: source.environment.platform.architecture })}</p>
+    <p>{t(source.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", { version: pluginEnvironmentVersion(source.environment), system: source.environment.platform.operatingSystem, architecture: source.environment.platform.architecture })}</p>
     <PluginPermissions permissions={capability.declaration.permissions} />
     <p>{t("sourcePlugin.unsandboxed")}</p>
     <details><summary>{t("sourcePlugin.fixedDetails")}</summary><dl>
@@ -42,7 +43,7 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
   const context = executionContext(project);
   const validated = validation === "valid";
   const [choices, setChoices] = useState<SourceChoice[]>([]);
-  const [runtimes, setRuntimes] = useState<PluginInventoryView["runtimes"]>([]);
+  const [environments, setEnvironments] = useState<PluginEnvironmentChoice[]>([]);
   const [choiceKey, setChoiceKey] = useState("");
   const [runtimeDigest, setRuntimeDigest] = useState("");
   const [environment, setEnvironment] = useState<PluginSourceView | null>(null);
@@ -67,6 +68,8 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
   const running = useRef(false), mounted = useRef(true), sequence = useRef(0);
   const errorRegion = useRef<HTMLDivElement>(null);
   const choice = choices.find(item => item.key === choiceKey);
+  const runtimes = matchingPluginEnvironments(environments, choice?.runtimeKinds ?? []);
+  const environmentAvailable = runtimes.some(item => item.environmentDigest === runtimeDigest);
   const sourceChoice: PluginSourceRequest | null = choice && runtimeDigest ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest } : null;
   const pending = !!startIntent || !!checkIntent || !!finishIntent;
   const locked = disabled || busy || pending;
@@ -85,23 +88,23 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
         const inventory = await pluginCommands.inventory();
         const enabled = inventory.packages.filter(item => item.state === "sealed" && inventory.packageDecisions.some(decision => decision.enabled && decision.packageDigest === item.packageDigest && decision.plugin.id === item.plugin.id && decision.plugin.version === item.plugin.version && decision.plugin.publisher === item.plugin.publisher));
         const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
-        const next = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.source-import-declaration" && contribution.contribution.schema.schemaVersion === 2 && contribution.contribution.schema.behaviorVersion === 2 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id }] : []));
-        const environments = inventory.runtimes.filter(item => item.state === "sealed" && inventory.runtimeDecisions.some(decision => decision.environmentDigest === item.environmentDigest));
-        if (!stale) { setInventoryReady(true); setChoices(next); setRuntimes(environments); setChoiceKey(current => current || next[0]?.key || ""); setRuntimeDigest(current => current || environments[0]?.environmentDigest || ""); }
+        const next = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.source-import-declaration" && contribution.contribution.schema.schemaVersion === 2 && contribution.contribution.schema.behaviorVersion === 2 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
+        const environments = approvedPluginEnvironments(inventory);
+        if (!stale) { setInventoryReady(true); setChoices(next); setEnvironments(environments); setChoiceKey(current => current || next[0]?.key || ""); setRuntimeDigest(current => current || matchingPluginEnvironments(environments, next[0]?.runtimeKinds ?? [])[0]?.environmentDigest || ""); }
       } catch (error) { if (!stale) setFailure(commandFailure(error)); }
       finally { if (!stale) setLoading(false); }
     })();
     return () => { stale = true; };
   }, [open, project.sessionToken, refresh]);
   useEffect(() => {
-    if (!open || !choice || !runtimeDigest) { setEnvironment(null); setEnvironmentLoading(false); return; }
+    if (!open || !choice || !environmentAvailable) { setEnvironment(null); setEnvironmentLoading(false); return; }
     let stale = false;
     setEnvironment(null); setEnvironmentLoading(true);
     void pluginCommands.source({ package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest })
       .then(value => { if (!stale) setEnvironment(value); }, error => { if (!stale) setFailure(commandFailure(error)); })
       .finally(() => { if (!stale) setEnvironmentLoading(false); });
     return () => { stale = true; };
-  }, [open, project.sessionToken, choice?.key, runtimeDigest, refresh]);
+  }, [open, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, refresh]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
   useEffect(() => { if (checkRead.error) setFailure(commandFailure(checkRead.error)); }, [checkRead.error]);
   useEffect(() => {
@@ -146,18 +149,18 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
       if (current()) { await onValidated(); if (current()) setFinishIntent(null); }
     } catch (error) { if (current() && !uncertain(error)) setFinishIntent(null); throw error; }
   }
-  const unavailable = !loading && (!inventoryReady || !choices.length || !runtimes.length);
+  const unavailable = !loading && (!inventoryReady || !choice || !environmentAvailable);
   return <section aria-label={t("sourcePlugin.importControls")} aria-busy={busy || loading || environmentLoading}>
     {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("sourcePlugin.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
     {busy || loading || environmentLoading ? <p role="status">{t("execution.working")}</p> : null}
     {canCapture || (proposal && !validated) ? <>
-      <label className="source-field">{t("source.integration")}<select value={choiceKey} disabled={locked || checkActive || loading} onChange={event => { changed(); setChoiceKey(event.target.value); }}>
+      <label className="source-field">{t("source.integration")}<select value={choiceKey} disabled={locked || checkActive || loading} onChange={event => { changed(); const key = event.target.value; setChoiceKey(key); const matching = matchingPluginEnvironments(environments, choices.find(item => item.key === key)?.runtimeKinds ?? []); setRuntimeDigest(current => matching.some(item => item.environmentDigest === current) ? current : matching[0]?.environmentDigest ?? ""); }}>
         {!choices.some(item => item.key === choiceKey) ? <option value={choiceKey}>{t("sourcePlugin.choosePackage")}</option> : null}
         {choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
       </select></label>
       <label className="source-field">{t("sourcePlugin.runtime")}<select value={runtimeDigest} disabled={locked || checkActive || loading} onChange={event => { changed(); setRuntimeDigest(event.target.value); }}>
         {!runtimes.some(item => item.environmentDigest === runtimeDigest) ? <option value={runtimeDigest}>{t("sourcePlugin.chooseRuntime")}</option> : null}
-        {runtimes.map(item => <option key={item.environmentDigest} value={item.environmentDigest}>{t("sourcePlugin.runtimeOption", { version: item.environment.toolVersion, system: item.environment.platform.operatingSystem, architecture: item.environment.platform.architecture })}</option>)}
+        {runtimes.map(item => <option key={item.environmentDigest} value={item.environmentDigest}>{t(item.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(item.environment), system: item.environment.platform.operatingSystem, architecture: item.environment.platform.architecture })}</option>)}
       </select></label>
       <button className="secondary-button" disabled={locked || checkActive} onClick={() => { setFailure(null); setRefresh(value => value + 1); }}>{t("sourcePlugin.refresh")}</button>
       {unavailable ? <p role="status">{t("sourcePlugin.unavailable")}</p> : null}

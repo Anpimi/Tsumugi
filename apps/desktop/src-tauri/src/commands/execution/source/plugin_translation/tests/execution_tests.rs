@@ -108,7 +108,7 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
     )
     .unwrap();
     let runtime_approval = RuntimeApproval {
-        environment: metadata.environment,
+        environment: metadata.environment.into(),
         origin: crate::runtime_bundle::bundled_origin(),
     };
     fixture.install_runtime(&runtime, &runtime_approval);

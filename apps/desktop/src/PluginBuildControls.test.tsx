@@ -309,3 +309,45 @@ it("cancels a queued task with the original cancellation request after a lost re
   expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.recordRelease") })).not.toBeInTheDocument();
   expect(await screen.findByRole("button", { name: i18n.t("releasePlugin.newBuild") })).toBeEnabled();
 });
+
+
+it("prepares a Native builder with Host presentation and independent unchecked consent", async () => {
+  const { nativeInventory, nativePackage, nativeEnvironment, nativeDigest, nativeOrigin } = await import("./testSupport/pluginNativeFixture");
+  const base = invoke.getMockImplementation()!;
+  const nativeView = { ...pluginBuildView, environment: nativeEnvironment, environmentDigest: nativeDigest, runtimeOrigin: nativeOrigin };
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_plugin_inventory") return nativeInventory(pluginBuildInventory);
+    if (command === "read_plugin_package") return nativePackage(pluginBuildPackage);
+    if (command === "read_plugin_build") return nativeView;
+    const value = await base(command, args);
+    return command === "prepare_plugin_build" ? { ...value, build: nativeView } : value;
+  });
+  await ready(["zh-CN"], false);
+  expect(captured!.build.environmentDigest).toBe(nativeDigest);
+  expect(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") })).toHaveValue(nativeDigest);
+  expect(screen.queryByRole("option", { name: /^Node / })).not.toBeInTheDocument();
+  expect(screen.getByText(i18n.t("sourcePlugin.nativeRuntimeDetails", { version: nativeEnvironment.hostVersion, system: "macos", architecture: "aarch64" }))).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: i18n.t("release.build") })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(false);
+});
+
+it("keeps Native build preparation unavailable when only Node is approved", async () => {
+  const { nativeInventory, nativePackage } = await import("./testSupport/pluginNativeFixture");
+  const base = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_plugin_inventory") return nativeInventory(pluginBuildInventory, false);
+    if (command === "read_plugin_package") return nativePackage(pluginBuildPackage);
+    return base(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReleaseWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await screen.findByText(i18n.t("releasePlugin.unavailable"));
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) }), "deliverables/zh-CN/messages.json");
+  expect(screen.getByRole("button", { name: i18n.t("release.check") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") })).toBeDisabled();
+  expect(screen.queryByRole("option", { name: /^Node / })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_build" || command === "prepare_plugin_build" || command === "start_plugin_build")).toBe(false);
+});

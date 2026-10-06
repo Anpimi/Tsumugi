@@ -139,7 +139,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     )
     .unwrap();
     let runtime_approval = RuntimeApproval {
-        environment: descriptor,
+        environment: descriptor.into(),
         origin: crate::runtime_bundle::bundled_origin(),
     };
     let mut catalog = PackageCatalog::new();
@@ -866,3 +866,6 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     }
     removable(temporary.path());
 }
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod native;

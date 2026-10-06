@@ -18,6 +18,8 @@ use tsumugi_plugin_sdk as sdk;
 pub(super) mod builds;
 pub(super) mod defaults;
 mod environment;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+pub(in crate::commands) use environment::test_support::Fixture as InstalledFixture;
 pub(super) mod packages;
 pub(super) mod reviews;
 pub(super) mod runtimes;

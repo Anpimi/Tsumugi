@@ -109,9 +109,7 @@ fn consent_environment(
             ))
         })?;
     if environment.1.binding.checker != binding.checker.capability
-        || tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor::from(
-            environment.1.runtime.descriptor().clone(),
-        ) != binding.checker.environment
+        || environment.1.runtime.environment() != binding.checker.environment
     {
         return Err(map_recover(ExecutionError::new(
             ErrorCode::DependencyConflict,

@@ -27,6 +27,12 @@ export type PermissionRequest =
       kind: "process";
       program: string;
     };
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
 export type RuntimeArchitecture = "aarch64" | "x86_64";
 export type RuntimeOperatingSystem = "macos" | "linux";
 /**
@@ -36,6 +42,21 @@ export type RuntimeOperatingSystem = "macos" | "linux";
  * OS image. Runtime capture must refuse unsupported profiles and platforms.
  */
 export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
 export type UnsignedDecimal = string;
 /**
  * Multiple providers retain separate provenance. A later merge is another
@@ -189,29 +210,8 @@ export type PluginNativeHostOfferView =
       availability: "unavailable";
       reason: NativeHostUnavailableReason;
     };
-/**
- * Identity of the actual application Host executable. This neither identifies
- * a publisher nor captures operating-system libraries or dynamically loaded
- * images. It must come from the trusted Host's OS observation, not a worker.
- */
-export type NativeHostExecutableIdentity =
-  | {
-      kind: "darwin-code-directory-hash-v1";
-      value: string;
-    }
-  | {
-      kind: "linux-executable-sha256-v1";
-      value: string;
-    };
-export type NativeHostProfile = "native-application-host-v1";
 export type NativeHostUnavailableReason = "unsupported-platform" | "identity-unavailable";
 export type PluginObjectState = "sealed" | "recovery-required";
-/**
- * Fixed execution choices for the two actual runtime profiles. Each variant
- * has a strict, distinct profile value and its own data/hash owner. Captured
- * Node serialization and digests remain exactly those of its existing type.
- */
-export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
 export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
 
@@ -286,7 +286,7 @@ export interface PluginBuildView {
   builder: CapabilityBinding;
   checker: CapabilityBinding;
   declaration: BuildDeclaration;
-  environment: RuntimeEnvironmentDescriptor;
+  environment: ExecutionEnvironmentDescriptor;
   environmentDigest: string;
   packageOrigin: PluginOriginView;
   resourceId: string;
@@ -332,6 +332,20 @@ export interface RuntimeArtifactBinding {
 export interface RuntimePlatform {
   architecture: RuntimeArchitecture;
   operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
 }
 export interface PluginOriginView {
   publisherId: string;
@@ -441,20 +455,6 @@ export interface PluginBundledPackageView {
   packageDigest: string;
   plugin: PluginIdentity;
 }
-/**
- * The native executable and its package resources are already fixed by the
- * separate provider binding. Native execution has no Node/tool/bootstrap tree.
- * This profile instead records the actual application Host executable identity.
- */
-export interface NativeHostEnvironmentDescriptor {
-  executable: NativeHostExecutableIdentity;
-  hostVersion: string;
-  platform: RuntimePlatform;
-  processProtocol: number;
-  profile: NativeHostProfile;
-  protocolVersion: number;
-  sdkVersion: string;
-}
 export interface PluginPackageDecisionView {
   enabled: boolean;
   origin: PluginOriginView;
@@ -496,7 +496,7 @@ export interface PluginPackageDetailsView {
 export interface PluginSourceView {
   checker: CapabilityBinding;
   declaration: SourceImportDeclaration;
-  environment: RuntimeEnvironmentDescriptor;
+  environment: ExecutionEnvironmentDescriptor;
   environmentDigest: string;
   extractor: CapabilityBinding;
   packageOrigin: PluginOriginView;
@@ -556,7 +556,7 @@ export interface ReviewRuleDeclaration {
 export interface PluginTranslationView {
   checker: CapabilityBinding;
   declaration: TranslationImportDeclaration;
-  environment: RuntimeEnvironmentDescriptor;
+  environment: ExecutionEnvironmentDescriptor;
   environmentDigest: string;
   extractor: CapabilityBinding;
   packageOrigin: PluginOriginView;

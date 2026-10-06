@@ -25,8 +25,8 @@ impl ReviewEnvironment {
             declaration: self.binding.declaration.clone(),
             checker: self.binding.checker.clone(),
             package_origin: self.package.origin().into(),
-            environment: self.runtime.descriptor().clone().into(),
-            environment_digest: self.runtime.descriptor().digest().map_err(|_| invalid())?,
+            environment: self.runtime.environment(),
+            environment_digest: self.runtime.environment().digest().map_err(|_| invalid())?,
             runtime_origin: (&self.runtime_origin).into(),
         })
     }
@@ -63,8 +63,7 @@ impl ApplicationPlugins {
             },
         )?;
         if captured.checker.profile.as_ref() != Some(&environment.binding.declaration.profile)
-            || sdk::ExecutionEnvironmentDescriptor::from(environment.runtime.descriptor().clone())
-                != captured.checker.environment
+            || environment.runtime.environment() != captured.checker.environment
         {
             return Err(invalid());
         }

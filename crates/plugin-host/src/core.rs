@@ -31,7 +31,9 @@ impl From<CapturedNativeRuntime> for RunnerRuntime {
     }
 }
 impl RunnerRuntime {
-    fn environment(&self) -> sdk::ExecutionEnvironmentDescriptor {
+    /// The exact SDK-owned environment captured for this runtime family.
+    /// Observation neither installs a runtime nor grants execution permission.
+    pub fn environment(&self) -> sdk::ExecutionEnvironmentDescriptor {
         match self {
             Self::JavaScript(value) => value.descriptor().clone().into(),
             Self::Native(value) => value.descriptor().clone().into(),
