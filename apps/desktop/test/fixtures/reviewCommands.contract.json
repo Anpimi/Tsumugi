@@ -104,12 +104,25 @@
       "projectId": "40000000-0000-4000-8000-000000000001"
     },
     "check": {
-      "locale": "zh-CN",
-      "unitId": "40000000-0000-4000-8000-000000000002",
       "sessionToken": "synthetic-review-session",
       "projectId": "40000000-0000-4000-8000-000000000001",
-      "actionId": "40000000-0000-4000-8000-000000000022",
-      "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      "check": {
+        "locale": "zh-CN",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "sessionToken": "synthetic-review-session",
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "actionId": "40000000-0000-4000-8000-000000000022",
+        "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "execution": {
+        "sessionToken": "synthetic-review-session",
+        "projectId": "40000000-0000-4000-8000-000000000001",
+        "attemptId": "10000000-0000-4000-8000-000000000201",
+        "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "grantId": "10000000-0000-4000-8000-000000000204",
+        "expiresAtMs": "1893456000000",
+        "unsandboxedExecution": true
+      }
     },
     "neighbor": {
       "locale": "zh-CN",
@@ -118,6 +131,14 @@
       "sessionToken": "synthetic-review-session",
       "scopeId": "40000000-0000-4000-8000-000000000013",
       "projectId": "40000000-0000-4000-8000-000000000001"
+    },
+    "prepareCheck": {
+      "locale": "zh-CN",
+      "unitId": "40000000-0000-4000-8000-000000000002",
+      "sessionToken": "synthetic-review-session",
+      "projectId": "40000000-0000-4000-8000-000000000001",
+      "actionId": "40000000-0000-4000-8000-000000000022",
+      "expectedBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     }
   },
   "responses": {
@@ -987,6 +1008,119 @@
       "unitId": null,
       "afterOrdinal": null,
       "sourceSnapshotId": "40000000-0000-4000-8000-000000000003"
+    },
+    "prepareCheck": {
+      "kind": "plugin",
+      "view": {
+        "actionId": "40000000-0000-4000-8000-000000000022",
+        "unitId": "40000000-0000-4000-8000-000000000002",
+        "locale": "zh-CN",
+        "basis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "attemptId": "10000000-0000-4000-8000-000000000201",
+        "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "plugin": {
+          "settingsRevision": "1",
+          "packageOrigin": {
+            "sourceId": "manual-local",
+            "publisherId": "user-approved"
+          },
+          "environment": {
+            "protocolVersion": 1,
+            "platform": {
+              "operatingSystem": "macos",
+              "architecture": "aarch64"
+            },
+            "sdkVersion": "0.1.0-alpha.1",
+            "processProtocol": 1,
+            "profile": "node-system-libraries-v1",
+            "toolVersion": "26.10.0",
+            "tool": {
+              "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+              "entrypoint": "bin/node"
+            },
+            "host": {
+              "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+              "entrypoint": "dist/main.js"
+            }
+          },
+          "environmentDigest": "982752cff6fb9de2f2742e35202c0715ef223e484435e37d34dbb8e61c014cb0",
+          "runtimeOrigin": {
+            "sourceId": "application-bundle",
+            "publisherId": "application-build"
+          },
+          "declaration": {
+            "profile": {
+              "id": "example.plain-text",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "checker": "review-check",
+            "rules": [
+              {
+                "rule": {
+                  "id": "example.review-semantics",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                },
+                "requiresTranslation": true
+              }
+            ]
+          },
+          "checker": {
+            "provider": {
+              "plugin": {
+                "publisher": "example",
+                "id": "plain-text",
+                "version": "0.1.0"
+              },
+              "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "componentId": "worker",
+              "contributionId": "review-check"
+            },
+            "declaration": {
+              "contract": {
+                "id": "example.review-check",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "inputSchema": {
+                "id": "tsumugi.review-check-input",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "outputSchema": {
+                "id": "tsumugi.check-results",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "errorSchema": {
+                "id": "tsumugi.review-check-error",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "profiles": [
+                {
+                  "id": "example.plain-text",
+                  "schemaVersion": 1,
+                  "behaviorVersion": 1
+                }
+              ],
+              "effect": "read-only",
+              "permissions": [
+                {
+                  "kind": "captured-input"
+                }
+              ],
+              "limits": {
+                "maxInputBytes": 4194304,
+                "maxOutputBytes": 2097152,
+                "concurrency": 1,
+                "timeoutMs": 30000
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

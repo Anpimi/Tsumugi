@@ -43,7 +43,7 @@ macro_rules! handlers {
         resource::read_context_capture,resource::tm_suggestions,resource::resource_impacts,
         review::read_review_page,review::read_review_target,review::read_review_history,review::write_review_decision,
         review::read_review_summary_page,review::read_review_editor_snapshot,review::read_review_neighbor,review::capture_review_scope,
-        review::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
+        review::plugin::prepare_review_checks,review::plugin::run_review_checks,review::cancel_review_checks,review::waive_review_issue,review::allow_source_fallback,
         review::read_review_work,review::read_review_eligibility,
         release::read_delivery_action,release::list_releases,release::choose_delivery_folder,
         release::preview_delivery,release::export_release,release::list_deliveries,
@@ -65,26 +65,33 @@ pub(super) fn handler<R: tauri::Runtime>()
     {
         handlers!(
             seed_execution_fixture,
-            source::select_source, source::select_webvtt_source,
-            source::read_source_integration, source::read_webvtt_integration,
+            source::select_source,
+            source::select_webvtt_source,
+            source::read_source_integration,
+            source::read_webvtt_integration,
             source::preflight_source,
             source::start_source_import,
             source::translation::list_translation_files,
             source::translation::preflight_translation,
             source::translation::start_translation_import,
-            release::start_locale_build, release::read_locale_build_attempt
+            release::start_locale_build,
+            release::read_locale_build_attempt
         )
     }
     #[cfg(all(test, not(feature = "execution-test-host")))]
     {
         handlers!(
-            source::select_source, source::select_webvtt_source,
-            source::read_source_integration, source::read_webvtt_integration,
-            source::preflight_source, source::start_source_import,
+            source::select_source,
+            source::select_webvtt_source,
+            source::read_source_integration,
+            source::read_webvtt_integration,
+            source::preflight_source,
+            source::start_source_import,
             source::translation::list_translation_files,
             source::translation::preflight_translation,
             source::translation::start_translation_import,
-            release::start_locale_build, release::read_locale_build_attempt
+            release::start_locale_build,
+            release::read_locale_build_attempt
         )
     }
     #[cfg(not(any(test, feature = "execution-test-host")))]
@@ -155,6 +162,7 @@ pub(super) struct ExecutionHost {
     source: source::SourceSession,
     release: release::ReleaseSession,
     ai: ai::AiSession,
+    review: review::ReviewSession,
     arena: arena::ArenaSession,
     work_plans: work_plans::WorkPlanSession,
     plugin_registrations: Vec<PluginExecutionBinding>,
@@ -179,6 +187,7 @@ impl ExecutionHost {
             source: source::SourceSession::default(),
             release: release::ReleaseSession::default(),
             ai: ai::AiSession::default(),
+            review: review::ReviewSession::default(),
             arena: arena::ArenaSession::default(),
             work_plans: work_plans::WorkPlanSession::default(),
             plugin_registrations: Vec::new(),
@@ -260,6 +269,7 @@ impl ExecutionHost {
             || self.source.is_active()
             || self.release.is_active()
             || self.ai.active()
+            || self.review.active()
             || !self.queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
@@ -267,12 +277,16 @@ impl ExecutionHost {
         if self.release.delivery_is_active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "delivery-active"));
         }
+        if self.review.active() {
+            return Err(ExecutionError::new(ErrorCode::Busy, "review-check-active"));
+        }
         self.runtime.finish_quiesce(store)?;
         self.quiescing = false;
         Ok(())
     }
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.poll_queries(store)?;
+        self.review.tick(store, &mut self.runtime)?;
         self.runtime.tick(store).map_err(map_read)?;
         if !self.quiescing {
             self.ai.tick(store, &self.runtime);
@@ -341,6 +355,7 @@ impl ExecutionHost {
         self.poll_queries(store)?;
         self.quiescing = true;
         self.source.stop();
+        self.review.stop();
         self.ai.stop();
         self.release.stop();
         for job in self.queries.drain(..) {

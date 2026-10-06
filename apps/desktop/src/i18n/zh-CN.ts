@@ -509,6 +509,8 @@ ai: {
       approve: "批准当前修订",
       requestChanges: "要求修改",
       check: "运行当前检查",
+      prepareCheck: "查看检查权限",
+      checkConsent: "允许此检查器在本机检查当前条目（最长 10 分钟）。",
       checking: "检查中…",
       cancelCheck: "取消当前检查",
       cancelRequested: "已请求取消。请等待检查结果，再开始其他操作。",

@@ -57,7 +57,7 @@ pub(in crate::persistence) fn prepare_candidate_in(
     })
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Capture {
     project_id: ExecutionId,
     action_id: ExecutionId,
@@ -68,12 +68,12 @@ struct Capture {
 }
 
 /// An immutable, store-created input. Callers cannot substitute its scope or basis.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PreparedReviewCheck {
     state: PreparedState,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum PreparedState {
     Pending(Capture),
     Recorded {
@@ -91,6 +91,14 @@ pub struct ComputedReviewCheck {
 }
 
 impl PreparedReviewCheck {
+    /// A durable retry needs neither a new worker nor renewed execution consent.
+    pub fn recorded_run(&self) -> Option<&CheckRun> {
+        match &self.state {
+            PreparedState::Recorded { run, .. } => Some(run),
+            PreparedState::Pending(_) => None,
+        }
+    }
+
     /// Original policy/domain capture; recorded retries create no new plan.
     pub fn plan(&self) -> Option<&ReviewCheckPlan> {
         match &self.state {

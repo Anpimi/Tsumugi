@@ -9,6 +9,7 @@ export declare function validateRequestFallback(value: unknown): value is Reques
 export declare function validateRequestHistory(value: unknown): value is Requests["history"];
 export declare function validateRequestNeighbor(value: unknown): value is Requests["neighbor"];
 export declare function validateRequestPage(value: unknown): value is Requests["page"];
+export declare function validateRequestPrepareCheck(value: unknown): value is Requests["prepareCheck"];
 export declare function validateRequestScope(value: unknown): value is Requests["scope"];
 export declare function validateRequestSummary(value: unknown): value is Requests["summary"];
 export declare function validateRequestTarget(value: unknown): value is Requests["target"];
@@ -23,6 +24,7 @@ export declare function validateResponseFallback(value: unknown): value is Respo
 export declare function validateResponseHistory(value: unknown): value is Responses["history"];
 export declare function validateResponseNeighbor(value: unknown): value is Responses["neighbor"];
 export declare function validateResponsePage(value: unknown): value is Responses["page"];
+export declare function validateResponsePrepareCheck(value: unknown): value is Responses["prepareCheck"];
 export declare function validateResponseScope(value: unknown): value is Responses["scope"];
 export declare function validateResponseSummary(value: unknown): value is Responses["summary"];
 export declare function validateResponseTarget(value: unknown): value is Responses["target"];

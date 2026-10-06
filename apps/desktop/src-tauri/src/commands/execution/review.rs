@@ -1,4 +1,6 @@
 use super::*;
+pub(in crate::commands) mod plugin;
+pub(super) use plugin::ReviewSession;
 
 #[cfg(test)]
 mod contracts {
@@ -27,7 +29,9 @@ mod contracts {
         round_trip!("requests", "scope", ReviewScopeRequest);
         round_trip!("requests", "history", ReviewHistoryRequest);
         round_trip!("requests", "decision", ReviewWriteRequest);
-        round_trip!("requests", "check", ReviewCheckRequest);
+        round_trip!("requests", "prepareCheck", ReviewCheckRequest);
+        round_trip!("requests", "check", plugin::ReviewCheckStartRequest);
+        round_trip!("responses", "prepareCheck", plugin::ReviewCheckPreparation);
         round_trip!("requests", "cancelCheck", ReviewCancelCheckRequest);
         round_trip!("requests", "waiver", WaiverRequest);
         round_trip!("requests", "fallback", FallbackRequest);
@@ -140,6 +144,7 @@ request!(
 );
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    #[derive(PartialEq, Eq)]
     ReviewCheckRequest {
         unit_id: ExecutionId,
         locale: String,
@@ -423,6 +428,7 @@ pub async fn write_review_decision(
         .await
 }
 
+#[cfg(any(test, feature = "execution-test-host"))]
 enum CheckCapture {
     Recorded(CheckRun),
     Prepared(tsumugi_core::PreparedReviewCheck),
@@ -448,8 +454,8 @@ impl Drop for ReviewCheckRegistration {
     }
 }
 
-#[tauri::command]
-pub async fn run_review_checks(
+#[cfg(any(test, feature = "execution-test-host"))]
+pub async fn run_fixture_review_checks(
     state: State<'_, AppState>,
     request: ReviewCheckRequest,
 ) -> Result<CheckRun, CommandError> {

@@ -22,6 +22,8 @@ it("validates both directions of every shared review contract and dispatches the
   expect(validators.validateRequestScope(fixture.requests.scope), "requests.scope").toBe(true);
   expect(validators.validateRequestHistory(fixture.requests.history), "requests.history").toBe(true);
   expect(validators.validateRequestDecision(fixture.requests.decision), "requests.decision").toBe(true);
+  expect(validators.validateRequestPrepareCheck(fixture.requests.prepareCheck)).toBe(true);
+  expect(validators.validateResponsePrepareCheck(fixture.responses.prepareCheck)).toBe(true);
   expect(validators.validateRequestCheck(fixture.requests.check), "requests.check").toBe(true);
   expect(validators.validateRequestCancelCheck(fixture.requests.cancelCheck), "requests.cancelCheck").toBe(true);
   expect(validators.validateRequestWaiver(fixture.requests.waiver), "requests.waiver").toBe(true);
@@ -51,6 +53,7 @@ it("validates both directions of every shared review contract and dispatches the
     ["capture_review_scope", fixture.requests.scope, fixture.responses.scope, () => reviewCommands.captureScope(fixture.requests.scope)],
     ["read_review_history", fixture.requests.history, fixture.responses.history, () => reviewCommands.history(fixture.requests.history)],
     ["write_review_decision", decision, fixture.responses.decision, () => reviewCommands.decide(session, decision.decision)],
+    ["prepare_review_checks", fixture.requests.prepareCheck, fixture.responses.prepareCheck, () => reviewCommands.prepareCheck(fixture.requests.prepareCheck)],
     ["run_review_checks", fixture.requests.check, fixture.responses.check, () => reviewCommands.check(fixture.requests.check)],
     ["cancel_review_checks", fixture.requests.cancelCheck, fixture.responses.cancelCheck, () => reviewCommands.cancelCheck(fixture.requests.cancelCheck)],
     ["waive_review_issue", fixture.requests.waiver, fixture.responses.waiver, () => reviewCommands.waive(session, fixture.requests.waiver.waiver)],
@@ -119,4 +122,14 @@ it("strictly receives the saved policy union and nested actual result projection
   const unknown = structuredClone(fixture.responses.check) as unknown as { evidence: { results: Array<{ outcome: { kind: string } }> } };
   unknown.evidence.results[0].outcome.kind = "passed";
   expect(validators.validateResponseCheck(unknown)).toBe(false);
+});
+
+it("checks the preparation acknowledgement against the exact review action and basis", async () => {
+  const request = fixture.requests.prepareCheck;
+  for (const change of [{ actionId: fixture.responses.check.runId }, { basis: "different" }, { locale: "ja-JP" }]) {
+    invoke.mockResolvedValueOnce({ ...fixture.responses.prepareCheck, view: { ...fixture.responses.prepareCheck.view, ...change } });
+    await expect(reviewCommands.prepareCheck(request)).rejects.toSatisfy(hasUnknownOutcome);
+  }
+  invoke.mockResolvedValueOnce({ kind: "recorded", run: fixture.responses.check });
+  expect(await reviewCommands.prepareCheck(request)).toEqual({ kind: "recorded", run: fixture.responses.check });
 });

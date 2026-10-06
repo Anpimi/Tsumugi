@@ -1,10 +1,10 @@
 import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
-import type { ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
+import type { ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
 import * as validators from "./generated/review.validators";
 
-export type { ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
-export type { ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
+export type { ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
+export type { ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
 
 function requireConfirmation(condition: boolean) {
   if (!condition) throw new Error("Invalid IPC acknowledgement: review action");
@@ -29,9 +29,15 @@ export const reviewCommands = {
       && result.sourceRevisionId === result.basisEvidence.sourceRevisionId);
     return result;
   },
-  check: async (request: ReviewCheckRequest) => {
+  prepareCheck: async (request: ReviewCheckRequest) => {
+    const result = await checkedInvoke("prepare_review_checks", request, validators.validateResponsePrepareCheck);
+    const captured = result.kind === "recorded" ? result.run : result.view;
+    requireConfirmation(sameAction(captured, request) && captured.basis === request.expectedBasis);
+    return result;
+  },
+  check: async (request: ReviewCheckStartRequest) => {
     const result = await checkedInvoke("run_review_checks", request, validators.validateResponseCheck);
-    requireConfirmation(sameAction(result, request) && result.basis === request.expectedBasis);
+    requireConfirmation(sameAction(result, request.check) && result.basis === request.check.expectedBasis);
     return result;
   },
   cancelCheck: (request: ReviewCancelCheckRequest) => checkedInvoke("cancel_review_checks", request, validators.validateResponseCancelCheck),

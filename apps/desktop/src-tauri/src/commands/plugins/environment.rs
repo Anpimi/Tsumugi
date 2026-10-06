@@ -9,7 +9,7 @@ pub(in crate::commands) struct DeclaredEnvironment<B> {
     pub binding: B,
     pub runtime: CapturedRuntime,
     pub staging_parent: PathBuf,
-    pub resource_id: String,
+    pub resource_id: Option<String>,
     pub settings_revision: UnsignedDecimal,
     pub runtime_origin: PackageOrigin,
 }
@@ -34,6 +34,24 @@ impl ApplicationPlugins {
         if resource_id.is_empty() || resource_id.len() > 128 {
             return Err(invalid());
         }
+        self.capture_capability_environment(
+            requested,
+            Some(resource_id),
+            environment_digest,
+            |image| resolve(image, resource_id),
+        )
+    }
+
+    pub(super) fn capture_capability_environment<B, const N: usize>(
+        &self,
+        requested: &PluginPackageRequest,
+        resource_id: Option<&str>,
+        environment_digest: &str,
+        resolve: impl FnOnce(&PackageImage) -> Result<(B, [sdk::CapabilityBinding; N]), HostError>,
+    ) -> Result<DeclaredEnvironment<B>, CommandError> {
+        requested.plugin.validate().map_err(|_| invalid())?;
+        sdk::validate_package_digest(&requested.package_digest).map_err(|_| invalid())?;
+        sdk::validate_package_digest(environment_digest).map_err(|_| invalid())?;
         let mut manager = self.try_manager()?;
         self.provision(&mut manager)?;
         let allowed = || self.open.load(Ordering::Acquire);
@@ -43,8 +61,8 @@ impl ApplicationPlugins {
         let package = catalog
             .registered(&requested.plugin)
             .map_err(packages::catalog_error)?;
-        let (binding, capabilities) = resolve(package.image(), resource_id)
-            .map_err(|error| map_store_error(InstallError::Host(error)))?;
+        let (binding, capabilities) =
+            resolve(package.image()).map_err(|error| map_store_error(InstallError::Host(error)))?;
         for capability in capabilities {
             let resolved = catalog
                 .lookup(&capability.provider)
@@ -84,7 +102,7 @@ impl ApplicationPlugins {
                 let directory = manager.directory.as_ref().expect("directory configured");
                 directory.anchor.join(&directory.application)
             },
-            resource_id: resource_id.into(),
+            resource_id: resource_id.map(str::to_owned),
             settings_revision: settings.revision().into(),
             runtime_origin,
         })

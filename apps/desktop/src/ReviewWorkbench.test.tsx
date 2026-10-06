@@ -2,6 +2,7 @@ import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import reviewWire from "../test/fixtures/reviewCommands.contract.json";
 import { ReviewWorkbench } from "./ReviewWorkbench";
 import type { ProjectView } from "./projectCommands";
 import type { ReviewTarget } from "./reviewCommands";
@@ -31,6 +32,8 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(targets.first)]);
+    if (command === "prepare_review_checks") return { kind: "plugin", view: { ...reviewWire.responses.prepareCheck.view,
+      actionId: args.request.actionId, unitId: args.request.unitId, locale: args.request.locale, basis: args.request.expectedBasis } };
     if (command === "read_review_target") return Object.values(targets).find(target => target.unitId === args.request.unitId);
     if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
     if (command === "create_execution_identity") return fixtureIdentity(++nextIdentity);
@@ -205,9 +208,9 @@ it("shows historical check findings and exception reasons", async () => {
   expect(screen.getByText(/Reviewed original wording/)).toHaveTextContent("Earlier evidence");
 });
 
-it("requests cancellation for the active check and reports its persisted outcome", async () => {
-  let finish!: (value: unknown) => void;
-  const pending = new Promise(resolve => { finish = resolve; });
+it("requests cancellation for the actual check without inventing a QA receipt", async () => {
+  let reject!: (value: unknown) => void;
+  const pending = new Promise((_resolve, failed) => { reject = failed; });
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
     if (command === "run_review_checks") return pending;
@@ -218,13 +221,18 @@ it("requests cancellation for the active check and reports its persisted outcome
   render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
-  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  const run = await screen.findByRole("button", { name: "Run current checks" });
+  expect(run).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: "Allow this checker to run on my computer for this item (up to 10 minutes)." }));
+  await user.click(run);
   await user.click(await screen.findByRole("button", { name: "Cancel current check" }));
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "cancel_review_checks")).toBe(true));
   const checkRequest = invoke.mock.calls.find(([command]) => command === "run_review_checks")?.[1].request;
   const cancelRequest = invoke.mock.calls.find(([command]) => command === "cancel_review_checks")?.[1].request;
-  expect(cancelRequest).toMatchObject({ actionId: checkRequest.actionId, projectId: project.metadata.projectId, sessionToken: "session" });
-  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.actionId, "cancelled")));
+  expect(cancelRequest).toMatchObject({ actionId: checkRequest.check.actionId, projectId: project.metadata.projectId, sessionToken: "session" });
+  await act(async () => reject({ code: "cancelled", stage: "execution-adopt", outcome: "rejected", recoveryRequired: false, reason: "review-check-cancelled" }));
   expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeInTheDocument();
 });
 
@@ -237,12 +245,44 @@ it("does not present a late check reply as current after the selected revision c
   render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
-  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  const run = await screen.findByRole("button", { name: "Run current checks" });
+  expect(run).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: "Allow this checker to run on my computer for this item (up to 10 minutes)." }));
+  await user.click(run);
   await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "run_review_checks")).toBe(true));
   const checkedTarget = targets.first;
   const checkRequest = invoke.mock.calls.find(([command]) => command === "run_review_checks")![1].request;
   targets.first = reviewTargetFixture({ ...targets.first, basisEvidence: undefined, basis: "new-basis", revisionId: fixtureIdentity(626), translationText: "新译文", currentCheck: null });
-  await act(async () => finish(reviewCheckFixture(checkedTarget, checkRequest.actionId)));
+  await act(async () => finish(reviewCheckFixture(checkedTarget, checkRequest.check.actionId)));
   expect(await screen.findByText("新译文")).toBeVisible();
   expect(screen.getByText("Current checks have not run or are stale.")).toBeVisible();
+});
+
+it("keeps the original checker grant and complete request when a reply is uncertain", async () => {
+  const original = invoke.getMockImplementation()!;
+  let checks = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "run_review_checks") {
+      if (++checks === 1) throw { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown" };
+      const check = args.request.check as { actionId: string };
+      return reviewCheckFixture(targets.first, check.actionId);
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Allow this checker to run on my computer for this item (up to 10 minutes)." }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  expect(await screen.findByRole("button", { name: "Cancel current check" })).toBeVisible();
+  await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(checks).toBe(2));
+  const requests = invoke.mock.calls.filter(([command]) => command === "run_review_checks").map(([, args]) => args.request);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(requests[0].execution.unsandboxedExecution).toBe(true);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
 });

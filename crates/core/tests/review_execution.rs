@@ -205,6 +205,24 @@ fn live_exact_result_is_bound_to_the_action_and_computes_outside_sqlite_without_
     let prepared = prepare(&store, unit, action);
     let mut runtime = runtime(&store, &prepared, Response::Exact);
     let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    assert!(prepared.recorded_run().is_none());
+    prepared.validate_domain_execution_input(&input).unwrap();
+    let mut substituted = input.envelope().clone();
+    substituted.task_id = ExecutionId::new();
+    assert_eq!(
+        prepared
+            .validate_domain_execution_input(&FixedInput::capture(substituted).unwrap())
+            .unwrap_err()
+            .stage,
+        "review-check-action"
+    );
+    let mut substituted = input.envelope().clone();
+    substituted.items[0].payload["targetLocale"] = serde_json::json!("ja-JP");
+    assert!(
+        prepared
+            .validate_domain_execution_input(&FixedInput::capture(substituted).unwrap())
+            .is_err()
+    );
     assert_eq!(input.envelope().task_id, action);
     assert_eq!(input.envelope().operation, REVIEW_CHECK_OPERATION);
     assert_eq!(
@@ -1117,5 +1135,57 @@ fn automatic_qa_insert_failure_rolls_back_the_selection_in_the_same_transaction(
                 .get::<_, i64>(0))
             .unwrap(),
         0
+    );
+}
+
+#[test]
+fn cloned_preflight_retains_the_original_check_cas_across_replay() {
+    let (_directory, mut store, rows) = support::source_fixture();
+    let unit = rows[0].unit_id.unwrap();
+    save(&mut store, unit, "译文");
+    let prepared = prepare(&store, unit, ExecutionId::new());
+    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let mut runtime = runtime(&store, &prepared, Response::Exact);
+    let (_, result) = support::execute(&mut runtime, &mut store, &input);
+    let newer = prepare(&store, unit, ExecutionId::new());
+    let newer_input = newer.domain_execution_input(ExecutionId::new()).unwrap();
+    let (_, newer_result) = support::execute(&mut runtime, &mut store, &newer_input);
+    let newer = store
+        .capture_review_check_execution(
+            newer,
+            newer_input.envelope().attempt_id,
+            newer_result.envelope().result_id,
+        )
+        .unwrap()
+        .compute(&Cancellation::default())
+        .unwrap();
+    let receipt = store
+        .commit_review_evidence(newer, &Cancellation::default())
+        .unwrap();
+    let replay = prepared.clone();
+    replay.validate_domain_execution_input(&input).unwrap();
+    let computed = store
+        .capture_review_check_execution(
+            replay,
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+        )
+        .unwrap()
+        .compute(&Cancellation::default())
+        .unwrap();
+    assert_eq!(
+        store
+            .commit_review_evidence(computed, &Cancellation::default())
+            .unwrap_err()
+            .code,
+        ErrorCode::DependencyConflict
+    );
+    assert_eq!(
+        store
+            .review_target(project(&store), unit, "zh-CN")
+            .unwrap()
+            .current_check
+            .unwrap(),
+        receipt
     );
 }

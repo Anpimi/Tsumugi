@@ -34,6 +34,52 @@ export type ReviewDecisionKind = "approve" | "request-changes";
 export type TermOrigin = "manual" | "external";
 export type Revision = string;
 export type TranslationOrigin = "import" | "manual" | "ai";
+export type ReviewCheckPreparation =
+  | {
+      kind: "recorded";
+      run: CheckRun;
+    }
+  | {
+      kind: "plugin";
+      view: ReviewPluginCheckView;
+    };
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+export type UnsignedDecimal = string;
 
 export interface Responses {
   cancelCheck: boolean;
@@ -45,6 +91,7 @@ export interface Responses {
   history: ReviewHistoryPage;
   neighbor: ReviewNeighbor;
   page: ReviewPage;
+  prepareCheck: ReviewCheckPreparation;
   scope: ReviewScopeCapture;
   summary: ReviewSummaryPage;
   target: ReviewTarget;
@@ -342,6 +389,98 @@ export interface ReviewPage {
   nextOrdinal: number | null;
   rows: ReviewTarget[];
   total: number;
+}
+export interface ReviewPluginCheckView {
+  actionId: ExecutionId;
+  attemptId: ExecutionId;
+  basis: string;
+  inputDigest: string;
+  locale: string;
+  plugin: PluginReviewView;
+  unitId: ExecutionId;
+}
+export interface PluginReviewView {
+  checker: CapabilityBinding;
+  declaration: ReviewDeclaration;
+  environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
 }
 export interface ReviewScopeCapture {
   locale: string;

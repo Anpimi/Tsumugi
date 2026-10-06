@@ -644,7 +644,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
     let action_id = ExecutionId::new();
     let state = app.state::<AppState>();
     let guard = state.sessions.pause();
-    let mut check = Box::pin(review::run_review_checks(
+    let mut check = Box::pin(review::run_fixture_review_checks(
         app.state::<AppState>(),
         review::ReviewCheckRequest {
             session_token: session_token.clone(),
@@ -792,7 +792,7 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     let save_action = ExecutionId::new();
     let held = state.sessions.pause();
     let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());
-    let mut check = Box::pin(review::run_review_checks(app.state::<AppState>(),
+    let mut check = Box::pin(review::run_fixture_review_checks(app.state::<AppState>(),
         serde_json::from_value(request(&context, json!({
             "actionId":action_id, "unitId":unit.unit_id, "locale":"zh-CN", "expectedBasis":target["basis"]
         }))).unwrap()));
@@ -1251,7 +1251,7 @@ fn review_computation_allows_save_close_and_completion_after_waiter_loss() {
             reached,
             release: resume,
         });
-        let mut pending = Box::pin(review::run_review_checks(
+        let mut pending = Box::pin(review::run_fixture_review_checks(
             app.state::<AppState>(),
             serde_json::from_value(request(
                 &context,

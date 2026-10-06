@@ -508,6 +508,8 @@ ai: {
       approve: "Approve selected revision",
       requestChanges: "Request changes",
       check: "Run current checks",
+      prepareCheck: "Review check permissions",
+      checkConsent: "Allow this checker to run on my computer for this item (up to 10 minutes).",
       checking: "Checking…",
       cancelCheck: "Cancel current check",
       cancelRequested: "Cancellation requested. Wait for the check result before starting another action.",

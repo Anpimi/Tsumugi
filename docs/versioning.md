@@ -475,3 +475,11 @@ SDK, process, Store, dependencies and
 installed packages are unchanged, and the same undistributed application
 0.2.0-alpha.1 / SDK 0.1.0-alpha.1 batch needs no extra bump. Desktop automatic
 checker orchestration and complete release/native acceptance remain separate.
+
+Desktop Review now uses prepared exact checker/runtime metadata, separately
+consented per-attempt execution and the existing Core evidence commit. The
+experimental Review IPC replaces direct synchronous execution with preparation
+and a fixed grant; consumers must use the current generated requests. Project
+schema 26, SDK/process contracts and installed Store formats are unchanged.
+This stays in the same undistributed application `0.2.0-alpha.1` batch, with
+no additional version bump, compatibility path or development migration.

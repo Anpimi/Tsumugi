@@ -7,7 +7,7 @@ use tsumugi_plugin_sdk as sdk;
 /// Store-created policy and original source material for one current target.
 /// Domain results must still come from an authorized, associated execution;
 /// evaluating this plan alone does not record QA or qualify a release.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ReviewCheckPlan {
     pub(super) target: ReviewTarget,
     binding: SourceReviewBinding,

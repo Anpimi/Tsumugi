@@ -24,6 +24,19 @@ fn invalid(stage: &str) -> ExecutionError {
 }
 
 impl PreparedReviewCheck {
+    /// Recheck an original preflight or accepted attempt against this current
+    /// store-owned capture, normalizing only the generated channel identities.
+    pub fn validate_domain_execution_input(
+        &self,
+        input: &FixedInput,
+    ) -> Result<(), ExecutionError> {
+        let expected = self.domain_execution_input(input.envelope().attempt_id)?;
+        if input.envelope().task_id != expected.envelope().task_id {
+            return Err(invalid("review-check-action"));
+        }
+        restore_check_input(&expected, input)
+    }
+
     /// Creates the single-item domain projection. Submission still requires a
     /// matching current grant and the independently installed checker/runtime.
     pub fn domain_execution_input(

@@ -34,7 +34,7 @@ impl TranslationEnvironment {
     pub(in crate::commands) fn view(&self) -> Result<PluginTranslationView, CommandError> {
         Ok(PluginTranslationView {
             settings_revision: self.settings_revision,
-            resource_id: self.resource_id.clone(),
+            resource_id: self.resource_id.clone().ok_or_else(invalid)?,
             declaration: self.binding.declaration.clone(),
             extractor: self.binding.extractor.clone(),
             checker: self.binding.checker.clone(),

@@ -360,6 +360,174 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         call(&window, "read_content_scope", context.clone()).unwrap()["currentSnapshot"]
             .is_string()
     );
+    // Review executes the separately consented adopted checker through the
+    // production command handler, with the original Core/domain policy union.
+    let page = call(&window, "read_review_page", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"locale":"zh-CN","afterOrdinal":0,"limit":50})).unwrap();
+    let unit = page["rows"][0]["unitId"].clone();
+    let target_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN"});
+    let target = call(&window, "read_review_target", target_request.clone()).unwrap();
+    let intent = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new()});
+    let review = call(&window, "prepare_review_checks", intent.clone()).unwrap();
+    assert_eq!(review["kind"], "plugin");
+    assert_eq!(
+        call(&window, "prepare_review_checks", intent.clone()).unwrap(),
+        review
+    );
+    let review_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":intent,"execution":consent(&context, &review["view"])});
+    let mut denied = review_start.clone();
+    denied["execution"]["unsandboxedExecution"] = json!(false);
+    assert_eq!(
+        call(&window, "run_review_checks", denied).unwrap_err()["code"],
+        "permission-denied"
+    );
+    let mut substituted = review_start.clone();
+    substituted["execution"]["inputDigest"] = json!("f".repeat(64));
+    assert!(call(&window, "run_review_checks", substituted).is_err());
+    let mut expired = review_start.clone();
+    expired["execution"]["expiresAtMs"] = json!("1");
+    assert!(call(&window, "run_review_checks", expired).is_err());
+    assert!(
+        call(&window, "read_review_target", target_request.clone()).unwrap()["currentCheck"]
+            .is_null()
+    );
+    // Accepted work survives the webview waiter, as source preparation does.
+    let mut pending_review = Box::pin(
+        crate::commands::execution::review::plugin::run_review_checks(
+            app.state(),
+            serde_json::from_value(review_start.clone()).unwrap(),
+        ),
+    );
+    assert!(matches!(
+        pending_review
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    drop(pending_review);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let checked = loop {
+        let current = call(&window, "read_review_target", target_request.clone()).unwrap();
+        if !current["currentCheck"].is_null() {
+            break current["currentCheck"].clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "accepted Review continuation lost its result"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(checked["actionId"], intent["actionId"]);
+    assert_eq!(checked["outcome"], "completed");
+    assert!(
+        !checked["evidence"]["results"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        call(&window, "run_review_checks", review_start.clone()).unwrap(),
+        checked
+    );
+    assert_eq!(
+        call(&window, "prepare_review_checks", intent.clone()).unwrap(),
+        json!({"kind":"recorded","run":checked})
+    );
+    // Cancellation during owned computation cannot replace the durable QA.
+    let action = ExecutionId::new();
+    let mut cancellation_intent = intent.clone();
+    cancellation_intent["actionId"] = json!(action);
+    let next = call(
+        &window,
+        "prepare_review_checks",
+        cancellation_intent.clone(),
+    )
+    .unwrap();
+    let cancellation_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":cancellation_intent,"execution":consent(&context, &next["view"])});
+    let (reached, waiting) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    *state.review_compute_probe.lock().unwrap() =
+        Some(crate::commands::execution::review::ComputeProbe {
+            action,
+            reached,
+            release: resume,
+        });
+    let mut cancelled_review = Box::pin(
+        crate::commands::execution::review::plugin::run_review_checks(
+            app.state(),
+            serde_json::from_value(cancellation_start.clone()).unwrap(),
+        ),
+    );
+    assert!(matches!(
+        cancelled_review
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    waiting.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(call(&window, "cancel_review_checks", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"actionId":action})).unwrap(), json!(true));
+    assert_eq!(
+        call(&window, "run_review_checks", cancellation_start).unwrap_err()["outcome"],
+        "unknown"
+    );
+    release.send(()).unwrap();
+    let error = tauri::async_runtime::block_on(cancelled_review).unwrap_err();
+    assert_eq!(error.code, CommandErrorCode::Cancelled);
+    assert_eq!(
+        call(&window, "read_review_target", target_request.clone()).unwrap()["currentCheck"],
+        checked
+    );
+    // The project stays owned while pure computation is pending. Explicit stop
+    // revokes it, drains the continuation and keeps the preceding durable check.
+    let action = ExecutionId::new();
+    let mut stop_intent = intent.clone();
+    stop_intent["actionId"] = json!(action);
+    let next = call(&window, "prepare_review_checks", stop_intent.clone()).unwrap();
+    let stop_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":stop_intent,"execution":consent(&context, &next["view"])});
+    let (reached, waiting) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    *state.review_compute_probe.lock().unwrap() =
+        Some(crate::commands::execution::review::ComputeProbe {
+            action,
+            reached,
+            release: resume,
+        });
+    let mut stopped = Box::pin(
+        crate::commands::execution::review::plugin::run_review_checks(
+            app.state(),
+            serde_json::from_value(stop_start).unwrap(),
+        ),
+    );
+    assert!(matches!(
+        stopped
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    waiting.recv_timeout(Duration::from_secs(60)).unwrap();
+    assert_eq!(
+        call(
+            &window,
+            "close_project",
+            json!({"sessionToken":context["sessionToken"]})
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    call(&window, "quiesce_execution", context.clone()).unwrap();
+    release.send(()).unwrap();
+    assert!(tauri::async_runtime::block_on(stopped).is_err());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while call(&window, "execution_status", context.clone()).unwrap()["active"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "Review did not drain after project stop"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        call(&window, "read_review_target", target_request.clone()).unwrap()["currentCheck"],
+        checked
+    );
     call(
         &window,
         "close_project",
@@ -380,6 +548,12 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         )
         .unwrap()["currentSnapshot"]
             .is_string()
+    );
+    let mut reopened_intent = intent.clone();
+    reopened_intent["sessionToken"] = reopened["sessionToken"].clone();
+    assert_eq!(
+        call(&window, "prepare_review_checks", reopened_intent).unwrap(),
+        json!({"kind":"recorded","run":checked})
     );
     // Owned process stages were reaped. Only synthetic fixture directories are
     // made removable; no user application directory is changed.

@@ -19,9 +19,12 @@ pub(super) mod builds;
 pub(super) mod defaults;
 mod environment;
 pub(super) mod packages;
+pub(super) mod reviews;
 pub(super) mod runtimes;
 pub(super) mod sources;
 pub(super) mod translations;
+pub use builds::{PluginBuildRequest, PluginBuildView};
+pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(in crate::commands) use environment::test_support::Fixture as InstalledPluginFixture;
 pub use packages::{
@@ -33,8 +36,6 @@ pub use runtimes::{
 };
 pub use sources::{PluginSourceRequest, PluginSourceView};
 pub use translations::{PluginTranslationRequest, PluginTranslationView};
-pub use builds::{PluginBuildRequest, PluginBuildView};
-pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -308,7 +309,11 @@ impl ApplicationPlugins {
                     })
                 })
                 .collect::<Result<Vec<_>, CommandError>>()?,
-            defaults_offer: manager.defaults.as_ref().map(|bundle| bundle.view(manager)).transpose()?,
+            defaults_offer: manager
+                .defaults
+                .as_ref()
+                .map(|bundle| bundle.view(manager))
+                .transpose()?,
             runtime_offers: manager
                 .bundle
                 .as_ref()
