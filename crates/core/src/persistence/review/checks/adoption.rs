@@ -4,7 +4,7 @@ use super::*;
 use crate::execution::{FixedInput, FixedResult};
 use tsumugi_plugin_sdk as sdk;
 
-pub(super) const CHECK_VERSION: &str = "tsumugi.core-review:1:1";
+pub(in crate::persistence) const CHECK_VERSION: &str = "tsumugi.core-review:1:1";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -153,6 +153,18 @@ fn project_rules(
     Ok(rules)
 }
 
+pub(in crate::persistence) fn candidate_checks_clean(
+    rules: &[CheckRuleResult],
+    evidence: &ReviewCheckEvidence,
+) -> bool {
+    fixed(&evidence.required_checks)
+        .and_then(|fixed| fixed.evaluate(&evidence.results).map_err(|_| corrupt()))
+        .is_ok_and(|coverage| coverage.complete)
+        && rules.iter().all(|rule| {
+            matches!(rule.status.as_str(), "passed" | "not-applicable") && rule.findings.is_empty()
+        })
+}
+
 pub(in crate::persistence::review) fn validate_projection(
     run: &CheckRun,
 ) -> Result<(), ExecutionError> {
@@ -248,6 +260,165 @@ pub(in crate::persistence::review) fn validate_saved_frames(
     Ok(())
 }
 
+/// Encoding and projection are prepared before either ordinary or automatic
+/// selection enters its write transaction. Only owned computation supplies it.
+#[derive(Debug)]
+pub(in crate::persistence) struct PreparedReviewAdoption {
+    computed: ComputedReviewEvidence,
+    evidence: ReviewCheckEvidence,
+    rules: Vec<CheckRuleResult>,
+    evidence_json: String,
+    rules_json: String,
+}
+impl PreparedReviewAdoption {
+    pub(in crate::persistence) fn new(
+        computed: ComputedReviewEvidence,
+    ) -> Result<Self, ExecutionError> {
+        let evidence = ReviewCheckEvidence {
+            qa_basis: computed.plan.basis().into(),
+            required_checks: computed.plan.fixed_checks().set().clone(),
+            results: computed.results.clone(),
+            attempt_id: computed.input.envelope().attempt_id,
+            input_digest: computed.input.digest().into(),
+            result_id: computed.result.envelope().result_id,
+            result_digest: computed.result.digest().into(),
+        };
+        let rules = project_rules(&evidence, &computed.core_rules)?;
+        let evidence_json = String::from_utf8(codec::encode(
+            &evidence,
+            crate::execution::MAX_RESULT_BYTES,
+        )?)
+        .map_err(|_| corrupt())?;
+        let rules_json = serde_json::to_string(&rules).map_err(|_| corrupt())?;
+        if rules_json.len() > crate::execution::MAX_RESULT_BYTES {
+            return Err(failure(ErrorCode::LimitExceeded, "review-check-encode"));
+        }
+        Ok(Self {
+            computed,
+            evidence,
+            rules,
+            evidence_json,
+            rules_json,
+        })
+    }
+    pub(in crate::persistence) fn rules(&self) -> &[CheckRuleResult] {
+        &self.rules
+    }
+    pub(in crate::persistence) fn evidence(&self) -> &ReviewCheckEvidence {
+        &self.evidence
+    }
+    pub(in crate::persistence) fn candidate_basis(&self) -> &ReviewBasis {
+        &self.computed.plan.target.basis_evidence
+    }
+    pub(in crate::persistence) fn recheck_authority_in(
+        &self,
+        connection: &Connection,
+        authority: &crate::execution::plugin_authority::PluginAuthority,
+        cancellation: &Cancellation,
+    ) -> Result<(), ExecutionError> {
+        if cancellation.is_requested() {
+            return Err(failure(ErrorCode::Cancelled, "review-check-adoption"));
+        }
+        super::super::super::ledger::recheck_current_plugin_result_in(
+            connection,
+            authority,
+            &self.computed.input,
+            &self.computed.result,
+        )
+    }
+    pub(in crate::persistence) fn save_in(
+        &self,
+        connection: &Connection,
+        authority: &crate::execution::plugin_authority::PluginAuthority,
+        cancellation: &Cancellation,
+    ) -> Result<CheckRun, ExecutionError> {
+        let computed = &self.computed;
+        if let Some((run, request)) =
+            check_by_action(connection, computed.project_id, computed.action_id)?
+        {
+            return if request == computed.request_digest {
+                Ok(run)
+            } else {
+                Err(failure(ErrorCode::ResultMismatch, "review-check-action"))
+            };
+        }
+        self.recheck_authority_in(connection, authority, cancellation)?;
+        let target = target_in(
+            connection,
+            computed.project_id,
+            computed.plan.unit_id(),
+            &computed.plan.domain_input().target_language,
+        )?;
+        let terms = resources::resolve_terms_in(
+            connection,
+            computed.project_id,
+            target.unit_id,
+            &target.locale,
+        )?;
+        let current = capture::capture_in(connection, computed.project_id, &target, &terms)?
+            .ok_or_else(corrupt)?;
+        if current.basis() != computed.plan.basis() {
+            return Err(failure(ErrorCode::DependencyConflict, "review-qa-current"));
+        }
+        let current_check = target.current_check.as_ref().map(|r| r.run_id);
+        if current_check != computed.expected_check_id {
+            return Err(
+                failure(ErrorCode::DependencyConflict, "review-check-current").with_conflict(
+                    ConflictEvidence::ReviewCheck {
+                        expected: computed.expected_check_id,
+                        current: current_check,
+                    },
+                ),
+            );
+        }
+        let basis_json = serde_json::to_string(&target.basis_evidence).map_err(|_| corrupt())?;
+        if cancellation.is_requested() {
+            return Err(failure(ErrorCode::Cancelled, "review-check-adoption"));
+        }
+        connection.execute(
+            "INSERT INTO review_checks (run_id,action_id,project_id,unit_id,locale,basis,basis_json,
+             validator_version,rules_json,qa_basis,evidence_json,request_digest)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            params![ExecutionId::new().to_string(),computed.action_id.to_string(),computed.project_id.to_string(),
+                target.unit_id.to_string(),target.locale,target.basis,basis_json,CHECK_VERSION,
+                self.rules_json,self.evidence.qa_basis,self.evidence_json,computed.request_digest],
+        ).map_err(sql)?;
+        check_by_action(connection, computed.project_id, computed.action_id)?
+            .map(|r| r.0)
+            .ok_or_else(corrupt)
+    }
+}
+
+/// A blocked automatic selection keeps its actual candidate QA without claiming
+/// a selected revision or a current CheckRun. Historical reads verify the ledger.
+pub(in crate::persistence) fn validate_candidate_evidence(
+    connection: &Connection,
+    project: ExecutionId,
+    action: ExecutionId,
+    unit: ExecutionId,
+    locale: &str,
+    basis_evidence: &ReviewBasis,
+    rules: &[CheckRuleResult],
+    evidence: &ReviewCheckEvidence,
+) -> Result<(), ExecutionError> {
+    let basis = basis_digest(basis_evidence)?;
+    let request = digest(&(project, unit, locale, basis.as_str(), action))?;
+    let run = CheckRun {
+        run_id: action,
+        action_id: action,
+        unit_id: unit,
+        locale: locale.into(),
+        basis,
+        basis_evidence: basis_evidence.clone(),
+        validator_version: CHECK_VERSION.into(),
+        outcome: check_outcome(rules),
+        rules: rules.to_vec(),
+        evidence: Some(evidence.clone()),
+        created_at: String::new(),
+    };
+    validate_saved(connection, project, &run, &request)
+}
+
 impl ProjectStore {
     /// Adopts only owned actual computation, with current dependencies and
     /// authority rechecked atomically. Missing coverage remains a blocking run.
@@ -259,34 +430,7 @@ impl ProjectStore {
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "review-session"));
         }
-        let ComputedReviewEvidence {
-            project_id: project,
-            action_id: action,
-            request_digest: request,
-            plan,
-            input,
-            result,
-            core_rules: core,
-            results,
-            expected_check_id: expected_check,
-            ..
-        } = computed;
-        let evidence = ReviewCheckEvidence {
-            qa_basis: plan.basis().into(),
-            required_checks: plan.fixed_checks().set().clone(),
-            results,
-            attempt_id: input.envelope().attempt_id,
-            input_digest: input.digest().into(),
-            result_id: result.envelope().result_id,
-            result_digest: result.digest().into(),
-        };
-        let rules = project_rules(&evidence, &core)?;
-        let evidence_json = codec::encode(&evidence, crate::execution::MAX_RESULT_BYTES)?;
-        let evidence_json = String::from_utf8(evidence_json).map_err(|_| corrupt())?;
-        let rules_json = serde_json::to_string(&rules).map_err(|_| corrupt())?;
-        if rules_json.len() > crate::execution::MAX_RESULT_BYTES {
-            return Err(failure(ErrorCode::LimitExceeded, "review-check-encode"));
-        }
+        let prepared = PreparedReviewAdoption::new(computed)?;
         let change_clock = self.changes.clone();
         let unknown = self.execution_unknown.clone();
         let authority = self.plugin_authority.clone();
@@ -296,69 +440,11 @@ impl ProjectStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sql)?;
         let observer = change_clock.observe(&transaction, super::super::super::ChangeScope::Review);
-        if let Some((run, digest)) = check_by_action(&transaction, project, action)? {
-            return if digest == request {
-                Ok(run)
-            } else {
-                Err(failure(ErrorCode::ResultMismatch, "review-check-action"))
-            };
-        }
-        if cancellation.is_requested() {
-            return Err(failure(ErrorCode::Cancelled, "review-check-adoption"));
-        }
-        super::super::super::ledger::recheck_current_plugin_result_in(
-            &transaction,
-            &authority,
-            &input,
-            &result,
-        )?;
-        let target = target_in(
-            &transaction,
-            project,
-            plan.unit_id(),
-            &plan.domain_input().target_language,
-        )?;
-        let terms =
-            resources::resolve_terms_in(&transaction, project, target.unit_id, &target.locale)?;
-        let current =
-            capture::capture_in(&transaction, project, &target, &terms)?.ok_or_else(corrupt)?;
-        if current.basis() != plan.basis() {
-            return Err(failure(ErrorCode::DependencyConflict, "review-qa-current"));
-        }
-        let current_check = target.current_check.as_ref().map(|r| r.run_id);
-        if current_check != expected_check {
-            return Err(
-                failure(ErrorCode::DependencyConflict, "review-check-current").with_conflict(
-                    ConflictEvidence::ReviewCheck {
-                        expected: expected_check,
-                        current: current_check,
-                    },
-                ),
-            );
-        }
-        let basis_json = serde_json::to_string(&target.basis_evidence).map_err(|_| corrupt())?;
-        if cancellation.is_requested() {
-            return Err(failure(ErrorCode::Cancelled, "review-check-adoption"));
-        }
-        transaction.execute(
-            "INSERT INTO review_checks (run_id,action_id,project_id,unit_id,locale,basis,basis_json,
-             validator_version,rules_json,qa_basis,evidence_json,request_digest)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-            params![ExecutionId::new().to_string(),action.to_string(),project.to_string(),
-                target.unit_id.to_string(),target.locale,target.basis,basis_json,CHECK_VERSION,
-                rules_json,evidence.qa_basis,evidence_json,request],
-        ).map_err(sql)?;
+        let run = prepared.save_in(&transaction, &authority, cancellation)?;
         observer.commit(transaction).map_err(|_| {
             unknown.store(true, std::sync::atomic::Ordering::Release);
             failure(ErrorCode::OutcomeUnknown, "review-check-commit")
         })?;
-        check_by_action(
-            self.connection()
-                .map_err(|_| failure(ErrorCode::StorageFailed, "review-read"))?,
-            project,
-            action,
-        )?
-        .map(|r| r.0)
-        .ok_or_else(corrupt)
+        Ok(run)
     }
 }

@@ -28,7 +28,9 @@ mod resources;
 mod review;
 mod translation;
 pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
-pub use application::{ComputedAutomaticSelection, PreparedAutomaticSelection};
+pub use application::{
+    CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
+};
 pub use arena::{
     ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
 };
@@ -68,7 +70,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 25;
+pub(crate) const SCHEMA_VERSION: i64 = 26;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\

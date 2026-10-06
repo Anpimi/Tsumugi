@@ -1056,10 +1056,30 @@
           "candidateBasis": {
             "$ref": "#/definitions/ReviewBasis"
           },
+          "capturedSelectionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "checkRunId": {
             "anyOf": [
               {
                 "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ReviewCheckEvidence"
               },
               {
                 "type": "null"
@@ -1104,8 +1124,10 @@
           "policy",
           "protectionRevision",
           "candidateBasis",
+          "capturedSelectionId",
           "validatorVersion",
           "rules",
+          "evidence",
           "blocked",
           "selection",
           "checkRunId"
@@ -1203,6 +1225,237 @@
           "detail",
           "severity",
           "waivable"
+        ],
+        "type": "object"
+      },
+      "CheckFinding2": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/definitions/FindingSeverity"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "target",
+          "severity"
+        ],
+        "type": "object"
+      },
+      "CheckImplementation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "core",
+                "type": "string"
+              },
+              "validator": {
+                "$ref": "#/definitions/ContractRef"
+              }
+            },
+            "required": [
+              "kind",
+              "validator"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "plugin",
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/definitions/ProviderSelectionBinding"
+              }
+            },
+            "required": [
+              "kind",
+              "provider"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CheckKey": {
+        "additionalProperties": false,
+        "properties": {
+          "implementation": {
+            "$ref": "#/definitions/CheckImplementation"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "implementation"
+        ],
+        "type": "object"
+      },
+      "CheckOutcome": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "findings": {
+                "items": {
+                  "$ref": "#/definitions/CheckFinding2"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "completed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "findings"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "$ref": "#/definitions/NotApplicableBasis"
+              },
+              "kind": {
+                "const": "not-applicable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "basis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "failed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "cancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "CheckRequirement": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
+          "notApplicable": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/NotApplicableBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scopeDigest": {
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "waivable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "inputDigest",
+          "scopeDigest",
+          "targets",
+          "mandatory",
+          "waivable",
+          "notApplicable"
+        ],
+        "type": "object"
+      },
+      "CheckResult": {
+        "additionalProperties": false,
+        "properties": {
+          "coveredTargets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "outcome": {
+            "$ref": "#/definitions/CheckOutcome"
+          },
+          "scopeDigest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "inputDigest",
+          "scopeDigest",
+          "coveredTargets",
+          "outcome"
         ],
         "type": "object"
       },
@@ -1788,6 +2041,31 @@
         ],
         "type": "object"
       },
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "EffectPhase": {
         "enum": [
           "waiting",
@@ -1864,6 +2142,13 @@
         ],
         "type": "string"
       },
+      "FindingSeverity": {
+        "enum": [
+          "warning",
+          "error"
+        ],
+        "type": "string"
+      },
       "ItemStatus": {
         "additionalProperties": false,
         "properties": {
@@ -1930,6 +2215,23 @@
         ],
         "type": "object"
       },
+      "NotApplicableBasis": {
+        "additionalProperties": false,
+        "description": "A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.",
+        "properties": {
+          "basisDigest": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "basisDigest"
+        ],
+        "type": "object"
+      },
       "PlanOptions": {
         "additionalProperties": false,
         "properties": {
@@ -1989,6 +2291,27 @@
           "sourceRevisionId",
           "nativeKey",
           "selectionId"
+        ],
+        "type": "object"
+      },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
         ],
         "type": "object"
       },
@@ -2109,6 +2432,31 @@
         ],
         "type": "object"
       },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
       "RecoveryAction": {
         "enum": [
           "resume-undispatched",
@@ -2213,6 +2561,26 @@
         ],
         "type": "object"
       },
+      "RequiredCheckSet": {
+        "additionalProperties": false,
+        "description": "Wire projection of the host's captured union. Receiving this from a plugin\ndoes not make it a trusted policy or permit it to replace the expected set.",
+        "properties": {
+          "policy": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/definitions/CheckRequirement"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "policy",
+          "requirements"
+        ],
+        "type": "object"
+      },
       "ReviewBasis": {
         "additionalProperties": false,
         "properties": {
@@ -2266,6 +2634,45 @@
           "revisionId",
           "contextRevisionId",
           "termRevisionIds"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "qaBasis": {
+            "type": "string"
+          },
+          "requiredChecks": {
+            "$ref": "#/definitions/RequiredCheckSet"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/definitions/CheckResult"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "qaBasis",
+          "requiredChecks",
+          "results",
+          "attemptId",
+          "inputDigest",
+          "resultId",
+          "resultDigest"
         ],
         "type": "object"
       },

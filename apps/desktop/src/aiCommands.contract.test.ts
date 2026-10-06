@@ -99,3 +99,14 @@ it("binds policy receipts to the exact project, lease, candidate, action and mec
   invoke.mockResolvedValueOnce(false);
   await expect(aiCommands.retryEffect(fixture.requests.effectRetry)).rejects.toSatisfy(hasUnknownOutcome);
 });
+
+it("receives the captured plugin union and rejects an injected nested authority field", async () => {
+  const valid = structuredClone(fixture.responses.automaticView);
+  expect(valid.rows[0].automation.receipt.rules.length).not.toBe(4);
+  invoke.mockResolvedValueOnce(valid);
+  expect(await aiCommands.read(fixture.requests.automaticRead)).toEqual(valid);
+  const invalid = structuredClone(valid) as unknown as { rows: Array<{ automation: { receipt: { evidence: { results: Array<{ key: { implementation: Record<string, unknown> } }> } } } }> };
+  invalid.rows[0].automation.receipt.evidence.results[0].key.implementation.permission = "granted";
+  invoke.mockResolvedValueOnce(invalid);
+  await expect(aiCommands.read(fixture.requests.automaticRead)).rejects.toThrow();
+});

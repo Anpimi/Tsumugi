@@ -35,10 +35,15 @@ export const aiCommands={
           || receipt.request.revisionId !== row.savedRevisionId || receipt.request.actionId !== effect.actionId
           || (receipt.blocked === null ? effect.phase !== "selected" || !selection || !receipt.checkRunId : effect.phase !== "blocked" || selection !== null || receipt.checkRunId !== null)
           || (selection !== null && (selection.unitId !== row.item.unitId
-            || selection.locale !== row.item.targetLocale || selection.revisionId !== row.savedRevisionId || selection.actionId !== receipt.request.actionId))
+            || selection.locale !== row.item.targetLocale || selection.revisionId !== row.savedRevisionId || selection.actionId !== receipt.request.actionId || selection.previousEventId !== receipt.capturedSelectionId))
           || receipt.candidateBasis.revisionId !== row.savedRevisionId || receipt.candidateBasis.sourceRevisionId !== row.item.sourceRevisionId
-          || receipt.rules.length !== 4 || new Set(receipt.rules.map(rule => rule.rule)).size !== 4
-          || receipt.rules.some(rule => !["required-translation", "placeholders", "format", "terminology"].includes(rule.rule))
+          || !receipt.evidence
+          || receipt.rules.length !== receipt.evidence.requiredChecks.requirements.length
+          || new Set(receipt.rules.map(rule => rule.rule)).size !== receipt.rules.length
+          || receipt.evidence.requiredChecks.requirements.some(requirement => !receipt.rules.some(rule =>
+            rule.rule === (requirement.key.implementation.kind === "core" ? requirement.key.rule.id : `plugin:${requirement.key.rule.id}`)))
+          || (selection !== null && (receipt.candidateBasis.selectionId !== selection.eventId
+            || receipt.rules.some(rule => !["passed", "not-applicable"].includes(rule.status) || rule.findings.length !== 0)))
           || effect.error !== null || effect.retryable;
       })) throw new Error("Invalid IPC response: automatic selection");
     return result;

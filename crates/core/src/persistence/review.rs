@@ -11,7 +11,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::review::CHECK_VERSION;
 mod checks;
+pub(super) use checks::candidate_checks_clean;
 pub(super) use checks::record_check_in;
+pub(super) use checks::{
+    CURRENT_CHECK_VERSION, PreparedReviewAdoption, prepare_candidate_in,
+    validate_candidate_evidence,
+};
 pub use checks::{
     CapturedReviewCheckExecution, ComputedReviewCheck, ComputedReviewEvidence, PreparedReviewCheck,
     ReviewCheckEvidence, ReviewCheckPlan,

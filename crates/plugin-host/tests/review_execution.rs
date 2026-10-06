@@ -1,9 +1,10 @@
 #![cfg(all(unix, feature = "core-adapter", feature = "javascript-conformance"))]
 //! Complete adopted source and actual authorized Review results through Core.
-//! QA persistence/qualification is a subsequent boundary, never inferred here.
+//! Automatic QA, human qualification and artifact proof remain distinct gates.
 use std::sync::Arc;
 use tsumugi_core::{
-    ProjectMetadata, ProjectStore, SaveTranslationRevision,
+    PluginBuildLocaleChoice, ProjectMetadata, ProjectStore, ReleaseAdoptionHandler,
+    ReleaseBuildEnvironment, ReleasePlan, SaveTranslationRevision,
     content::{SourceAdoptionHandler, SourceBundle, SourceReviewBinding, SourceSettings},
     execution::*,
 };
@@ -16,6 +17,8 @@ mod package_fixture;
 #[path = "support/runtime.rs"]
 mod runtime_fixture;
 use core_execution::{authorize, execute};
+#[path = "../../core/tests/support/automatic.rs"]
+mod automatic;
 
 fn paired_core_review(plugin: &str, caption: bool) {
     let directory = tempfile::tempdir().unwrap();
@@ -299,14 +302,251 @@ fn paired_core_review(plugin: &str, caption: bool) {
             }
         }
     }
+    // The same installed checker evaluates a saved candidate before selection.
+    // Clean QA selects atomically; bad domain output leaves that selection intact.
+    let mut selected_receipt = None;
+    for (text, clean) in [(valid, true), (bad, false)] {
+        let target = store.review_target(project, unit, "zh-CN").unwrap();
+        let protection = store.work_protection(unit, "zh-CN").unwrap();
+        store
+            .set_work_protection(&tsumugi_core::application::SetWorkProtection {
+                action_id: ExecutionId::new(),
+                project_id: project,
+                unit_id: unit,
+                locale: "zh-CN".into(),
+                source_revision_id: target.source_revision_id,
+                selection_id: target.selection_id,
+                expected_revision: protection.revision,
+                protected: false,
+                confirmed_release: true,
+            })
+            .unwrap();
+        let request = automatic::candidate_request(
+            &mut store,
+            unit,
+            text,
+            tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
+        );
+        let prepared = store.prepare_automatic_selection(&request).unwrap();
+        let input = prepared
+            .review_check()
+            .unwrap()
+            .domain_execution_input(ExecutionId::new())
+            .unwrap();
+        authorize(&runtime, &mut store, &input);
+        let result = execute(&mut runtime, &mut store, &input);
+        let computed = store
+            .capture_automatic_selection_execution(
+                prepared,
+                input.envelope().attempt_id,
+                result.envelope().result_id,
+            )
+            .unwrap()
+            .compute(&Cancellation::default())
+            .unwrap();
+        let prior = store.review_target(project, unit, "zh-CN").unwrap();
+        let receipt = store
+            .commit_automatic_selection(computed, &Cancellation::default())
+            .unwrap();
+        assert_eq!(
+            receipt.evidence.as_ref().unwrap().result_digest,
+            result.digest()
+        );
+        let current = store.review_target(project, unit, "zh-CN").unwrap();
+        if clean {
+            assert!(receipt.blocked.is_none());
+            assert_eq!(current.revision_id, Some(request.revision_id));
+            assert_eq!(
+                current.current_check.as_ref().unwrap().evidence,
+                receipt.evidence
+            );
+            assert!(current.current_decision.is_none());
+            selected_receipt = Some(receipt.clone());
+        } else {
+            assert_eq!(
+                receipt.blocked,
+                Some(tsumugi_core::application::AutomaticSelectionBlock::Checks)
+            );
+            assert!(receipt.selection.is_none() && receipt.check_run_id.is_none());
+            assert_eq!(current.selection_id, prior.selection_id);
+            assert_eq!(current.current_check, prior.current_check);
+        }
+        assert_eq!(
+            store
+                .automatic_selection_receipt(request.action_id)
+                .unwrap(),
+            Some(receipt)
+        );
+    }
+    // Current automatic QA does not replace human approval or artifact proof.
+    let build = image.build_declaration("build-profile").unwrap();
+    runtime.register(proxy(&build.declaration.builder)).unwrap();
+    runtime.register(proxy(&build.declaration.checker)).unwrap();
+    let environment = ReleaseBuildEnvironment::new(
+        build,
+        runtime_fixture::approved_runtime().descriptor().clone(),
+    )
+    .unwrap();
+    let output = if caption {
+        "translated.vtt"
+    } else {
+        "i18n/zh.json"
+    };
+    let choices = vec![PluginBuildLocaleChoice {
+        locale: "zh-CN".into(),
+        output_paths: vec![output.into()],
+        configuration: vec![],
+    }];
+    let eligibility = store
+        .review_eligibility(project, &["zh-CN".into()])
+        .unwrap();
+    assert!(!eligibility.ready);
+    assert!(
+        store
+            .prepare_plugin_build(
+                project,
+                ExecutionId::new(),
+                &choices,
+                &eligibility.basis,
+                &environment
+            )
+            .is_err()
+    );
+    let target = store.review_target(project, unit, "zh-CN").unwrap();
+    store
+        .write_review(&tsumugi_core::ReviewWrite {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: unit,
+            locale: "zh-CN".into(),
+            expected_basis: target.basis,
+            expected_decision_id: None,
+            actor: "Synthetic reviewer".into(),
+            kind: tsumugi_core::ReviewDecisionKind::Approve,
+            reason: "Approve the exact checked translation".into(),
+        })
+        .unwrap();
+    let eligibility = store
+        .review_eligibility(project, &["zh-CN".into()])
+        .unwrap();
+    assert!(eligibility.ready, "{eligibility:?}");
+    let input = store
+        .prepare_plugin_build(
+            project,
+            ExecutionId::new(),
+            &choices,
+            &eligibility.basis,
+            &environment,
+        )
+        .unwrap();
+    let frozen = ReleasePlan::from_input(&input).unwrap();
+    assert_eq!(frozen.eligibility_basis(), eligibility.basis);
+    assert_eq!(frozen.plugin_input("zh-CN").unwrap().targets[0].text, valid);
+    let producer_grant = authorize(&runtime, &mut store, &input);
+    let result = execute(&mut runtime, &mut store, &input);
+    let action = store
+        .prepare_adoption(
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            serde_json::json!({}),
+        )
+        .unwrap();
+    assert!(
+        store
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .is_err()
+    );
+    assert!(store.adoption_receipt(action.action_id).unwrap().is_none());
+    assert!(store.list_releases(project).unwrap().is_empty());
+    let capture = store
+        .capture_artifact_validation(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let check_input = capture.check_input().clone();
+    let check_grant = authorize(&runtime, &mut store, &check_input);
+    assert_ne!(producer_grant, check_grant);
+    let checked = execute(&mut runtime, &mut store, &check_input);
+    store
+        .commit_artifact_validation(capture.prepare(checked).unwrap())
+        .unwrap();
+    let receipt = store
+        .adopt_execution(&action, &ReleaseAdoptionHandler)
+        .unwrap();
+    let release = ExecutionId::parse(&receipt.changes[0].id).unwrap();
+    let released = store.release_view(release).unwrap();
+    assert_eq!(released.artifacts.len(), 1);
+    let expected = if caption {
+        "\u{feff}WEBVTT\r\n\r\nCue\r\n00:01.000 --> 00:02.000\r\n译文 é 👩🏽‍💻\r\n第二行\r\n\r\n"
+    } else {
+        "{\n  \"first\": \"你好 {{name}} {{name}} é 👩🏽‍💻\"\n}\n"
+    };
+    assert_eq!(
+        store
+            .release_artifact_by_path(release, "zh-CN", output)
+            .unwrap()
+            .1,
+        expected.as_bytes()
+    );
+    // Later edits expire current QA without changing the frozen plan or release.
+    let target = store.review_target(project, unit, "zh-CN").unwrap();
+    store
+        .save_translation_revision(&SaveTranslationRevision {
+            project_id: project,
+            action_id: ExecutionId::new(),
+            unit_id: unit,
+            locale: "zh-CN".into(),
+            source_revision_id: target.source_revision_id,
+            expected_selection_id: target.selection_id,
+            text: bad.into(),
+        })
+        .unwrap();
+    assert!(
+        store
+            .review_target(project, unit, "zh-CN")
+            .unwrap()
+            .current_check
+            .is_none()
+    );
+    assert!(
+        store
+            .prepare_plugin_build(
+                project,
+                ExecutionId::new(),
+                &choices,
+                &eligibility.basis,
+                &environment,
+            )
+            .is_err()
+    );
+    assert_eq!(frozen.plugin_input("zh-CN").unwrap().targets[0].text, valid);
+    assert_eq!(store.release_view(release).unwrap(), released);
+    runtime.revoke_plugin(&mut store, producer_grant).unwrap();
+    runtime.revoke_plugin(&mut store, check_grant).unwrap();
+    runtime.begin_quiesce(&mut store).unwrap();
+    runtime.finish_quiesce(&mut store).unwrap();
+    drop(runtime);
     store.close().unwrap();
-    let reopened = ProjectStore::open(&path).unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
     assert!(
         reopened
             .review_target(project, unit, "zh-CN")
             .unwrap()
             .current_check
-            .is_some()
+            .is_none()
+    );
+    assert_eq!(reopened.release_view(release).unwrap(), released);
+    assert_eq!(
+        reopened
+            .adopt_execution(&action, &ReleaseAdoptionHandler)
+            .unwrap(),
+        receipt
+    );
+    let selected_receipt = selected_receipt.unwrap();
+    assert_eq!(
+        reopened
+            .automatic_selection_receipt(selected_receipt.request.action_id)
+            .unwrap(),
+        Some(selected_receipt)
     );
 }
 

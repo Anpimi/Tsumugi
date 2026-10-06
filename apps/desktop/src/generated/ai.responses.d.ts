@@ -117,6 +117,34 @@ export type CommandStage =
   | "execution-quiesce";
 export type EffectPhase = "waiting" | "saving-candidate" | "checking" | "selected" | "blocked" | "failed" | "cancelled";
 export type AutomaticSelectionBlock = "protected" | "already-selected" | "checks";
+export type CheckImplementation =
+  | {
+      kind: "core";
+      validator: ContractRef;
+    }
+  | {
+      kind: "plugin";
+      provider: ProviderSelectionBinding;
+    };
+export type CheckOutcome =
+  | {
+      findings: CheckFinding2[];
+      kind: "completed";
+    }
+  | {
+      basis: NotApplicableBasis;
+      kind: "not-applicable";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "unavailable";
+    };
+export type FindingSeverity = "warning" | "error";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
@@ -295,7 +323,9 @@ export interface CommandError {
 export interface AutomaticSelectionReceipt {
   blocked: AutomaticSelectionBlock | null;
   candidateBasis: ReviewBasis;
+  capturedSelectionId: ExecutionId | null;
   checkRunId: ExecutionId | null;
+  evidence: ReviewCheckEvidence | null;
   policy: SelectionPolicy;
   policyVersion: string;
   protectionRevision: Revision;
@@ -311,6 +341,84 @@ export interface ReviewBasis {
   sourceRevisionId: ExecutionId;
   sourceSnapshotId: ExecutionId;
   termRevisionIds: ExecutionId[];
+}
+export interface ReviewCheckEvidence {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  qaBasis: string;
+  requiredChecks: RequiredCheckSet;
+  resultDigest: string;
+  resultId: ExecutionId;
+  results: CheckResult[];
+}
+/**
+ * Wire projection of the host's captured union. Receiving this from a plugin
+ * does not make it a trusted policy or permit it to replace the expected set.
+ */
+export interface RequiredCheckSet {
+  policy: ContractRef;
+  requirements: CheckRequirement[];
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface CheckRequirement {
+  inputDigest: string;
+  key: CheckKey;
+  mandatory: boolean;
+  notApplicable: NotApplicableBasis | null;
+  scopeDigest: string;
+  targets: string[];
+  waivable: boolean;
+}
+export interface CheckKey {
+  implementation: CheckImplementation;
+  rule: ContractRef;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * A trusted capture of an allowed reason and its exact scope basis, not a
+ * plugin's claim that it is safe to skip a required check.
+ */
+export interface NotApplicableBasis {
+  basisDigest: string;
+  code: string;
+}
+export interface CheckResult {
+  coveredTargets: string[];
+  inputDigest: string;
+  key: CheckKey;
+  outcome: CheckOutcome;
+  scopeDigest: string;
+}
+export interface CheckFinding2 {
+  code: string;
+  severity: FindingSeverity;
+  target: string;
 }
 /**
  * The host supplies only a saved AI revision and a durable lease. Core derives

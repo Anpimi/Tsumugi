@@ -39,3 +39,18 @@ it("offers only an explicit allowed retry and prevents it under revoked authorit
   rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={retry} />);
   await userEvent.click(button); expect(retry).toHaveBeenCalledTimes(1);
 });
+
+it("presents opaque plugin rules and findings without classifying them as terminology", async () => {
+  const effect = recorded(); effect.phase = "blocked"; effect.receipt!.blocked = "checks";
+  effect.receipt!.selection = null; effect.receipt!.checkRunId = null;
+  effect.receipt!.rules.push({ rule: "plugin:third-domain", status: "findings", reason: null,
+    findings: [{ issueId: "domain-issue", rule: "plugin:third-domain", code: "third-format-invalid",
+      detail: "third-format-invalid", severity: "error", waivable: false }] });
+  const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  await userEvent.click(screen.getByText("Mechanical check evidence"));
+  expect(screen.getByText(/Plugin check: third-domain/)).toBeVisible();
+  expect(screen.getByText("Plugin check reported: third-format-invalid")).toBeVisible();
+  expect(screen.queryByText("Protected term needs review")).not.toBeInTheDocument();
+  await i18n.changeLanguage("zh-CN"); rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText("插件检查报告：third-format-invalid")).toBeVisible();
+});

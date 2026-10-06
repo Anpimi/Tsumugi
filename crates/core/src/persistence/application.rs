@@ -11,7 +11,9 @@ pub(super) use control::{
     allows_cancelled_ancestor, check_enqueue, check_input, initialize, protect_manual_in,
     record_input, stop_execution_plan_in, table_names, validate,
 };
-pub use selection::{ComputedAutomaticSelection, PreparedAutomaticSelection};
+pub use selection::{
+    CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
+};
 
 impl ProjectStore {
     pub fn prepare_work_plan(

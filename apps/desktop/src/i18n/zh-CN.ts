@@ -523,6 +523,8 @@ ai: {
       qaCurrent: "当前确定性检查",
       qaRun: "确定性检查记录",
       ruleRequired: "必需译文",
+      rulePlugin: "插件检查：{{rule}}",
+      issuePlugin: "插件检查报告：{{code}}",
       rulePlaceholders: "命名占位符",
       ruleFormat: "文本格式",
       ruleTerminology: "适用术语",

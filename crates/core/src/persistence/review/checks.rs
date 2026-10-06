@@ -5,12 +5,57 @@ use crate::review::{CheckInput, check_rules, interrupted_rules};
 mod adoption;
 mod capture;
 mod execution;
+pub(in crate::persistence) use adoption::CHECK_VERSION as CURRENT_CHECK_VERSION;
 pub use adoption::ReviewCheckEvidence;
+pub(in crate::persistence) use adoption::candidate_checks_clean;
 pub(super) use adoption::coverage_complete;
+pub(in crate::persistence) use adoption::{PreparedReviewAdoption, validate_candidate_evidence};
 pub(super) use adoption::{validate_projection, validate_saved, validate_saved_frames};
 pub use capture::ReviewCheckPlan;
 pub(super) use capture::ReviewMaterial;
 pub use execution::{CapturedReviewCheckExecution, ComputedReviewEvidence};
+
+/// Capture QA for a store-reserved candidate selection, without selecting it.
+pub(in crate::persistence) fn prepare_candidate_in(
+    connection: &Connection,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    current: &ReviewTarget,
+    selection_id: ExecutionId,
+    revision_id: ExecutionId,
+    text: &str,
+    terms: &resources::TermResolution,
+) -> Result<PreparedReviewCheck, ExecutionError> {
+    let mut target = current.clone();
+    target.selection_id = Some(selection_id);
+    target.revision_id = Some(revision_id);
+    target.translation_text = Some(text.into());
+    target.basis_evidence.selection_id = Some(selection_id);
+    target.basis_evidence.revision_id = Some(revision_id);
+    target.basis = basis_digest(&target.basis_evidence)?;
+    target.current_decision = None;
+    target.current_check = None;
+    target.current_fallback = None;
+    target.current_waivers.clear();
+    let request_digest = digest(&(
+        project_id,
+        target.unit_id,
+        target.locale.as_str(),
+        target.basis.as_str(),
+        action_id,
+    ))?;
+    let plan = capture::capture_in(connection, project_id, &target, terms)?;
+    Ok(PreparedReviewCheck {
+        state: PreparedState::Pending(Capture {
+            project_id,
+            action_id,
+            request_digest,
+            target,
+            terms: terms.clone(),
+            plan,
+        }),
+    })
+}
 
 #[derive(Debug)]
 struct Capture {

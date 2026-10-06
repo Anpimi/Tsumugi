@@ -522,6 +522,8 @@ ai: {
       qaCurrent: "Current deterministic checks",
       qaRun: "Deterministic check run",
       ruleRequired: "Required translation",
+      rulePlugin: "Plugin check: {{rule}}",
+      issuePlugin: "Plugin check reported: {{code}}",
       rulePlaceholders: "Named placeholders",
       ruleFormat: "Text format",
       ruleTerminology: "Applicable terminology",

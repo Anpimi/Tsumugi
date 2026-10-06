@@ -1,4 +1,4 @@
-import { reviewReasonKey } from "./reviewLabels";
+import { reviewFindingLabel, reviewRuleLabel, reviewReasonKey } from "./reviewLabels";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
@@ -304,18 +304,6 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (value.code === "issue-waiver") return t("review.waived");
     return queueReason(value.code);
   }
-  function findingLabel(rule: string, code: string) {
-    if (rule === "required-translation") return t(code === "empty" ? "review.issueEmpty" : "review.issueMissing");
-    if (rule === "placeholders") return t("review.issueMarker");
-    if (rule === "format") return t("review.issueFormat");
-    return t(code === "conflict" ? "review.issueConflict" : "review.issueTerm");
-  }
-  function ruleLabel(rule: string) {
-    if (rule === "required-translation") return t("review.ruleRequired");
-    if (rule === "placeholders") return t("review.rulePlaceholders");
-    if (rule === "format") return t("review.ruleFormat");
-    return t("review.ruleTerminology");
-  }
   function ruleStatusLabel(status: string) {
     return t(status === "passed" ? "review.passed" : status === "not-applicable" ? "review.notApplicable"
       : status === "findings" ? "review.findings" : status === "failed" ? "review.checkFailed"
@@ -374,17 +362,17 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                   <button className="secondary-button" disabled={busy || !selected.selectionId || !actor.trim()} onClick={() => void decide("request-changes")}>{t("review.requestChanges")}</button>
                   {!selected.selectionId ? <button className="secondary-button" disabled={busy || !actor.trim()} onClick={() => void fallback(!selected.currentFallback)}>{t(selected.currentFallback ? "review.withdrawFallback" : "review.fallback")}</button> : null}</div>
                 <div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => void check()}>{busy ? t("review.checking") : t("review.check")}</button>{activeCheckId ? <button className="secondary-button" onClick={() => void cancelCheck()}>{t("review.cancelCheck")}</button> : null}</div>
-                <h4>{t("review.qaCurrent")}</h4>{!selected.currentCheck ? <p>{t("review.qaMissing")}</p> : selected.currentCheck.rules.map(rule => <div key={rule.rule} className="review-rule"><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                <h4>{t("review.qaCurrent")}</h4>{!selected.currentCheck ? <p>{t("review.qaMissing")}</p> : selected.currentCheck.rules.map(rule => <div key={rule.rule} className="review-rule"><strong>{reviewRuleLabel(t, rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
                   {rule.reason ? <p>{ruleReasonLabel(rule.status)}</p> : null}
-                  {rule.findings.map(finding => <div key={finding.issueId}><p>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</p>
+                  {rule.findings.map(finding => <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</p>
                     {selected.currentWaivers.some(waiver => waiver.issueId === finding.issueId) ? <><p>{t("review.waived")}</p><button className="text-button" disabled={busy || !actor.trim()} onClick={() => void waive(finding.issueId, false, selected.currentWaivers.find(waiver => waiver.issueId === finding.issueId)!.waiverId)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={busy || !actor.trim()} onClick={() => void waive(finding.issueId, true, null)}>{t("review.waive")}</button> : null}</div>)}
                 </div>)}
                 <details><summary>{t("review.history")}</summary>{history && history.decisions.length + history.checks.length + history.waivers.length + history.fallbacks.length === 0 ? <p>{t("review.historyEmpty")}</p> : null}
                   {history?.decisions.map(item => <p key={item.decisionId}>{item.createdAt} · {item.actor} · {t(item.kind === "approve" ? "review.currentApproval" : "review.changesRequested")}{item.decisionId === selected.currentDecision?.decisionId ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
                   {history?.checks.map(item => <div key={item.runId} className="review-history-check"><p>{item.createdAt} · {t("review.qaRun")} · {item.validatorVersion}{item.runId === selected.currentCheck?.runId ? "" : ` · ${t("review.earlier")}`}</p>
-                    <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                    <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{reviewRuleLabel(t, rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
                       {rule.reason ? ` · ${ruleReasonLabel(rule.status)}` : ""}
-                      {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</li>)}</ul> : null}
+                      {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</li>)}</ul> : null}
                     </li>)}</ul>
                   </div>)}
                   {history?.waivers.map(item => <p key={item.waiverId}>{item.createdAt} · {item.actor} · {t(item.grant ? "review.waived" : "review.revokeWaiver")}{selected.currentWaivers.some(waiver => waiver.waiverId === item.waiverId) ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}

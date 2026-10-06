@@ -184,8 +184,8 @@ it("shows historical check findings and exception reasons", async () => {
     if (command === "read_review_history") return {
       decisions: [], nextOffset: null,
       checks: [reviewCheckFixture(targets.first, fixtureIdentity(622), "completed", {
-        runId: fixtureIdentity(623), validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "placeholders", status: "findings", reason: null,
-          findings: [{ issueId: "old-issue", rule: "placeholders", code: "marker-mismatch", detail: "Names differ", severity: "error", waivable: false }] }],
+        runId: fixtureIdentity(623), validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "plugin:markers", status: "findings", reason: null,
+          findings: [{ issueId: "old-issue", rule: "plugin:markers", code: "marker-mismatch", detail: "Names differ", severity: "error", waivable: false }] }],
       })],
       waivers: [{ waiverId: fixtureIdentity(624), actionId: fixtureIdentity(625), unitId: targets.first.unitId, locale: "zh-CN", basis: "basis-first",
         issueId: "old-issue", grant: true, previousWaiverId: null, policyVersion: "balanced-1", actor: "Reviewer A",
@@ -199,7 +199,7 @@ it("shows historical check findings and exception reasons", async () => {
   await user.click(screen.getByRole("button", { name: "Review and QA" }));
   await user.click(await screen.findByRole("button", { name: "first" }));
   await user.click(screen.getByText("Decision and check history"));
-  expect(await screen.findByText("Named placeholders differ or are malformed")).toBeVisible();
+  expect(await screen.findByText("Plugin check reported: marker-mismatch")).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toBeVisible();
   expect(screen.getByText(/Deterministic check run · smapi-prebuild-1 · Earlier evidence/)).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toHaveTextContent("Earlier evidence");

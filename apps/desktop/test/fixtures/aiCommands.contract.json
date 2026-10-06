@@ -329,14 +329,14 @@
               "candidateBasis": {
                 "contextRevisionId": null,
                 "revisionId": "4203da61-71cc-4d88-a74f-32a18fc5ca14",
-                "selectionId": null,
+                "selectionId": "d7bf4ae8-dbf4-4b06-a57a-bf2576160c40",
                 "sourceRevisionId": "524ad16e-9daf-475d-a2de-66b43c852dc5",
                 "sourceSnapshotId": "d6861ee2-0a7c-4260-866f-027bd7bf959b",
                 "termRevisionIds": []
               },
               "checkRunId": "234f6f72-5bb2-4487-aaac-548147298769",
               "policy": "missing-only",
-              "policyVersion": "checked-selection-1",
+              "policyVersion": "checked-selection-2",
               "protectionRevision": "0",
               "request": {
                 "actionId": "4928bc6d-7f24-423b-840c-8259888b08c4",
@@ -351,28 +351,22 @@
               },
               "rules": [
                 {
-                  "findings": [],
-                  "reason": null,
                   "rule": "required-translation",
-                  "status": "passed"
+                  "status": "passed",
+                  "reason": null,
+                  "findings": []
                 },
                 {
-                  "findings": [],
-                  "reason": null,
-                  "rule": "placeholders",
-                  "status": "passed"
-                },
-                {
-                  "findings": [],
-                  "reason": null,
-                  "rule": "format",
-                  "status": "passed"
-                },
-                {
-                  "findings": [],
-                  "reason": null,
                   "rule": "terminology",
-                  "status": "passed"
+                  "status": "passed",
+                  "reason": null,
+                  "findings": []
+                },
+                {
+                  "rule": "plugin:synthetic-domain-rule",
+                  "status": "passed",
+                  "reason": null,
+                  "findings": []
                 }
               ],
               "selection": {
@@ -384,7 +378,189 @@
                 "sequence": "1",
                 "unitId": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3"
               },
-              "validatorVersion": "smapi-prebuild-2"
+              "validatorVersion": "tsumugi.core-review:1:1",
+              "evidence": {
+                "qaBasis": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "requiredChecks": {
+                  "policy": {
+                    "id": "tsumugi.policy.balanced",
+                    "schemaVersion": 1,
+                    "behaviorVersion": 1
+                  },
+                  "requirements": [
+                    {
+                      "key": {
+                        "rule": {
+                          "id": "required-translation",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "implementation": {
+                          "kind": "core",
+                          "validator": {
+                            "id": "tsumugi.core-review",
+                            "schemaVersion": 1,
+                            "behaviorVersion": 1
+                          }
+                        }
+                      },
+                      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "targets": [
+                        "synthetic-unit"
+                      ],
+                      "mandatory": true,
+                      "waivable": false,
+                      "notApplicable": null
+                    },
+                    {
+                      "key": {
+                        "rule": {
+                          "id": "terminology",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "implementation": {
+                          "kind": "core",
+                          "validator": {
+                            "id": "tsumugi.core-review",
+                            "schemaVersion": 1,
+                            "behaviorVersion": 1
+                          }
+                        }
+                      },
+                      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "targets": [
+                        "synthetic-unit"
+                      ],
+                      "mandatory": true,
+                      "waivable": true,
+                      "notApplicable": null
+                    },
+                    {
+                      "key": {
+                        "rule": {
+                          "id": "synthetic-domain-rule",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        },
+                        "implementation": {
+                          "kind": "plugin",
+                          "provider": {
+                            "plugin": {
+                              "id": "example.review",
+                              "publisher": "example",
+                              "version": "0.1.0-alpha.1"
+                            },
+                            "componentId": "review",
+                            "contributionId": "checker",
+                            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                          }
+                        }
+                      },
+                      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "targets": [
+                        "synthetic-unit"
+                      ],
+                      "mandatory": true,
+                      "waivable": false,
+                      "notApplicable": null
+                    }
+                  ]
+                },
+                "results": [
+                  {
+                    "key": {
+                      "rule": {
+                        "id": "required-translation",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      },
+                      "implementation": {
+                        "kind": "core",
+                        "validator": {
+                          "id": "tsumugi.core-review",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        }
+                      }
+                    },
+                    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "coveredTargets": [
+                      "synthetic-unit"
+                    ],
+                    "outcome": {
+                      "kind": "completed",
+                      "findings": []
+                    }
+                  },
+                  {
+                    "key": {
+                      "rule": {
+                        "id": "terminology",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      },
+                      "implementation": {
+                        "kind": "core",
+                        "validator": {
+                          "id": "tsumugi.core-review",
+                          "schemaVersion": 1,
+                          "behaviorVersion": 1
+                        }
+                      }
+                    },
+                    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "coveredTargets": [
+                      "synthetic-unit"
+                    ],
+                    "outcome": {
+                      "kind": "completed",
+                      "findings": []
+                    }
+                  },
+                  {
+                    "key": {
+                      "rule": {
+                        "id": "synthetic-domain-rule",
+                        "schemaVersion": 1,
+                        "behaviorVersion": 1
+                      },
+                      "implementation": {
+                        "kind": "plugin",
+                        "provider": {
+                          "plugin": {
+                            "id": "example.review",
+                            "publisher": "example",
+                            "version": "0.1.0-alpha.1"
+                          },
+                          "componentId": "review",
+                          "contributionId": "checker",
+                          "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                        }
+                      }
+                    },
+                    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "scopeDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "coveredTargets": [
+                      "synthetic-unit"
+                    ],
+                    "outcome": {
+                      "kind": "completed",
+                      "findings": []
+                    }
+                  }
+                ],
+                "attemptId": "00000000-0000-4000-8000-000000000051",
+                "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "resultId": "00000000-0000-4000-8000-000000000052",
+                "resultDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "capturedSelectionId": null
             },
             "retryable": false
           },

@@ -462,3 +462,16 @@ installed Store and dependencies are unchanged. This remains the same
 undistributed application 0.2.0-alpha.1 / SDK 0.1.0-alpha.1 batch and requires
 no additional version bump or historical conversion. Desktop execution,
 automatic-selection and full release consumers still require integration.
+
+Core automatic selection now captures candidate QA before selection and persists
+actual evidence with the selection in one transaction. Policy receipts retain
+exact required checks and original execution identities, including blocked
+candidates. This advances the current-only project format to schema 26; schema
+25 and earlier development directories are refused unchanged without migration.
+The experimental AutomaticSelectionReceipt includes required nullable captured
+evidence and the previously observed selection identity; the candidate basis
+names the exact prospective selection. Normal projects require actual evidence.
+SDK, process, Store, dependencies and
+installed packages are unchanged, and the same undistributed application
+0.2.0-alpha.1 / SDK 0.1.0-alpha.1 batch needs no extra bump. Desktop automatic
+checker orchestration and complete release/native acceptance remain separate.

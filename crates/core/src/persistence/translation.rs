@@ -892,7 +892,34 @@ pub(super) fn insert_selection(
     current: Option<TranslationSelection>,
     sequence: u64,
 ) -> Result<TranslationSelection, ExecutionError> {
-    let event = ExecutionId::new();
+    insert_reserved_selection(
+        connection,
+        project,
+        unit,
+        locale,
+        revision,
+        action,
+        digest,
+        current,
+        sequence,
+        ExecutionId::new(),
+    )
+}
+
+// Only the persistence owner reserves this identity. It lets candidate QA bind
+// the exact prospective selection before the atomic selection/QA transaction.
+pub(super) fn insert_reserved_selection(
+    connection: &Connection,
+    project: ExecutionId,
+    unit: ExecutionId,
+    locale: &str,
+    revision: ExecutionId,
+    action: ExecutionId,
+    digest: &str,
+    current: Option<TranslationSelection>,
+    sequence: u64,
+    event: ExecutionId,
+) -> Result<TranslationSelection, ExecutionError> {
     connection
         .execute(
             "INSERT INTO translation_selections

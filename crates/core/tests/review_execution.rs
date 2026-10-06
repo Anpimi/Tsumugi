@@ -854,3 +854,268 @@ fn adoption_policy_refresh_expires_qa_but_preserves_unchanged_manual_approval_an
     );
     assert_eq!(store.content_scope().unwrap(), scope);
 }
+
+#[path = "support/automatic.rs"]
+mod automatic;
+
+fn automatic_computed(
+    store: &mut ProjectStore,
+    request: &tsumugi_core::application::AutomaticSelectionRequest,
+    response: Response,
+) -> (
+    ExecutionRuntime,
+    ExecutionId,
+    tsumugi_core::ComputedAutomaticSelection,
+) {
+    let prepared = store.prepare_automatic_selection(request).unwrap();
+    let check = prepared.review_check().unwrap();
+    let mut runtime = runtime(store, check, response);
+    let input = check.domain_execution_input(ExecutionId::new()).unwrap();
+    let (_, result) = support::execute(&mut runtime, store, &input);
+    let grant = result.envelope().plugin.as_ref().unwrap().authorization_id;
+    let computed = store
+        .capture_automatic_selection_execution(
+            prepared,
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+        )
+        .unwrap()
+        .compute(&Cancellation::default())
+        .unwrap();
+    (runtime, grant, computed)
+}
+
+#[test]
+fn automatic_candidate_uses_actual_union_and_atomically_selects_current_qa_without_human_approval()
+{
+    let (directory, mut store, rows) = support::source_fixture();
+    let unit = rows[0].unit_id.unwrap();
+    let request = automatic::candidate_request(
+        &mut store,
+        unit,
+        "候选",
+        tsumugi_core::application::SelectionPolicy::MissingOnly,
+    );
+    let prepared = store.prepare_automatic_selection(&request).unwrap();
+    assert_eq!(
+        prepared
+            .compute(&Cancellation::default())
+            .unwrap_err()
+            .stage,
+        "review-plugin-evidence-required"
+    );
+    let (runtime, grant, computed) = automatic_computed(&mut store, &request, Response::Exact);
+    let receipt = store
+        .commit_automatic_selection(computed, &Cancellation::default())
+        .unwrap();
+    assert!(receipt.blocked.is_none());
+    let target = store
+        .review_target(request.project_id, unit, "zh-CN")
+        .unwrap();
+    assert_eq!(target.revision_id, Some(request.revision_id));
+    assert_eq!(
+        target.selection_id,
+        Some(receipt.selection.as_ref().unwrap().event_id)
+    );
+    assert_eq!(target.basis_evidence, receipt.candidate_basis);
+    let check = target.current_check.unwrap();
+    assert_eq!(Some(check.run_id), receipt.check_run_id);
+    assert_eq!(check.evidence, receipt.evidence);
+    assert!(target.current_decision.is_none());
+    assert!(
+        store
+            .review_eligibility(request.project_id, &["zh-CN".into()])
+            .unwrap()
+            .locales[0]
+            .blockers
+            .iter()
+            .any(|b| b.unit_id == unit && b.code == "approval-missing-or-stale")
+    );
+    runtime.revoke_plugin(&mut store, grant).unwrap();
+    let cancel = Cancellation::default();
+    cancel.request();
+    let replay = store
+        .prepare_automatic_selection(&request)
+        .unwrap()
+        .compute(&cancel)
+        .unwrap();
+    assert_eq!(
+        store.commit_automatic_selection(replay, &cancel).unwrap(),
+        receipt
+    );
+    drop(runtime);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&directory.path().join("project")).unwrap();
+    assert_eq!(
+        reopened
+            .automatic_selection_receipt(request.action_id)
+            .unwrap(),
+        Some(receipt)
+    );
+    assert!(
+        reopened
+            .review_target(request.project_id, unit, "zh-CN")
+            .unwrap()
+            .current_check
+            .is_some()
+    );
+}
+
+#[test]
+fn automatic_empty_missing_or_domain_findings_keep_candidate_without_selection_or_current_qa() {
+    for response in [Response::Empty, Response::Missing, Response::Finding] {
+        let (directory, mut store, rows) = support::source_fixture();
+        let unit = rows[0].unit_id.unwrap();
+        let request = automatic::candidate_request(
+            &mut store,
+            unit,
+            "候选",
+            tsumugi_core::application::SelectionPolicy::MissingOnly,
+        );
+        let (runtime, _, computed) = automatic_computed(&mut store, &request, response);
+        let receipt = store
+            .commit_automatic_selection(computed, &Cancellation::default())
+            .unwrap();
+        assert_eq!(
+            receipt.blocked,
+            Some(tsumugi_core::application::AutomaticSelectionBlock::Checks)
+        );
+        assert!(
+            receipt.evidence.is_some()
+                && receipt.selection.is_none()
+                && receipt.check_run_id.is_none()
+        );
+        let target = store
+            .review_target(request.project_id, unit, "zh-CN")
+            .unwrap();
+        assert!(target.selection_id.is_none() && target.current_check.is_none());
+        assert!(
+            store
+                .translation_history(request.project_id, unit, "zh-CN", 0, 25)
+                .unwrap()
+                .rows
+                .iter()
+                .any(|r| r.revision_id == request.revision_id)
+        );
+        drop(runtime);
+        store.close().unwrap();
+        let reopened = ProjectStore::open(&directory.path().join("project")).unwrap();
+        assert_eq!(
+            reopened
+                .automatic_selection_receipt(request.action_id)
+                .unwrap(),
+            Some(receipt)
+        );
+    }
+}
+
+#[test]
+fn automatic_grant_revocation_cancellation_and_manual_change_reject_without_partial_actions() {
+    for change in 0..5 {
+        let (_directory, mut store, rows) = support::source_fixture();
+        let unit = rows[0].unit_id.unwrap();
+        let request = automatic::candidate_request(
+            &mut store,
+            unit,
+            "候选",
+            tsumugi_core::application::SelectionPolicy::MissingOnly,
+        );
+        let (runtime, grant, computed) = automatic_computed(&mut store, &request, Response::Exact);
+        let cancellation = Cancellation::default();
+        match change {
+            0 => runtime.revoke_plugin(&mut store, grant).unwrap(),
+            1 => cancellation.request(),
+            2 => save(&mut store, unit, "较新人工输入"),
+            3 => {
+                store
+                    .control_work_plan(&tsumugi_core::application::ControlWorkPlan {
+                        action_id: ExecutionId::new(),
+                        plan_id: request.lease.plan_id,
+                        expected_generation: request.lease.generation,
+                        command: tsumugi_core::application::WorkPlanCommand::Stop,
+                        confirmed: false,
+                        expires_at: None,
+                    })
+                    .unwrap();
+            }
+            _ => {
+                let target = store
+                    .review_target(request.project_id, unit, "zh-CN")
+                    .unwrap();
+                store
+                    .save_term(&tsumugi_core::SaveTerm {
+                        project_id: request.project_id,
+                        action_id: ExecutionId::new(),
+                        term_id: None,
+                        locale: "zh-CN".into(),
+                        source: target.source_text,
+                        aliases: vec![],
+                        target: "指定".into(),
+                        protected: true,
+                        scope_unit_id: Some(unit),
+                        expected_revision_id: None,
+                        reason: "Synthetic concurrent term".into(),
+                    })
+                    .unwrap();
+            }
+        }
+        let before = store
+            .review_target(request.project_id, unit, "zh-CN")
+            .unwrap();
+        assert!(
+            store
+                .commit_automatic_selection(computed, &cancellation)
+                .is_err()
+        );
+        assert!(
+            store
+                .automatic_selection_receipt(request.action_id)
+                .unwrap()
+                .is_none()
+        );
+        let after = store
+            .review_target(request.project_id, unit, "zh-CN")
+            .unwrap();
+        assert_eq!(after.selection_id, before.selection_id);
+        assert_eq!(after.translation_text, before.translation_text);
+        assert_eq!(after.current_check, before.current_check);
+    }
+}
+
+#[test]
+fn automatic_qa_insert_failure_rolls_back_the_selection_in_the_same_transaction() {
+    let (directory, mut store, rows) = support::source_fixture();
+    let unit = rows[0].unit_id.unwrap();
+    let request = automatic::candidate_request(
+        &mut store,
+        unit,
+        "候选",
+        tsumugi_core::application::SelectionPolicy::MissingOnly,
+    );
+    let (_runtime, _, computed) = automatic_computed(&mut store, &request, Response::Exact);
+    let connection =
+        rusqlite::Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    connection.execute_batch("CREATE TRIGGER synthetic_qa_failure BEFORE INSERT ON review_checks BEGIN SELECT RAISE(ABORT,'synthetic-qa-failure'); END;").unwrap();
+    assert!(
+        store
+            .commit_automatic_selection(computed, &Cancellation::default())
+            .is_err()
+    );
+    let target = store
+        .review_target(request.project_id, unit, "zh-CN")
+        .unwrap();
+    assert!(target.selection_id.is_none() && target.current_check.is_none());
+    assert!(
+        store
+            .automatic_selection_receipt(request.action_id)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM translation_selections", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}

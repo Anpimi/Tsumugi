@@ -9,7 +9,7 @@ use tsumugi_plugin_sdk as sdk;
 /// evaluating this plan alone does not record QA or qualify a release.
 #[derive(Debug)]
 pub struct ReviewCheckPlan {
-    target: ReviewTarget,
+    pub(super) target: ReviewTarget,
     binding: SourceReviewBinding,
     input: sdk::ReviewCheckInput,
     checks: sdk::FixedCheckSet,

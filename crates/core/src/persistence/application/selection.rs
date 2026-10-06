@@ -8,7 +8,7 @@ use crate::{
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
-const POLICY_VERSION: &str = "checked-selection-1";
+const POLICY_VERSION: &str = "checked-selection-2";
 
 fn error(code: ErrorCode, stage: &str) -> ExecutionError {
     ExecutionError::new(code, stage)
@@ -16,14 +16,23 @@ fn error(code: ErrorCode, stage: &str) -> ExecutionError {
 fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, ExecutionError> {
     codec::encode(value, MAX_INPUT_BYTES)
 }
-fn checks_allow_selection(rules: &[CheckRuleResult]) -> bool {
-    // This initial policy requires complete, clean deterministic evidence. It
-    // does not inherit waivers from a different revision or turn warnings into
-    // human approval. Domain/release eligibility remains a separate boundary.
-    crate::review::complete_rules(rules)
-        && rules.iter().all(|rule| {
-            matches!(rule.status.as_str(), "passed" | "not-applicable") && rule.findings.is_empty()
-        })
+fn checks_allow_selection(
+    rules: &[CheckRuleResult],
+    evidence: Option<&crate::ReviewCheckEvidence>,
+) -> bool {
+    // Selection requires clean complete QA; it never inherits human approval or
+    // waivers. The existing Review owner evaluates the exact captured union.
+    match evidence {
+        Some(evidence) => review::candidate_checks_clean(rules, evidence),
+        None => {
+            cfg!(any(test, feature = "execution-test-host"))
+                && crate::review::complete_rules(rules)
+                && rules.iter().all(|rule| {
+                    matches!(rule.status.as_str(), "passed" | "not-applicable")
+                        && rule.findings.is_empty()
+                })
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -34,6 +43,8 @@ struct Capture {
     text: String,
     policy: SelectionPolicy,
     protection: WorkProtection,
+    selection_event: ExecutionId,
+    check: Option<crate::PreparedReviewCheck>,
 }
 #[derive(Debug)]
 enum Prepared {
@@ -48,8 +59,37 @@ pub struct PreparedAutomaticSelection(Prepared);
 pub struct ComputedAutomaticSelection {
     prepared: PreparedAutomaticSelection,
     rules: Vec<CheckRuleResult>,
+    adoption: Option<review::PreparedReviewAdoption>,
+}
+
+/// Original candidate action plus its actual, authorized domain execution.
+#[derive(Debug)]
+pub struct CapturedAutomaticSelection {
+    capture: Capture,
+    execution: crate::CapturedReviewCheckExecution,
+}
+impl CapturedAutomaticSelection {
+    pub fn compute(
+        self,
+        cancellation: &Cancellation,
+    ) -> Result<ComputedAutomaticSelection, ExecutionError> {
+        let adoption = review::PreparedReviewAdoption::new(self.execution.compute(cancellation)?)?;
+        Ok(ComputedAutomaticSelection {
+            rules: adoption.rules().to_vec(),
+            prepared: PreparedAutomaticSelection(Prepared::Pending(self.capture)),
+            adoption: Some(adoption),
+        })
+    }
 }
 impl PreparedAutomaticSelection {
+    /// Current policy projection for the saved candidate; this does not grant
+    /// execution permission or make the candidate the selected translation.
+    pub fn review_check(&self) -> Option<&crate::PreparedReviewCheck> {
+        match &self.0 {
+            Prepared::Pending(capture) => capture.check.as_ref(),
+            _ => None,
+        }
+    }
     /// Only owned values are used here, with no SQLite connection or transaction.
     pub fn compute(
         self,
@@ -59,6 +99,14 @@ impl PreparedAutomaticSelection {
             Prepared::Recorded(_) => Vec::new(),
             Prepared::Pending(_) if cancellation.is_requested() => {
                 return Err(error(ErrorCode::Cancelled, "work-selection-checks"));
+            }
+            Prepared::Pending(capture)
+                if capture.check.as_ref().is_some_and(|p| p.plan().is_some()) =>
+            {
+                return Err(error(
+                    ErrorCode::InvalidInput,
+                    "review-plugin-evidence-required",
+                ));
             }
             Prepared::Pending(capture) => crate::review::check_rules(
                 &crate::review::CheckInput {
@@ -73,6 +121,7 @@ impl PreparedAutomaticSelection {
         Ok(ComputedAutomaticSelection {
             prepared: self,
             rules,
+            adoption: None,
         })
     }
 }
@@ -88,11 +137,48 @@ fn recorded(
     row.map(|(request, digest, receipt, receipt_digest)| {
         let value: AutomaticSelectionReceipt = codec::decode(&receipt, MAX_INPUT_BYTES)?;
         if value.request.action_id != action
+            || value.policy_version != POLICY_VERSION
             || request != encode(&value.request)?
             || digest != codec::digest(&request)
             || receipt_digest != codec::digest(&receipt)
         {
             return Err(error(ErrorCode::CorruptLedger, "work-selection-receipt"));
+        }
+        if let Some(evidence) = &value.evidence {
+            review::validate_candidate_evidence(
+                c,
+                value.request.project_id,
+                action,
+                value.request.unit_id,
+                &value.request.locale,
+                &value.candidate_basis,
+                &value.rules,
+                evidence,
+            )?;
+            if value.validator_version != review::CURRENT_CHECK_VERSION {
+                return Err(error(ErrorCode::CorruptLedger, "work-selection-validator"));
+            }
+            if value.blocked.is_none() {
+                let (check, _) = review::check_by_action(c, value.request.project_id, action)?
+                    .ok_or_else(|| error(ErrorCode::CorruptLedger, "work-selection-check"))?;
+                let (selected, _) = translation::selection_by_action(c, action)?
+                    .ok_or_else(|| error(ErrorCode::CorruptLedger, "work-selection-selected"))?;
+                if Some(check.run_id) != value.check_run_id
+                    || check.basis_evidence != value.candidate_basis
+                    || check.evidence.as_ref() != Some(evidence)
+                    || check.rules != value.rules
+                    || value.selection.as_ref() != Some(&selected)
+                {
+                    return Err(error(
+                        ErrorCode::CorruptLedger,
+                        "work-selection-association",
+                    ));
+                }
+            } else if value.selection.is_some() || value.check_run_id.is_some() {
+                return Err(error(ErrorCode::CorruptLedger, "work-selection-blocked"));
+            }
+        } else if !cfg!(any(test, feature = "execution-test-host")) {
+            return Err(error(ErrorCode::CorruptLedger, "work-selection-evidence"));
         }
         Ok(value)
     })
@@ -139,7 +225,12 @@ pub(super) fn selection_matches_plan(
         && receipt.request.lease.generation.get() <= maximum_generation
         && receipt.policy == plan.options.selection_policy
         && receipt.policy_version == POLICY_VERSION
-        && receipt.validator_version == crate::review::CHECK_VERSION
+        && receipt.validator_version
+            == if receipt.evidence.is_some() {
+                review::CURRENT_CHECK_VERSION
+            } else {
+                crate::review::CHECK_VERSION
+            }
         && receipt.blocked.is_none()
         && receipt.selection.is_some_and(|value| {
             value.event_id == selected
@@ -182,6 +273,7 @@ fn capture(
     store: &ProjectStore,
     c: &Connection,
     request: &AutomaticSelectionRequest,
+    selection_event: ExecutionId,
 ) -> Result<Capture, ExecutionError> {
     let stored = authority(c, request)?;
     let basis = stored
@@ -261,18 +353,27 @@ fn capture(
             "work-selection-resources",
         ));
     }
+    let terms =
+        resources::resolve_terms_in(c, request.project_id, request.unit_id, &request.locale)?;
+    let check = review::prepare_candidate_in(
+        c,
+        request.project_id,
+        request.action_id,
+        &target,
+        selection_event,
+        request.revision_id,
+        &text,
+        &terms,
+    )?;
     Ok(Capture {
         request: request.clone(),
         target,
-        terms: resources::resolve_terms_in(
-            c,
-            request.project_id,
-            request.unit_id,
-            &request.locale,
-        )?,
+        terms,
         text,
         policy: stored.plan.options.selection_policy,
         protection: control::protection(c, request.unit_id, &request.locale)?,
+        selection_event,
+        check: Some(check),
     })
 }
 
@@ -324,9 +425,29 @@ impl ProjectStore {
                 return Ok(PreparedAutomaticSelection(Prepared::Recorded(receipt)));
             }
             Ok(PreparedAutomaticSelection(Prepared::Pending(capture(
-                self, c, request,
+                self,
+                c,
+                request,
+                ExecutionId::new(),
             )?)))
         })
+    }
+
+    pub fn capture_automatic_selection_execution(
+        &self,
+        prepared: PreparedAutomaticSelection,
+        attempt: ExecutionId,
+        result: ExecutionId,
+    ) -> Result<CapturedAutomaticSelection, ExecutionError> {
+        let Prepared::Pending(mut capture) = prepared.0 else {
+            return Err(error(ErrorCode::InvalidInput, "work-selection-recorded"));
+        };
+        let check = capture
+            .check
+            .take()
+            .ok_or_else(|| error(ErrorCode::CorruptLedger, "work-selection-check"))?;
+        let execution = self.capture_review_check_execution(check, attempt, result)?;
+        Ok(CapturedAutomaticSelection { capture, execution })
     }
 
     pub fn automatic_selection_receipt(
@@ -353,6 +474,7 @@ impl ProjectStore {
                 };
             }
         };
+        let plugin_authority = self.plugin_authority.clone();
         let mut tx = self.execution_write()?;
         let request = &capture.request;
         if let Some(receipt) = recorded(&tx, request.action_id)? {
@@ -365,7 +487,7 @@ impl ProjectStore {
         if cancellation.is_requested() {
             return Err(error(ErrorCode::Cancelled, "work-selection-checks"));
         }
-        let current = self::capture(self, &tx, request)?;
+        let current = self::capture(self, &tx, request, capture.selection_event)?;
         if current.target.basis != capture.target.basis
             || current.terms != capture.terms
             || current.protection != capture.protection
@@ -376,13 +498,36 @@ impl ProjectStore {
                 "work-selection-current",
             ));
         }
+        if let Some(adoption) = &computed.adoption {
+            adoption.recheck_authority_in(&tx, &plugin_authority, cancellation)?;
+            if current
+                .check
+                .as_ref()
+                .and_then(|p| p.plan())
+                .map(|p| p.basis())
+                != Some(adoption.evidence().qa_basis.as_str())
+            {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "work-selection-qa-current",
+                ));
+            }
+        } else if current.check.as_ref().is_some_and(|p| p.plan().is_some()) {
+            return Err(error(
+                ErrorCode::InvalidInput,
+                "review-plugin-evidence-required",
+            ));
+        }
         let blocked = if current.protection.protected {
             Some(AutomaticSelectionBlock::Protected)
         } else if current.policy == SelectionPolicy::MissingOnly
             && current.target.selection_id.is_some()
         {
             Some(AutomaticSelectionBlock::AlreadySelected)
-        } else if !checks_allow_selection(&computed.rules) {
+        } else if !checks_allow_selection(
+            &computed.rules,
+            computed.adoption.as_ref().map(|a| a.evidence()),
+        ) {
             Some(AutomaticSelectionBlock::Checks)
         } else {
             None
@@ -391,14 +536,24 @@ impl ProjectStore {
         let digest = codec::digest(&bytes);
         let mut candidate_basis = capture.target.basis_evidence;
         candidate_basis.revision_id = Some(request.revision_id);
+        if let Some(adoption) = &computed.adoption {
+            candidate_basis = adoption.candidate_basis().clone();
+        }
         let mut receipt = AutomaticSelectionReceipt {
             request: request.clone(),
             policy_version: POLICY_VERSION.into(),
             policy: current.policy,
             protection_revision: current.protection.revision,
             candidate_basis,
-            validator_version: crate::review::CHECK_VERSION.into(),
+            captured_selection_id: capture.target.selection_id,
+            validator_version: if computed.adoption.is_some() {
+                review::CURRENT_CHECK_VERSION
+            } else {
+                crate::review::CHECK_VERSION
+            }
+            .into(),
             rules: computed.rules,
+            evidence: computed.adoption.as_ref().map(|a| a.evidence().clone()),
             blocked,
             selection: None,
             check_run_id: None,
@@ -406,7 +561,7 @@ impl ProjectStore {
         if receipt.blocked.is_none() {
             let prior = translation::current_selection(&tx, request.unit_id, &request.locale)?;
             let sequence = translation::check_expected(&prior, current.target.selection_id)?;
-            let selected = translation::insert_selection(
+            let selected = translation::insert_reserved_selection(
                 &tx,
                 request.project_id,
                 request.unit_id,
@@ -416,18 +571,23 @@ impl ProjectStore {
                 &digest,
                 prior,
                 sequence,
+                capture.selection_event,
             )?;
             let selected_target =
                 review::target_in(&tx, request.project_id, request.unit_id, &request.locale)?;
-            let check = review::record_check_in(
-                &tx,
-                request.project_id,
-                request.action_id,
-                &digest,
-                &selected_target,
-                &receipt.rules,
-                cancellation,
-            )?;
+            let check = if let Some(adoption) = &computed.adoption {
+                adoption.save_in(&tx, &plugin_authority, cancellation)?
+            } else {
+                review::record_check_in(
+                    &tx,
+                    request.project_id,
+                    request.action_id,
+                    &digest,
+                    &selected_target,
+                    &receipt.rules,
+                    cancellation,
+                )?
+            };
             if check.rules != receipt.rules {
                 return Err(error(ErrorCode::Cancelled, "work-selection-checks"));
             }
@@ -508,17 +668,22 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             || receipt.policy != stored.plan.options.selection_policy
             || receipt.policy == SelectionPolicy::CandidatesOnly
             || receipt.policy_version != POLICY_VERSION
-            || receipt.validator_version != crate::review::CHECK_VERSION
+            || receipt.validator_version
+                != if receipt.evidence.is_some() {
+                    review::CURRENT_CHECK_VERSION
+                } else {
+                    crate::review::CHECK_VERSION
+                }
             || receipt.candidate_basis.source_revision_id != basis.source_revision_id
             || !selection_matches_plan(
                 c,
                 &stored.plan,
                 request.unit_id,
-                receipt.candidate_basis.selection_id,
+                receipt.captured_selection_id,
                 request.lease.generation.get(),
             )?
             || receipt.candidate_basis.revision_id != Some(request.revision_id)
-            || !crate::review::complete_rules(&receipt.rules)
+            || (receipt.evidence.is_none() && !crate::review::complete_rules(&receipt.rules))
             || !valid_candidate
             || receipt.selection.as_ref().map(|s| s.event_id.to_string()) != selection
             || receipt.blocked.is_some() == receipt.selection.is_some()
@@ -530,15 +695,20 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             let selected_row = translation::selection_by_action(c, request.action_id)?;
             let check = review::check_by_action(c, request.project_id, request.action_id)?;
             let digest = codec::digest(&encode(request)?);
-            if !checks_allow_selection(&receipt.rules)
+            if !checks_allow_selection(&receipt.rules, receipt.evidence.as_ref())
                 || selected.action_id != request.action_id
                 || selected.revision_id != request.revision_id
-                || selected.previous_event_id != receipt.candidate_basis.selection_id
+                || selected.previous_event_id != receipt.captured_selection_id
                 || selected_row != Some((selected.clone(), digest.clone()))
                 || !check.is_some_and(|(check, check_digest)| {
                     check.run_id == receipt.check_run_id.unwrap()
                         && check.rules == receipt.rules
-                        && check_digest == digest
+                        && if receipt.evidence.is_some() {
+                            check.evidence == receipt.evidence
+                                && check.basis_evidence == receipt.candidate_basis
+                        } else {
+                            check_digest == digest
+                        }
                         && check.basis_evidence.selection_id == Some(selected.event_id)
                         && check.basis_evidence.revision_id == Some(selected.revision_id)
                 })
