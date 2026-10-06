@@ -919,6 +919,42 @@ fn complete_translation_projection(
 }
 
 impl ProjectStore {
+    /// Keep the caller's original projection attempt across uncertain submission
+    /// outcomes. Existing inputs must retain the exact producer/result origin;
+    /// reading them never renews either plugin grant.
+    pub fn capture_translation_projection_with_id(
+        &self,
+        attempt: ExecutionId,
+        result: ExecutionId,
+        projection_attempt: ExecutionId,
+    ) -> Result<FixedInput, ExecutionError> {
+        match self.execution_input(projection_attempt) {
+            Ok(input) => {
+                let projection = crate::content::TranslationProjection::from_input(&input)?;
+                if projection.origin.producer_attempt != attempt
+                    || projection.origin.producer_result != result
+                {
+                    return Err(error(
+                        ErrorCode::ResultMismatch,
+                        "translation-projection-origin",
+                    ));
+                }
+                let connection = self.execution_connection()?;
+                check_translation_projection(connection, &input, Some(&self.plugin_authority))?;
+                let producer = load_input(connection, attempt)?;
+                super::translation::record_input(connection, &producer)?;
+                Ok(input)
+            }
+            Err(error) if error.code == ErrorCode::InvalidInput => {
+                let input = self.capture_translation_projection(attempt, result)?;
+                let mut envelope = input.envelope().clone();
+                envelope.attempt_id = projection_attempt;
+                FixedInput::capture(envelope)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// Capture once and reuse this exact input for retries. It retains one whole
     /// file and one compact entry set; each EX item only references its ordinal.
     pub fn capture_translation_projection(

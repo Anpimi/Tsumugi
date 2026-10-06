@@ -2,6 +2,39 @@ use super::*;
 use serde_json::{Value, json};
 
 #[test]
+fn translation_execution_wire_keeps_original_actions_and_separate_consent() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../../test/fixtures/pluginTranslationExecution.contract.json"
+    ))
+    .unwrap();
+    fn round<T: serde::de::DeserializeOwned + Serialize>(value: &Value) {
+        assert_eq!(
+            serde_json::to_value(serde_json::from_value::<T>(value.clone()).unwrap()).unwrap(),
+            *value
+        );
+    }
+    round::<PluginStartRequest>(&fixture["start"]);
+    round::<TranslationCheckPrepareRequest>(&fixture["checkPrepare"]);
+    round::<TranslationCheckFinishRequest>(&fixture["checkFinish"]);
+    round::<TranslationCheckReview>(&fixture["checkReview"]);
+    round::<TranslationProjectionPrepareRequest>(&fixture["projectionPrepare"]);
+    round::<TranslationProjectionStartRequest>(&fixture["projectionStart"]);
+    round::<TranslationProjectionReview>(&fixture["projectionReview"]);
+    round::<()>(&fixture["checked"]);
+    for field in ["grantId", "approved", "path", "environment", "targetLocale"] {
+        let mut value = fixture["checkPrepare"].clone();
+        value[field] = json!(true);
+        assert!(serde_json::from_value::<TranslationCheckPrepareRequest>(value).is_err());
+        let mut value = fixture["projectionStart"].clone();
+        value[field] = json!(true);
+        assert!(serde_json::from_value::<TranslationProjectionStartRequest>(value).is_err());
+    }
+    let mut value = fixture["start"].clone();
+    value["expiresAtMs"] = json!(9_007_199_254_740_993u64);
+    assert!(serde_json::from_value::<PluginStartRequest>(value).is_err());
+}
+
+#[test]
 fn translation_capture_wire_does_not_accept_paths_or_execution_grants() {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../../../test/fixtures/pluginTranslationCapture.contract.json"
@@ -44,119 +77,10 @@ fn translation_capture_wire_does_not_accept_paths_or_execution_grants() {
 #[test]
 fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_running_workers() {
     use std::{fs, path::PathBuf};
-    use tauri::{
-        Manager,
-        ipc::{CallbackFn, InvokeBody},
-        webview::InvokeRequest,
-    };
-    use tsumugi_core::content::{SourceAdoptionHandler, SourceBundle};
+    use tauri::Manager;
     use tsumugi_plugin_host::{CapturedRuntime, RuntimeApproval};
 
-    fn call(
-        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
-        command: &str,
-        request: Value,
-    ) -> Result<Value, Value> {
-        tauri::test::get_ipc_response(
-            window,
-            InvokeRequest {
-                cmd: command.into(),
-                callback: CallbackFn(0),
-                error: CallbackFn(1),
-                url: crate::ipc_test_url().parse().unwrap(),
-                body: InvokeBody::Json(json!({"request":request})),
-                headers: Default::default(),
-                invoke_key: tauri::test::INVOKE_KEY.into(),
-            },
-        )
-        .map(|response| response.deserialize::<Value>().unwrap())
-    }
-    fn adopt_source(state: &AppState, bytes: &'static [u8]) -> TranslationSourceContext {
-        let attempt = state.sessions.with(move |sessions| {
-            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-            // Test-only built-in source execution establishes a real adopted
-            // Core fixture. No plugin worker or native checker is invoked.
-            let bundle = SourceBundle::capture(
-                br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
-                bytes, "en",
-            ).unwrap();
-            let input = bundle.fixed_input(store.metadata().unwrap().project_id()).unwrap();
-            host.runtime.submit(store, &input).unwrap();
-            input.envelope().attempt_id
-        });
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            let accepted = state.sessions.with(move |sessions| {
-                let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-                host.tick(store).unwrap();
-                let status = store.execution_attempt(attempt, true).unwrap();
-                if status.items[0].validation != ValidationState::Valid {
-                    return None;
-                }
-                let result = store
-                    .execution_current_result(attempt, status.items[0].item_id)
-                    .unwrap()
-                    .unwrap();
-                let confirmation = if store.content_scope().unwrap().current_snapshot.is_some() {
-                    store
-                        .source_comparison(attempt, result, 0, 10)
-                        .unwrap()
-                        .confirmation
-                } else {
-                    store
-                        .source_preview(attempt, result, 0, 10)
-                        .unwrap()
-                        .confirmation
-                };
-                let input = store.execution_input(attempt).unwrap();
-                let action = store
-                    .prepare_adoption_with_id(
-                        ExecutionId::new(),
-                        attempt,
-                        input.envelope().units[0].unit_id,
-                        vec![result],
-                        serde_json::to_value(confirmation).unwrap(),
-                    )
-                    .unwrap();
-                store
-                    .adopt_execution(&action, &SourceAdoptionHandler)
-                    .unwrap();
-                Some(store.translation_source_context("zh-CN").unwrap())
-            });
-            if let Some(source) = accepted {
-                return source;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "test source execution did not complete"
-            );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-    }
-    fn choose(
-        state: &AppState,
-        directory: PathBuf,
-        request: PluginTranslationSelectRequest,
-    ) -> ExecutionId {
-        state.sessions.with(move |sessions| {
-            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-            let source = source_context(store, &request).unwrap();
-            host.source.stop();
-            let selection_id = ExecutionId::new();
-            // A real owned native handle replaces only the interactive picker.
-            // No path-grant IPC is exposed by either production configuration.
-            host.source.selection = Some((
-                selection_id,
-                Arc::new(capture::Selection::authorize(directory).unwrap()),
-            ));
-            host.source.translation.choice = Some(TranslationChoice {
-                selection_id,
-                request,
-                source,
-            });
-            selection_id
-        })
-    }
+    use native::*;
     let temporary = tempfile::tempdir().unwrap();
     let directory = temporary.path().join("material");
     fs::create_dir_all(directory.join("i18n")).unwrap();
@@ -333,3 +257,130 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
     call(&window, "cancel_source_capture", context).unwrap();
     assert!(call(&window, "preflight_plugin_translation", capture).is_err());
 }
+
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+mod native {
+    use super::*;
+    use std::path::PathBuf;
+    use tauri::{
+        ipc::{CallbackFn, InvokeBody},
+        webview::InvokeRequest,
+    };
+    use tsumugi_core::content::{SourceAdoptionHandler, SourceBundle};
+    pub(super) fn call(
+        window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        command: &str,
+        request: Value,
+    ) -> Result<Value, Value> {
+        tauri::test::get_ipc_response(
+            window,
+            InvokeRequest {
+                cmd: command.into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: crate::ipc_test_url().parse().unwrap(),
+                body: InvokeBody::Json(json!({"request":request})),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+        .map(|response| response.deserialize::<Value>().unwrap())
+    }
+    pub(super) fn adopt_source(state: &AppState, bytes: &'static [u8]) -> TranslationSourceContext {
+        let attempt = state.sessions.with(move |sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        // Test-only built-in source execution establishes a real adopted
+        // Core fixture. No plugin worker or native checker is invoked.
+        let bundle = SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            bytes, "en",
+        ).unwrap();
+        let input = bundle.fixed_input(store.metadata().unwrap().project_id()).unwrap();
+        host.runtime.submit(store, &input).unwrap();
+        input.envelope().attempt_id
+    });
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let accepted = state.sessions.with(move |sessions| {
+                let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+                host.tick(store).unwrap();
+                let status = store.execution_attempt(attempt, true).unwrap();
+                if status.items[0].validation != ValidationState::Valid {
+                    return None;
+                }
+                let result = store
+                    .execution_current_result(attempt, status.items[0].item_id)
+                    .unwrap()
+                    .unwrap();
+                let confirmation = if store.content_scope().unwrap().current_snapshot.is_some() {
+                    store
+                        .source_comparison(attempt, result, 0, 10)
+                        .unwrap()
+                        .confirmation
+                } else {
+                    store
+                        .source_preview(attempt, result, 0, 10)
+                        .unwrap()
+                        .confirmation
+                };
+                let input = store.execution_input(attempt).unwrap();
+                let action = store
+                    .prepare_adoption_with_id(
+                        ExecutionId::new(),
+                        attempt,
+                        input.envelope().units[0].unit_id,
+                        vec![result],
+                        serde_json::to_value(confirmation).unwrap(),
+                    )
+                    .unwrap();
+                store
+                    .adopt_execution(&action, &SourceAdoptionHandler)
+                    .unwrap();
+                Some(store.translation_source_context("zh-CN").unwrap())
+            });
+            if let Some(source) = accepted {
+                return source;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "test source execution did not complete"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    pub(super) fn choose(
+        state: &AppState,
+        directory: PathBuf,
+        request: PluginTranslationSelectRequest,
+    ) -> ExecutionId {
+        state.sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            let source = source_context(store, &request).unwrap();
+            host.source.stop();
+            let selection_id = ExecutionId::new();
+            // A real owned native handle replaces only the interactive picker.
+            // No path-grant IPC is exposed by either production configuration.
+            host.source.selection = Some((
+                selection_id,
+                Arc::new(capture::Selection::authorize(directory).unwrap()),
+            ));
+            host.source.translation.choice = Some(TranslationChoice {
+                selection_id,
+                request,
+                source,
+            });
+            selection_id
+        })
+    }
+}
+
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+mod execution_tests;

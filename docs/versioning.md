@@ -337,3 +337,13 @@ project schema 21, SDK/process/Store formats and dependencies in the same
 undistributed application/SDK alpha.1 batch. Both Unreleased changelogs are
 synchronized; no additional bump or historical migration is required. Actual
 producer/checker execution and workbench integration remain separate.
+
+Desktop translation execution now connects the declared producer, separately
+consented checker, durable proof and per-entry projection to the existing Core
+ledger and adoption owners. Recovery verifies original checker bytes and exact
+projection attempt origins; it never renews execution grants. The additive IPC
+and generic projection runner change no SDK/process/Store format, schema 21 or
+dependency metadata. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain
+in this same undistributed batch, with synchronized Unreleased changelogs and no
+additional bump or historical migration. Rendered workbench cutover and complete
+native acceptance remain pending.

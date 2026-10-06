@@ -115,6 +115,21 @@ Long-running or domain-specific operations can run outside the Core through boun
 
 ## Development
 
+The native translation IPC integration test on Apple silicon macOS uses an
+independently fingerprinted prebuilt SMAPI package and the
+[prepared desktop runtime](runtimes/javascript-host/README.md#opt-into-the-desktop-extension-bundle).
+Set `TSUMUGI_TEST_PLUGIN_PACKAGE` to that package directory and
+`TSUMUGI_TEST_PLUGIN_DIGEST` to its complete verified digest, then run:
+
+```text
+cargo test -p tsumugi-desktop --features wire-schema,bundled-runtime translation_execution -- --include-ignored
+```
+
+This opt-in test runs actual translation producer/checker Workers, durable Core
+proof and per-entry adoption in temporary application/project directories. The
+interactive picker uses an owned native handle fixture; rendered workbench
+acceptance remains separate.
+
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
 validates declarations, content/execution frames and captured check coverage;

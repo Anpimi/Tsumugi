@@ -3,16 +3,22 @@
 export type ExecutionId = string;
 export type TranslationSelectionDecision = "candidate-only" | "select-if-empty" | "replace";
 export type Revision = string;
+export type UnsignedDecimal = string;
 
 export interface Requests {
   action: TranslationActionRequest;
   adopt: TranslationAdoptRequest;
   capture: TranslationCaptureRequest;
+  checkFinish: TranslationCheckFinishRequest;
+  checkPrepare: TranslationCheckPrepareRequest;
   files: TranslationFilesRequest;
   history: TranslationHistoryRequest;
   pluginCapture: PluginTranslationCaptureRequest;
   pluginSelect: PluginTranslationSelectRequest;
+  pluginStart: PluginStartRequest;
   preview: TranslationPreviewRequest;
+  projectionPrepare: TranslationProjectionPrepareRequest;
+  projectionStart: TranslationProjectionStartRequest;
   save: TranslationSaveRequest;
   select: TranslationSelectRequest;
   source: TranslationSourceRequest;
@@ -49,6 +55,39 @@ export interface TranslationCaptureRequest {
   selectionId: ExecutionId;
   sessionToken: string;
   targetLocale: string;
+}
+export interface TranslationCheckFinishRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  resultId: ExecutionId;
+  sessionToken: string;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+export interface TranslationCheckPrepareRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  translation: PluginTranslationRequest;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+export interface PluginTranslationRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
 }
 export interface TranslationFilesRequest {
   projectId: ExecutionId;
@@ -96,28 +135,33 @@ export interface ContractRef {
   id: string;
   schemaVersion: number;
 }
-export interface PluginTranslationRequest {
-  environmentDigest: string;
-  package: PluginPackageRequest;
-  resourceId: string;
-}
-export interface PluginPackageRequest {
-  packageDigest: string;
-  plugin: PluginIdentity;
-}
-/**
- * Claimed package identity; a host must authenticate the actual package source.
- */
-export interface PluginIdentity {
-  id: string;
-  publisher: string;
-  version: string;
+export interface PluginStartRequest {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  unsandboxedExecution: boolean;
 }
 export interface TranslationPreviewRequest {
   after: number;
   attemptId: ExecutionId;
   basis?: string | null;
   limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface TranslationProjectionPrepareRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
+}
+export interface TranslationProjectionStartRequest {
+  attemptId: ExecutionId;
+  inputDigest: string;
   projectId: ExecutionId;
   sessionToken: string;
 }

@@ -148,6 +148,17 @@ Workers / Data Extensions / External Tools
 
 ## 开发环境
 
+Apple Silicon macOS 上的原生译文 IPC 集成测试使用独立摘要固定的预构建 SMAPI 包及
+[已准备的桌面运行时](runtimes/javascript-host/README.md#opt-into-the-desktop-extension-bundle)。
+将 `TSUMUGI_TEST_PLUGIN_PACKAGE` 指向该包目录，将 `TSUMUGI_TEST_PLUGIN_DIGEST` 设为已核验的完整摘要，然后运行：
+
+```text
+cargo test -p tsumugi-desktop --features wire-schema,bundled-runtime translation_execution -- --include-ignored
+```
+
+这项显式开启的测试在临时应用/项目目录中执行真实译文提取器与独立检查器 Worker、Core 持久证明及逐条采纳。
+交互选择器使用已拥有的原生目录句柄 fixture；实际工作面界面验收另行完成。
+
 实验性的独立[插件 SDK](crates/plugin-sdk)提供数据契约与 schema/校验 harness，不依赖 Core。
 当前校验声明、内容/执行交换帧及固定检查覆盖；本单元尚未提供生产插件加载与运行绑定。详见[插件声明契约](crates/plugin-sdk/docs/declarations.md)与[内容交换契约](crates/plugin-sdk/docs/exchange.md)。[实验性进程 Host](crates/plugin-host)增加 SDK 所有的[帧协议](crates/plugin-sdk/docs/process.md)和 macOS 实际原生 conformance 进程；生产目录/Core 集成仍未完成。
 

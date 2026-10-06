@@ -14,6 +14,23 @@ pub(in crate::commands) struct Fixture {
     pub(in crate::commands) approval: PackageApproval,
 }
 impl Fixture {
+    pub(in crate::commands) fn from_image(
+        owner: Arc<ApplicationPlugins>,
+        image: PackageImage,
+        approval: PackageApproval,
+    ) -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        owner
+            .configure(directory.path().join("application"))
+            .unwrap();
+        Self {
+            directory,
+            owner,
+            image,
+            approval,
+        }
+    }
+
     pub(in crate::commands) fn new(
         change: impl FnOnce(&mut sdk::PluginManifest, &mut BTreeMap<String, PackageFile>),
     ) -> Self {

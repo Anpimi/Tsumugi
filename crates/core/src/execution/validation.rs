@@ -122,6 +122,16 @@ pub struct PreparedResultValidation {
     pub(crate) proof: ValidationProof,
 }
 impl ResultValidationCapture {
+    /// Recover the original independently captured checker input. Only generated
+    /// identities may differ from reconstruction; every payload and binding is
+    /// compared by the same owner used when restoring durable proof links.
+    pub fn restore_translation_check(
+        self,
+        input: FixedInput,
+    ) -> Result<TranslationValidationCapture, ExecutionError> {
+        TranslationValidationCapture::restore(self, input)
+    }
+
     pub fn prepare_translation_check(
         self,
         attempt: ExecutionId,

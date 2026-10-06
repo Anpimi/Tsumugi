@@ -6,11 +6,17 @@ use crate::commands::plugins::{
 };
 use tsumugi_core::{TranslationSourceContext, content::PluginTranslationSettings};
 use tsumugi_plugin_sdk as sdk;
+mod execution;
+pub use execution::*;
 
 #[derive(Default)]
 pub(super) struct PluginTranslationSession {
     choice: Option<TranslationChoice>,
     review: Option<Arc<TranslationReview>>,
+    last_start: Option<PluginStartRequest>,
+    check: Option<Arc<execution::CheckReview>>,
+    last_check_start: Option<PluginStartRequest>,
+    projection: Option<Arc<execution::ProjectionReview>>,
 }
 impl PluginTranslationSession {
     pub(super) fn discard_capture(&mut self) {
@@ -25,6 +31,7 @@ struct TranslationChoice {
     source: TranslationSourceContext,
 }
 struct TranslationReview {
+    choice: TranslationChoice,
     request: PluginTranslationCaptureRequest,
     input: FixedInput,
     view: PluginTranslationPreflight,
@@ -444,6 +451,7 @@ pub async fn preflight_plugin_translation(
                 let mut envelope = fixed.envelope().clone();
                 envelope.attempt_id = capturing.attempt_id;
                 let input = FixedInput::capture(envelope).map_err(map_source)?;
+                let review_choice = selected.clone();
                 let view = PluginTranslationPreflight {
                     attempt_id: capturing.attempt_id,
                     input_digest: input.digest().into(),
@@ -453,6 +461,7 @@ pub async fn preflight_plugin_translation(
                     file,
                 };
                 Ok(Arc::new(TranslationReview {
+                    choice: review_choice,
                     request: capturing,
                     input,
                     view,

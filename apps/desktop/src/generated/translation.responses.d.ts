@@ -2,7 +2,6 @@
 
 export type ExecutionId = string;
 export type Revision = string;
-export type TranslationOrigin = "import" | "manual" | "ai";
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
  * Network/process effects still require their own host authorization.
@@ -40,12 +39,15 @@ export type RuntimeOperatingSystem = "macos" | "linux";
  */
 export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
 export type UnsignedDecimal = string;
+export type TranslationOrigin = "import" | "manual" | "ai";
 export type TranslationMatch =
   "unique" | "unmatched" | "ambiguous" | "selected-conflict" | "source-changed" | "applied";
 
 export interface Responses {
   action: TranslationSelection | null;
   attempt: ExecutionId;
+  checkReview: TranslationCheckReview;
+  checked: null;
   files: string[];
   history: TranslationHistory;
   pluginPreflight: PluginTranslationPreflight;
@@ -53,6 +55,7 @@ export interface Responses {
   preflight: TranslationPreflight;
   prepared: AdoptionAction;
   preview: TranslationPreview;
+  projectionReview: TranslationProjectionReview;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
   source: TranslationSourceContext;
@@ -66,48 +69,23 @@ export interface TranslationSelection {
   sequence: Revision;
   unitId: ExecutionId;
 }
-export interface TranslationHistory {
-  current: TranslationSelection | null;
-  currentText: string | null;
-  locale: string;
-  nextOrdinal: Revision | null;
-  rows: TranslationRevision[];
-  total: Revision;
-  unitId: ExecutionId;
-}
-export interface TranslationRevision {
-  actionId: ExecutionId;
-  artifactId: ExecutionId | null;
-  attemptId: ExecutionId | null;
-  contributors: ExecutionId[];
-  declaredLocale: string | null;
-  fileDigest: string | null;
-  itemId: ExecutionId | null;
-  locale: string;
-  logicalPath: string | null;
-  nativeKey: string | null;
-  ordinal: Revision;
-  originKind: TranslationOrigin;
-  resultId: ExecutionId | null;
-  revisionId: ExecutionId;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  text: string;
-  unitId: ExecutionId;
-}
-export interface PluginTranslationPreflight {
+export interface TranslationCheckReview {
   attemptId: ExecutionId;
-  file: PluginSourceFile;
   inputDigest: string;
+  rules: ContractRef[];
   source: TranslationSourceContext;
-  targetLocale: string;
   translation: PluginTranslationView;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
 }
-export interface PluginSourceFile {
-  byteLength: number;
-  logicalPath: string;
-  role: string;
-  sha256: string;
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
 }
 /**
  * Immutable matching scopes from the current adopted source. This observation
@@ -127,15 +105,6 @@ export interface TranslationSourceContext {
 export interface TranslationNativeScope {
   namespace: string;
   policy: ContractRef;
-}
-/**
- * Schema and behavior are separate exact-match compatibility identities.
- * Matching JSON field types or a package SemVer is not behavioral compatibility.
- */
-export interface ContractRef {
-  behaviorVersion: number;
-  id: string;
-  schemaVersion: number;
 }
 export interface PluginTranslationView {
   checker: CapabilityBinding;
@@ -245,6 +214,49 @@ export interface PluginOriginView {
   publisherId: string;
   sourceId: string;
 }
+export interface TranslationHistory {
+  current: TranslationSelection | null;
+  currentText: string | null;
+  locale: string;
+  nextOrdinal: Revision | null;
+  rows: TranslationRevision[];
+  total: Revision;
+  unitId: ExecutionId;
+}
+export interface TranslationRevision {
+  actionId: ExecutionId;
+  artifactId: ExecutionId | null;
+  attemptId: ExecutionId | null;
+  contributors: ExecutionId[];
+  declaredLocale: string | null;
+  fileDigest: string | null;
+  itemId: ExecutionId | null;
+  locale: string;
+  logicalPath: string | null;
+  nativeKey: string | null;
+  ordinal: Revision;
+  originKind: TranslationOrigin;
+  resultId: ExecutionId | null;
+  revisionId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  text: string;
+  unitId: ExecutionId;
+}
+export interface PluginTranslationPreflight {
+  attemptId: ExecutionId;
+  file: PluginSourceFile;
+  inputDigest: string;
+  source: TranslationSourceContext;
+  targetLocale: string;
+  translation: PluginTranslationView;
+}
+export interface PluginSourceFile {
+  byteLength: number;
+  logicalPath: string;
+  role: string;
+  sha256: string;
+}
 export interface PluginTranslationSelection {
   folderName: string;
   nativeScope: TranslationNativeScope;
@@ -324,6 +336,15 @@ export interface TranslationEntry {
    * @maxItems 2
    */
   valueByteRange: [number, number];
+}
+export interface TranslationProjectionReview {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  itemCount: number;
+  source: TranslationSourceContext;
+  targetLocale: string;
+  translationAttemptId: ExecutionId;
+  translationResultId: ExecutionId;
 }
 /**
  * Immutable confirmation of one save, including the basis for the next edit.

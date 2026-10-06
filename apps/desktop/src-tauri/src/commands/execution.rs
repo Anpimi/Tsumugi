@@ -32,6 +32,9 @@ macro_rules! handlers {
         source::translation::list_translation_files,source::translation::preflight_translation,
         source::plugin_translation::read_plugin_translation_source,source::plugin_translation::select_plugin_translation,
         source::plugin_translation::list_plugin_translation_files,source::plugin_translation::preflight_plugin_translation,
+        source::plugin_translation::start_plugin_translation,source::plugin_translation::prepare_translation_check,
+        source::plugin_translation::start_translation_check,source::plugin_translation::finish_translation_check,
+        source::plugin_translation::prepare_translation_projection,source::plugin_translation::start_translation_projection,
         source::translation::start_translation_import,source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
         source::translation::read_translation_action,
@@ -174,6 +177,9 @@ impl ExecutionHost {
             .map_err(map_read)?;
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::TranslationRunner))
+            .map_err(map_read)?;
+        host.runtime
+            .register_read_only(Arc::new(tsumugi_core::content::TranslationProjectionRunner))
             .map_err(map_read)?;
         host.runtime
             .register_read_only(Arc::new(tsumugi_core::content::BuildRunner))

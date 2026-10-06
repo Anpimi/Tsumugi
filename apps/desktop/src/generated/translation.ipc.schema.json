@@ -67,6 +67,42 @@
         ],
         "type": "object"
       },
+      "PluginStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
+        ],
+        "type": "object"
+      },
       "PluginTranslationCaptureRequest": {
         "additionalProperties": false,
         "properties": {
@@ -289,6 +325,70 @@
         ],
         "type": "object"
       },
+      "TranslationCheckFinishRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "translationAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "translationAttemptId",
+          "translationResultId",
+          "attemptId",
+          "resultId"
+        ],
+        "type": "object"
+      },
+      "TranslationCheckPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "translation": {
+            "$ref": "#/definitions/PluginTranslationRequest"
+          },
+          "translationAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "translationAttemptId",
+          "translationResultId",
+          "attemptId",
+          "translation"
+        ],
+        "type": "object"
+      },
       "TranslationFilesRequest": {
         "additionalProperties": false,
         "properties": {
@@ -398,6 +498,58 @@
           "attemptId",
           "after",
           "limit"
+        ],
+        "type": "object"
+      },
+      "TranslationProjectionPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "translationAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "translationAttemptId",
+          "translationResultId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "TranslationProjectionStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest"
         ],
         "type": "object"
       },
@@ -564,6 +716,10 @@
           "attemptId"
         ],
         "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
       }
     },
     "properties": {
@@ -575,6 +731,12 @@
       },
       "capture": {
         "$ref": "#/definitions/TranslationCaptureRequest"
+      },
+      "checkFinish": {
+        "$ref": "#/definitions/TranslationCheckFinishRequest"
+      },
+      "checkPrepare": {
+        "$ref": "#/definitions/TranslationCheckPrepareRequest"
       },
       "files": {
         "$ref": "#/definitions/TranslationFilesRequest"
@@ -588,8 +750,17 @@
       "pluginSelect": {
         "$ref": "#/definitions/PluginTranslationSelectRequest"
       },
+      "pluginStart": {
+        "$ref": "#/definitions/PluginStartRequest"
+      },
       "preview": {
         "$ref": "#/definitions/TranslationPreviewRequest"
+      },
+      "projectionPrepare": {
+        "$ref": "#/definitions/TranslationProjectionPrepareRequest"
+      },
+      "projectionStart": {
+        "$ref": "#/definitions/TranslationProjectionStartRequest"
       },
       "save": {
         "$ref": "#/definitions/TranslationSaveRequest"
@@ -608,6 +779,11 @@
       "source",
       "pluginSelect",
       "pluginCapture",
+      "pluginStart",
+      "checkPrepare",
+      "checkFinish",
+      "projectionPrepare",
+      "projectionStart",
       "files",
       "capture",
       "start",
@@ -1185,6 +1361,45 @@
         ],
         "type": "object"
       },
+      "TranslationCheckReview": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "source": {
+            "$ref": "#/definitions/TranslationSourceContext"
+          },
+          "translation": {
+            "$ref": "#/definitions/PluginTranslationView"
+          },
+          "translationAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "translationAttemptId",
+          "translationResultId",
+          "source",
+          "translation",
+          "rules"
+        ],
+        "type": "object"
+      },
       "TranslationEditBasis": {
         "additionalProperties": false,
         "properties": {
@@ -1651,6 +1866,45 @@
         ],
         "type": "object"
       },
+      "TranslationProjectionReview": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "itemCount": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/definitions/TranslationSourceContext"
+          },
+          "targetLocale": {
+            "type": "string"
+          },
+          "translationAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "translationResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "translationAttemptId",
+          "translationResultId",
+          "source",
+          "targetLocale",
+          "itemCount"
+        ],
+        "type": "object"
+      },
       "TranslationRevision": {
         "additionalProperties": false,
         "properties": {
@@ -1897,6 +2151,12 @@
       "attempt": {
         "$ref": "#/definitions/ExecutionId"
       },
+      "checkReview": {
+        "$ref": "#/definitions/TranslationCheckReview"
+      },
+      "checked": {
+        "type": "null"
+      },
       "files": {
         "items": {
           "type": "string"
@@ -1928,6 +2188,9 @@
       "preview": {
         "$ref": "#/definitions/TranslationPreview"
       },
+      "projectionReview": {
+        "$ref": "#/definitions/TranslationProjectionReview"
+      },
       "saved": {
         "$ref": "#/definitions/TranslationSaveReceipt"
       },
@@ -1942,6 +2205,9 @@
       "source",
       "pluginSelection",
       "pluginPreflight",
+      "checkReview",
+      "projectionReview",
+      "checked",
       "files",
       "preflight",
       "attempt",
