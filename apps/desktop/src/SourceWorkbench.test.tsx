@@ -1,6 +1,6 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { createRef } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
@@ -8,6 +8,7 @@ import type { ContentPage, SourceChangePage } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import commandErrors from "../test/fixtures/commandErrors.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { pluginSourceView, pluginSourceWorkflow, pluginSourceRequest, pluginSourceInventory, pluginSourcePackage } from "./testSupport/pluginSourceFixture";
@@ -511,4 +512,42 @@ it("reports a rejected capture discard and retains the selected material", async
   await user.click(screen.getByRole("button", { name: "Discard selection" }));
   await screen.findByRole("alert");
   expect(screen.getByText("Example Mod")).toBeInTheDocument();
+});
+
+
+it.each(["en-US", "zh-CN"].flatMap(locale => ["vtt-header", "vtt-payload", "catalog.invalid-line", "invalid-json", "source-value-not-string"].map(diagnostic => [locale, diagnostic])))("keeps plugin diagnostics opaque during source preview failure in %s: %s", async (locale, diagnostic) => {
+  await i18n.changeLanguage(locale);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "read_source_preview") return Promise.reject({ ...commandErrors.errors[0], reason: diagnostic });
+    return original(command, args);
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("source.title") }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("sourcePlugin.chooseFolder") }));
+  await user.click(await screen.findByRole("checkbox", { name: i18n.t("source.language", { language: project.metadata.sourceLocale }) }));
+  await user.click(screen.getByRole("button", { name: i18n.t("source.preflight") }));
+  await user.click(await screen.findByRole("checkbox", { name: i18n.t("sourcePlugin.producerConsent") }));
+  await user.click(screen.getByRole("button", { name: i18n.t("source.start") }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(i18n.t("source.errors.failed"));
+  await user.click(within(alert).getByText(i18n.t("execution.diagnostic")));
+  expect(within(alert).getByText(diagnostic)).toBeVisible();
+  expect(invoke.mock.calls.some(([name]) => name === "prepare_source_adoption" || name === "adopt_execution")).toBe(false);
+});
+
+
+it("shows every captured source diagnostic without interpreting a domain profile", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_source_preview"
+    ? Promise.resolve({ ...preview, diagnostics: ["source-template", "catalog.incomplete-metadata"] }) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  const summary = screen.getByText(i18n.t("source.diagnostics", { count: 2 }));
+  expect(summary.closest("details")).not.toHaveAttribute("open");
+  await user.click(summary);
+  expect(screen.getByText("source-template")).toBeVisible();
+  expect(screen.getByText("catalog.incomplete-metadata")).toBeVisible();
+  expect(invoke.mock.calls.some(([name]) => name === "adopt_execution")).toBe(false);
 });

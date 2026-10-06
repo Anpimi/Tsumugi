@@ -57,3 +57,18 @@ it("preserves an explicit unknown outcome independently of its diagnostic reason
   expect(failureReason("input-busy")).toBe("input-busy");
   expect(failureReason(null)).toBeNull();
 });
+
+
+it.each(["en-US", "zh-CN"])("retains the original reason or field without interpreting a plugin name in %s", async locale => {
+  await i18n.changeLanguage(locale);
+  const reason = "catalog.invalid-line <original>";
+  const view = render(<CommandFailureDetails failure={commandFailure({ ...fixture.errors[0], reason, field: "input.payload" })} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByText(i18n.t("execution.diagnostic")));
+  expect(screen.getByText(reason)).toBeVisible();
+  const fieldOnly: Record<string, unknown> = { ...fixture.errors[0], field: "input.payload" };
+  delete fieldOnly.reason;
+  view.rerender(<CommandFailureDetails failure={commandFailure(fieldOnly)} />);
+  expect(screen.getByText("input.payload")).toBeVisible();
+  expect(screen.queryByText(reason)).not.toBeInTheDocument();
+});

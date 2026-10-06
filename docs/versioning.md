@@ -518,3 +518,11 @@ permission or currentness is cached, and no stored shape, schema 26, dependency
 or SDK/process/Store/IPC profile changes. This remains the same undistributed
 application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch without an extra bump
 or migration; both Unreleased changelogs describe the behavior.
+
+
+The source workbench now uses capability-neutral identity and workflow messages.
+Opaque plugin diagnostics and errors do not select fixed domain advice; shared
+command details retain their original reason or field. This changes presentation
+only, with no SDK/process/Store/IPC or schema 26 change and no new dependency.
+Both Unreleased changelogs are synchronized. The same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no extra bump or migration.
