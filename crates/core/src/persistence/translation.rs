@@ -371,8 +371,8 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// One preview/adoption owner, with explicitly selected legacy and checked
-/// projection inputs. Unknown capabilities never fall back to a domain parser.
+/// The shared preview/adoption view of a checked plugin projection. The former
+/// built-in importer is available only as an explicit test baseline.
 struct TranslationImportView {
     bundle_id: ExecutionId,
     source_snapshot_id: ExecutionId,
@@ -413,7 +413,21 @@ impl TranslationImportView {
                     .collect(),
             });
         }
-        // Explicit transition route until desktop imports use the plugin owner.
+        #[cfg(any(test, feature = "execution-test-host"))]
+        {
+            Self::from_legacy_input(input)
+        }
+        #[cfg(not(any(test, feature = "execution-test-host")))]
+        {
+            Err(error(
+                ErrorCode::InvalidInput,
+                "translation-projection-required",
+            ))
+        }
+    }
+
+    #[cfg(any(test, feature = "execution-test-host"))]
+    fn from_legacy_input(input: &FixedInput) -> Result<Self, ExecutionError> {
         let bundle = crate::content::TranslationBundle::from_input(input)?;
         let entries = crate::content::extract_translation(
             &bundle,
@@ -453,6 +467,21 @@ pub(super) fn record_input(
         let producer = super::ledger::load_input(connection, projection.origin.producer_attempt)?;
         return record_plugin_input(connection, &producer);
     }
+    #[cfg(any(test, feature = "execution-test-host"))]
+    {
+        record_legacy_input(connection, input)
+    }
+    #[cfg(not(any(test, feature = "execution-test-host")))]
+    {
+        Err(error(
+            ErrorCode::InvalidInput,
+            "translation-projection-required",
+        ))
+    }
+}
+
+#[cfg(any(test, feature = "execution-test-host"))]
+fn record_legacy_input(connection: &Connection, input: &FixedInput) -> Result<(), ExecutionError> {
     let bundle = crate::content::TranslationBundle::from_input(input)?;
     check_target(
         connection,

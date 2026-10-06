@@ -1,5 +1,7 @@
 //! Immutable source bundles, native identity evidence and read-only projections.
 mod build;
+#[cfg(any(test, feature = "execution-test-host"))]
+mod legacy_translation;
 mod plugin_translation;
 mod smapi;
 mod translation;
@@ -9,8 +11,10 @@ pub use crate::persistence::content::SourceAdoptionHandler;
 pub use build::{
     BUILD_CAPABILITY, BUILD_CAPABILITY_VERSION, BUILD_OPERATION, BUILDER_VERSION, BuildEntry,
     BuildLocale, BuildManifest, BuildOutput, BuildRunner, BuildSourceFile, VALIDATOR_VERSION,
-    WebvttBuildRunner, artifact_digest, build_locale, validate_build_output,
+    WebvttBuildRunner, artifact_digest, build_locale, declared_locale, validate_build_output,
 };
+#[cfg(any(test, feature = "execution-test-host"))]
+pub use legacy_translation::{TranslationBundle, TranslationRunner, extract_translation};
 pub use plugin_translation::{
     MAX_TRANSLATION_INPUT_BYTES, MAX_TRANSLATION_RESULT_BYTES, PluginTranslationSettings,
     TRANSLATION_EXTRACTION_OPERATION, plugin_translation_input, validate_plugin_translation_output,
@@ -34,8 +38,7 @@ pub fn supported_identity_policy(policy: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 pub use translation::{
-    TRANSLATION_OPERATION, TranslationBundle, TranslationEntry, TranslationOutput,
-    TranslationRunner, declared_locale, extract_translation, validate_translation_output,
+    TRANSLATION_OPERATION, TranslationEntry, TranslationOutput, validate_translation_output,
 };
 pub use translation_projection::{TRANSLATION_PROJECTION_CAPABILITY, TranslationProjectionRunner};
 pub(crate) use translation_projection::{

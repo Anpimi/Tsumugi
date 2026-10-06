@@ -14,6 +14,28 @@ pub fn artifact_digest(bytes: &[u8]) -> String {
     codec::digest(bytes)
 }
 
+pub fn declared_locale(path: &str) -> Result<String, ExecutionError> {
+    let Some(name) = path
+        .strip_prefix("i18n/")
+        .and_then(|name| name.strip_suffix(".json"))
+    else {
+        return Err(invalid("unsupported-format"));
+    };
+    if name == "default"
+        || !name.is_ascii()
+        || name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return Err(invalid("unsupported-format"));
+    }
+    let locale = Locale::parse(name).map_err(|_| invalid("language-conflict"))?;
+    if locale.as_str() != name {
+        return Err(invalid("language-conflict"));
+    }
+    Ok(name.into())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildEntry {

@@ -360,5 +360,20 @@ plugin import and generic preview/adoption/editor commands. This removes earlier
 development IPC shapes; consumers must regenerate and use the declared plugin
 workflow. No project/SDK/process/Store format, dependency or version source changes
 are introduced. It remains in the same undistributed alpha.1 batch with both
-Unreleased changelogs synchronized and no historical migration. Core still compiles its legacy translation parser and persistence transition
-route, alongside other domain owners awaiting their separate cutover.
+Unreleased changelogs synchronized and no historical migration.
+
+Normal Core builds now exclude the former built-in translation parser, bundle
+and runner APIs. New translation imports use the checked plugin projection;
+former captured inputs are refused at enqueue without persisted execution or
+change notifications. The importer and its persistence branch compile only for
+unit tests or the explicit `execution-test-host` feature. Desktop test fixtures
+opt into that existing Core feature through a development dependency; normal
+desktop assembly does not enable it. Experimental Rust consumers must use the
+declared extraction, independent check and projection APIs. This removes earlier
+development APIs without changing current project tables, proof or receipt
+shapes, SDK/process/Store formats, dependencies or version sources. The same
+undistributed application/SDK alpha.1 batch and schema 21 remain, with both
+Unreleased changelogs updated and no historical migration. Generic editor,
+history and original save receipts retain their existing owner. The filename
+decoder still required by the old build path now belongs to that build module;
+source and build domain owners await their separate production cutover.

@@ -156,6 +156,16 @@ cargo test --workspace
 pnpm --dir apps/desktop tauri dev
 ```
 
+Run the normal Core translation regression separately:
+
+```text
+cargo test -p tsumugi-core --test translation_production
+```
+
+This checks production input rejection, manual history and original save receipts.
+Workspace tests enable the explicit `execution-test-host` fixture through
+development dependencies; this focused command uses normal Core features.
+
 For a standalone Windows executable without an installer, run:
 
 ```text
