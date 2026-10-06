@@ -179,8 +179,11 @@ are refused unchanged, without migration. Experimental Rust consumers must use
 the new execution-environment type; Node and Native data values convert into it.
 This remains the same undistributed application `0.2.0-alpha.1` / SDK
 `0.1.0-alpha.1` batch, so no additional SemVer bump or release is implied. Both
-Unreleased changelogs are synchronized. Native Desktop approval/discovery and
-real third-domain extraction/check/build acceptance remain separate work.
+Unreleased changelogs are synchronized. The public Host's independent Rust catalog
+tests separately cover extraction/check/build through real Native channels and
+normal Core source/review/release gates. Native Desktop approval/discovery and
+complete independent-domain acceptance remain separate work; test tooling adds
+no version, stored shape or production domain branch.
 
 The initial package source-import Resource used the experimental contract
 `tsumugi.source-import-declaration/1/1`, generated from the same data-only SDK.

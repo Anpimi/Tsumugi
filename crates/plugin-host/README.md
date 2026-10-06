@@ -459,6 +459,32 @@ do not prove a production plugin catalog, domain migration or desktop workflow.
 
 ## Real-process conformance
 
+The `native_catalog` test consumes the independent public
+[Rust JSON catalog example](https://github.com/Anpimi/tsumugi-plugins)
+as an explicitly selected prebuilt package, with no domain-source dependency.
+Prepare and inspect that package using its public recipe, review its source and
+fingerprint, then run:
+
+```sh
+TSUMUGI_TEST_NATIVE_PACKAGE=/absolute/path/to/prebuilt-flat-json \
+TSUMUGI_TEST_NATIVE_DIGEST='<independently-reviewed-package-digest>' \
+cargo test -p tsumugi-plugin-host --features core-adapter --test native_catalog --locked -- --ignored --nocapture --test-threads=1
+```
+
+The tests install/reopen fixed package bytes in a temporary Store, independently
+capture the actual Native Host, and execute extraction, source checking, QA,
+building and artifact checking over real child channels. Literal Unicode/BOM
+oracles and rehashed semantic forgeries are separate from the producer. Cancelled
+or revoked children are reaped, with owned staging checked for cleanup. The Core
+flow requires separate source proof, current QA, human approval and artifact
+proof before adopting a frozen Release, then checks exact bytes and history on
+reopen. Use this same public test file as an external Cargo consumer with normal
+Core features `[]` to establish that the flow does not depend on legacy fixtures;
+the host workspace's dev dependency enables test fixtures. Installation does not
+grant execution authority. These tests use synthetic project data and establish
+neither Desktop Native discovery/approval, Windows/Linux execution nor complete
+domain migration or release acceptance.
+
 The `translation_validation` test, with `core-adapter,javascript-conformance`,
 uses an explicitly captured SMAPI package and the independently approved runtime
 to adopt its actual source, then qualify a complete translation proposal in the
