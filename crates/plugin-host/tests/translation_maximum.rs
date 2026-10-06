@@ -24,15 +24,20 @@ use core_execution::{authorize, execute};
 
 #[test]
 fn maximum_file_executes_and_adopts_all_entries_with_saved_receipts_after_reopen() {
-    maximum_file_workflow(false);
+    maximum_file_workflow(false, 6);
 }
 
 #[test]
 fn maximum_unicode_and_escaped_text_executes_and_adopts_with_exact_saved_values() {
-    maximum_file_workflow(true);
+    maximum_file_workflow(true, 6);
 }
 
-fn maximum_file_workflow(unicode: bool) {
+#[test]
+fn maximum_long_native_keys_execute_and_adopt_all_entries_without_truncation() {
+    maximum_file_workflow(false, 48);
+}
+
+fn maximum_file_workflow(unicode: bool, key_length: usize) {
     let selected = PathBuf::from(
         std::env::var_os("TSUMUGI_TEST_PLUGIN_PACKAGE")
             .expect("explicit prebuilt SMAPI package required"),
@@ -74,7 +79,7 @@ fn maximum_file_workflow(unicode: bool) {
     }
     let source_json = serde_json::to_vec(
         &(0..2000)
-            .map(|n| (format!("K{n:04}X"), "same"))
+            .map(|n| (format!("K{n:04}{}", "X".repeat(key_length - 5)), "same"))
             .collect::<std::collections::BTreeMap<_, _>>(),
     )
     .unwrap();
@@ -164,7 +169,13 @@ fn maximum_file_workflow(unicode: bool) {
     let pairs = expected_texts
         .iter()
         .enumerate()
-        .map(|(n, text)| format!("\"k{n:04}x\":{}", serde_json::to_string(&text).unwrap()))
+        .map(|(n, text)| {
+            format!(
+                "\"k{n:04}{}\":{}",
+                "x".repeat(key_length - 5),
+                serde_json::to_string(&text).unwrap()
+            )
+        })
         .collect::<Vec<_>>();
     let mut raw = format!(
         "{}{{{}}}",
@@ -269,7 +280,7 @@ fn maximum_file_workflow(unicode: bool) {
         .unwrap();
     let check_input = capture.check_input().clone();
     println!(
-        "maximum transport unicode={unicode} producer_input={} ledger_proposal={} fixed_check={}",
+        "maximum transport unicode={unicode} key_length={key_length} producer_input={} ledger_proposal={} fixed_check={}",
         input.bytes().len(),
         proposal.bytes().len(),
         check_input.bytes().len()
@@ -401,7 +412,10 @@ fn maximum_file_workflow(unicode: bool) {
         2000
     );
     for (n, row) in rows.iter().enumerate() {
-        assert_eq!(row.entry.native_key, format!("k{n:04}x"));
+        assert_eq!(
+            row.entry.native_key,
+            format!("k{n:04}{}", "x".repeat(key_length - 5))
+        );
         assert_eq!(row.entry.text, expected_texts[n]);
     }
     let mut receipts = Vec::new();
@@ -508,7 +522,7 @@ fn maximum_file_workflow(unicode: bool) {
     assert_eq!(history.rows[99].entry.ordinal, 1999);
     assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
     println!(
-        "maximum file unicode={unicode} raw=131072 entries=2000 projection_input={} execution_seconds={:.3} adoption_seconds={:.3} receipts={}",
+        "maximum file unicode={unicode} key_length={key_length} raw=131072 entries=2000 projection_input={} execution_seconds={:.3} adoption_seconds={:.3} receipts={}",
         projected.bytes().len(),
         execution_seconds,
         adoption_seconds,

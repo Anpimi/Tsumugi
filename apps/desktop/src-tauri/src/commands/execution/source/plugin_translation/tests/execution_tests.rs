@@ -398,6 +398,111 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
         call(&window, "adopt_execution", action_request.clone()).unwrap(),
         receipt
     );
+    // A valid empty object still needs independent plugin proof and the Core
+    // empty-file sentinel. It must not invent an entry or alter saved work.
+    let empty_raw = "\u{feff} { }\n";
+    fs::write(directory.join("i18n/zh.json"), empty_raw).unwrap();
+    let empty_selection = choose(
+        &state,
+        directory.clone(),
+        PluginTranslationSelectRequest {
+            session_token: context["sessionToken"].as_str().unwrap().into(),
+            project_id: serde_json::from_value(context["projectId"].clone()).unwrap(),
+            translation: translation.clone(),
+            target_locale: "zh-CN".into(),
+            expected_source_snapshot_id: changed.source_snapshot_id,
+            native_scope: changed.native_scopes[0].clone(),
+        },
+    );
+    let empty_producer = ExecutionId::new();
+    let empty_capture = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"selectionId":empty_selection,"fileName":"zh.json","languageConfirmed":true,"attemptId":empty_producer});
+    let empty_review = call(&window, "preflight_plugin_translation", empty_capture).unwrap();
+    fs::remove_file(directory.join("i18n/zh.json")).unwrap();
+    let empty_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":empty_producer,"inputDigest":empty_review["inputDigest"],"grantId":ExecutionId::new(),"expiresAtMs":expiry,"unsandboxedExecution":true});
+    assert_eq!(
+        call(&window, "start_plugin_translation", empty_start.clone()).unwrap(),
+        json!(empty_producer)
+    );
+    let empty_result = wait(&state, empty_producer, 1)[0];
+    let empty_projection = ExecutionId::new();
+    let empty_prepare = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"translationAttemptId":empty_producer,"translationResultId":empty_result,"attemptId":empty_projection});
+    let not_checked = call(
+        &window,
+        "prepare_translation_projection",
+        empty_prepare.clone(),
+    )
+    .unwrap_err();
+    assert_eq!(not_checked["reason"], "translation-check-incomplete");
+    let empty_checker = ExecutionId::new();
+    let empty_check = call(&window, "prepare_translation_check", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"translationAttemptId":empty_producer,"translationResultId":empty_result,"attemptId":empty_checker,"translation":translation})).unwrap();
+    let mut empty_check_start = empty_start;
+    empty_check_start["attemptId"] = json!(empty_checker);
+    empty_check_start["inputDigest"] = empty_check["inputDigest"].clone();
+    assert!(
+        call(
+            &window,
+            "start_translation_check",
+            empty_check_start.clone()
+        )
+        .is_err()
+    );
+    empty_check_start["grantId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&window, "start_translation_check", empty_check_start).unwrap(),
+        json!(empty_checker)
+    );
+    let empty_check_result = wait(&state, empty_checker, 1)[0];
+    let mut empty_finish = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"translationAttemptId":empty_producer,"translationResultId":empty_result,"attemptId":empty_checker,"resultId":empty_check_result});
+    call(&window, "finish_translation_check", empty_finish.clone()).unwrap();
+    let empty_projected = call(&window, "prepare_translation_projection", empty_prepare).unwrap();
+    assert_eq!(
+        empty_projected["itemCount"], 1,
+        "one sentinel, zero entries"
+    );
+    let empty_project_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":empty_projection,"inputDigest":empty_projected["inputDigest"]});
+    assert_eq!(
+        call(
+            &window,
+            "start_translation_projection",
+            empty_project_start.clone()
+        )
+        .unwrap(),
+        json!(empty_projection)
+    );
+    wait(&state, empty_projection, 1);
+    assert_eq!(
+        call(&window, "start_translation_projection", empty_project_start).unwrap(),
+        json!(empty_projection)
+    );
+    let empty_preview_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":empty_projection,"after":0,"limit":10,"basis":null});
+    let empty_page = call(
+        &window,
+        "read_translation_preview",
+        empty_preview_request.clone(),
+    )
+    .unwrap();
+    assert_eq!(empty_page["total"], 0);
+    assert_eq!(empty_page["unique"], 0);
+    assert_eq!(empty_page["unmatched"], 0);
+    assert_eq!(empty_page["rows"], json!([]));
+    state.sessions.with(move |sessions| {
+        let store = &sessions.active.as_ref().unwrap().store;
+        let input = store.execution_input(empty_producer).unwrap();
+        let (material, _) = content::plugin_translation_input(&input).unwrap();
+        assert_eq!(material.artifacts[0].utf8, empty_raw);
+        assert!(
+            store
+                .execution_attempt(empty_projection, true)
+                .unwrap()
+                .items
+                .iter()
+                .all(|item| item.validation == ValidationState::Valid)
+        );
+    });
+    assert_eq!(
+        call(&window, "read_translation_history", history_request.clone()).unwrap(),
+        history
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while state.sessions.with(|sessions| {
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
@@ -422,6 +527,17 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
     let historical = call(&window, "read_translation_preview", reopened_preview).unwrap();
     assert_eq!(historical["rows"][0]["resultId"], row["resultId"]);
     assert_eq!(historical["rows"][0]["entry"], row["entry"]);
+    let mut reopened_empty = empty_preview_request;
+    reopened_empty["sessionToken"] = opened["sessionToken"].clone();
+    assert_eq!(
+        call(&window, "read_translation_preview", reopened_empty).unwrap(),
+        empty_page
+    );
+    empty_finish["sessionToken"] = opened["sessionToken"].clone();
+    assert!(
+        call(&window, "finish_translation_check", empty_finish).is_err(),
+        "empty-file proof does not restore live grants either"
+    );
     let mut reopened_history = history_request;
     reopened_history["sessionToken"] = opened["sessionToken"].clone();
     let saved = call(&window, "read_translation_history", reopened_history).unwrap();
