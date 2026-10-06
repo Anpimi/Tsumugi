@@ -7,11 +7,13 @@ pub mod catalog;
 pub mod core;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod filesystem;
+mod native_runtime;
 mod package;
 mod runtime;
 mod session;
 mod staging;
 mod tree;
+pub use native_runtime::CapturedNativeRuntime;
 pub use package::installation::{
     ApprovedPackageSetting, InstallError, InstallReceipt, InstallResult, InstalledInventory,
     InstalledObjectState, InstalledPackage, InstalledPackageRecord, InstalledRuntime,

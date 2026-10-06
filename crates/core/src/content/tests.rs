@@ -1424,7 +1424,8 @@ fn generic_source_binding(checker: bool) -> PluginExecutionBinding {
                 tree_digest: "c".repeat(64),
                 entrypoint: "dist/main.js".into(),
             },
-        },
+        }
+        .into(),
     }
 }
 
@@ -1623,7 +1624,7 @@ impl Runner for GenericSourcePlugin {
     fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
         Some(&self.0.capability.provider)
     }
-    fn plugin_environment(&self) -> Option<&sdk::RuntimeEnvironmentDescriptor> {
+    fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
         Some(&self.0.environment)
     }
     fn run(

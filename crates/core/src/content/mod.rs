@@ -392,15 +392,15 @@ pub struct SourceReviewBinding {
 impl SourceReviewBinding {
     /// Preserve the selected package rules and independently captured runtime.
     /// Capturing this metadata grants no checker execution or project approval.
-    pub fn capture(
+    pub fn capture<E: Clone + Into<sdk::ExecutionEnvironmentDescriptor>>(
         binding: &sdk::ReviewBinding,
-        environment: &sdk::RuntimeEnvironmentDescriptor,
+        environment: &E,
     ) -> Result<Self, ExecutionError> {
         binding.validate().map_err(source_contract_error)?;
         let checker = PluginExecutionBinding {
             capability: binding.checker.clone(),
             profile: Some(binding.declaration.profile.clone()),
-            environment: environment.clone(),
+            environment: environment.clone().into(),
         };
         checker.validate()?;
         Ok(Self {

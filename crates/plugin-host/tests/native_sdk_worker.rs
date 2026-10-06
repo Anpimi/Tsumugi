@@ -1,72 +1,13 @@
 #![cfg(unix)]
 //! Actual public SDK-only binary over the existing captured-package Host route.
 //! This is transport/lifecycle evidence, not domain or Core adoption evidence.
-use std::collections::BTreeMap;
 use tsumugi_plugin_host::*;
 use tsumugi_plugin_sdk::*;
 
-fn contract(id: &str) -> ContractRef {
-    ContractRef {
-        id: id.into(),
-        schema_version: 1,
-        behavior_version: 1,
-    }
-}
-fn image() -> PackageImage {
-    let worker = std::env::var_os("TSUMUGI_NATIVE_SDK_WORKER")
-        .expect("build the public native-worker example and supply its exact path");
-    let manifest = PluginManifest {
-        protocol_version: MANIFEST_PROTOCOL,
-        plugin: PluginIdentity {
-            publisher: "example".into(),
-            id: "example.native-sdk".into(),
-            version: "0.1.0".into(),
-        },
-        permissions: vec![PermissionRequest::CapturedInput],
-        components: vec![ComponentDeclaration {
-            id: "worker".into(),
-            scope: ComponentScope::Project,
-            runtime: RuntimeKind::NativeWorker,
-            entrypoint: Some("bin/worker".into()),
-            dependencies: vec![],
-            exit: ExitRequirements {
-                stop_timeout_ms: 500,
-                cleanup_timeout_ms: 1000,
-            },
-        }],
-        contributions: vec![ContributionDeclaration {
-            id: "echo".into(),
-            component_id: "worker".into(),
-            contribution: ContributionKind::Capability {
-                declaration: CapabilityDeclaration {
-                    contract: contract("example.echo"),
-                    input_schema: contract("example.text"),
-                    output_schema: contract("example.text"),
-                    error_schema: contract("example.error"),
-                    profiles: vec![],
-                    effect: EffectKind::ReadOnly,
-                    permissions: vec![PermissionRequest::CapturedInput],
-                    limits: CapabilityLimits {
-                        max_input_bytes: 131072,
-                        max_output_bytes: 131072,
-                        concurrency: 1,
-                        timeout_ms: 1000,
-                    },
-                },
-            },
-        }],
-    };
-    let manifest = serde_json::to_vec(&manifest).unwrap();
-    let files = BTreeMap::from([(
-        "bin/worker".into(),
-        PackageFile {
-            bytes: std::fs::read(worker).unwrap(),
-            executable: true,
-        },
-    )]);
-    let digest = PackageImage::digest(&manifest, &files).unwrap();
-    PackageImage::capture(manifest, files, &digest).unwrap()
-}
+#[path = "support/native.rs"]
+mod native;
+use native::{contract, image};
+
 fn options() -> LaunchOptions {
     LaunchOptions {
         scope: ScopeBinding {
@@ -187,4 +128,62 @@ async fn actual_host_rejects_forged_identity_and_revokes_owned_channel() {
     assert!(receipt.direct_child_reaped);
     assert!(!session.is_accepting());
     assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+#[ignore = "requires the exact independently built SDK native-worker example"]
+async fn native_core_channel_checks_captured_environment_and_reaps_on_cancel_or_revoke() {
+    let approved = CapturedNativeRuntime::inspect_current().unwrap();
+    let runtime = CapturedNativeRuntime::capture(&approved).unwrap();
+    for cancel in [true, false] {
+        let staging = tempfile::tempdir().unwrap();
+        let launcher = RuntimeLauncher::NativeCore {
+            runtime: runtime.clone(),
+        };
+        let mut session = ProcessSession::launch(
+            &image(),
+            "echo",
+            staging.path(),
+            &launcher,
+            options(),
+            || true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            session.environment_digest(),
+            Some(runtime.environment_digest())
+        );
+        let forged = request(&session, "dispatch-forged-environment", "captured");
+        assert!(matches!(
+            session.invoke(&forged, || false, || true).await,
+            Err(HostError::RequestMismatch)
+        ));
+        let mut real = request(&session, "dispatch-native-real", "中文\r\n e\u{301}");
+        real.context.environment_digest = runtime.environment_digest().into();
+        let received = session.invoke(&real, || false, || true).await.unwrap();
+        assert_eq!(received.result().context, real.context);
+        assert_eq!(received.result().provider, session.channel().provider);
+        let sdk_output = &received.result().outcome;
+        assert!(
+            matches!(sdk_output, InvocationOutcome::Succeeded { output } if output == &real.input)
+        );
+        let mut stopped = request(&session, "dispatch-native-stop", "captured");
+        stopped.context.environment_digest = runtime.environment_digest().into();
+        let error = session
+            .invoke(&stopped, || cancel, || cancel)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            if cancel {
+                HostError::Cancelled
+            } else {
+                HostError::AuthorityRevoked
+            }
+        );
+        assert!(session.termination_receipt().unwrap().direct_child_reaped);
+        assert!(!session.is_accepting());
+        assert_eq!(std::fs::read_dir(staging.path()).unwrap().count(), 0);
+    }
 }

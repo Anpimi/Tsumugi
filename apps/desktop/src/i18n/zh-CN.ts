@@ -30,6 +30,7 @@ sourcePlugin: {
   chooseRuntime: "选择已批准并安装的运行环境",
   runtimeOption: "Node {{version}} · {{system}} {{architecture}}",
   runtimeDetails: "固定 Node {{version}}，平台 {{system}} {{architecture}}",
+  nativeRuntimeDetails: "Native 插件，应用 {{version}}，平台 {{system}} {{architecture}}",
   refresh: "刷新已安装的源选项",
   unavailable: "请在扩展中启用已安装的源插件，并独立批准、安装其运行环境。当前源内容与草稿仍可使用。",
   material: "必需文件：{{path}} · 最多 {{bytes}} 字节",

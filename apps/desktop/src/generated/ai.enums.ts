@@ -9,6 +9,7 @@ export const EffectKindValues = ["read-only","proposal","external"] as const;
 export const EffectPhaseValues = ["waiting","saving-candidate","checking","selected","blocked","failed","cancelled"] as const;
 export const ExecutionStateValues = ["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"] as const;
 export const FindingSeverityValues = ["warning","error"] as const;
+export const NativeHostProfileValues = ["native-application-host-v1"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
 export const RecoveryGuidanceValues = ["reconcile-original","review-current","choose-destination"] as const;
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;

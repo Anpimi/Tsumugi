@@ -28,6 +28,7 @@ sourcePlugin: {
   chooseRuntime: "Choose an approved installed runtime",
   runtimeOption: "Node {{version}} · {{system}} {{architecture}}",
   runtimeDetails: "Fixed Node {{version}} on {{system}} {{architecture}}",
+  nativeRuntimeDetails: "Native plugin with application {{version}} on {{system}} {{architecture}}",
   refresh: "Refresh installed source choices",
   unavailable: "Enable an installed source package and independently approve and install its runtime in Extensions. Your current source and drafts remain available.",
   material: "Required file: {{path}} · up to {{bytes}} bytes",

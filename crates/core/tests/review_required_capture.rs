@@ -106,14 +106,13 @@ fn adopted_capture_preserves_original_source_and_exact_identity_without_writes()
     assert_eq!(input.requirements.len(), 3);
     assert_eq!(captured.fixed_checks().set().requirements.len(), 5);
     assert_eq!(captured.binding().declaration.rules, rules());
-    assert_eq!(
-        captured.binding().checker.environment.tool.tree_digest,
-        "b".repeat(64)
-    );
-    assert_eq!(
-        captured.binding().checker.environment.host.tree_digest,
-        "c".repeat(64)
-    );
+    let sdk::ExecutionEnvironmentDescriptor::Captured(environment) =
+        &captured.binding().checker.environment
+    else {
+        panic!("captured Node fixture");
+    };
+    assert_eq!(environment.tool.tree_digest, "b".repeat(64));
+    assert_eq!(environment.host.tree_digest, "c".repeat(64));
     for (r, declaration) in input.requirements.iter().zip(rules()) {
         assert_eq!(r.key.rule, declaration.rule);
         assert!(r.mandatory && !r.waivable);

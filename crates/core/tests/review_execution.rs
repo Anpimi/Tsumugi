@@ -38,7 +38,7 @@ impl Runner for Checker {
     fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
         Some(&self.binding.capability.provider)
     }
-    fn plugin_environment(&self) -> Option<&sdk::RuntimeEnvironmentDescriptor> {
+    fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
         Some(&self.binding.environment)
     }
     fn run(

@@ -394,7 +394,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                   {!selected.selectionId ? <button className="secondary-button" disabled={busy || !actor.trim()} onClick={() => void fallback(!selected.currentFallback)}>{t(selected.currentFallback ? "review.withdrawFallback" : "review.fallback")}</button> : null}</div>
                 {currentCheckReview ? <section aria-label={t("sourcePlugin.executionReview")}>
                   <p>{t("review.qaRun")} · {currentCheckReview.view.plugin.checker.provider.plugin.id} {currentCheckReview.view.plugin.checker.provider.plugin.version}</p>
-                  <p>{t("sourcePlugin.runtimeDetails", { version: currentCheckReview.view.plugin.environment.toolVersion,
+                  <p>{t(currentCheckReview.view.plugin.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", {
+                    version: currentCheckReview.view.plugin.environment.profile === "node-system-libraries-v1" ? currentCheckReview.view.plugin.environment.toolVersion : currentCheckReview.view.plugin.environment.hostVersion,
                     system: currentCheckReview.view.plugin.environment.platform.operatingSystem, architecture: currentCheckReview.view.plugin.environment.platform.architecture })}</p>
                   <PluginPermissions permissions={currentCheckReview.view.plugin.checker.declaration.permissions} />
                   <p>{t("sourcePlugin.unsandboxed")}</p>

@@ -275,3 +275,29 @@ it("keeps a checked plan unavailable when its installed checker cannot be prepar
   expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "authorize_work_plan")).toBe(false);
 });
+
+it("displays native application identity and keeps checker consent separate", async () => {
+  const user = await preview();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Choose generated translations" }), "missing-only");
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    const value = await original(command, args);
+    if (command === "prepare_work_plan") {
+      const checker: WorkPlanView["checker"] = value.checker;
+      if (checker?.kind !== "ready") throw new Error("captured checker required");
+      value.checker = { ...checker, plugin: { ...checker.plugin, environment: {
+        protocolVersion: 1, platform: { operatingSystem: "macos", architecture: "aarch64" },
+        sdkVersion: "0.1.0-alpha.1", processProtocol: 1, profile: "native-application-host-v1",
+        hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) },
+      } } } satisfies WorkPlanView["checker"];
+    }
+    return value;
+  });
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  expect(await screen.findByText("Native plugin with application 0.2.0-alpha.1 on macos aarch64")).toBeInTheDocument();
+  expect(screen.queryByText(/Fixed Node/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm sending/ }));
+  expect(screen.getByRole("checkbox", { name: /I authorize this checker/ })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "authorize_work_plan")).toBe(false);
+});

@@ -12,7 +12,7 @@ pub struct PluginReviewView {
     pub declaration: sdk::ReviewDeclaration,
     pub checker: sdk::CapabilityBinding,
     pub package_origin: PluginOriginView,
-    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub environment: sdk::ExecutionEnvironmentDescriptor,
     pub environment_digest: String,
     pub runtime_origin: PluginOriginView,
 }
@@ -25,7 +25,7 @@ impl ReviewEnvironment {
             declaration: self.binding.declaration.clone(),
             checker: self.binding.checker.clone(),
             package_origin: self.package.origin().into(),
-            environment: self.runtime.descriptor().clone(),
+            environment: self.runtime.descriptor().clone().into(),
             environment_digest: self.runtime.descriptor().digest().map_err(|_| invalid())?,
             runtime_origin: (&self.runtime_origin).into(),
         })
@@ -63,7 +63,8 @@ impl ApplicationPlugins {
             },
         )?;
         if captured.checker.profile.as_ref() != Some(&environment.binding.declaration.profile)
-            || environment.runtime.descriptor() != &captured.checker.environment
+            || sdk::ExecutionEnvironmentDescriptor::from(environment.runtime.descriptor().clone())
+                != captured.checker.environment
         {
             return Err(invalid());
         }

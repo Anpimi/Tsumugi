@@ -25,16 +25,16 @@ pub struct PluginBuildLocaleChoice {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReleaseBuildEnvironment {
     binding: sdk::BuildBinding,
-    environment: sdk::RuntimeEnvironmentDescriptor,
+    environment: sdk::ExecutionEnvironmentDescriptor,
 }
 impl ReleaseBuildEnvironment {
     pub fn new(
         binding: sdk::BuildBinding,
-        environment: sdk::RuntimeEnvironmentDescriptor,
+        environment: impl Into<sdk::ExecutionEnvironmentDescriptor>,
     ) -> Result<Self, ExecutionError> {
         let selection = Self {
             binding,
-            environment,
+            environment: environment.into(),
         };
         selection.validate()?;
         Ok(selection)
@@ -47,7 +47,7 @@ impl ReleaseBuildEnvironment {
     pub fn binding(&self) -> &sdk::BuildBinding {
         &self.binding
     }
-    pub fn environment(&self) -> &sdk::RuntimeEnvironmentDescriptor {
+    pub fn environment(&self) -> &sdk::ExecutionEnvironmentDescriptor {
         &self.environment
     }
     fn builder(&self) -> PluginExecutionBinding {

@@ -3,6 +3,7 @@
 //! source producer/checker fixture proves SQLite/data behavior, not domain QA.
 mod support;
 use tsumugi_core::{ProjectStore, content::SourceSettings, execution::*};
+use tsumugi_plugin_sdk as sdk;
 
 #[test]
 fn adopted_source_review_rules_and_runtime_survive_reopen_without_new_grants() {
@@ -23,8 +24,12 @@ fn adopted_source_review_rules_and_runtime_survive_reopen_without_new_grants() {
         bound.checker.capability.provider.package_digest,
         "a".repeat(64)
     );
-    assert_eq!(bound.checker.environment.tool.tree_digest, "b".repeat(64));
-    assert_eq!(bound.checker.environment.host.tree_digest, "c".repeat(64));
+    let sdk::ExecutionEnvironmentDescriptor::Captured(environment) = &bound.checker.environment
+    else {
+        panic!("captured Node fixture");
+    };
+    assert_eq!(environment.tool.tree_digest, "b".repeat(64));
+    assert_eq!(environment.host.tree_digest, "c".repeat(64));
     let before = serde_json::to_value(store.changes_since(Revision::new(0).unwrap())).unwrap();
     assert_eq!(
         store.source_review_binding(snapshot).unwrap(),

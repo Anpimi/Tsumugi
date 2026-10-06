@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- The experimental Host/Core adapter now runs captured Native Worker packages with an independently approved identity of the actual application Host, exact live consent and original channel evidence. Core stores the strict Native or Node environment in the existing ledger and reopens historical results without restoring execution grants. Native environments carry no artificial Node artifacts; desktop runtime approval/discovery remains separate work. The experimental Rust environment port now uses `ExecutionEnvironmentDescriptor`, and current project schema 27 refuses earlier development directories unchanged, without migration.
+
 - The experimental public SDK offers an optional Rust native component entry point that owns strict framing, exact request/result identity, cooperative cancellation and cleanup. Authors return opaque capability output through the existing protocol; captured package/channel authorization and complete Native/Core environment binding remain Host responsibilities.
 
 - Source workbench messages now describe native content identities and installed capabilities. Plugin-specific errors and source diagnostics remain opaque in technical details instead of triggering fixed SMAPI or WebVTT advice; shared command details preserve the original reason or field.

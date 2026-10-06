@@ -84,6 +84,10 @@ adoption authority, and a digest does not authenticate a package publisher.
 [Captured runtime descriptions](docs/environment.md) define the experimental
 `node-system-libraries-v1` profile, complete tool/Host artifact hashes, and an
 SDK-owned environment digest derived from the full validated descriptor.
+`ExecutionEnvironmentDescriptor` also admits the separate
+`native-application-host-v1` profile, recording the actual application Host
+identity rather than artificial Node artifacts. Native package bytes remain
+independently bound by the provider. Neither profile grants permission.
 These data helpers contain no filesystem capture or loader. Host integration
 must independently approve and retain the actual runtime bytes.
 

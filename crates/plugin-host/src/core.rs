@@ -11,9 +11,43 @@ use tsumugi_core::execution::{
 use tsumugi_plugin_sdk as sdk;
 
 use crate::{
-    CapturedRuntime, HostError, HostLimits, LaunchOptions, PackageImage, ProcessSession,
-    ReceivedResult, RuntimeLauncher, ScopeBinding,
+    CapturedNativeRuntime, CapturedRuntime, HostError, HostLimits, LaunchOptions, PackageImage,
+    ProcessSession, ReceivedResult, RuntimeLauncher, ScopeBinding,
 };
+
+#[derive(Clone, Debug)]
+pub enum RunnerRuntime {
+    JavaScript(CapturedRuntime),
+    Native(CapturedNativeRuntime),
+}
+impl From<CapturedRuntime> for RunnerRuntime {
+    fn from(value: CapturedRuntime) -> Self {
+        Self::JavaScript(value)
+    }
+}
+impl From<CapturedNativeRuntime> for RunnerRuntime {
+    fn from(value: CapturedNativeRuntime) -> Self {
+        Self::Native(value)
+    }
+}
+impl RunnerRuntime {
+    fn environment(&self) -> sdk::ExecutionEnvironmentDescriptor {
+        match self {
+            Self::JavaScript(value) => value.descriptor().clone().into(),
+            Self::Native(value) => value.descriptor().clone().into(),
+        }
+    }
+    fn launcher(&self) -> RuntimeLauncher {
+        match self {
+            Self::JavaScript(runtime) => RuntimeLauncher::JavaScript {
+                runtime: runtime.clone(),
+            },
+            Self::Native(runtime) => RuntimeLauncher::NativeCore {
+                runtime: runtime.clone(),
+            },
+        }
+    }
+}
 
 /// One captured package/contribution selection. Construct this only with the
 /// trusted installer's captured image and complete runtime environment.
@@ -24,7 +58,8 @@ pub struct RunnerProxy {
     image: PackageImage,
     capability: sdk::CapabilityBinding,
     capability_version: String,
-    runtime: CapturedRuntime,
+    runtime: RunnerRuntime,
+    environment: sdk::ExecutionEnvironmentDescriptor,
     staging_parent: PathBuf,
     limits: HostLimits,
 }
@@ -33,12 +68,13 @@ impl RunnerProxy {
     pub fn new(
         image: PackageImage,
         contribution_id: impl Into<String>,
-        runtime: CapturedRuntime,
+        runtime: impl Into<RunnerRuntime>,
         staging_parent: impl Into<PathBuf>,
         limits: HostLimits,
     ) -> Result<Self, ExecutionError> {
         let contribution_id = contribution_id.into();
         let staging_parent = staging_parent.into();
+        let runtime = runtime.into();
         if !staging_parent.is_absolute() {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
@@ -56,21 +92,29 @@ impl RunnerProxy {
             .iter()
             .find(|component| component.id == capability.provider.component_id)
             .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-selection"))?;
-        // The captured environment's current profile is Node-specific. A
-        // native process cannot acquire a Node environment binding by reuse.
-        if component.runtime != sdk::RuntimeKind::JavaScript {
+        if !matches!(
+            (&runtime, component.runtime),
+            (RunnerRuntime::JavaScript(_), sdk::RuntimeKind::JavaScript)
+                | (RunnerRuntime::Native(_), sdk::RuntimeKind::NativeWorker)
+        ) {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
                 "plugin-runtime-profile",
             ));
         }
+        if let RunnerRuntime::Native(value) = &runtime {
+            value.require_current().map_err(|_| {
+                ExecutionError::new(ErrorCode::InvalidInput, "plugin-native-environment")
+            })?;
+        }
+        let environment = runtime.environment();
         // Reuse Core's binding validation for the captured environment. A
         // declared profile is used only for this validation, never as a default
         // selection: execution_binding still requires an explicit profile.
         let checked = PluginExecutionBinding {
             profile: capability.declaration.profiles.first().cloned(),
             capability: capability.clone(),
-            environment: runtime.descriptor().clone(),
+            environment: environment.clone(),
         };
         checked.validate()?;
         Ok(Self {
@@ -78,6 +122,7 @@ impl RunnerProxy {
             capability,
             capability_version: checked.capability_version(),
             runtime,
+            environment,
             staging_parent,
             limits,
         })
@@ -92,7 +137,7 @@ impl RunnerProxy {
         let binding = PluginExecutionBinding {
             capability: self.capability.clone(),
             profile,
-            environment: self.runtime.descriptor().clone(),
+            environment: self.environment.clone(),
         };
         binding.validate()?;
         Ok(binding)
@@ -146,9 +191,7 @@ impl RunnerProxy {
             &self.image,
             &self.capability.provider.contribution_id,
             &self.staging_parent,
-            &RuntimeLauncher::JavaScript {
-                runtime: self.runtime.clone(),
-            },
+            &self.runtime.launcher(),
             options,
             move || is_live(&live_request, &live_permit, &live_cancellation),
         )
@@ -240,8 +283,8 @@ impl Runner for RunnerProxy {
     fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
         Some(&self.capability.provider)
     }
-    fn plugin_environment(&self) -> Option<&sdk::RuntimeEnvironmentDescriptor> {
-        Some(self.runtime.descriptor())
+    fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
+        Some(&self.environment)
     }
 
     fn run(

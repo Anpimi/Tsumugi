@@ -62,7 +62,7 @@ pub trait Runner: Send + Sync + 'static {
     }
     /// The exact approved environment paired with `plugin_provider`. Registration
     /// requires both values together; these descriptions do not grant execution.
-    fn plugin_environment(&self) -> Option<&tsumugi_plugin_sdk::RuntimeEnvironmentDescriptor> {
+    fn plugin_environment(&self) -> Option<&tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor> {
         None
     }
     fn concurrency_limit(&self, _input: &FixedInput) -> usize {

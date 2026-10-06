@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/reviewCommands.contract.json";
+import nativeEnvironment from "../test/fixtures/nativeRuntime.contract.json";
 import { reviewCommands } from "./reviewCommands";
 import * as validators from "./generated/review.validators";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -13,6 +14,20 @@ function decisionRequest() {
   return request;
 }
 beforeEach(() => invoke.mockReset());
+
+it("receives the native profile and rejects mixed runtime fields or claimed authorization", () => {
+  const value = structuredClone(fixture.responses.prepareCheck);
+  const native = { ...value, view: { ...value.view, plugin: { ...value.view.plugin,
+    environment: nativeEnvironment, environmentDigest: "ba38dd6b1f63b641359cf711154563ce9d1616d4790f250e1718bb5c3f570ddd",
+  } } };
+  expect(validators.validateResponsePrepareCheck(native)).toBe(true);
+  for (const fields of [{ toolVersion: "26.10.0" }, { authorization: true }, { profile: "caller-native-path" }]) {
+    const bad = { ...native, view: { ...native.view, plugin: { ...native.view.plugin,
+      environment: { ...nativeEnvironment, ...fields },
+    } } };
+    expect(validators.validateResponsePrepareCheck(bad)).toBe(false);
+  }
+});
 
 it("validates both directions of every shared review contract and dispatches the actual requests", async () => {
   expect(validators.validateRequestPage(fixture.requests.page), "requests.page").toBe(true);

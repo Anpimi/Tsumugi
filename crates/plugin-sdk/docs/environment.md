@@ -74,3 +74,41 @@ actual channel evidence, live execution consent, semantic validation and
 explicit project adoption remain separate responsibilities. This data module
 does not by itself replace a Host's mutable launcher or implement runtime
 installation, distribution, sandboxing or trusted updates.
+
+## Native application Host profile
+
+`ExecutionEnvironmentDescriptor` selects either the existing captured Node
+descriptor or a strict `NativeHostEnvironmentDescriptor`. They have distinct
+`profile` values and field sets; Node serialization and digest rules above are
+unchanged. There is no historical decoder or missing-field default.
+
+Native environment protocol 1 uses `native-application-host-v1`, exact SDK and
+process versions, platform/architecture, SemVer `hostVersion` and `executable`.
+The application Host observes its own executable identity independently of the
+worker. The executable is a tagged `{kind, value}`:
+
+- `darwin-code-directory-hash-v1`: the actual process's 20-byte CodeDirectory
+  hash, encoded as 40 lowercase hexadecimal characters, on macOS.
+- `linux-executable-sha256-v1`: SHA-256 of the complete executable opened through
+  the kernel's `/proc/self/exe` handle, encoded as 64 lowercase hexadecimal
+  characters, on Linux. The complete nonempty bytes are bounded to 256 MiB.
+
+All-zero identities, wrong algorithm/platform pairs, unknown or duplicate
+fields and unsupported versions are refused. `native_host_executable_sha256`
+only hashes data; stable OS-handle capture remains the Host's responsibility.
+No tool/Node/bootstrap artifacts, mutable executable pathname, claimed worker
+identity, approval flag or caller-supplied environment digest belongs here.
+The separate provider still fixes the entire plugin package and native entrypoint.
+
+The native descriptor digest is SHA-256 of ASCII
+`tsumugi-native-host-environment-v1`, a zero byte, the unsigned 64-bit big-endian
+canonical JSON byte length, then its UTF-8 bytes. The exact struct field order is
+`protocolVersion`, `platform`, `sdkVersion`, `processProtocol`, `profile`,
+`hostVersion`, `executable`. Platform orders `operatingSystem`, `architecture`;
+executable orders `kind`, `value`. There is no JSON whitespace. Consumers decode,
+validate and derive the canonical digest rather than hashing incoming JSON text.
+
+This observation identifies the application Host, not its publisher. It captures
+neither OS/dynamic-library contents nor an OS sandbox. Independent approval,
+package capture, exact current consent, real channel provenance, semantic checks
+and explicit adoption remain separate responsibilities.

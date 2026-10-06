@@ -168,6 +168,20 @@ is implied.
 
 ## Choosing the next version
 
+The experimental Native/Core route adds the SDK's strict
+`native-application-host-v1` descriptor and changes Core's fixed environment
+port to `ExecutionEnvironmentDescriptor`. Actual native Host identity is bound
+separately from package bytes and per-attempt grants; Node descriptors and digest
+rules, process protocol 1 and installed runtime Store shapes are unchanged.
+Admitting the stored native fixed-input variant advances the current-only
+project format to schema 27. Schema 26 and all earlier development directories
+are refused unchanged, without migration. Experimental Rust consumers must use
+the new execution-environment type; Node and Native data values convert into it.
+This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, so no additional SemVer bump or release is implied. Both
+Unreleased changelogs are synchronized. Native Desktop approval/discovery and
+real third-domain extraction/check/build acceptance remain separate work.
+
 The initial package source-import Resource used the experimental contract
 `tsumugi.source-import-declaration/1/1`, generated from the same data-only SDK.
 The current required 2/2 contract is assessed below.

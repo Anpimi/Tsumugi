@@ -693,7 +693,8 @@ fn plugin_binding(host_digest: &str) -> PluginExecutionBinding {
                 tree_digest: host_digest.repeat(64),
                 entrypoint: "dist/main.js".into(),
             },
-        },
+        }
+        .into(),
     }
 }
 
@@ -725,7 +726,7 @@ struct PluginCall {
 }
 struct SelectedPlugin {
     provider: Option<sdk::ProviderSelectionBinding>,
-    environment: Option<sdk::RuntimeEnvironmentDescriptor>,
+    environment: Option<sdk::ExecutionEnvironmentDescriptor>,
     calls: mpsc::Sender<PluginCall>,
 }
 impl SelectedPlugin {
@@ -756,7 +757,7 @@ impl Runner for SelectedPlugin {
     fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
         self.provider.as_ref()
     }
-    fn plugin_environment(&self) -> Option<&sdk::RuntimeEnvironmentDescriptor> {
+    fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
         self.environment.as_ref()
     }
     fn run(
@@ -920,9 +921,15 @@ fn registration_rejects_unpaired_or_invalid_plugin_environment_choices() {
         );
     }
     let mut bad_protocol = binding.clone();
-    bad_protocol.environment.process_protocol += 1;
+    let sdk::ExecutionEnvironmentDescriptor::Captured(value) = &mut bad_protocol.environment else {
+        panic!("Node fixture");
+    };
+    value.process_protocol += 1;
     let mut bad_path = binding.clone();
-    bad_path.environment.host.entrypoint = "../outside.js".into();
+    let sdk::ExecutionEnvironmentDescriptor::Captured(value) = &mut bad_path.environment else {
+        panic!("Node fixture");
+    };
+    value.host.entrypoint = "../outside.js".into();
     for bad in [bad_protocol, bad_path] {
         assert!(bad.environment_digest().is_err());
         assert_eq!(bad.validate().unwrap_err().code, ErrorCode::InvalidInput);

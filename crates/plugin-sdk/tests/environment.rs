@@ -76,6 +76,27 @@ fn descriptor_digest_matches_the_independent_profile_vector() {
 }
 
 #[test]
+fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
+    let node = descriptor();
+    let wrapped = ExecutionEnvironmentDescriptor::from(node.clone());
+    assert_eq!(
+        serde_json::to_vec(&wrapped).unwrap(),
+        serde_json::to_vec(&node).unwrap()
+    );
+    assert_eq!(
+        wrapped.digest().unwrap(),
+        "4967a15b4bc2a884cc968a4dc3a6b398c8163bb1f83b2e7848385c5d9e4f6b25"
+    );
+    assert_eq!(
+        serde_json::from_slice::<ExecutionEnvironmentDescriptor>(
+            &serde_json::to_vec(&node).unwrap()
+        )
+        .unwrap(),
+        wrapped
+    );
+}
+
+#[test]
 fn every_fixed_environment_choice_participates_in_the_digest() {
     let original = descriptor();
     let mut alternatives = vec![original.clone(); 7];

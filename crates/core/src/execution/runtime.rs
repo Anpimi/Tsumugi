@@ -15,7 +15,7 @@ fn runner_key(
     capability: &str,
     version: &str,
     provider: Option<&tsumugi_plugin_sdk::ProviderSelectionBinding>,
-    environment: Option<&tsumugi_plugin_sdk::RuntimeEnvironmentDescriptor>,
+    environment: Option<&tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor>,
 ) -> Result<RunnerKey, ExecutionError> {
     label(capability)?;
     label(version)?;

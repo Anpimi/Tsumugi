@@ -136,7 +136,8 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
       {!plan.preview ? <p>{t("ai.plan.manualHelp")}</p> : null}
       {checkerRequired && plan.checker?.kind === "ready" ? <section aria-label={t("sourcePlugin.executionReview")}>
         <p>{t("review.qaRun")} · {plan.checker.plugin.checker.provider.plugin.id} {plan.checker.plugin.checker.provider.plugin.version}</p>
-        <p>{t("sourcePlugin.runtimeDetails", { version: plan.checker.plugin.environment.toolVersion,
+        <p>{t(plan.checker.plugin.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", {
+          version: plan.checker.plugin.environment.profile === "node-system-libraries-v1" ? plan.checker.plugin.environment.toolVersion : plan.checker.plugin.environment.hostVersion,
           system: plan.checker.plugin.environment.platform.operatingSystem, architecture: plan.checker.plugin.environment.platform.architecture })}</p>
         <PluginPermissions permissions={plan.checker.plugin.checker.declaration.permissions} />
         <p>{t("sourcePlugin.unsandboxed")}</p>

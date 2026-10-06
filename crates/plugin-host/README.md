@@ -106,7 +106,27 @@ authority between chunks and before spawn. The child runs the captured Node and
 Host entries with an empty inherited environment; it does not resolve them from
 PATH, global modules or the original source directories. JavaScript invocation
 requests must carry this environment's SDK-derived digest. The Native standalone
-conformance profile does not provide this Node-specific Core environment binding.
+conformance profile does not provide a Core environment binding.
+
+`CapturedNativeRuntime::inspect_current()` observes the actual application Host
+without executing a plugin or creating approval. `capture(&approval)` compares
+the complete independently approved SDK native descriptor with that observation.
+On macOS, the read-only [XNU `csops` interface](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/codesign.h)
+supplies the own process's CodeDirectory hash; on Linux, the held
+[`/proc/self/exe` executable handle](https://man7.org/linux/man-pages/man5/proc_pid_exe.5.html)
+supplies complete bytes with stable metadata checks. Mutable current-executable
+pathnames and worker claims are not used. Unknown platforms/architectures or
+unavailable identities are refused. Publisher trust and OS/library capture are
+outside this profile.
+
+`RuntimeLauncher::NativeCore` retains that immutable native description and its
+owner PID, checks the actual current Host again before staging/spawn, and binds
+requests to its derived environment digest. It uses the same captured package,
+held staging directories, live-authority callbacks and close/reap owner as Node.
+Native entrypoint/package bytes remain fixed by the separate provider binding;
+no Node/tool/Host tree is invented for them. Native installed Desktop selection
+and persisted approval are separate work; this library route does not add a
+parallel settings store.
 
 ## Package catalog and fixed selection
 
@@ -379,7 +399,9 @@ artifact output opening and adoption authority are not provided by this profile.
 ## Core execution adapter
 
 With `core-adapter`, `RunnerProxy` captures a package contribution and the trusted
-installer's `CapturedRuntime`. Core's fixed input retains the complete SDK
+installer's `CapturedRuntime` or approved `CapturedNativeRuntime`, selected by
+`RunnerRuntime` and checked against the component runtime kind. Core's fixed
+input retains the complete SDK `ExecutionEnvironmentDescriptor`
 descriptor and derives its digest. Registration and host policy use the exact
 provider/environment pair, so A/B environments for the same package coexist;
 registration order does not choose between them. The adapter

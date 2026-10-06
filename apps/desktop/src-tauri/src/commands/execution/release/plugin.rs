@@ -147,7 +147,7 @@ fn binding(environment: &BuildEnvironment, checker: bool) -> PluginExecutionBind
             environment.binding.builder.clone()
         },
         profile: Some(environment.binding.declaration.profile.clone()),
-        environment: environment.runtime.descriptor().clone(),
+        environment: environment.runtime.descriptor().clone().into(),
     }
 }
 fn matches_build(input: &FixedInput, environment: &BuildEnvironment) -> Result<(), CommandError> {

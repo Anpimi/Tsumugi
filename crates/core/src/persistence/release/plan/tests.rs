@@ -481,7 +481,10 @@ fn multi_locale_capture_is_atomic_and_rejects_output_aliases_and_substitution() 
     assert_eq!(input.envelope().units[0].item_ids.len(), 2);
     enqueue_fixture(&mut store, &input);
     let mut changed = build.clone();
-    changed.environment.tool.tree_digest = "d".repeat(64);
+    let sdk::ExecutionEnvironmentDescriptor::Captured(value) = &mut changed.environment else {
+        panic!("Node fixture");
+    };
+    value.tool.tree_digest = "d".repeat(64);
     assert!(
         store
             .find_plugin_build(

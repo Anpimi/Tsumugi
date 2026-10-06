@@ -8,9 +8,9 @@ use tsumugi_plugin_sdk as sdk;
 pub struct PluginExecutionBinding {
     pub capability: sdk::CapabilityBinding,
     pub profile: Option<sdk::ContractRef>,
-    /// Exact tool and Host artifacts captured and approved by the trusted installer.
+    /// Exact captured Node artifacts or actual native application Host identity.
     /// This data value does not authenticate its source or grant execution.
-    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub environment: sdk::ExecutionEnvironmentDescriptor,
 }
 impl PluginExecutionBinding {
     pub fn capability_version(&self) -> String {
@@ -56,7 +56,7 @@ fn environment_error(_: sdk::ContractError) -> ExecutionError {
     ExecutionError::new(ErrorCode::InvalidInput, "plugin-environment")
 }
 pub(crate) fn environment_key(
-    environment: &sdk::RuntimeEnvironmentDescriptor,
+    environment: &sdk::ExecutionEnvironmentDescriptor,
 ) -> Result<String, ExecutionError> {
     environment.digest().map_err(environment_error)
 }

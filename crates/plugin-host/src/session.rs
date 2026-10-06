@@ -89,6 +89,7 @@ impl HostLimits {
 #[derive(Clone, Debug)]
 pub enum RuntimeLauncher {
     Native,
+    NativeCore { runtime: CapturedNativeRuntime },
     JavaScript { runtime: CapturedRuntime },
 }
 
@@ -202,12 +203,21 @@ impl ProcessSession {
             }
             let runtime = match (component.runtime, launcher) {
                 (RuntimeKind::NativeWorker, RuntimeLauncher::Native) => None,
+                (RuntimeKind::NativeWorker, RuntimeLauncher::NativeCore { runtime }) => {
+                    runtime.require_current()?;
+                    None
+                }
                 (RuntimeKind::JavaScript, RuntimeLauncher::JavaScript { runtime }) => {
                     Some(runtime.clone())
                 }
                 _ => return Err(HostError::UnsupportedRuntime),
             };
-            let environment_digest = runtime.as_ref().map(|r| r.environment_digest().to_owned());
+            let environment_digest = match launcher {
+                RuntimeLauncher::NativeCore { runtime } => {
+                    Some(runtime.environment_digest().to_owned())
+                }
+                _ => runtime.as_ref().map(|r| r.environment_digest().to_owned()),
+            };
             let authorized = Arc::new(authorized);
             let stage_guard = authorized.clone();
             let captured = image.clone();
@@ -260,6 +270,9 @@ impl ProcessSession {
                 return Err(HostError::AuthorityRevoked);
             }
             directory.verify_binding()?;
+            if let RuntimeLauncher::NativeCore { runtime } = launcher {
+                runtime.require_current()?;
+            }
             let child = command.spawn().map_err(|_| HostError::SpawnFailed)?;
             // From the first successful spawn through every subsequent await,
             // an owned lease keeps files alive unless the direct child is reaped.
