@@ -81,7 +81,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
-- Desktop translation imports use declared installed plugin capabilities only. Built-in file listing, preflight and import commands and their extractor runner are excluded from production; regenerate earlier development IPC consumers. Generic editing, history, preview and adoption remain available.
+- Desktop translation imports use declared installed plugin capabilities only. Production omits the built-in file listing, preflight and import commands and no longer registers their extractor runner; regenerate earlier development IPC consumers. Generic editing, history, preview and adoption remain available.
 
 - Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization; uncertain external requests retain their recorded budget exposure and do not replay automatically.
 
