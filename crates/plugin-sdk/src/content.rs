@@ -343,17 +343,7 @@ pub(crate) fn validate_source_material(
 ) -> Result<(), ContractError> {
     reference(profile, "content.profile")?;
     opaque_id(source_set_id, "content.sourceSetId")?;
-    if source_language.is_empty()
-        || source_language.len() > 128
-        || !source_language
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-    {
-        return Err(ContractError::at(
-            ContractErrorCode::InvalidDeclaration,
-            "content.sourceLanguage",
-        ));
-    }
+    crate::validation::language_label(source_language, "content.sourceLanguage")?;
     // Canonical supported locales remain the host's existing locale owner's job.
     count(artifacts.len(), "content.artifacts")?;
     if artifacts.is_empty() {

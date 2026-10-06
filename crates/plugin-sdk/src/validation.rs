@@ -45,6 +45,22 @@ impl fmt::Display for ContractError {
 }
 impl std::error::Error for ContractError {}
 
+/// Wire label syntax only; supported canonical locales are host-owned.
+pub(crate) fn language_label(value: &str, field: &str) -> Result<(), ContractError> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            field,
+        ));
+    }
+    Ok(())
+}
+
 /// Owned and immutable after structural/semantic validation. Not an installed
 /// package or a permission grant, and not proof that any component is available.
 #[derive(Clone, Debug)]

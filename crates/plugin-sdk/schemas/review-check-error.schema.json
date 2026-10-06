@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewCheckError",
+  "description": "Public descriptions and operation-local unit references only. Arbitrary\ndiagnostic text is not thereby authenticated or safe to disclose.",
+  "type": "object",
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/ReviewCheckErrorCode"
+    },
+    "detail": {
+      "type": "string"
+    },
+    "unitId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "detail"
+  ],
+  "$defs": {
+    "ReviewCheckErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid-input",
+        "unsupported-profile",
+        "invalid-source",
+        "invalid-translation",
+        "unsupported-structure",
+        "limit-exceeded",
+        "cancelled"
+      ]
+    }
+  }
+}

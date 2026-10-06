@@ -37,17 +37,7 @@ fn mismatch(field: &str) -> ContractError {
     ContractError::at(ContractErrorCode::ResultMismatch, field)
 }
 fn language(value: &str) -> Result<(), ContractError> {
-    if value.is_empty()
-        || value.len() > 128
-        || !value
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'-')
-    {
-        return Err(invalid("build.targetLanguage"));
-    }
-    // The application's existing locale owner still establishes supported,
-    // canonical locales; this data check does not implement BCP 47 parsing.
-    Ok(())
+    crate::validation::language_label(value, "build.targetLanguage")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

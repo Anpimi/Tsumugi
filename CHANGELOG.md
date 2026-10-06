@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental SDK review contracts now capture complete original source evidence, an explicit selected-text scope and exact mandatory domain rules, with missing text distinguished from empty text. Host inspection binds a captured review Resource to its exact package/checker. Generated JavaScript structure and Rust receiving checks share the same definitions; results reuse the existing Core/domain coverage union. These APIs do not run checkers or grant approval, waivers or release eligibility. Production Review integration remains in development.
+
 - The translation workbench selects installed declared capabilities and an approved runtime, confirms the file's target language, and captures immutable bytes against the current adopted source and exact native matching scope. Extraction and independent checks require separate consent before checked per-entry previews reach the existing adoption workflow. Preparation survives view changes; uncertain operations retain their original requests, grants and proof identities. Missing capabilities preserve editing, and rejected checks cannot open a preview. Full native interaction acceptance and domain cutover remain pending.
 
 - Read-only desktop translation environment resolution now returns the selected material recipe, exact extractor/checker bindings and independently approved installed runtime. Native selected-directory capture follows the declaration with complete bounded UTF-8 bytes, preserving BOM and original evidence through the existing Windows/macOS path, identity and double-read checks. Preparation grants no execution permission; the plugin translation workbench remains under development.

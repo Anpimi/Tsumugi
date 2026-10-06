@@ -33,6 +33,11 @@ A captured Resource selects one file and exact extractor/checker contributions.
 These helpers grant no execution or adoption authority; domain execution, current
 project matching and desktop integration remain required consumers.
 
+[Domain review checks](docs/review.md) define fixed source/selected-text scopes,
+versioned mandatory domain rules and an immutable checker Resource. Results reuse
+the existing check coverage contract. Core qualification and desktop execution
+remain separate consumers; reading metadata grants no execution or review approval.
+
 From the repository root:
 
 ```sh

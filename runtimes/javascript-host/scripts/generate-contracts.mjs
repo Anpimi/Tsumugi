@@ -36,6 +36,12 @@ for (const kind of ['translation-extraction-input', 'translation-exchange', 'tra
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   translationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
+const reviewSchemas = new Map();
+for (const kind of ['review-check-input', 'review-declaration', 'review-check-error', 'review-types']) {
+  const url = new URL(`crates/plugin-sdk/schemas/${kind}.schema.json`, root);
+  cargo(`check-${kind}-schema`, fileURLToPath(url));
+  reviewSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
+}
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
 const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
 const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
@@ -85,6 +91,16 @@ for (const kind of ['translation-extraction-input', 'translation-exchange', 'tra
   const validator = standaloneCode(ajv, ajv.compile(translationSchemas.get(kind)));
   if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
     throw new Error('The generated translation validator requires a runtime dependency.');
+  }
+  outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
+}
+outputs.push([new URL('crates/plugin-sdk/javascript/review.d.ts', root), await compile(reviewSchemas.get('review-types'), 'ReviewTypes', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+for (const kind of ['review-check-input', 'review-declaration', 'review-check-error']) {
+  const validator = standaloneCode(ajv, ajv.compile(reviewSchemas.get(kind)));
+  if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
+    throw new Error('The generated review validator requires a runtime dependency.');
   }
   outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
 }

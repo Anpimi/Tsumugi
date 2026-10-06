@@ -141,6 +141,15 @@ impl PackageImage {
         .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
         .map_err(|_| HostError::InvalidContract)
     }
+    /// Inspect a fixed domain QA resource; this neither runs its checker nor
+    /// replaces the application's mandatory checks, waivers or human decisions.
+    pub fn review_declaration(&self, contribution_id: &str) -> HostResult<ReviewBinding> {
+        parse_review_declaration(
+            self.resource_bytes(contribution_id, &review_declaration_contract())?,
+        )
+        .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+        .map_err(|_| HostError::InvalidContract)
+    }
     fn resource_bytes(&self, contribution_id: &str, expected: &ContractRef) -> HostResult<&[u8]> {
         let contribution = self
             .manifest

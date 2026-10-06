@@ -402,3 +402,14 @@ directories are refused unchanged. Application and SDK alpha.1, SDK/process/Stor
 formats, dependencies and version sources remain in the same undistributed batch;
 no additional SemVer bump or historical migration is introduced. Both Unreleased
 changelogs record the source cutoff and current schema boundary.
+
+The additive experimental review-check input/declaration/error contracts use their
+own exact 1/1 schema/behavior identities and the existing check-results contract.
+The Host reads the captured review Resource without executing code. Generated
+JavaScript types and validators come from those Rust definitions. These data and
+metadata APIs do not change Core qualification, project schema 23, process frames,
+installed Store formats, dependencies or desktop runtime assembly. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed batch, with
+no additional SemVer bump, publication or historical migration. Production Review
+and automatic-selection consumers still require integration with the captured
+Core/domain union and actual checker execution.
