@@ -85,9 +85,54 @@ fn completed(
     }
 }
 
+fn native_review(
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    context: &Value,
+    unit: &Value,
+    environment: &Value,
+) -> Value {
+    let request = scoped(context, json!({"unitId":unit,"locale":"zh-CN"}));
+    let target = call(window, "read_review_target", request.clone()).unwrap();
+    let intent = scoped(
+        context,
+        json!({"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new()}),
+    );
+    let review = call(window, "prepare_review_checks", intent.clone()).unwrap();
+    assert_eq!(review["kind"], "plugin");
+    assert_eq!(review["view"]["plugin"]["environment"], *environment);
+    let qa = call(
+        window,
+        "run_review_checks",
+        scoped(
+            context,
+            json!({"check":intent,"execution":consent(context, &review["view"])}),
+        ),
+    )
+    .unwrap();
+    assert_eq!(qa["outcome"], "completed");
+    let current = call(window, "read_review_target", request).unwrap();
+    let mut rules = current["currentCheck"]["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| result["rule"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    rules.sort_unstable();
+    assert_eq!(
+        rules,
+        [
+            "plugin:flat-json.placeholders",
+            "plugin:flat-json.source-semantics",
+            "required-translation",
+            "terminology"
+        ]
+    );
+    current
+}
+
 #[test]
 #[ignore = "requires an explicit independently built macOS arm64 Native catalog package and digest"]
-fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proofs() {
+fn actual_native_desktop_source_translation_review_and_build_use_independent_grants_and_proofs() {
     let selected = PathBuf::from(
         std::env::var_os("TSUMUGI_TEST_NATIVE_PACKAGE")
             .expect("explicit independent Native package required"),
@@ -152,7 +197,7 @@ fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proo
     let environment = call(&window, "read_plugin_source", json!(source_choice)).unwrap();
     assert_eq!(environment["environment"], offer["environment"]);
     let build_choice = crate::commands::plugins::PluginBuildRequest {
-        package,
+        package: package.clone(),
         resource_id: "build-profile".into(),
         environment_digest: host_digest.clone(),
     };
@@ -165,7 +210,7 @@ fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proo
     let context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
     let source = fixture.directory.path().join("catalog");
     fs::create_dir(&source).unwrap();
-    let original = "\u{feff}{\r\n  \"message\": \"Hello {name} 👩🏽‍💻\"\r\n}\r\n";
+    let original = "\u{feff}{\r\n  \"message\": \"Hello {name} 👩🏽‍💻\",\r\n  \"empty\": \"\"\r\n}\r\n";
     fs::write(source.join("source.json"), original).unwrap();
     // Only the native picker selection is injected. Actual capture, IPC,
     // Host, workers, Core checks, proof and persistence remain production paths.
@@ -261,6 +306,254 @@ fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proo
     .unwrap();
     let receipt = call(&window, "adopt_execution", action.clone()).unwrap();
     assert_eq!(call(&window, "adopt_execution", action).unwrap(), receipt);
+    // The public translation declaration supplies the exact current-source
+    // scope. Only the existing picker fixture is shared across these IPC flows.
+    let translation_choice = crate::commands::plugins::PluginTranslationRequest {
+        package,
+        resource_id: "translation-profile".into(),
+        environment_digest: host_digest.clone(),
+    };
+    let translation_environment = call(
+        &window,
+        "read_plugin_translation",
+        json!(translation_choice),
+    )
+    .unwrap();
+    assert_eq!(translation_environment["environment"], offer["environment"]);
+    let current_source = call(
+        &window,
+        "read_plugin_translation_source",
+        scoped(&context, json!({"targetLocale":"zh-CN"})),
+    )
+    .unwrap();
+    let translated = "你好 {name} 👩🏽‍💻 e\u{301}";
+    let translation_raw = format!(
+        "\u{feff}{{\r\n  \"\\u006dessage\": \"{translated}\",\r\n  \"empty\": \"\",\r\n  \"ghost\": \"unmatched\"\r\n}}\r\n"
+    );
+    fs::create_dir(source.join("translations")).unwrap();
+    fs::write(source.join("translations/zh-CN.json"), &translation_raw).unwrap();
+    let select = scoped(
+        &context,
+        json!({"translation":translation_choice,"targetLocale":"zh-CN","expectedSourceSnapshotId":current_source["sourceSnapshotId"],"nativeScope":current_source["nativeScopes"][0]}),
+    );
+    let selection =
+        crate::commands::execution::source::plugin_translation::choose_translation_for_test(
+            &state,
+            source.clone(),
+            serde_json::from_value(select).unwrap(),
+        );
+    let producer = ExecutionId::new();
+    let mut capture = scoped(
+        &context,
+        json!({"selectionId":selection,"fileName":"zh-CN.json","languageConfirmed":false,"attemptId":producer}),
+    );
+    assert!(call(&window, "preflight_plugin_translation", capture.clone()).is_err());
+    capture["languageConfirmed"] = json!(true);
+    let translation_review = call(&window, "preflight_plugin_translation", capture).unwrap();
+    assert_eq!(
+        translation_review["translation"]["environment"],
+        offer["environment"]
+    );
+    fs::remove_file(source.join("translations/zh-CN.json")).unwrap();
+    let translation_start = consent(&context, &translation_review);
+    let mut refused = translation_start.clone();
+    refused["unsandboxedExecution"] = json!(false);
+    assert!(call(&window, "start_plugin_translation", refused).is_err());
+    assert!(
+        call(
+            &window,
+            "start_translation_check",
+            translation_start.clone()
+        )
+        .is_err()
+    );
+    assert_eq!(
+        call(
+            &window,
+            "start_plugin_translation",
+            translation_start.clone()
+        )
+        .unwrap(),
+        json!(producer)
+    );
+    assert_eq!(
+        call(
+            &window,
+            "start_plugin_translation",
+            translation_start.clone()
+        )
+        .unwrap(),
+        json!(producer)
+    );
+    let produced = completed(&window, &context, &json!(producer));
+    let translation_result = &produced["items"][0]["resultId"];
+    let projection = ExecutionId::new();
+    let project_translation = scoped(
+        &context,
+        json!({"translationAttemptId":producer,"translationResultId":translation_result,"attemptId":projection}),
+    );
+    let incomplete = call(
+        &window,
+        "prepare_translation_projection",
+        project_translation.clone(),
+    )
+    .unwrap_err();
+    assert_eq!(incomplete["reason"], "translation-check-incomplete");
+    let checker = ExecutionId::new();
+    let check_request = scoped(
+        &context,
+        json!({"translationAttemptId":producer,"translationResultId":translation_result,"attemptId":checker,"translation":translation_choice}),
+    );
+    let translation_check =
+        call(&window, "prepare_translation_check", check_request.clone()).unwrap();
+    assert_eq!(
+        translation_check["translation"]["environment"],
+        offer["environment"]
+    );
+    let mut checker_start = consent(&context, &translation_check);
+    checker_start["grantId"] = translation_start["grantId"].clone();
+    assert!(
+        call(&window, "start_translation_check", checker_start.clone()).is_err(),
+        "producer consent cannot authorize the independent checker"
+    );
+    checker_start["grantId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&window, "start_translation_check", checker_start).unwrap(),
+        json!(checker)
+    );
+    let checked_translation = completed(&window, &context, &json!(checker));
+    let finish = scoped(
+        &context,
+        json!({"translationAttemptId":producer,"translationResultId":translation_result,"attemptId":checker,"resultId":checked_translation["items"][0]["resultId"]}),
+    );
+    assert_eq!(
+        call(&window, "finish_translation_check", finish.clone()).unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        call(&window, "finish_translation_check", finish).unwrap(),
+        Value::Null
+    );
+    let projected = call(
+        &window,
+        "prepare_translation_projection",
+        project_translation,
+    )
+    .unwrap();
+    assert_eq!(projected["itemCount"], 3);
+    let project_start = scoped(
+        &context,
+        json!({"attemptId":projection,"inputDigest":projected["inputDigest"]}),
+    );
+    assert_eq!(
+        call(&window, "start_translation_projection", project_start).unwrap(),
+        json!(projection)
+    );
+    completed(&window, &context, &json!(projection));
+    let preview = call(
+        &window,
+        "read_translation_preview",
+        scoped(
+            &context,
+            json!({"attemptId":projection,"after":0,"limit":10,"basis":null}),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        (
+            preview["total"].as_u64(),
+            preview["unique"].as_u64(),
+            preview["unmatched"].as_u64()
+        ),
+        (Some(3), Some(2), Some(1))
+    );
+    assert_eq!(preview["rows"][0]["entry"]["text"], translated);
+    assert_eq!(preview["rows"][1]["entry"]["text"], "");
+    assert!(preview["rows"][2]["unitId"].is_null());
+    let mut histories = Vec::new();
+    for row in &preview["rows"].as_array().unwrap()[..2] {
+        let action = ExecutionId::new();
+        let adopt = scoped(
+            &context,
+            json!({"attemptId":projection,"itemId":row["itemId"],"resultId":row["resultId"],"actionId":action,"confirmation":{"resultDigest":row["resultDigest"],"sourceSnapshotId":preview["currentSourceSnapshotId"],"occurrenceId":row["occurrenceId"],"sourceRevisionId":row["sourceRevisionId"],"targetUnitId":row["unitId"],"expectedSelectionId":row["currentSelection"]["eventId"],"decision":"select-if-empty"}}),
+        );
+        call(&window, "prepare_translation_adoption", adopt).unwrap();
+        let action_request = scoped(&context, json!({"actionId":action}));
+        let receipt = call(&window, "adopt_execution", action_request.clone()).unwrap();
+        assert_eq!(
+            call(&window, "adopt_execution", action_request).unwrap(),
+            receipt
+        );
+        let request = scoped(
+            &context,
+            json!({"unitId":row["unitId"],"locale":"zh-CN","afterOrdinal":"0","limit":10}),
+        );
+        let history = call(&window, "read_translation_history", request.clone()).unwrap();
+        assert_eq!(history["total"], "1");
+        assert_eq!(history["rows"][0]["text"], row["entry"]["text"]);
+        histories.push((request, history));
+    }
+    let captured_raw = translation_raw.clone();
+    let expected_environment = offer["environment"].clone();
+    state.sessions.with(move |sessions| {
+        let input = sessions
+            .active
+            .as_ref()
+            .unwrap()
+            .store
+            .execution_input(producer)
+            .unwrap();
+        let (material, _) = tsumugi_core::content::plugin_translation_input(&input).unwrap();
+        assert_eq!(material.artifacts[0].utf8, captured_raw);
+        assert_eq!(
+            serde_json::to_value(&input.envelope().plugin.as_ref().unwrap().environment).unwrap(),
+            expected_environment
+        );
+    });
+    // Saving an empty translation is valid history, but Core release policy
+    // remains mandatory even when both independent Native domain rules pass.
+    let empty_unit = &preview["rows"][1]["unitId"];
+    let empty_target = native_review(&window, &context, empty_unit, &offer["environment"]);
+    let empty_rules = empty_target["currentCheck"]["rules"].as_array().unwrap();
+    let required = empty_rules
+        .iter()
+        .find(|r| r["rule"] == "required-translation")
+        .unwrap();
+    assert_eq!(required["status"], "findings");
+    assert_eq!(required["findings"].as_array().unwrap().len(), 1);
+    assert_eq!(required["findings"][0]["code"], "empty");
+    assert!(
+        empty_rules
+            .iter()
+            .filter(|r| r["rule"] != "required-translation")
+            .all(|r| r["status"] == "passed")
+    );
+    let blocked = call(
+        &window,
+        "read_review_eligibility",
+        scoped(&context, json!({"locales":["zh-CN"]})),
+    )
+    .unwrap();
+    assert_eq!(blocked["ready"], false);
+    assert!(call(&window, "prepare_plugin_build", scoped(&context, json!({"attemptId":ExecutionId::new(),"build":build_choice,"expectedEligibilityBasis":blocked["basis"],"choices":[{"locale":"zh-CN","outputPaths":["authorized.json"],"configuration":[]}]}))).is_err());
+    let corrected_empty = "空值";
+    let correction = scoped(
+        &context,
+        json!({"unitId":empty_unit,"locale":"zh-CN","sourceRevisionId":empty_target["sourceRevisionId"],"expectedSelectionId":empty_target["selectionId"],"text":corrected_empty,"actionId":ExecutionId::new()}),
+    );
+    let saved = call(&window, "save_translation_revision", correction.clone()).unwrap();
+    assert_eq!(
+        call(&window, "save_translation_revision", correction).unwrap(),
+        saved
+    );
+    for (request, history) in &mut histories {
+        if request["unitId"] == *empty_unit {
+            *history = call(&window, "read_translation_history", request.clone()).unwrap();
+            assert_eq!(history["total"], "2");
+            assert_eq!(history["rows"][0]["text"], "");
+            assert_eq!(history["rows"][1]["text"], corrected_empty);
+        }
+    }
     let page = call(
         &window,
         "read_review_page",
@@ -270,42 +563,20 @@ fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proo
         ),
     )
     .unwrap();
-    let unit = &page["rows"][0]["unitId"];
-    let target_request = scoped(&context, json!({"unitId":unit,"locale":"zh-CN"}));
-    let target = call(&window, "read_review_target", target_request.clone()).unwrap();
-    let translated = "你好 {name} 👩🏽‍💻";
-    call(&window, "save_translation_revision", scoped(&context, json!({"unitId":unit,"locale":"zh-CN","sourceRevisionId":target["sourceRevisionId"],"expectedSelectionId":target["selectionId"],"text":translated,"actionId":ExecutionId::new()}))).unwrap();
-    let target = call(&window, "read_review_target", target_request.clone()).unwrap();
-    let review_intent = scoped(
-        &context,
-        json!({"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new()}),
-    );
-    let review = call(&window, "prepare_review_checks", review_intent.clone()).unwrap();
-    assert_eq!(review["kind"], "plugin");
-    assert_eq!(
-        review["view"]["plugin"]["environment"],
-        offer["environment"]
-    );
-    let qa = call(
-        &window,
-        "run_review_checks",
-        scoped(
-            &context,
-            json!({"check":review_intent,"execution":consent(&context, &review["view"])}),
-        ),
-    )
-    .unwrap();
-    assert_eq!(qa["outcome"], "completed");
-    let current = call(&window, "read_review_target", target_request).unwrap();
-    assert!(
-        current["currentCheck"]["rules"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|result| result["status"] == "passed"),
-        "Native QA rejected a valid exact placeholder: {current}"
-    );
-    call(&window, "write_review_decision", scoped(&context, json!({"decision":{"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN","expectedBasis":current["basis"],"expectedDecisionId":null,"actor":"Synthetic reviewer","kind":"approve","reason":"","actionId":ExecutionId::new()}}))).unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(), 2);
+    for row in page["rows"].as_array().unwrap() {
+        let unit = &row["unitId"];
+        let current = native_review(&window, &context, unit, &offer["environment"]);
+        assert!(
+            current["currentCheck"]["rules"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|result| result["status"] == "passed"),
+            "Native QA rejected a valid exact placeholder: {current}"
+        );
+        call(&window, "write_review_decision", scoped(&context, json!({"decision":{"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN","expectedBasis":current["basis"],"expectedDecisionId":null,"actor":"Synthetic reviewer","kind":"approve","reason":"","actionId":ExecutionId::new()}}))).unwrap();
+    }
     let eligibility = call(
         &window,
         "read_review_eligibility",
@@ -346,7 +617,10 @@ fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proo
     let releases = call(&window, "list_releases", context.clone()).unwrap();
     assert_eq!(releases.as_array().unwrap().len(), 1);
     let release: ExecutionId = serde_json::from_value(releases[0]["releaseId"].clone()).unwrap();
-    let expected = format!("\u{feff}{{\n  \"message\": \"{translated}\"\n}}\n").into_bytes();
+    let expected = format!(
+        "\u{feff}{{\n  \"empty\": \"{corrected_empty}\",\n  \"message\": \"{translated}\"\n}}\n"
+    )
+    .into_bytes();
     let retained = expected.clone();
     state.sessions.with(move |sessions| {
         let store = &sessions.active.as_ref().unwrap().store;
@@ -368,6 +642,13 @@ fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proo
         call(&window, "list_releases", reopened_context.clone()).unwrap(),
         releases
     );
+    for (mut request, history) in histories {
+        request["sessionToken"] = reopened_context["sessionToken"].clone();
+        assert_eq!(
+            call(&window, "read_translation_history", request).unwrap(),
+            history
+        );
+    }
     state.sessions.with(move |sessions| {
         let (_, bytes) = sessions
             .active
@@ -385,7 +666,7 @@ fn actual_native_desktop_source_review_and_build_use_independent_grants_and_proo
     )
     .unwrap();
     println!(
-        "Native desktop source/QA/build/reopen accepted: package={} environment={host_digest}; no installed Node runtime",
+        "Native desktop source/translation/QA/build/reopen accepted: package={} environment={host_digest}; no installed Node runtime",
         fixture.approval.package_digest
     );
 }

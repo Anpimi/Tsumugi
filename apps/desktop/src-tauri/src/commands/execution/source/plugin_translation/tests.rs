@@ -111,7 +111,9 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
     ] {
         let error = call(&window, command, json!({})).unwrap_err();
         assert!(
-            error.as_str().is_some_and(|value| value.contains("not found")),
+            error
+                .as_str()
+                .is_some_and(|value| value.contains("not found")),
             "legacy domain command remained registered: {command}: {error}"
         );
     }
@@ -283,7 +285,7 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
     target_os = "macos",
     target_arch = "aarch64"
 ))]
-mod native {
+pub(super) mod native {
     use super::*;
     use std::path::PathBuf;
     use tauri::{
@@ -372,7 +374,7 @@ mod native {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    pub(super) fn choose(
+    pub(in crate::commands::execution::source) fn choose(
         state: &AppState,
         directory: PathBuf,
         request: PluginTranslationSelectRequest,

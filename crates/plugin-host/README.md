@@ -633,13 +633,16 @@ The desktop controls display approved current Native Host choices and sealed
 approved Node choices for the selected package's runtime types; the backend
 resolves and checks the exact declaration providers before execution.
 
-The desktop's ignored `actual_native_desktop_source_review_and_build_use_independent_grants_and_proofs`
+The desktop's ignored `actual_native_desktop_source_translation_review_and_build_use_independent_grants_and_proofs`
 test accepts an explicit independently built macOS arm64 `examples/flat-json`
 package through `TSUMUGI_TEST_NATIVE_PACKAGE` and its independent expected digest
 through `TSUMUGI_TEST_NATIVE_DIGEST`. It uses production registered IPC with a mock
 window and a synthetic picker selection. Actual Native worker processes, source
-capture/check/adoption, manual translation saving, QA, build/artifact proof,
+capture/check/adoption, complete translation extraction/check/projection/adoption,
+QA, build/artifact proof,
 release adoption and project reopen remain real. The fixture verifies Host
-revocation, independent grants and exact preserved output bytes without an
+revocation, independent grants, unmatched and empty translations, the complete
+Core/domain rule union, Core release refusal for an empty selection, manual
+correction and retained translation history, and exact output bytes without an
 installed Node runtime. It is an IPC/process test, not a native GUI observation.
 No model call, network request or user project is part of that fixture.
