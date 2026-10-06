@@ -22,6 +22,21 @@ pub struct ReviewCheckEvidence {
 fn corrupt() -> ExecutionError {
     failure(ErrorCode::CorruptLedger, "review-check-evidence")
 }
+pub(in crate::persistence) fn validator_version(
+    evidence: Option<&ReviewCheckEvidence>,
+) -> Result<&'static str, ExecutionError> {
+    if evidence.is_some() {
+        return Ok(CHECK_VERSION);
+    }
+    #[cfg(any(test, feature = "execution-test-host"))]
+    {
+        Ok(crate::review::CHECK_VERSION)
+    }
+    #[cfg(not(any(test, feature = "execution-test-host")))]
+    {
+        Err(corrupt())
+    }
+}
 fn fixed(set: &sdk::RequiredCheckSet) -> Result<sdk::FixedCheckSet, ExecutionError> {
     let (core, domain) = set
         .requirements
@@ -51,11 +66,19 @@ fn fixed(set: &sdk::RequiredCheckSet) -> Result<sdk::FixedCheckSet, ExecutionErr
 pub(in crate::persistence::review) fn coverage_complete(run: &CheckRun) -> bool {
     // Read owners validate the projection first. A malformed direct assessment
     // is also closed to qualification rather than treating it as empty success.
-    run.evidence.as_ref().is_some_and(|e| {
-        fixed(&e.required_checks)
-            .and_then(|s| s.evaluate(&e.results).map_err(|_| corrupt()))
-            .is_ok_and(|coverage| coverage.complete)
-    })
+    let Some(e) = &run.evidence else {
+        #[cfg(any(test, feature = "execution-test-host"))]
+        {
+            return crate::review::complete_rules(&run.rules);
+        }
+        #[cfg(not(any(test, feature = "execution-test-host")))]
+        {
+            return false;
+        }
+    };
+    fixed(&e.required_checks)
+        .and_then(|s| s.evaluate(&e.results).map_err(|_| corrupt()))
+        .is_ok_and(|coverage| coverage.complete)
 }
 
 fn project_rules(
@@ -169,7 +192,7 @@ pub(in crate::persistence::review) fn validate_projection(
     run: &CheckRun,
 ) -> Result<(), ExecutionError> {
     let Some(evidence) = &run.evidence else {
-        return Ok(());
+        return validator_version(None).map(|_| ());
     };
     let core: Vec<_> = run
         .rules

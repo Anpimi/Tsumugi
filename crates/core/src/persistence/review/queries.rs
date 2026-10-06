@@ -267,8 +267,14 @@ pub(in crate::persistence) fn targets_in(
                 evidence,
             )?
         } else {
-            cfg!(any(test, feature = "execution-test-host"))
-                && check.validator_version == CHECK_VERSION
+            #[cfg(any(test, feature = "execution-test-host"))]
+            {
+                check.validator_version == CHECK_VERSION
+            }
+            #[cfg(not(any(test, feature = "execution-test-host")))]
+            {
+                false
+            }
         };
         if current {
             target.current_check = Some(check);

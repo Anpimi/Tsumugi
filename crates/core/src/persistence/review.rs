@@ -9,17 +9,20 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(any(test, feature = "execution-test-host"))]
 use crate::review::CHECK_VERSION;
 mod checks;
 pub(super) use checks::candidate_checks_clean;
+#[cfg(any(test, feature = "execution-test-host"))]
 pub(super) use checks::record_check_in;
+pub(super) use checks::validator_version;
 pub(super) use checks::{
     CURRENT_CHECK_VERSION, PreparedReviewAdoption, prepare_candidate_in,
     validate_candidate_evidence,
 };
 pub use checks::{
-    CapturedReviewCheckExecution, ComputedReviewCheck, ComputedReviewEvidence, PreparedReviewCheck,
-    ReviewCheckEvidence, ReviewCheckPlan,
+    CapturedReviewCheckExecution, ComputedReviewEvidence, PreparedReviewCheck, ReviewCheckEvidence,
+    ReviewCheckPlan,
 };
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
@@ -1032,6 +1035,7 @@ impl ProjectStore {
         .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-receipt"))
     }
 
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn run_review_checks(
         &mut self,
         project_id: ExecutionId,
@@ -1050,6 +1054,7 @@ impl ProjectStore {
         )
     }
 
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn run_review_checks_with_cancel(
         &mut self,
         project_id: ExecutionId,
@@ -1424,20 +1429,7 @@ pub(super) fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec
     match &target.current_check {
         None => blockers.push("qa-missing-or-stale".to_owned()),
         Some(check) => {
-            let rules: BTreeSet<&str> = check.rules.iter().map(|rule| rule.rule.as_str()).collect();
-            let complete = if check.evidence.is_some() {
-                checks::coverage_complete(check)
-            } else {
-                cfg!(any(test, feature = "execution-test-host"))
-                    && rules
-                        == BTreeSet::from([
-                            "required-translation",
-                            "placeholders",
-                            "format",
-                            "terminology",
-                        ])
-                    && check.rules.len() == 4
-            };
+            let complete = checks::coverage_complete(check);
             if !complete {
                 blockers.push("qa-incomplete-coverage".to_owned());
             }
@@ -4770,3 +4762,6 @@ pub(super) mod tests {
         }
     }
 }
+
+#[cfg(any(test, feature = "execution-test-host"))]
+pub use checks::ComputedReviewCheck;

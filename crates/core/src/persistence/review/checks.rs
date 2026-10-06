@@ -1,6 +1,8 @@
 //! Capture and commit adapters for database-independent review computation.
 use super::*;
-use crate::review::{CheckInput, check_rules, interrupted_rules};
+use crate::review::CheckInput;
+#[cfg(any(test, feature = "execution-test-host"))]
+use crate::review::{check_rules, interrupted_rules};
 
 mod adoption;
 mod capture;
@@ -9,6 +11,7 @@ pub(in crate::persistence) use adoption::CHECK_VERSION as CURRENT_CHECK_VERSION;
 pub use adoption::ReviewCheckEvidence;
 pub(in crate::persistence) use adoption::candidate_checks_clean;
 pub(super) use adoption::coverage_complete;
+pub(in crate::persistence) use adoption::validator_version;
 pub(in crate::persistence) use adoption::{PreparedReviewAdoption, validate_candidate_evidence};
 pub(super) use adoption::{validate_projection, validate_saved, validate_saved_frames};
 pub use capture::ReviewCheckPlan;
@@ -51,6 +54,7 @@ pub(in crate::persistence) fn prepare_candidate_in(
             action_id,
             request_digest,
             target,
+            #[cfg(any(test, feature = "execution-test-host"))]
             terms: terms.clone(),
             plan,
         }),
@@ -63,6 +67,7 @@ struct Capture {
     action_id: ExecutionId,
     request_digest: String,
     target: ReviewTarget,
+    #[cfg(any(test, feature = "execution-test-host"))]
     terms: resources::TermResolution,
     plan: Option<ReviewCheckPlan>,
 }
@@ -77,13 +82,16 @@ pub struct PreparedReviewCheck {
 enum PreparedState {
     Pending(Capture),
     Recorded {
+        #[cfg(any(test, feature = "execution-test-host"))]
         project_id: ExecutionId,
+        #[cfg(any(test, feature = "execution-test-host"))]
         request_digest: String,
         run: CheckRun,
     },
 }
 
 /// Computation carries its original authority; it cannot be deserialized from IPC.
+#[cfg(any(test, feature = "execution-test-host"))]
 #[derive(Debug)]
 pub struct ComputedReviewCheck {
     prepared: PreparedReviewCheck,
@@ -107,6 +115,7 @@ impl PreparedReviewCheck {
         }
     }
 
+    #[cfg(any(test, feature = "execution-test-host"))]
     /// Runs with owned values only, without holding a connection or transaction.
     pub fn compute(self, cancellation: &Cancellation) -> ComputedReviewCheck {
         let rules = match &self.state {
@@ -173,7 +182,9 @@ impl ProjectStore {
                 return if prior_digest == request_digest {
                     Ok(PreparedReviewCheck {
                         state: PreparedState::Recorded {
+                            #[cfg(any(test, feature = "execution-test-host"))]
                             project_id,
+                            #[cfg(any(test, feature = "execution-test-host"))]
                             request_digest,
                             run,
                         },
@@ -198,6 +209,7 @@ impl ProjectStore {
                     action_id,
                     request_digest,
                     target,
+                    #[cfg(any(test, feature = "execution-test-host"))]
                     terms,
                     plan,
                 }),
@@ -205,6 +217,7 @@ impl ProjectStore {
         })
     }
 
+    #[cfg(any(test, feature = "execution-test-host"))]
     pub fn commit_review_check(
         &mut self,
         computed: ComputedReviewCheck,
@@ -315,6 +328,7 @@ impl ProjectStore {
 
 /// Record computed rules against an already rechecked target inside the caller's
 /// transaction. Both manual checks and automatic selection use this authority.
+#[cfg(any(test, feature = "execution-test-host"))]
 pub(in crate::persistence) fn record_check_in(
     connection: &Connection,
     project_id: ExecutionId,

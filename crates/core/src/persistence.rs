@@ -51,13 +51,13 @@ pub use resources::{
     TmSuggestion,
 };
 pub use review::{
-    CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun, ComputedReviewCheck,
-    ComputedReviewEvidence, Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision,
-    FallbackWrite, PreparedReviewCheck, ReviewBasis, ReviewCheckEvidence, ReviewCheckOutcome,
-    ReviewCheckPlan, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage,
-    ReviewNeighbor, ReviewPage, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary,
-    ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite,
-    Waiver, WaiverWrite, WorkItem, WorkPage,
+    CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun, ComputedReviewEvidence,
+    Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite,
+    PreparedReviewCheck, ReviewBasis, ReviewCheckEvidence, ReviewCheckOutcome, ReviewCheckPlan,
+    ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor,
+    ReviewPage, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,
+    ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite,
+    WorkItem, WorkPage,
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
@@ -1445,3 +1445,6 @@ mod tests {
         reopened.close().unwrap();
     }
 }
+
+#[cfg(any(test, feature = "execution-test-host"))]
+pub use review::ComputedReviewCheck;

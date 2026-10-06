@@ -25,12 +25,18 @@ fn checks_allow_selection(
     match evidence {
         Some(evidence) => review::candidate_checks_clean(rules, evidence),
         None => {
-            cfg!(any(test, feature = "execution-test-host"))
-                && crate::review::complete_rules(rules)
-                && rules.iter().all(|rule| {
-                    matches!(rule.status.as_str(), "passed" | "not-applicable")
-                        && rule.findings.is_empty()
-                })
+            #[cfg(any(test, feature = "execution-test-host"))]
+            {
+                crate::review::complete_rules(rules)
+                    && rules.iter().all(|rule| {
+                        matches!(rule.status.as_str(), "passed" | "not-applicable")
+                            && rule.findings.is_empty()
+                    })
+            }
+            #[cfg(not(any(test, feature = "execution-test-host")))]
+            {
+                false
+            }
         }
     }
 }
@@ -108,15 +114,27 @@ impl PreparedAutomaticSelection {
                     "review-plugin-evidence-required",
                 ));
             }
-            Prepared::Pending(capture) => crate::review::check_rules(
-                &crate::review::CheckInput {
-                    unit_id: capture.request.unit_id,
-                    locale: capture.request.locale.clone(),
-                    source_text: capture.target.source_text.clone(),
-                    translation_text: Some(capture.text.clone()),
-                },
-                &capture.terms,
-            )?,
+            Prepared::Pending(_capture) => {
+                #[cfg(any(test, feature = "execution-test-host"))]
+                {
+                    crate::review::check_rules(
+                        &crate::review::CheckInput {
+                            unit_id: _capture.request.unit_id,
+                            locale: _capture.request.locale.clone(),
+                            source_text: _capture.target.source_text.clone(),
+                            translation_text: Some(_capture.text.clone()),
+                        },
+                        &_capture.terms,
+                    )?
+                }
+                #[cfg(not(any(test, feature = "execution-test-host")))]
+                {
+                    return Err(error(
+                        ErrorCode::InvalidInput,
+                        "review-plugin-evidence-required",
+                    ));
+                }
+            }
         };
         Ok(ComputedAutomaticSelection {
             prepared: self,
@@ -225,12 +243,7 @@ pub(super) fn selection_matches_plan(
         && receipt.request.lease.generation.get() <= maximum_generation
         && receipt.policy == plan.options.selection_policy
         && receipt.policy_version == POLICY_VERSION
-        && receipt.validator_version
-            == if receipt.evidence.is_some() {
-                review::CURRENT_CHECK_VERSION
-            } else {
-                crate::review::CHECK_VERSION
-            }
+        && receipt.validator_version == review::validator_version(receipt.evidence.as_ref())?
         && receipt.blocked.is_none()
         && receipt.selection.is_some_and(|value| {
             value.event_id == selected
@@ -551,11 +564,12 @@ impl ProjectStore {
             protection_revision: current.protection.revision,
             candidate_basis,
             captured_selection_id: capture.target.selection_id,
-            validator_version: if computed.adoption.is_some() {
-                review::CURRENT_CHECK_VERSION
-            } else {
-                crate::review::CHECK_VERSION
-            }
+            validator_version: review::validator_version(
+                computed
+                    .adoption
+                    .as_ref()
+                    .map(|adoption| adoption.evidence()),
+            )?
             .into(),
             rules: computed.rules,
             evidence: computed.adoption.as_ref().map(|a| a.evidence().clone()),
@@ -578,20 +592,31 @@ impl ProjectStore {
                 sequence,
                 capture.selection_event,
             )?;
+            #[cfg(any(test, feature = "execution-test-host"))]
             let selected_target =
                 review::target_in(&tx, request.project_id, request.unit_id, &request.locale)?;
             let check = if let Some(adoption) = &computed.adoption {
                 adoption.save_in(&tx, &plugin_authority, cancellation)?
             } else {
-                review::record_check_in(
-                    &tx,
-                    request.project_id,
-                    request.action_id,
-                    &digest,
-                    &selected_target,
-                    &receipt.rules,
-                    cancellation,
-                )?
+                #[cfg(any(test, feature = "execution-test-host"))]
+                {
+                    review::record_check_in(
+                        &tx,
+                        request.project_id,
+                        request.action_id,
+                        &digest,
+                        &selected_target,
+                        &receipt.rules,
+                        cancellation,
+                    )?
+                }
+                #[cfg(not(any(test, feature = "execution-test-host")))]
+                {
+                    return Err(error(
+                        ErrorCode::InvalidInput,
+                        "review-plugin-evidence-required",
+                    ));
+                }
             };
             if check.rules != receipt.rules {
                 return Err(error(ErrorCode::Cancelled, "work-selection-checks"));
@@ -664,6 +689,10 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             "SELECT EXISTS(SELECT 1 FROM translation_revisions r JOIN application_executions e USING(attempt_id) WHERE r.revision_id=?1 AND r.unit_id=?2 AND r.locale=?3 AND r.source_revision_id=?4 AND r.origin_kind='ai' AND e.plan_id=?5 AND e.generation=?6)",
             params![revision, request.unit_id.to_string(), request.locale, basis.source_revision_id.to_string(),
                 plan, request.lease.generation.get() as i64], |row|row.get(0)).map_err(ledger::sql_error)?;
+        #[cfg(any(test, feature = "execution-test-host"))]
+        if receipt.evidence.is_none() && !crate::review::complete_rules(&receipt.rules) {
+            return Err(error(ErrorCode::CorruptLedger, "work-selection-receipt"));
+        }
         if request.lease.plan_id.to_string() != plan
             || request.revision_id.to_string() != revision
             || request.project_id != stored.plan.project_id
@@ -673,12 +702,7 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
             || receipt.policy != stored.plan.options.selection_policy
             || receipt.policy == SelectionPolicy::CandidatesOnly
             || receipt.policy_version != POLICY_VERSION
-            || receipt.validator_version
-                != if receipt.evidence.is_some() {
-                    review::CURRENT_CHECK_VERSION
-                } else {
-                    crate::review::CHECK_VERSION
-                }
+            || receipt.validator_version != review::validator_version(receipt.evidence.as_ref())?
             || receipt.candidate_basis.source_revision_id != basis.source_revision_id
             || !selection_matches_plan(
                 c,
@@ -688,7 +712,6 @@ pub(super) fn validate(c: &Connection) -> Result<(), ExecutionError> {
                 request.lease.generation.get(),
             )?
             || receipt.candidate_basis.revision_id != Some(request.revision_id)
-            || (receipt.evidence.is_none() && !crate::review::complete_rules(&receipt.rules))
             || !valid_candidate
             || receipt.selection.as_ref().map(|s| s.event_id.to_string()) != selection
             || receipt.blocked.is_some() == receipt.selection.is_some()

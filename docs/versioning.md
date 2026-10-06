@@ -491,3 +491,14 @@ current generated client. Plans retain their existing stored shape and digest;
 project schema 26, SDK/process and Store formats are unchanged. This is the same
 undistributed application `0.2.0-alpha.1` batch and needs no additional bump or
 development migration. Reopened history does not restore local execution consent.
+
+Normal Core QA now excludes the legacy domain parser, fixed four-rule selection
+and synchronous check APIs from its default build. Those APIs and projections
+remain explicit test-host tooling; normal consumers use actual prepared
+execution/evidence adoption. Missing ledger evidence is rejected for current
+and historical QA rather than admitted as a legacy projection. Existing valid
+current-format history retains its original authority without restoring grants.
+This changes experimental Core API availability, not stored fields, schema 26,
+SDK/process/Store profiles or dependencies. The same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no extra bump or development
+migration. Both Unreleased changelogs record the behavior.

@@ -520,22 +520,15 @@ fn adopted_actual_union_is_current_durable_and_idempotent_after_grant_ends() {
     );
     runtime.revoke_plugin(&mut store, grant).unwrap();
     store.close().unwrap();
-    let mut reopened = ProjectStore::open(&directory.path().join("project")).unwrap();
+    let reopened = ProjectStore::open(&directory.path().join("project")).unwrap();
     let target = reopened
         .review_target(project(&reopened), unit, "zh-CN")
         .unwrap();
     assert_eq!(target.current_check, Some(run.clone()));
     assert!(target.current_decision.is_some());
-    let cancelled = Cancellation::default();
-    cancelled.request();
     let prepared = prepare(&reopened, unit, action);
     assert!(prepared.plan().is_none());
-    assert_eq!(
-        reopened
-            .commit_review_check(prepared.compute(&cancelled), &cancelled)
-            .unwrap(),
-        run
-    );
+    assert_eq!(prepared.recorded_run(), Some(&run));
 }
 
 #[test]
@@ -626,21 +619,10 @@ fn adoption_rechecks_revocation_cancellation_selection_and_concurrent_check_with
 }
 
 #[test]
-fn persisted_qa_cannot_replace_actual_domain_findings_and_old_production_checks_cannot_record() {
+fn persisted_qa_cannot_replace_actual_domain_findings() {
     let (directory, mut store, rows) = support::source_fixture();
     let unit = rows[0].unit_id.unwrap();
     save(&mut store, unit, "译文");
-    let prepared = prepare(&store, unit, ExecutionId::new());
-    assert_eq!(
-        store
-            .commit_review_check(
-                prepared.compute(&Cancellation::default()),
-                &Cancellation::default()
-            )
-            .unwrap_err()
-            .stage,
-        "review-plugin-evidence-required"
-    );
     let (computed, _runtime, _grant) = compute_actual(&mut store, unit, Response::Exact);
     store
         .commit_review_evidence(computed, &Cancellation::default())
@@ -650,6 +632,71 @@ fn persisted_qa_cannot_replace_actual_domain_findings_and_old_production_checks_
     assert!(store.review_target(project(&store), unit, "zh-CN").is_err());
     store.close().unwrap();
     assert!(ProjectStore::open(&directory.path().join("project")).is_err());
+}
+
+#[test]
+fn saved_checks_without_actual_evidence_are_refused_in_current_and_historical_reads() {
+    for fixed_four in [false, true] {
+        let (directory, mut store, rows) = support::source_fixture();
+        let unit = rows[0].unit_id.unwrap();
+        save(&mut store, unit, "译文");
+        let (computed, _runtime, _grant) = compute_actual(&mut store, unit, Response::Exact);
+        store
+            .commit_review_evidence(computed, &Cancellation::default())
+            .unwrap();
+        let db =
+            rusqlite::Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+        db.execute(
+            "UPDATE review_checks SET evidence_json=NULL,qa_basis=NULL",
+            [],
+        )
+        .unwrap();
+        if fixed_four {
+            let rules: Vec<_> = [
+                "required-translation",
+                "placeholders",
+                "format",
+                "terminology",
+            ]
+            .into_iter()
+            .map(|rule| tsumugi_core::CheckRuleResult {
+                rule: rule.into(),
+                status: "passed".into(),
+                reason: None,
+                findings: vec![],
+            })
+            .collect();
+            db.execute(
+                "UPDATE review_checks SET validator_version='smapi-prebuild-2',rules_json=?1",
+                [serde_json::to_string(&rules).unwrap()],
+            )
+            .unwrap();
+        }
+        let project = project(&store);
+        assert_eq!(
+            store
+                .review_target(project, unit, "zh-CN")
+                .unwrap_err()
+                .stage,
+            "review-check-evidence"
+        );
+        assert_eq!(
+            store
+                .review_history(project, unit, "zh-CN", 0, 50)
+                .unwrap_err()
+                .stage,
+            "review-check-evidence"
+        );
+        assert_eq!(
+            store
+                .review_eligibility(project, &["zh-CN".into()])
+                .unwrap_err()
+                .stage,
+            "review-check-evidence"
+        );
+        store.close().unwrap();
+        assert!(ProjectStore::open(&directory.path().join("project")).is_err());
+    }
 }
 
 #[test]
