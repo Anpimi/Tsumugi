@@ -92,10 +92,13 @@ it("ignores an outdated source environment after a new installed-choice refresh"
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));
   await waitFor(() => expect(reads).toBe(1));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh installed source choices" })).toBeEnabled());
+  expect(screen.getByText(i18n.t("execution.working"))).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
   await act(async () => complete({ ...pluginSourceView, declaration: { ...pluginSourceView.declaration, displayName: "STALE ENVIRONMENT" } }));
   expect(screen.queryByText("STALE ENVIRONMENT")).not.toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("execution.working"))).not.toBeInTheDocument();
 });
 async function select() {
   const user = userEvent.setup();

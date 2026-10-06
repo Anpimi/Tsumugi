@@ -1,6 +1,6 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { createRef } from "react";
-import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
@@ -374,6 +374,62 @@ it("requires language mapping and applies only the reviewed unique result", asyn
   await user.click(screen.getByRole("button", { name: "Apply 1 unique matches" }));
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "adopt_execution")).toBe(true));
   expect(invoke.mock.calls.find(([name]) => name === "prepare_translation_adoption")?.[1].request.confirmation).toMatchObject({ decision: "candidate-only", resultDigest: "result-digest", targetUnitId: fixtureIdentity(204) });
+});
+
+it.each(["escape", "continue"])("returns focus to the retained draft after %s cancels leaving", async (dismissal) => {
+  const ref = createRef<TranslationHandle>();
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(draft, "Keep this unsaved input");
+  let leaving!: Promise<boolean>;
+  act(() => { leaving = ref.current!.allowLeave(); });
+  await screen.findByRole("dialog", { name: i18n.t("translation.leaveTitle") });
+  if (dismissal === "escape") await user.keyboard("{Escape}");
+  else await user.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(await leaving).toBe(false);
+  expect(draft).toHaveValue("Keep this unsaved input");
+  await waitFor(() => expect(draft).toHaveFocus());
+  expect(invoke.mock.calls.some(([name]) => name === "save_translation_revision")).toBe(false);
+});
+
+it.each(["batch", "row"])("refreshes frozen editor summaries after %s import selection", async (mode) => {
+  const original = invoke.getMockImplementation()!;
+  let adopted = false;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page" && adopted && args.request.scopeId === null) {
+      return reviewSummaryPageFixture([reviewSummaryFor(reviewTargetFixture({
+        unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original",
+        sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205),
+        selectionId: fixtureIdentity(601), revisionId: fixtureIdentity(701),
+        translationText: "你好", basis: "selected-basis",
+      }))]);
+    }
+    const result = await original(command, args);
+    if (command === "adopt_execution") adopted = true;
+    return result;
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(screen.getByRole("button", { name: "Edit translations" }));
+  expect(await screen.findByRole("button", { name: "first" })).toHaveTextContent("No selected translation");
+  await user.click(screen.getByRole("button", { name: "Import file" }));
+  await importDeclaredTranslation(user);
+  await screen.findByRole("heading", { name: "Review translation matches" });
+  if (mode === "batch") {
+    await user.click(screen.getByRole("checkbox", { name: i18n.t("translation.selectIfEmpty") }));
+    await user.click(screen.getByRole("button", { name: "Apply 1 unique matches" }));
+  } else {
+    await user.click(screen.getByRole("button", { name: "Select imported translation" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Select imported translation" })).getByRole("button", { name: "Select imported translation" }));
+  }
+  await waitFor(() => expect(adopted).toBe(true));
+  await user.click(screen.getByRole("button", { name: "Edit translations" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "first" })).toHaveTextContent("你好"));
+  expect(screen.getByRole("button", { name: "first" })).toHaveTextContent(i18n.t("workbench.selected"));
 });
 
 it("keeps text typed after an earlier save and checks the new selection before saving again", async () => {

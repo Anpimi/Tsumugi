@@ -240,6 +240,10 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     const next = await commands.preview({ ...context, attemptId: attempt, after, limit: 50, basis });
     if (current()) setPreview(next);
   }
+  async function refreshImportViews(current: () => boolean) {
+    await loadPreview(0, null, current);
+    if (current()) await loadList(listAfter, appliedQuery, current, true);
+  }
   async function allPreviewRows(first: TranslationPreview): Promise<TranslationPreviewRow[]> {
     const rows = [...first.rows];
     let after = first.nextOrdinal;
@@ -287,7 +291,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       if (current()) {
         setBatchOutcome(outcome);
         setBatchDetails(details);
-        await loadPreview(0, null, current);
+        await refreshImportViews(current);
       }
     } finally {
       if (current()) setBatchProgress(null);
@@ -310,7 +314,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     try {
       await commands.prepare(request);
       await execution.adopt({ ...context, actionId: request.actionId });
-      if (current()) { setRowAction(null); await loadPreview(0, null, current); }
+      if (current()) { setRowAction(null); await refreshImportViews(current); }
     } catch (error) {
       if (current() && hasUnknownOutcome(error)) {
         setUncertain(list => [...list, request]);
@@ -465,7 +469,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
               <button className="primary-button" disabled={busy || preview.unique === 0 || preview.sourceChanged > 0} onClick={() => void perform(applyBatch)}>{t("translation.apply", { count: preview.unique })}</button>
               {batchProgress ? <p role="status">{t("translation.applying", { done: String(batchProgress.done), total: String(batchProgress.total) })}</p> : null}
               {batchOutcome ? <><p role="status">{t("translation.outcome", { applied: String(batchOutcome.applied), conflicted: String(batchOutcome.conflicted), failed: String(batchOutcome.failed), unknown: String(batchOutcome.unknown) })}</p><details><summary>{t("translation.batchDetails")}</summary><ul>{batchDetails.map((item, index) => <li key={`${item.key}:${index}`}>{item.key}: {t(`translation.batchStatus.${item.status}`)}</li>)}</ul></details></> : null}
-              {uncertain.map(request => <div key={request.actionId} role="status"><button className="secondary-button" disabled={busy} onClick={() => void perform(async current => { const receipt = await execution.receipt({ ...context, actionId: request.actionId }); if (current()) { setReceiptMessage(receipt ? "found" : "missing"); if (receipt) { setUncertain(list => list.filter(item => item.actionId !== request.actionId)); await loadPreview(0, null, current); } } })}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={busy} onClick={() => void perform(async current => { await commands.prepare(request); await execution.adopt({ ...context, actionId: request.actionId }); if (current()) { setUncertain(list => list.filter(item => item.actionId !== request.actionId)); await loadPreview(0, null, current); } })}>{t("translation.retryAction")}</button></div>)}
+              {uncertain.map(request => <div key={request.actionId} role="status"><button className="secondary-button" disabled={busy} onClick={() => void perform(async current => { const receipt = await execution.receipt({ ...context, actionId: request.actionId }); if (current()) { setReceiptMessage(receipt ? "found" : "missing"); if (receipt) { setUncertain(list => list.filter(item => item.actionId !== request.actionId)); await refreshImportViews(current); } } })}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={busy} onClick={() => void perform(async current => { await commands.prepare(request); await execution.adopt({ ...context, actionId: request.actionId }); if (current()) { setUncertain(list => list.filter(item => item.actionId !== request.actionId)); await refreshImportViews(current); } })}>{t("translation.retryAction")}</button></div>)}
               {receiptMessage ? <p role="status">{t(receiptMessage === "found" ? "translation.receiptFound" : "translation.receiptMissing")}</p> : null}
             </section> : null}
           </> : null}
@@ -524,6 +528,6 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
         </div>
       </WorkbenchPanel>
     <Dialog.Root open={rowAction !== null} onOpenChange={value => { if (!value && !busy) setRowAction(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</Dialog.Title><Dialog.Description>{t("translation.rowActionHelp", { key: rowAction?.row.entry.nativeKey ?? "" })}</Dialog.Description>{rowAction ? <div className="translation-action-compare"><p>{t("translation.importedText")}: {rowAction.row.entry.text === "" ? t("translation.empty") : rowAction.row.entry.text}</p><p>{t("translation.selectedText")}: {rowAction.row.currentText === null ? t("translation.noSelection") : rowAction.row.currentText === "" ? t("translation.empty") : rowAction.row.currentText}</p></div> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => setRowAction(null)}>{t("execution.back")}</button><button className="primary-button" disabled={busy} onClick={() => void perform(applyRow)}>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
-    <Dialog.Root open={leaveIntent !== null} onOpenChange={value => { if (!value && !busy) resolveLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t("translation.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translation.leaveHelp")}</Dialog.Description>{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}{newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => resolveLeave(false)}>{t("translation.stay")}</button><button className="secondary-button" disabled={busy || !!pendingSave} onClick={() => resolveLeave(true)}>{t("translation.discard")}</button><button className="primary-button" disabled={busy || composing || (!editingReady && !pendingSave)} onClick={() => void perform(saveAndLeave)}>{pendingSave ? t("translation.retryAction") : t("translation.saveAndContinue")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={leaveIntent !== null} onOpenChange={value => { if (!value && !busy) resolveLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onCloseAutoFocus={event => { event.preventDefault(); const field = draftField.current; if (open && tab === "edit" && field?.isConnected && !field.closest("[hidden]")) field.focus({ preventScroll: true }); }} onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t("translation.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translation.leaveHelp")}</Dialog.Description>{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}{newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => resolveLeave(false)}>{t("translation.stay")}</button><button className="secondary-button" disabled={busy || !!pendingSave} onClick={() => resolveLeave(true)}>{t("translation.discard")}</button><button className="primary-button" disabled={busy || composing || (!editingReady && !pendingSave)} onClick={() => void perform(saveAndLeave)}>{pendingSave ? t("translation.retryAction") : t("translation.saveAndContinue")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </>;
 }

@@ -46,6 +46,7 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
   const [choiceKey, setChoiceKey] = useState("");
   const [runtimeDigest, setRuntimeDigest] = useState("");
   const [environment, setEnvironment] = useState<PluginSourceView | null>(null);
+  const [environmentLoading, setEnvironmentLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [inventoryReady, setInventoryReady] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -93,10 +94,12 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
     return () => { stale = true; };
   }, [open, project.sessionToken, refresh]);
   useEffect(() => {
-    if (!open || !choice || !runtimeDigest) { setEnvironment(null); return; }
+    if (!open || !choice || !runtimeDigest) { setEnvironment(null); setEnvironmentLoading(false); return; }
     let stale = false;
-    setEnvironment(null);
-    void pluginCommands.source({ package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest }).then(value => { if (!stale) setEnvironment(value); }, error => { if (!stale) setFailure(commandFailure(error)); });
+    setEnvironment(null); setEnvironmentLoading(true);
+    void pluginCommands.source({ package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest })
+      .then(value => { if (!stale) setEnvironment(value); }, error => { if (!stale) setFailure(commandFailure(error)); })
+      .finally(() => { if (!stale) setEnvironmentLoading(false); });
     return () => { stale = true; };
   }, [open, project.sessionToken, choice?.key, runtimeDigest, refresh]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
@@ -144,9 +147,9 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
     } catch (error) { if (current() && !uncertain(error)) setFinishIntent(null); throw error; }
   }
   const unavailable = !loading && (!inventoryReady || !choices.length || !runtimes.length);
-  return <section aria-label={t("sourcePlugin.importControls")} aria-busy={busy || loading}>
+  return <section aria-label={t("sourcePlugin.importControls")} aria-busy={busy || loading || environmentLoading}>
     {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("sourcePlugin.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
-    {busy || loading ? <p role="status">{t("execution.working")}</p> : null}
+    {busy || loading || environmentLoading ? <p role="status">{t("execution.working")}</p> : null}
     {canCapture || (proposal && !validated) ? <>
       <label className="source-field">{t("source.integration")}<select value={choiceKey} disabled={locked || checkActive || loading} onChange={event => { changed(); setChoiceKey(event.target.value); }}>
         {!choices.some(item => item.key === choiceKey) ? <option value={choiceKey}>{t("sourcePlugin.choosePackage")}</option> : null}

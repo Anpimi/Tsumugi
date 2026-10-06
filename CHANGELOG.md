@@ -91,6 +91,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Translation import refreshes the editor entry list after individual or batch adoption and confirmed recovery, preserving its query, page and any draft. Cancelling an unsaved-draft leave confirmation returns focus to the editor. Declared translation fields use the existing form layout, and installed source-environment reads keep their loading feedback visible until completion.
+
 - Preparing a plugin translation preview before its independent check completes now reports an incomplete check instead of a corrupt project. Rejected checks still block preview, and a missing proof for a result already marked qualified remains a corruption error.
 
 - Experimental source and artifact adoption recheck the selected checker's current authorization and unsuperseded result before preparation and at commit. Revocation or cancellation after a successful semantic check blocks new adoption while preserving previously adopted content, saved evidence and committed receipts.
