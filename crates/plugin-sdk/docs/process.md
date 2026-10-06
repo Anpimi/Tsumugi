@@ -69,3 +69,14 @@ non-integer numeric tokens, unsafe JavaScript integers and excessive nesting.
 Exact payload UTF-8 (including BOM, CRLF and Unicode) remains opaque data. These
 additional parser limits are profile constraints; structural validation does not
 replace Rust's semantic matching or the real parent's channel/authority checks.
+
+## Rust native component profile
+
+The optional SDK `native-worker` feature provides the
+[native component entry point](native-worker.md), using this same strict Rust
+codec. Authors implement their capability over captured input and return opaque
+proposal bytes; the entry point owns framing, handshake, result correlation,
+cooperative cancellation and disposal. The actual process Host still checks
+captured package identity, scope, live authority, deadlines and reaping. This
+component-side API does not establish a complete Native/Core runtime environment
+or perform domain validation/adoption.

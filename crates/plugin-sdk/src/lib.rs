@@ -1,8 +1,10 @@
-//! Experimental, data-only plugin contracts shared by authors and hosts.
+//! Experimental plugin contracts shared by authors and hosts.
 //!
 //! Parsing a declaration does not install a package, start a component or grant
 //! permission. Runtime identity, activation, authorization, execution and
 //! persistence belong to the host; this crate has no Core or database dependency.
+//! The optional `native-worker` feature serves this process through the same
+//! contracts; it does not launch processes, install packages or grant authority.
 
 mod binding;
 mod build;
@@ -11,6 +13,8 @@ mod content;
 mod declaration;
 mod environment;
 mod invocation;
+#[cfg(feature = "native-worker")]
+mod native_worker;
 mod process;
 mod resolution;
 mod review;
@@ -27,6 +31,8 @@ pub use content::*;
 pub use declaration::*;
 pub use environment::*;
 pub use invocation::*;
+#[cfg(feature = "native-worker")]
+pub use native_worker::*;
 pub use process::*;
 pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
 pub use review::*;

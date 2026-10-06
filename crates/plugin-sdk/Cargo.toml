@@ -9,6 +9,11 @@ description = "Experimental data contracts and conformance harness for Tsumugi p
 
 [features]
 schema = ["dep:schemars"]
+native-worker = []
+
+[[example]]
+name = "native-worker"
+required-features = ["native-worker"]
 
 [dependencies]
 schemars = { version = "=1.2.2", optional = true }

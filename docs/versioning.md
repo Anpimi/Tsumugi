@@ -156,6 +156,16 @@ dependency or version source. Both Unreleased changelogs are synchronized, with
 application `0.2.0-alpha.1`, SDK `0.1.0-alpha.1` and schema20 unchanged in this
 same undistributed batch; there is no additional bump or historical migration.
 
+The optional public SDK `native-worker` component-side entry point is additive
+within the same undistributed SDK `0.1.0-alpha.1` batch. It reuses process protocol
+1 and all existing wire shapes and adds no dependency, manifest generation,
+stored project field, current schema change or application runtime assembly.
+Default SDK features remain data-only. The application `0.2.0-alpha.1`, SDK and
+schema 26 version sources therefore remain unchanged, with both Unreleased
+changelogs synchronized. Complete Native/Core environment binding and real
+third-domain acceptance remain separate work; no historical migration or release
+is implied.
+
 ## Choosing the next version
 
 The initial package source-import Resource used the experimental contract

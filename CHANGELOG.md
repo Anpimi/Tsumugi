@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- The experimental public SDK offers an optional Rust native component entry point that owns strict framing, exact request/result identity, cooperative cancellation and cleanup. Authors return opaque capability output through the existing protocol; captured package/channel authorization and complete Native/Core environment binding remain Host responsibilities.
+
 - Source workbench messages now describe native content identities and installed capabilities. Plugin-specific errors and source diagnostics remain opaque in technical details instead of triggering fixed SMAPI or WebVTT advice; shared command details preserve the original reason or field.
 
 - Repeated source proof reads now reuse one bounded immutable qualification after comparing all four complete stored frames, their row associations and the current proof link. Project opening reuses each just-restored attempt input for its item validation instead of decoding it twice. Live execution permission and currentness remain separate checks; stored formats are unchanged.

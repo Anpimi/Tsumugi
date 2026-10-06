@@ -1,9 +1,12 @@
 # Experimental plugin SDK
 
-`tsumugi-plugin-sdk` is a data-only Rust library and conformance harness. Its
+`tsumugi-plugin-sdk` is a Rust contract library and conformance harness. Its
 current package version is `0.1.0-alpha.1`; declaration and exchange protocols `1` are separate
 versions. It has no dependency on Core, SQLite, the desktop application or Cordis.
-It does not start code, install packages or grant permissions.
+Default features are data-only. It does not launch processes, install packages
+or grant permissions. The optional `native-worker` feature provides a
+[Rust component entry point](docs/native-worker.md) for serving this process
+through the same public protocol, with cancellation and cleanup.
 
 See [the declaration contract](docs/declarations.md) for fields,
 compatibility and host responsibilities, and [content exchange](docs/exchange.md)
@@ -68,8 +71,9 @@ SDK snapshot; a production distribution must use a verified SDK artifact.
 
 The [local process protocol](docs/process.md) adds SDK-owned handshake, invocation,
 cancel/close and heartbeat frames. The [experimental process Host](../plugin-host/README.md)
-binds those frames to captured packages and actual child pipes; the SDK remains
-data-only and has no runtime or Core dependency.
+binds those frames to captured packages and actual child pipes. The SDK has no
+Core dependency; its optional native component entry point uses only the standard
+library and the existing contracts, with no additional framework dependency.
 
 `bind_capability` captures an exact validated declaration and its owner with an
 independently supplied package digest. `ProviderSelectionBinding` identifies that
