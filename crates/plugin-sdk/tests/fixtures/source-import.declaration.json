@@ -1,15 +1,44 @@
 {
   "displayName": "Example plain text",
-  "profile": { "id": "example.plain-text", "schemaVersion": 1, "behaviorVersion": 1 },
+  "profile": {
+    "id": "example.plain-text",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
   "materials": [
-    { "logicalPath": "materials/raw.txt", "role": "source", "maxBytes": 131072 },
-    { "logicalPath": "metadata/header.txt", "role": "companion", "maxBytes": 16384 }
+    {
+      "logicalPath": "materials/raw.txt",
+      "role": "source",
+      "maxBytes": 131072
+    },
+    {
+      "logicalPath": "metadata/header.txt",
+      "role": "companion",
+      "maxBytes": 16384
+    }
   ],
   "extractor": "extract",
   "checker": "source-check",
   "revisionPolicy": {
-    "profile": { "id": "example.plain-text", "schemaVersion": 1, "behaviorVersion": 1 },
-    "revisionBasis": [{ "id": "example.text-basis", "schemaVersion": 1, "behaviorVersion": 1 }]
+    "profile": {
+      "id": "example.plain-text",
+      "schemaVersion": 1,
+      "behaviorVersion": 1
+    },
+    "revisionBasis": [
+      {
+        "id": "example.text-basis",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      }
+    ]
   },
-  "semanticRules": [{ "id": "example.source-semantics", "schemaVersion": 1, "behaviorVersion": 1 }]
+  "semanticRules": [
+    {
+      "id": "example.source-semantics",
+      "schemaVersion": 1,
+      "behaviorVersion": 1
+    }
+  ],
+  "reviewResource": "review-profile"
 }

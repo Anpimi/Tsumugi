@@ -158,8 +158,9 @@ same undistributed batch; there is no additional bump or historical migration.
 
 ## Choosing the next version
 
-The optional package source-import Resource has its own experimental contract
+The initial package source-import Resource used the experimental contract
 `tsumugi.source-import-declaration/1/1`, generated from the same data-only SDK.
+The current required 2/2 contract is assessed below.
 It fixes a material recipe and independent extractor/checker declarations before
 execution. Host resource lookup and generic authorized material capture add no
 manifest fields, process/exchange version, Store layout or project schema change.
@@ -413,3 +414,14 @@ installed Store formats, dependencies or desktop runtime assembly. Application
 no additional SemVer bump, publication or historical migration. Production Review
 and automatic-selection consumers still require integration with the captured
 Core/domain union and actual checker execution.
+
+The source-import declaration now requires a named Review Resource and an exact
+ReviewBinding from the same captured package/profile. Its independently versioned
+resource schema/behavior advances to 2/2; callers must supply the captured review
+declaration when binding. Core stores the domain rules and complete checker/runtime
+selection in the source operation's existing immutable input, so the current-only
+project format advances to schema 24. Earlier development directories are refused
+unchanged without migration. SDK 0.1.0-alpha.1, application 0.2.0-alpha.1 and
+process/Store/dependency versions remain the same undistributed batch. Binding
+inspection and reading add no execution grant, approval or release eligibility;
+production Review policy/execution cutover remains separate integration work.

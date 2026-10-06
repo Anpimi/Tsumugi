@@ -17,6 +17,10 @@ it("keeps the shared source recipe, exact providers and installed environment in
   expect(source.view.extractor.provider.plugin).toEqual(source.request.package.plugin);
   expect(source.view.checker.provider.packageDigest).toBe(source.request.package.packageDigest);
   expect(source.view.extractor.provider.contributionId).not.toBe(source.view.checker.provider.contributionId);
+  expect(source.view.declaration.reviewResource).toBe("review-profile");
+  expect(source.view.review.checker.provider.plugin).toEqual(source.request.package.plugin);
+  expect(source.view.review.checker.provider.packageDigest).toBe(source.request.package.packageDigest);
+  expect(source.view.review.declaration.profile).toEqual(source.view.declaration.profile);
   expect(source.view.environmentDigest).toBe(source.request.environmentDigest);
   expect(source.view.declaration.materials.map(material => material.logicalPath)).toEqual(["materials/raw.txt", "metadata/header.txt"]);
 });
@@ -30,6 +34,9 @@ it("refuses caller source paths or grants and incomplete or unrecognized source 
   expect(validateResponseSource({ ...source.view, settingsRevision: "01" })).toBe(false);
   expect(validateResponseSource({ ...source.view, permissionGranted: true })).toBe(false);
   expect(validateResponseSource({ ...source.view, checker: undefined })).toBe(false);
+  expect(validateResponseSource({ ...source.view, review: undefined })).toBe(false);
+  expect(validateResponseSource({ ...source.view, review: { ...source.view.review, checker: undefined } })).toBe(false);
+  expect(validateResponseSource({ ...source.view, declaration: { ...source.view.declaration, reviewResource: undefined } })).toBe(false);
   expect(validateResponseSource({ ...source.view, environment: { ...source.view.environment, launcherPath: "/untrusted" } })).toBe(false);
 });
 

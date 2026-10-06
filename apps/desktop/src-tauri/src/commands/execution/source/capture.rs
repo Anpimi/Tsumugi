@@ -1144,7 +1144,14 @@ mod source_import_tests {
             "../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.declaration.json"
         ))
         .unwrap()
-        .bind(&manifest, &"a".repeat(64))
+        .bind(
+            &manifest,
+            &"a".repeat(64),
+            &tsumugi_plugin_sdk::parse_review_declaration(include_bytes!(
+                "../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.review.json"
+            ))
+            .unwrap(),
+        )
         .unwrap()
     }
     fn fixture() -> tempfile::TempDir {

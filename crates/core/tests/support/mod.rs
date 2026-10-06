@@ -27,7 +27,14 @@ fn declaration() -> sdk::SourceImportBinding {
         "../../../plugin-sdk/tests/fixtures/source-import.declaration.json"
     ))
     .unwrap()
-    .bind(&manifest, &"a".repeat(64))
+    .bind(
+        &manifest,
+        &"a".repeat(64),
+        &sdk::parse_review_declaration(include_bytes!(
+            "../../../plugin-sdk/tests/fixtures/source-import.review.json"
+        ))
+        .unwrap(),
+    )
     .unwrap()
 }
 fn selected(capability: sdk::CapabilityBinding) -> PluginExecutionBinding {
@@ -71,6 +78,13 @@ pub fn source_input(store: &ProjectStore) -> FixedInput {
                 revision_policy: binding.declaration.revision_policy,
                 checker: Some(selected(binding.checker)),
                 semantic_rules: binding.declaration.semantic_rules,
+                review: Some(
+                    tsumugi_core::content::SourceReviewBinding::capture(
+                        &binding.review,
+                        &selected(binding.review.checker.clone()).environment,
+                    )
+                    .unwrap(),
+                ),
             },
         )
         .unwrap()

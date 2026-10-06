@@ -385,10 +385,62 @@ fn source_contract_error(error: sdk::ContractError) -> ExecutionError {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceReviewBinding {
+    pub declaration: sdk::ReviewDeclaration,
+    pub checker: PluginExecutionBinding,
+}
+impl SourceReviewBinding {
+    /// Preserve the selected package rules and independently captured runtime.
+    /// Capturing this metadata grants no checker execution or project approval.
+    pub fn capture(
+        binding: &sdk::ReviewBinding,
+        environment: &sdk::RuntimeEnvironmentDescriptor,
+    ) -> Result<Self, ExecutionError> {
+        binding.validate().map_err(source_contract_error)?;
+        let checker = PluginExecutionBinding {
+            capability: binding.checker.clone(),
+            profile: Some(binding.declaration.profile.clone()),
+            environment: environment.clone(),
+        };
+        checker.validate()?;
+        Ok(Self {
+            declaration: binding.declaration.clone(),
+            checker,
+        })
+    }
+    fn validate(
+        &self,
+        source: &sdk::SourceExtractionInput,
+        producer: &PluginExecutionBinding,
+    ) -> Result<(), ExecutionError> {
+        self.checker.validate()?;
+        sdk::ReviewBinding {
+            declaration: self.declaration.clone(),
+            checker: self.checker.capability.clone(),
+        }
+        .validate()
+        .map_err(source_contract_error)?;
+        if self.declaration.profile != source.profile
+            || self.checker.profile.as_ref() != Some(&source.profile)
+            || self.checker.capability.provider.plugin != producer.capability.provider.plugin
+            || self.checker.capability.provider.package_digest
+                != producer.capability.provider.package_digest
+        {
+            return Err(invalid("source-review-binding"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceSettings {
     pub revision_policy: sdk::SourceRevisionPolicy,
     pub checker: Option<PluginExecutionBinding>,
     pub semantic_rules: Vec<sdk::ContractRef>,
+    /// Null is reserved for explicitly compiled legacy fixtures. Normal source
+    /// adoption requires the package's fixed domain Review rules and runtime.
+    pub review: Option<SourceReviewBinding>,
 }
 impl SourceSettings {
     pub fn from_input(input: &FixedInput) -> Result<Self, ExecutionError> {
@@ -407,6 +459,17 @@ impl SourceSettings {
         )?;
         if settings.revision_policy.profile != source.profile {
             return Err(invalid("source-policy"));
+        }
+        if let Some(review) = &settings.review {
+            let producer = input
+                .envelope()
+                .plugin
+                .as_ref()
+                .ok_or_else(|| invalid("source-review-producer"))?;
+            review.validate(&source, producer)?;
+        } else {
+            #[cfg(not(any(test, feature = "execution-test-host")))]
+            return Err(failure(ErrorCode::InvalidInput, "source-review-required"));
         }
         if let Some(checker) = &settings.checker {
             checker.validate()?;

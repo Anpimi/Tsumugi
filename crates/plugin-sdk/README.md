@@ -82,3 +82,11 @@ adoption authority, and a digest does not authenticate a package publisher.
 SDK-owned environment digest derived from the full validated descriptor.
 These data helpers contain no filesystem capture or loader. Host integration
 must independently approve and retain the actual runtime bytes.
+
+Source-import Resource schema/behavior 2/2 additionally requires `reviewResource`,
+which selects an immutable SDK ReviewDeclaration. `SourceImportDeclaration::bind`
+requires that captured declaration and fixes its ReviewBinding to the same package
+and profile. Missing/wrong resources or replacement providers/profiles are refused.
+The source extraction/check protocols remain unchanged; these data helpers grant no
+execution or project qualification. Earlier experimental Resource 1/1 is not
+accepted by the current Host; no historical development migration is supplied.

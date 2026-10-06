@@ -450,6 +450,7 @@ export interface PluginSourceView {
   extractor: CapabilityBinding;
   packageOrigin: PluginOriginView;
   resourceId: string;
+  review: ReviewBinding;
   runtimeOrigin: PluginOriginView;
   settingsRevision: UnsignedDecimal;
 }
@@ -463,6 +464,10 @@ export interface SourceImportDeclaration {
   extractor: string;
   materials: SourceMaterialDeclaration[];
   profile: ContractRef;
+  /**
+   * Exact immutable Resource whose domain rules are adopted with this source.
+   */
+  reviewResource: string;
   revisionPolicy: SourceRevisionPolicy;
   semanticRules: ContractRef[];
 }
@@ -478,6 +483,24 @@ export interface SourceMaterialDeclaration {
 export interface SourceRevisionPolicy {
   profile: ContractRef;
   revisionBasis: ContractRef[];
+}
+export interface ReviewBinding {
+  checker: CapabilityBinding;
+  declaration: ReviewDeclaration;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
 }
 export interface PluginTranslationView {
   checker: CapabilityBinding;

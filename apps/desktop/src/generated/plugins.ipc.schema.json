@@ -1762,6 +1762,9 @@
           "resourceId": {
             "type": "string"
           },
+          "review": {
+            "$ref": "#/definitions/ReviewBinding"
+          },
           "runtimeOrigin": {
             "$ref": "#/definitions/PluginOriginView"
           },
@@ -1775,6 +1778,7 @@
           "declaration",
           "extractor",
           "checker",
+          "review",
           "packageOrigin",
           "environment",
           "environmentDigest",
@@ -1878,6 +1882,62 @@
           "choose-destination"
         ],
         "type": "string"
+      },
+      "ReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker"
+        ],
+        "type": "object"
+      },
+      "ReviewDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ReviewRuleDeclaration"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "ReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "description": "A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.",
+        "properties": {
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation"
+        ],
+        "type": "object"
       },
       "Revision": {
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
@@ -2024,6 +2084,10 @@
           "profile": {
             "$ref": "#/definitions/ContractRef"
           },
+          "reviewResource": {
+            "description": "Exact immutable Resource whose domain rules are adopted with this source.",
+            "type": "string"
+          },
           "revisionPolicy": {
             "$ref": "#/definitions/SourceRevisionPolicy"
           },
@@ -2040,6 +2104,7 @@
           "materials",
           "extractor",
           "checker",
+          "reviewResource",
           "revisionPolicy",
           "semanticRules"
         ],

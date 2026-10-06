@@ -47,6 +47,16 @@ fn checked_source(
                 revision_policy: resource.declaration.revision_policy.clone(),
                 checker: Some(checker.execution_binding(Some(profile)).unwrap()),
                 semantic_rules: resource.declaration.semantic_rules.clone(),
+                review: Some(
+                    tsumugi_core::content::SourceReviewBinding::capture(
+                        &resource.review,
+                        &producer
+                            .execution_binding(Some(resource.declaration.profile.clone()))
+                            .unwrap()
+                            .environment,
+                    )
+                    .unwrap(),
+                ),
             },
         )
         .unwrap();

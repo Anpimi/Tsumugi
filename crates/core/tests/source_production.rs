@@ -68,8 +68,8 @@ fn production_source_schema_refuses_previous_format_without_changing_files() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 23);
-    connection.pragma_update(None, "user_version", 22).unwrap();
+    assert_eq!(version, 24);
+    connection.pragma_update(None, "user_version", 23).unwrap();
     drop(connection);
     let files = || {
         std::fs::read_dir(&project)
@@ -83,7 +83,7 @@ fn production_source_schema_refuses_previous_format_without_changing_files() {
     let before = files();
     let error = ProjectStore::open(&project).unwrap_err();
     assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
-    assert_eq!(error.found_schema_version(), Some(22));
+    assert_eq!(error.found_schema_version(), Some(23));
     assert_eq!(files(), before);
 }
 

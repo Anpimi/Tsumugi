@@ -77,6 +77,13 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
                 revision_policy: source.declaration.revision_policy.clone(),
                 checker: Some(source_checker.execution_binding(Some(profile)).unwrap()),
                 semantic_rules: source.declaration.semantic_rules.clone(),
+                review: Some(
+                    tsumugi_core::content::SourceReviewBinding::capture(
+                        &source.review,
+                        environment.descriptor(),
+                    )
+                    .unwrap(),
+                ),
             },
         )
         .unwrap();
@@ -112,6 +119,17 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
         .adopt_execution(&action, &SourceAdoptionHandler)
         .unwrap();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+    let source_snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let adopted_review = store
+        .source_review_binding(source_snapshot)
+        .unwrap()
+        .unwrap();
+    assert_eq!(adopted_review.declaration, source.review.declaration);
+    assert_eq!(adopted_review.checker.capability, source.review.checker);
+    assert_eq!(
+        adopted_review.checker.environment,
+        *environment.descriptor()
+    );
     // Existing manual edit/review owners qualify exact current project text.
     // This is not an independent plugin translation-QA acceptance claim.
     for (locale, translated) in [
@@ -336,6 +354,10 @@ fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_
     drop(runtime);
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.source_review_binding(source_snapshot).unwrap(),
+        Some(adopted_review)
+    );
     assert_eq!(reopened.release_view(release).unwrap(), original);
     assert_eq!(
         reopened

@@ -1379,6 +1379,9 @@
           "resourceId": {
             "type": "string"
           },
+          "review": {
+            "$ref": "#/definitions/ReviewBinding"
+          },
           "runtimeOrigin": {
             "$ref": "#/definitions/PluginOriginView"
           },
@@ -1392,6 +1395,7 @@
           "declaration",
           "extractor",
           "checker",
+          "review",
           "packageOrigin",
           "environment",
           "environmentDigest",
@@ -1477,6 +1481,62 @@
           "revisionId",
           "contextRevisionId",
           "termRevisionIds"
+        ],
+        "type": "object"
+      },
+      "ReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker"
+        ],
+        "type": "object"
+      },
+      "ReviewDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ReviewRuleDeclaration"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "ReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "description": "A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.",
+        "properties": {
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation"
         ],
         "type": "object"
       },
@@ -2124,6 +2184,10 @@
           "profile": {
             "$ref": "#/definitions/ContractRef"
           },
+          "reviewResource": {
+            "description": "Exact immutable Resource whose domain rules are adopted with this source.",
+            "type": "string"
+          },
           "revisionPolicy": {
             "$ref": "#/definitions/SourceRevisionPolicy"
           },
@@ -2140,6 +2204,7 @@
           "materials",
           "extractor",
           "checker",
+          "reviewResource",
           "revisionPolicy",
           "semanticRules"
         ],

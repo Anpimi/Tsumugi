@@ -21,12 +21,12 @@ pub(super) fn invalid() -> CommandError {
 }
 
 impl ApplicationPlugins {
-    pub(super) fn capture_declared_environment<B>(
+    pub(super) fn capture_declared_environment<B, const N: usize>(
         &self,
         requested: &PluginPackageRequest,
         resource_id: &str,
         environment_digest: &str,
-        resolve: impl FnOnce(&PackageImage, &str) -> Result<(B, [sdk::CapabilityBinding; 2]), HostError>,
+        resolve: impl FnOnce(&PackageImage, &str) -> Result<(B, [sdk::CapabilityBinding; N]), HostError>,
     ) -> Result<DeclaredEnvironment<B>, CommandError> {
         requested.plugin.validate().map_err(|_| invalid())?;
         sdk::validate_package_digest(&requested.package_digest).map_err(|_| invalid())?;

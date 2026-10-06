@@ -342,6 +342,13 @@ pub async fn preflight_plugin_source(
                                 .clone(),
                             checker: Some(binding(&environment, true)),
                             semantic_rules: environment.binding.declaration.semantic_rules.clone(),
+                            review: Some(
+                                tsumugi_core::content::SourceReviewBinding::capture(
+                                    &environment.binding.review,
+                                    environment.runtime.descriptor(),
+                                )
+                                .map_err(map_source)?,
+                            ),
                         },
                     )
                     .map_err(map_source)?;

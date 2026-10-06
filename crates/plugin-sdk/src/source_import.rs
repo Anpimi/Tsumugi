@@ -10,8 +10,8 @@ pub const MAX_SOURCE_IMPORT_MATERIALS: usize = 32;
 pub fn source_import_declaration_contract() -> ContractRef {
     ContractRef {
         id: "tsumugi.source-import-declaration".into(),
-        schema_version: 1,
-        behavior_version: 1,
+        schema_version: 2,
+        behavior_version: 2,
     }
 }
 #[cfg(feature = "schema")]
@@ -39,6 +39,8 @@ pub struct SourceImportDeclaration {
     pub materials: Vec<SourceMaterialDeclaration>,
     pub extractor: String,
     pub checker: String,
+    /// Exact immutable Resource whose domain rules are adopted with this source.
+    pub review_resource: String,
     pub revision_policy: SourceRevisionPolicy,
     pub semantic_rules: Vec<ContractRef>,
 }
@@ -48,6 +50,7 @@ pub struct SourceImportBinding {
     pub declaration: SourceImportDeclaration,
     pub extractor: CapabilityBinding,
     pub checker: CapabilityBinding,
+    pub review: ReviewBinding,
 }
 
 fn invalid(field: &str) -> ContractError {
@@ -64,6 +67,7 @@ impl SourceImportDeclaration {
         reference(&self.profile, "sourceImport.profile")?;
         name(&self.extractor, "sourceImport.extractor")?;
         name(&self.checker, "sourceImport.checker")?;
+        name(&self.review_resource, "sourceImport.reviewResource")?;
         if self.extractor == self.checker {
             return Err(invalid("sourceImport.checker"));
         }
@@ -108,20 +112,34 @@ impl SourceImportDeclaration {
         encoded_limit(self, MAX_SOURCE_IMPORT_DECLARATION_BYTES, "sourceImport")
     }
 
-    /// Bind both exact providers from the same captured manifest. The application
+    /// Bind source and Review providers from the same captured manifest. The application
     /// separately chooses approved runtime bytes and grants each fixed attempt.
     pub fn bind(
         &self,
         manifest: &ValidatedManifest,
         package_digest: &str,
+        review: &ReviewDeclaration,
     ) -> Result<SourceImportBinding, ContractError> {
         self.validate()?;
         let extractor = bind_capability(manifest, &self.extractor, package_digest)?;
         let checker = bind_capability(manifest, &self.checker, package_digest)?;
+        let resource = manifest
+            .manifest()
+            .contributions
+            .iter()
+            .find(|entry| entry.id == self.review_resource)
+            .ok_or_else(|| invalid("sourceImport.reviewResource"))?;
+        if !matches!(&resource.contribution, ContributionKind::Resource { schema, .. }
+            if *schema == review_declaration_contract())
+        {
+            return Err(invalid("sourceImport.reviewResource"));
+        }
+        let review = review.bind(manifest, package_digest)?;
         let binding = SourceImportBinding {
             declaration: self.clone(),
             extractor,
             checker,
+            review,
         };
         binding.validate()?;
         Ok(binding)
@@ -132,10 +150,14 @@ impl SourceImportBinding {
         self.declaration.validate()?;
         self.extractor.validate()?;
         self.checker.validate()?;
+        self.review.validate()?;
         if self.extractor.provider.plugin != self.checker.provider.plugin
             || self.extractor.provider.package_digest != self.checker.provider.package_digest
             || self.extractor.provider.contribution_id != self.declaration.extractor
             || self.checker.provider.contribution_id != self.declaration.checker
+            || self.review.declaration.profile != self.declaration.profile
+            || self.review.checker.provider.plugin != self.extractor.provider.plugin
+            || self.review.checker.provider.package_digest != self.extractor.provider.package_digest
         {
             return Err(invalid("sourceImport.provider"));
         }

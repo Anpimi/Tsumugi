@@ -17,7 +17,7 @@ export const pluginSourcePackage: PluginPackageDetailsView = {
   enabled: true, packageDigest: source.request.package.packageDigest,
   manifest: { ...(packageFixture.manifest as PluginPackageDetailsView["manifest"]), plugin: source.request.package.plugin,
     contributions: [{ id: source.request.resourceId, componentId: packageFixture.manifest.components[0].id,
-      contribution: { kind: "resource", path: "profiles/source-import.json", schema: { id: "tsumugi.source-import-declaration", schemaVersion: 1, behaviorVersion: 1 } } }],
+      contribution: { kind: "resource", path: "profiles/source-import.json", schema: { id: "tsumugi.source-import-declaration", schemaVersion: 2, behaviorVersion: 2 } } }],
   },
 };
 

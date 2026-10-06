@@ -1454,6 +1454,7 @@ fn generic_source_input(
                 },
                 checker: Some(generic_source_binding(true)),
                 semantic_rules: vec![contract_ref("example.source-semantics")],
+                review: None,
             },
         )
         .unwrap()
@@ -1469,7 +1470,16 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
         "../../../plugin-sdk/tests/fixtures/source-import.declaration.json"
     ))
     .unwrap();
-    let binding = declaration.bind(&manifest, &"a".repeat(64)).unwrap();
+    let binding = declaration
+        .bind(
+            &manifest,
+            &"a".repeat(64),
+            &sdk::parse_review_declaration(include_bytes!(
+                "../../../plugin-sdk/tests/fixtures/source-import.review.json"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
     let raw = "\u{feff}uninterpreted 👩🏽‍💻 é\r\n";
     let materials = vec![raw.as_bytes().to_vec(), b"not a manifest".to_vec()];
     let bundle = SourceBundle::capture_declared(&binding, materials.clone(), "en-US").unwrap();
@@ -1505,6 +1515,7 @@ fn source_import_declared_capture_preserves_material_without_domain_interpretati
                 revision_policy: declaration.revision_policy.clone(),
                 checker: Some(selected(binding.checker)),
                 semantic_rules: declaration.semantic_rules.clone(),
+                review: Some(SourceReviewBinding::capture(&binding.review, &environment).unwrap()),
             },
         )
         .unwrap();

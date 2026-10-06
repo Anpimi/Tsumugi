@@ -162,6 +162,7 @@ impl SourceBundle {
             revision_policy: policy,
             checker: None,
             semantic_rules: vec![],
+            review: None,
         };
         self.capture_input(
             project,

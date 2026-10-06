@@ -81,6 +81,16 @@ fn maximum_complete_translation_transport_preserves_sdk_bytes_and_fixed_budgets(
                         .unwrap(),
                 ),
                 semantic_rules: source_resource.declaration.semantic_rules.clone(),
+                review: Some(
+                    tsumugi_core::content::SourceReviewBinding::capture(
+                        &source_resource.review,
+                        &source_producer
+                            .execution_binding(Some(source_resource.declaration.profile.clone()))
+                            .unwrap()
+                            .environment,
+                    )
+                    .unwrap(),
+                ),
             },
         )
         .unwrap();

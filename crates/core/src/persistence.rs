@@ -67,7 +67,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 23;
+pub(crate) const SCHEMA_VERSION: i64 = 24;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\

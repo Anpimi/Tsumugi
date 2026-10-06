@@ -957,6 +957,19 @@ impl ProjectStore {
         let (_, (input, _, _, _)) = snapshot_rows(connection, snapshot, true)?;
         SourceBundle::from_input(&input)
     }
+    /// Read the domain QA selection from the source's original immutable input.
+    /// Snapshot/proof validation uses the same owner as all source readers.
+    /// Installed-package availability and a current execution grant are separate.
+    pub fn source_review_binding(
+        &self,
+        snapshot: ExecutionId,
+    ) -> Result<Option<SourceReviewBinding>, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "source-read"))?;
+        let (_, (input, _, _, _)) = snapshot_rows(connection, snapshot, true)?;
+        Ok(SourceSettings::from_input(&input)?.review)
+    }
     pub fn content_scope(&self) -> Result<ContentScope, ExecutionError> {
         scope(
             self.connection()

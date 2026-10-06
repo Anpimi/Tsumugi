@@ -62,7 +62,8 @@
             "schemaVersion": 1,
             "behaviorVersion": 1
           }
-        ]
+        ],
+        "reviewResource": "review-profile"
       },
       "extractor": {
         "provider": {
@@ -197,6 +198,79 @@
       "runtimeOrigin": {
         "sourceId": "application-bundle",
         "publisherId": "application-build"
+      },
+      "review": {
+        "declaration": {
+          "profile": {
+            "id": "example.plain-text",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "checker": "review-check",
+          "rules": [
+            {
+              "rule": {
+                "id": "example.review-semantics",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "requiresTranslation": true
+            }
+          ]
+        },
+        "checker": {
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "plain-text",
+              "version": "0.1.0"
+            },
+            "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "componentId": "worker",
+            "contributionId": "review-check"
+          },
+          "declaration": {
+            "contract": {
+              "id": "example.review-check",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "inputSchema": {
+              "id": "tsumugi.review-check-input",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "outputSchema": {
+              "id": "tsumugi.check-results",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "errorSchema": {
+              "id": "tsumugi.review-check-error",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "profiles": [
+              {
+                "id": "example.plain-text",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            ],
+            "effect": "read-only",
+            "permissions": [
+              {
+                "kind": "captured-input"
+              }
+            ],
+            "limits": {
+              "maxInputBytes": 4194304,
+              "maxOutputBytes": 2097152,
+              "concurrency": 1,
+              "timeoutMs": 30000
+            }
+          }
+        }
       }
     }
   },
@@ -255,7 +329,8 @@
             "schemaVersion": 1,
             "behaviorVersion": 1
           }
-        ]
+        ],
+        "reviewResource": "review-profile"
       },
       "extractor": {
         "provider": {
@@ -390,6 +465,79 @@
       "runtimeOrigin": {
         "sourceId": "application-bundle",
         "publisherId": "application-build"
+      },
+      "review": {
+        "declaration": {
+          "profile": {
+            "id": "example.plain-text",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "checker": "review-check",
+          "rules": [
+            {
+              "rule": {
+                "id": "example.review-semantics",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "requiresTranslation": true
+            }
+          ]
+        },
+        "checker": {
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "plain-text",
+              "version": "0.1.0"
+            },
+            "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "componentId": "worker",
+            "contributionId": "review-check"
+          },
+          "declaration": {
+            "contract": {
+              "id": "example.review-check",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "inputSchema": {
+              "id": "tsumugi.review-check-input",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "outputSchema": {
+              "id": "tsumugi.check-results",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "errorSchema": {
+              "id": "tsumugi.review-check-error",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "profiles": [
+              {
+                "id": "example.plain-text",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            ],
+            "effect": "read-only",
+            "permissions": [
+              {
+                "kind": "captured-input"
+              }
+            ],
+            "limits": {
+              "maxInputBytes": 4194304,
+              "maxOutputBytes": 2097152,
+              "concurrency": 1,
+              "timeoutMs": 30000
+            }
+          }
+        }
       }
     },
     "files": [
@@ -478,7 +626,8 @@
             "schemaVersion": 1,
             "behaviorVersion": 1
           }
-        ]
+        ],
+        "reviewResource": "review-profile"
       },
       "extractor": {
         "provider": {
@@ -613,6 +762,79 @@
       "runtimeOrigin": {
         "sourceId": "application-bundle",
         "publisherId": "application-build"
+      },
+      "review": {
+        "declaration": {
+          "profile": {
+            "id": "example.plain-text",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "checker": "review-check",
+          "rules": [
+            {
+              "rule": {
+                "id": "example.review-semantics",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              },
+              "requiresTranslation": true
+            }
+          ]
+        },
+        "checker": {
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "plain-text",
+              "version": "0.1.0"
+            },
+            "packageDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "componentId": "worker",
+            "contributionId": "review-check"
+          },
+          "declaration": {
+            "contract": {
+              "id": "example.review-check",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "inputSchema": {
+              "id": "tsumugi.review-check-input",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "outputSchema": {
+              "id": "tsumugi.check-results",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "errorSchema": {
+              "id": "tsumugi.review-check-error",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            },
+            "profiles": [
+              {
+                "id": "example.plain-text",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            ],
+            "effect": "read-only",
+            "permissions": [
+              {
+                "kind": "captured-input"
+              }
+            ],
+            "limits": {
+              "maxInputBytes": 4194304,
+              "maxOutputBytes": 2097152,
+              "concurrency": 1,
+              "timeoutMs": 30000
+            }
+          }
+        }
       }
     },
     "rules": [

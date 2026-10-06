@@ -80,6 +80,15 @@ impl Fixture {
                 },
             ),
         ]);
+        if manifest
+            .contributions
+            .iter()
+            .any(|entry| entry.id == "review-profile")
+        {
+            files.insert("review-profile.json".into(), PackageFile {
+                bytes: include_bytes!("../../../../../../../crates/plugin-sdk/tests/fixtures/source-import.review.json").to_vec(), executable: false,
+            });
+        }
         change(&mut manifest, &mut files);
         let bytes = serde_json::to_vec(&manifest).unwrap();
         let digest = PackageImage::digest(&bytes, &files).unwrap();

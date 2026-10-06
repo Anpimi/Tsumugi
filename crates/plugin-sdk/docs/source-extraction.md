@@ -66,10 +66,10 @@ parsing their domain schema or treating operation-local IDs as revision evidence
 ### Package-owned source import resource
 
 A `Resource` contribution can declare schema
-`tsumugi.source-import-declaration/1/1`. Its captured, nonexecutable JSON selects
+`tsumugi.source-import-declaration/2/2`. Its captured, nonexecutable JSON selects
 a `SourceImportDeclaration`: a human-readable `displayName`, exact `profile`,
 ordered required `materials`, independent `extractor` and `checker` contribution
-IDs, a `revisionPolicy` and nonempty mandatory `semanticRules`. Each material has
+IDs, a named `reviewResource`, a `revisionPolicy` and nonempty mandatory `semanticRules`. Each material has
 one literal directory-relative `logicalPath`, `role` and positive `maxBytes`.
 The contract supports up to 32 fixed files, at most 16 path segments and 2 MiB
 aggregate declared bytes. It has no discovery script, optional file or glob
@@ -78,8 +78,9 @@ The complete resource is bounded to 32 KiB. Hosts may enforce smaller encoded
 capture limits; they must refuse excess rather than truncate it.
 
 `parse_source_import_declaration` uses the strict typed receiver.
-`SourceImportDeclaration::bind` resolves both providers from the same validated
-manifest and independently supplied package digest. Both must support the exact
+`SourceImportDeclaration::bind` accepts the validated manifest, independently
+supplied package digest and captured Review declaration. It resolves the source
+providers and Review checker from that same manifest/package. Both source providers must support the exact
 profile and SDK source input/output/error schemas. Only captured-input permission
 requests are admitted; the checker must be read-only and distinct from the
 extractor. The captured resource fixes policy before extraction. Neither a
@@ -205,3 +206,15 @@ The public JavaScript/Rust fixture checks exact Unicode bytes and hashes, strict
 receiver behavior, schema currentness and rejection of independently rewritten
 material. It is data conformance, not proof of a domain implementation, process
 identity, source approval or project adoption.
+
+## Adopted domain review binding
+
+A source-import Resource uses schema/behavior 2/2 and must name `reviewResource`.
+The Host reads that exact non-executable ReviewDeclaration Resource from the same
+immutable package. Binding requires the captured declaration, fixes its complete
+rule versions and checker, and rejects a different package/profile or invalid
+Resource schema. Source extraction/checking input protocols retain their existing
+identities. Applications preserve the selected domain Review binding and complete
+checker environment in the original source input; readers do not infer current
+execution authority from stored metadata. Project policy and actual Review
+execution remain application responsibilities.

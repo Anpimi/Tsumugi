@@ -22,6 +22,10 @@
     "profile": {
       "$ref": "#/$defs/ContractRef"
     },
+    "reviewResource": {
+      "description": "Exact immutable Resource whose domain rules are adopted with this source.",
+      "type": "string"
+    },
     "revisionPolicy": {
       "$ref": "#/$defs/SourceRevisionPolicy"
     },
@@ -39,6 +43,7 @@
     "materials",
     "extractor",
     "checker",
+    "reviewResource",
     "revisionPolicy",
     "semanticRules"
   ],

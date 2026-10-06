@@ -96,6 +96,16 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
                         .unwrap(),
                 ),
                 semantic_rules: source_resource.declaration.semantic_rules.clone(),
+                review: Some(
+                    tsumugi_core::content::SourceReviewBinding::capture(
+                        &source_resource.review,
+                        &source_producer
+                            .execution_binding(Some(source_resource.declaration.profile.clone()))
+                            .unwrap()
+                            .environment,
+                    )
+                    .unwrap(),
+                ),
             },
         )
         .unwrap();
@@ -134,6 +144,22 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
         .adopt_execution(&adoption, &SourceAdoptionHandler)
         .unwrap();
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+    let adopted_review = store.source_review_binding(snapshot).unwrap().unwrap();
+    assert_eq!(
+        adopted_review.declaration,
+        source_resource.review.declaration
+    );
+    assert_eq!(
+        adopted_review.checker.capability,
+        source_resource.review.checker
+    );
+    assert_eq!(
+        adopted_review.checker.environment,
+        source_producer
+            .execution_binding(Some(source_resource.declaration.profile.clone()))
+            .unwrap()
+            .environment
+    );
     let source = store.source_content(snapshot, 0, 100).unwrap();
     let native = source.rows[0].occurrence.native_identity.as_ref().unwrap();
     let raw = "\u{feff}{\r\n // original 中文 👩🏽‍💻\r\n \"mIxA\": \"你好 é\",\r\n \"Different\": \"你好 é\",\r\n \"Empty\": \"\",\r\n \"Unmatched\": \"未匹配\",\r\n}\r\n";
@@ -642,6 +668,10 @@ fn complete_translation_requires_current_scope_independent_grants_and_saved_chec
     drop(runtime);
     drop(store);
     let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.source_review_binding(snapshot).unwrap(),
+        Some(adopted_review)
+    );
     assert_eq!(
         reopened
             .adopt_execution(&candidate, &TranslationAdoptionHandler)

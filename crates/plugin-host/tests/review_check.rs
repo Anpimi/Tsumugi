@@ -138,6 +138,7 @@ async fn paired_review(plugin: &str, caption: bool) {
     let image = installed(temporary.path(), plugin);
     let source = image.source_import("source-profile").unwrap();
     let binding = image.review_declaration("review-profile").unwrap();
+    assert_eq!(source.review, binding);
     assert_eq!(binding.declaration.profile, source.declaration.profile);
     let captured = source_input(source.declaration.profile.clone(), caption);
     captured.validate().unwrap();

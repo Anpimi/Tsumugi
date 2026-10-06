@@ -21,6 +21,7 @@ pub struct PluginSourceView {
     pub declaration: sdk::SourceImportDeclaration,
     pub extractor: sdk::CapabilityBinding,
     pub checker: sdk::CapabilityBinding,
+    pub review: sdk::ReviewBinding,
     pub package_origin: PluginOriginView,
     pub environment: sdk::RuntimeEnvironmentDescriptor,
     pub environment_digest: String,
@@ -38,6 +39,7 @@ impl SourceEnvironment {
             declaration: self.binding.declaration.clone(),
             extractor: self.binding.extractor.clone(),
             checker: self.binding.checker.clone(),
+            review: self.binding.review.clone(),
             package_origin: self.package.origin().into(),
             environment: self.runtime.descriptor().clone(),
             environment_digest: self.runtime.descriptor().digest().map_err(|_| invalid())?,
@@ -57,7 +59,11 @@ impl ApplicationPlugins {
             &request.environment_digest,
             |image, resource| {
                 let binding = image.source_import(resource)?;
-                let providers = [binding.extractor.clone(), binding.checker.clone()];
+                let providers = [
+                    binding.extractor.clone(),
+                    binding.checker.clone(),
+                    binding.review.checker.clone(),
+                ];
                 Ok((binding, providers))
             },
         )

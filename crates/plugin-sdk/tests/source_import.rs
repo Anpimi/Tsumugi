@@ -4,13 +4,16 @@ fn declaration() -> SourceImportDeclaration {
     parse_source_import_declaration(include_bytes!("fixtures/source-import.declaration.json"))
         .unwrap()
 }
+fn review() -> ReviewDeclaration {
+    parse_review_declaration(include_bytes!("fixtures/source-import.review.json")).unwrap()
+}
 fn manifest() -> PluginManifest {
     serde_json::from_slice(include_bytes!("fixtures/source-import.manifest.json")).unwrap()
 }
 #[test]
 fn source_import_binds_both_providers_without_execution_authority() {
     let binding = declaration()
-        .bind(&manifest().validate().unwrap(), &"a".repeat(64))
+        .bind(&manifest().validate().unwrap(), &"a".repeat(64), &review())
         .unwrap();
     assert_eq!(binding.extractor.provider.contribution_id, "extract");
     assert_eq!(binding.checker.provider.contribution_id, "source-check");
@@ -47,7 +50,7 @@ fn source_import_rejects_wrong_contract_profile_permission_and_checker_effect() 
         }
         assert!(
             declaration()
-                .bind(&m.validate().unwrap(), &"a".repeat(64))
+                .bind(&m.validate().unwrap(), &"a".repeat(64), &review())
                 .is_err(),
             "case {change}"
         );
@@ -120,6 +123,71 @@ fn source_import_strict_parser_rejects_duplicates_unknown_fields_and_large_input
         parse_source_import_declaration(&vec![b' '; MAX_SOURCE_IMPORT_DECLARATION_BYTES + 1])
             .is_err()
     );
+}
+
+#[test]
+fn source_import_requires_the_named_review_resource_and_exact_profile() {
+    assert_eq!(source_import_declaration_contract().schema_version, 2);
+    assert_eq!(source_import_declaration_contract().behavior_version, 2);
+    let mut d = declaration();
+    d.review_resource = "missing".into();
+    assert!(
+        d.bind(&manifest().validate().unwrap(), &"a".repeat(64), &review())
+            .is_err()
+    );
+    d.review_resource = "extract".into();
+    assert!(
+        d.bind(&manifest().validate().unwrap(), &"a".repeat(64), &review())
+            .is_err()
+    );
+    let mut m = manifest();
+    let ContributionKind::Resource { schema, .. } =
+        &mut m.contributions.last_mut().unwrap().contribution
+    else {
+        unreachable!()
+    };
+    schema.behavior_version += 1;
+    assert!(
+        declaration()
+            .bind(&m.validate().unwrap(), &"a".repeat(64), &review())
+            .is_err()
+    );
+    let mut substituted = review();
+    substituted.profile.behavior_version += 1;
+    assert!(
+        declaration()
+            .bind(
+                &manifest().validate().unwrap(),
+                &"a".repeat(64),
+                &substituted
+            )
+            .is_err()
+    );
+    let mut raw = serde_json::to_value(declaration()).unwrap();
+    raw.as_object_mut().unwrap().remove("reviewResource");
+    assert!(parse_source_import_declaration(&serde_json::to_vec(&raw).unwrap()).is_err());
+}
+
+#[test]
+fn source_review_binding_refuses_replacement_package_rules_and_checker() {
+    let binding = declaration()
+        .bind(&manifest().validate().unwrap(), &"a".repeat(64), &review())
+        .unwrap();
+    assert_eq!(binding.review.declaration, review());
+    assert_eq!(
+        binding.review.checker.provider.package_digest,
+        binding.extractor.provider.package_digest
+    );
+    for change in 0..4 {
+        let mut forged = binding.clone();
+        match change {
+            0 => forged.review.checker.provider.package_digest = "b".repeat(64),
+            1 => forged.review.declaration.rules.clear(),
+            2 => forged.review.checker.provider.contribution_id = "source-check".into(),
+            _ => forged.review.declaration.profile.behavior_version += 1,
+        }
+        assert!(forged.validate().is_err(), "case {change}");
+    }
 }
 #[cfg(feature = "schema")]
 #[test]

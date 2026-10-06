@@ -1,0 +1,18 @@
+{
+  "profile": {
+    "id": "example.plain-text",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "checker": "review-check",
+  "rules": [
+    {
+      "rule": {
+        "id": "example.review-semantics",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "requiresTranslation": true
+    }
+  ]
+}

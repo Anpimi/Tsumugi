@@ -122,7 +122,7 @@ mod unix {
     #[test]
     fn source_resolution_rejects_nonresources_changed_policy_executable_data_and_native_components()
     {
-        for scenario in 0..4 {
+        for scenario in 0..5 {
             let fixture = Fixture::new(|manifest, files| match scenario {
                 0 => {}
                 1 => {
@@ -132,9 +132,29 @@ mod unix {
                     file.bytes = serde_json::to_vec(&value).unwrap();
                 }
                 2 => files.get_mut("source-profile.json").unwrap().executable = true,
-                _ => {
+                3 => {
                     manifest.components[0].runtime = sdk::RuntimeKind::NativeWorker;
                     files.get_mut("component.mjs").unwrap().executable = true;
+                }
+                _ => {
+                    let mut component = manifest.components[0].clone();
+                    component.id = "review-worker".into();
+                    component.runtime = sdk::RuntimeKind::NativeWorker;
+                    component.entrypoint = Some("review-worker".into());
+                    manifest.components.push(component);
+                    manifest
+                        .contributions
+                        .iter_mut()
+                        .find(|entry| entry.id == "review-check")
+                        .unwrap()
+                        .component_id = "review-worker".into();
+                    files.insert(
+                        "review-worker".into(),
+                        tsumugi_plugin_host::PackageFile {
+                            bytes: b"metadata fixture must not execute".to_vec(),
+                            executable: true,
+                        },
+                    );
                 }
             });
             fixture.install();
@@ -215,6 +235,11 @@ mod unix {
         let view = held.view().unwrap();
         assert_eq!(view.extractor, held.binding.extractor);
         assert_eq!(view.checker, held.binding.checker);
+        assert_eq!(view.review, held.binding.review);
+        assert_eq!(
+            view.review.checker.provider.package_digest,
+            fixture.approval.package_digest
+        );
         assert_eq!(
             view.extractor.provider.package_digest,
             fixture.approval.package_digest

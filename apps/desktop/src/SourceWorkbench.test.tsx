@@ -395,6 +395,21 @@ it("retains pending proposals and requires separate checker consent and recorded
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
 });
 
+it.each([[1, 1], [1, 2], [2, 1], [3, 2], [2, 3]])("keeps unsupported source declaration %s/%s unavailable", async (schemaVersion, behaviorVersion) => {
+  const original = invoke.getMockImplementation()!;
+  const unsupported = structuredClone(pluginSourcePackage);
+  const contribution = unsupported.manifest.contributions[0].contribution;
+  if (contribution.kind !== "resource") throw new Error("Source resource fixture required");
+  contribution.schema = { ...contribution.schema, schemaVersion, behaviorVersion };
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_plugin_package" ? Promise.resolve(unsupported) : original(command, args));
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  await screen.findByText(/independently approve and install/);
+  expect(screen.getByRole("button", { name: "Choose source folder" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_plugin_source" || name === "select_plugin_source")).toHaveLength(0);
+});
+
 it("keeps source controls unavailable without an independently approved installed runtime", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: unknown) => command === "read_plugin_inventory" ? Promise.resolve({ ...pluginSourceInventory, runtimeDecisions: [] }) : original(command, args));
