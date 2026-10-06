@@ -35,6 +35,7 @@ pub struct SourceValidationCapture {
     pub(crate) check_input: FixedInput,
     checks: sdk::FixedCheckSet,
 }
+#[derive(Clone)]
 pub struct PreparedSourceValidation {
     pub(crate) capture: SourceValidationCapture,
     pub(crate) check_result: FixedResult,

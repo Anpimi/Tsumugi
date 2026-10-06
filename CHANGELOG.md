@@ -12,6 +12,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Repeated source proof reads now reuse one bounded immutable qualification after comparing all four complete stored frames, their row associations and the current proof link. Project opening reuses each just-restored attempt input for its item validation instead of decoding it twice. Live execution permission and currentness remain separate checks; stored formats are unchanged.
+
 - QA current-view reads now validate and release one original ledger input/result frame at a time in the same SQLite snapshot, avoiding retention of every complete plugin input. Release qualification now batches all requested units and locales inside one read snapshot. Original byte digests, associations, captured coverage and currentness remain mandatory; stored fields and the project format are unchanged.
 
 - Normal Core now uses the adopted policy/plugin union for QA reads and release qualification; domain marker/format parsing and synchronous four-rule checks are confined to explicit test-host fixtures. Saved checks without actual ledger evidence are refused on current/history reads and reopen, while validated historical receipts remain readable after grant expiry. Experimental synchronous Core check APIs are now test-host-only; normal consumers use prepared actual execution and evidence adoption. Project schema and the undistributed application/SDK versions are unchanged.

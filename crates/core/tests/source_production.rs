@@ -151,3 +151,141 @@ fn production_source_keeps_original_bytes_ids_proof_and_receipt_after_reopen() {
         receipt
     );
 }
+
+#[test]
+fn reused_source_qualification_rechecks_every_frame_association_and_proof_link() {
+    for change in [
+        "producer-input",
+        "producer-result",
+        "checker-input",
+        "checker-result",
+        "checker-association",
+        "checker-previous",
+        "proof-validity",
+        "proof-link",
+    ] {
+        let (directory, store, rows) = source_fixture();
+        let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+        assert_eq!(store.source_content(snapshot, 0, 10).unwrap().rows, rows);
+        assert_eq!(store.source_content(snapshot, 0, 10).unwrap().rows, rows);
+        let path = directory.path().join("project");
+        let db = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+        let (producer, result, checker, checked): (String, String, String, String) = db
+            .query_row(
+                "SELECT s.attempt_id,s.result_id,r.attempt_id,r.result_id
+                 FROM source_snapshots s
+                 JOIN plugin_validation_links l ON l.producer_result_id=s.result_id
+                 JOIN execution_results r ON r.result_id=l.checker_result_id
+                 WHERE s.snapshot_id=?1",
+                [snapshot.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        match change {
+            "producer-input" | "checker-input" => {
+                let attempt = if change == "producer-input" {
+                    &producer
+                } else {
+                    &checker
+                };
+                let mut bytes: Vec<u8> = db
+                    .query_row(
+                        "SELECT input FROM execution_attempts WHERE attempt_id=?1",
+                        [attempt],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                // Keep the old digest: identical identities cannot vouch for
+                // changed bytes, even when the JSON remains syntactically valid.
+                bytes.push(b' ');
+                assert_eq!(
+                    db.execute(
+                        "UPDATE execution_attempts SET input=?1 WHERE attempt_id=?2",
+                        rusqlite::params![bytes, attempt]
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "producer-result" | "checker-result" => {
+                let result = if change == "producer-result" {
+                    &result
+                } else {
+                    &checked
+                };
+                let mut bytes: Vec<u8> = db
+                    .query_row(
+                        "SELECT bytes FROM execution_results WHERE result_id=?1",
+                        [result],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                bytes.push(b' ');
+                assert_eq!(
+                    db.execute(
+                        "UPDATE execution_results SET bytes=?1 WHERE result_id=?2",
+                        rusqlite::params![bytes, result]
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "checker-association" => {
+                assert_eq!(
+                    db.execute(
+                        "UPDATE execution_results SET
+                         (attempt_id,item_id,dispatch_token)=
+                         (SELECT attempt_id,item_id,dispatch_token FROM execution_results WHERE result_id=?1)
+                         WHERE result_id=?2",
+                        [&result, &checked]
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "checker-previous" => {
+                assert_eq!(
+                    db.execute(
+                        "UPDATE execution_attempts SET previous_attempt_id=?1 WHERE attempt_id=?1",
+                        [checker]
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "proof-validity" => {
+                assert_eq!(
+                    db.execute(
+                        "UPDATE plugin_validation_links SET valid=0 WHERE producer_result_id=?1",
+                        [result]
+                    )
+                    .unwrap(),
+                    1
+                );
+            }
+            "proof-link" => {
+                assert_eq!(db.execute("UPDATE plugin_validation_links SET checker_result_id=?1 WHERE producer_result_id=?1", [result]).unwrap(), 1);
+            }
+            _ => unreachable!(),
+        }
+        drop(db);
+        let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+        assert!(store.source_content(snapshot, 0, 10).is_err(), "{change}");
+        assert_eq!(
+            std::fs::read(path.join("project.sqlite3")).unwrap(),
+            before,
+            "{change}"
+        );
+        store.close().unwrap();
+        assert_eq!(
+            ProjectStore::open(&path).unwrap_err().code(),
+            PersistenceErrorCode::CorruptProject,
+            "{change}"
+        );
+        assert_eq!(
+            std::fs::read(path.join("project.sqlite3")).unwrap(),
+            before,
+            "{change}"
+        );
+    }
+}

@@ -130,7 +130,7 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
         if input.envelope().project_id.to_string() != project.project_id().to_string() {
             return Err(error(ErrorCode::CorruptLedger, "project"));
         }
-        let _ = read_attempt(connection, id, false)?;
+        let _ = read_attempt_in(connection, &input, false)?;
     }
     let mut links = connection
         .prepare("SELECT producer_result_id,valid FROM plugin_validation_links")
@@ -529,7 +529,18 @@ fn read_attempt(
     active: bool,
 ) -> Result<AttemptView, ExecutionError> {
     let input = load_input(connection, attempt)?;
-    check_translation_projection(connection, &input, None)?;
+    read_attempt_in(connection, &input, active)
+}
+
+// Opening has already restored this exact frame in its read snapshot. Reuse
+// that capture rather than decoding the complete input a second time.
+fn read_attempt_in(
+    connection: &Connection,
+    input: &FixedInput,
+    active: bool,
+) -> Result<AttemptView, ExecutionError> {
+    let attempt = input.envelope().attempt_id;
+    check_translation_projection(connection, input, None)?;
     let envelope = input.envelope();
     let cancellation_revision = cancel_revision(connection, envelope.task_id)?;
     let captured: i64 = connection
@@ -586,7 +597,7 @@ fn read_attempt(
             state = ExecutionState::Unknown;
         }
         if let Some(result) = result {
-            match load_result(connection, &input, parse_id(result)?) {
+            match load_result(connection, input, parse_id(result)?) {
                 Ok(output)
                     if output.envelope().item_id == item_id
                         && output.envelope().outcome == state
@@ -597,8 +608,8 @@ fn read_attempt(
                             .is_some_and(|value| value.retry_safe)
                             == retry_safe =>
                 {
-                    if validation == ValidationState::Valid && requires_semantic_check(&input) {
-                        validate_plugin_link(connection, &input, &output, true)?;
+                    if validation == ValidationState::Valid && requires_semantic_check(input) {
+                        validate_plugin_link(connection, input, &output, true)?;
                     }
                 }
                 _ => validation = ValidationState::Invalid,
@@ -652,16 +663,24 @@ fn load_check_link(
         "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
         [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
     ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
+    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
+    Ok((check_input, check_result, saved_valid))
+}
+
+fn load_check_frames(
+    connection: &Connection,
+    checker_id: &str,
+) -> Result<(FixedInput, FixedResult), ExecutionError> {
     let checker_attempt: String = connection
         .query_row(
             "SELECT attempt_id FROM execution_results WHERE result_id=?1",
-            [&checker_id],
+            [checker_id],
             |r| r.get(0),
         )
         .map_err(sql_error)?;
     let check_input = load_input(connection, parse_id(checker_attempt)?)?;
-    let check_result = load_result(connection, &check_input, parse_id(checker_id)?)?;
-    Ok((check_input, check_result, saved_valid))
+    let check_result = load_result(connection, &check_input, parse_id(checker_id.to_owned())?)?;
+    Ok((check_input, check_result))
 }
 
 pub(super) fn validate_source_link(
@@ -670,7 +689,43 @@ pub(super) fn validate_source_link(
     result: &FixedResult,
     expected_valid: bool,
 ) -> Result<PreparedSourceValidation, ExecutionError> {
-    let (check_input, check_result, saved_valid) = load_check_link(connection, result)?;
+    use std::sync::{Mutex, OnceLock};
+    // Memoize only pure immutable source qualification, bounded to one proof.
+    // Each reuse checks all four original frames and row associations, plus
+    // the current proof link. Execution grants/currentness are never cached.
+    static CACHE: OnceLock<Mutex<Option<PreparedSourceValidation>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    let (checker_id, saved_valid): (String, bool) = connection.query_row(
+        "SELECT checker_result_id,valid FROM plugin_validation_links WHERE producer_result_id=?1",
+        [result.envelope().result_id.to_string()], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(|_| error(ErrorCode::CorruptLedger, "semantic-validation-link"))?;
+    let cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .filter(|prepared| {
+            prepared.capture.source.result.envelope().result_id == result.envelope().result_id
+                && prepared.check_result.envelope().result_id.to_string() == checker_id
+        })
+        .cloned();
+    if let Some(prepared) = cached {
+        let source = &prepared.capture.source;
+        if source.input.digest() != input.digest()
+            || source.input.bytes() != input.bytes()
+            || source.result.digest() != result.digest()
+            || source.result.bytes() != result.bytes()
+            || saved_valid != expected_valid
+            || prepared.proof.valid != saved_valid
+        {
+            return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
+        }
+        check_stored_input(connection, &source.input)?;
+        check_stored_result(connection, &source.result)?;
+        check_stored_input(connection, &prepared.capture.check_input)?;
+        check_stored_result(connection, &prepared.check_result)?;
+        return Ok(prepared);
+    }
+    let (check_input, check_result) = load_check_frames(connection, &checker_id)?;
     let prepared = SourceValidationCapture::restore(
         ResultValidationCapture {
             input: input.clone(),
@@ -682,6 +737,9 @@ pub(super) fn validate_source_link(
     if saved_valid != expected_valid || prepared.proof.valid != saved_valid {
         return Err(error(ErrorCode::CorruptLedger, "semantic-validation-proof"));
     }
+    *cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(prepared.clone());
     Ok(prepared)
 }
 

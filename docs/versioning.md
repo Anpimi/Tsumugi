@@ -510,3 +510,11 @@ changing any persisted frame, digest, profile, coverage or application-facing
 API. Project schema 26, SDK/process/Store formats and dependencies are unchanged.
 The same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
 needs no extra bump or migration; both Unreleased changelogs record the change.
+
+Repeated source proof reads reuse bounded pure immutable qualification only after
+checking all four persisted frames, row associations and the current proof link.
+Opening reuses its just-restored attempt input for item validation. No execution
+permission or currentness is cached, and no stored shape, schema 26, dependency
+or SDK/process/Store/IPC profile changes. This remains the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch without an extra bump
+or migration; both Unreleased changelogs describe the behavior.
