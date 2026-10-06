@@ -187,14 +187,50 @@ fn translation_execution_ipc_runs_independent_workers_proof_projection_and_adopt
     });
     let projection = ExecutionId::new();
     let project_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"translationAttemptId":producer,"translationResultId":result,"attemptId":projection});
-    assert!(
-        call(
-            &window,
-            "prepare_translation_projection",
-            project_request.clone()
-        )
-        .is_err()
-    );
+    let incomplete = call(
+        &window,
+        "prepare_translation_projection",
+        project_request.clone(),
+    )
+    .unwrap_err();
+    assert_eq!(incomplete["code"], "dependency-conflict");
+    assert_eq!(incomplete["reason"], "translation-check-incomplete");
+    // Corruption fixtures are confined to this owned temporary project. A
+    // rejected check and a lost qualified proof must not look merely pending.
+    let database = rusqlite::Connection::open(project_path.join("project.sqlite3")).unwrap();
+    state.sessions.with(move |sessions| {
+        let store = &sessions.active.as_ref().unwrap().store;
+        for (validation, code, stage) in [
+            (
+                "invalid",
+                ErrorCode::OutputInvalid,
+                "translation-check-invalid",
+            ),
+            (
+                "valid",
+                ErrorCode::CorruptLedger,
+                "semantic-validation-link",
+            ),
+            ("absent", ErrorCode::CorruptLedger, "result-state"),
+        ] {
+            database
+                .execute(
+                    "UPDATE execution_items SET validation=?2 WHERE attempt_id=?1",
+                    rusqlite::params![producer.to_string(), validation],
+                )
+                .unwrap();
+            let error = store
+                .capture_translation_projection(producer, result)
+                .unwrap_err();
+            assert_eq!((error.code, error.stage.as_str()), (code, stage));
+        }
+        database
+            .execute(
+                "UPDATE execution_items SET validation='pending' WHERE attempt_id=?1",
+                [producer.to_string()],
+            )
+            .unwrap();
+    });
     let checker = ExecutionId::new();
     let check_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"translationAttemptId":producer,"translationResultId":result,"attemptId":checker,"translation":translation});
     let checked = call(&window, "prepare_translation_check", check_request.clone()).unwrap();

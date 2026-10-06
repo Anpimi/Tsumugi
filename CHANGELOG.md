@@ -12,7 +12,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
-- Prepare declared plugin translation captures against an explicit project target and the current adopted source, with exact native matching scopes, immutable bytes, cancellation, and stale-source checks. Desktop commands separately authorize the installed extractor and checker, preserve original consent and proof identities, and submit checked results to the existing per-entry import and adoption workflow. The rendered plugin translation workbench remains under development.
+- The translation workbench selects installed declared capabilities and an approved runtime, confirms the file's target language, and captures immutable bytes against the current adopted source and exact native matching scope. Extraction and independent checks require separate consent before checked per-entry previews reach the existing adoption workflow. Preparation survives view changes; uncertain operations retain their original requests, grants and proof identities. Missing capabilities preserve editing, and rejected checks cannot open a preview. Full native interaction acceptance and domain cutover remain pending.
 
 - Read-only desktop translation environment resolution now returns the selected material recipe, exact extractor/checker bindings and independently approved installed runtime. Native selected-directory capture follows the declaration with complete bounded UTF-8 bytes, preserving BOM and original evidence through the existing Windows/macOS path, identity and double-read checks. Preparation grants no execution permission; the plugin translation workbench remains under development.
 
@@ -90,6 +90,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
 ### Fixed
+
+- Preparing a plugin translation preview before its independent check completes now reports an incomplete check instead of a corrupt project. Rejected checks still block preview, and a missing proof for a result already marked qualified remains a corruption error.
 
 - Experimental source and artifact adoption recheck the selected checker's current authorization and unsuperseded result before preparation and at commit. Revocation or cancellation after a successful semantic check blocks new adoption while preserving previously adopted content, saved evidence and committed receipts.
 

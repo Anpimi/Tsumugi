@@ -967,6 +967,31 @@ impl ProjectStore {
             .map_err(|_| error(ErrorCode::StorageFailed, "translation-projection"))?;
         let producer = load_input(connection, attempt)?;
         let result = load_result(connection, &producer, result)?;
+        require_current_result(connection, &producer, &result)?;
+        let validation: String = connection
+            .query_row(
+                "SELECT validation FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                params![attempt.to_string(), result.envelope().item_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        match decode_enum::<ValidationState>(validation)? {
+            ValidationState::Pending => {
+                return Err(error(
+                    ErrorCode::DependencyConflict,
+                    "translation-check-incomplete",
+                ));
+            }
+            ValidationState::Invalid => {
+                return Err(error(ErrorCode::OutputInvalid, "translation-check-invalid"));
+            }
+            ValidationState::Absent => {
+                return Err(error(ErrorCode::CorruptLedger, "result-state"));
+            }
+            ValidationState::Valid => {}
+        }
+        // Only qualified results promise a durable proof link. Missing proof
+        // after successful qualification remains corruption, not a pending check.
         let prepared = validate_translation_link(connection, &producer, &result, true)?;
         let projection = crate::content::TranslationProjection::capture(
             &producer,

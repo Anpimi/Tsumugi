@@ -9,6 +9,8 @@ import type { TranslationHistory, TranslationPreview } from "./translationComman
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
+import { translationCapture, translationSelection, translationView, translationInventory, translationPackage, translationCheck, translationProjection } from "./testSupport/pluginTranslationFixture";
+import type { AttemptDetail } from "./executionCommands";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
@@ -20,6 +22,7 @@ const content = sourcePageFixture({ snapshotId: fixtureIdentity(200), attemptId:
 const preview: TranslationPreview = { attemptId: fixtureIdentity(210), bundleId: fixtureIdentity(211), fixedSourceSnapshotId: fixtureIdentity(200), currentSourceSnapshotId: fixtureIdentity(200), resultDigest: "all-results", fileDigest: "file-digest", logicalPath: "i18n/zh.json", declaredLocale: "zh", targetLocale: "zh-CN", basis: "basis", total: 1, unique: 1, unmatched: 0, ambiguous: 0, selectedConflicts: 0, sourceChanged: 0, applied: 0, nextOrdinal: null, rows: [{ entry: { ordinal: 0, artifactId: fixtureIdentity(212), nativeKey: "FIRST", text: "你好", keyByteRange: [1, 8], valueByteRange: [9, 19] }, itemId: fixtureIdentity(213), resultId: fixtureIdentity(214), resultDigest: "result-digest", unitId: fixtureIdentity(204), occurrenceId: fixtureIdentity(203), sourceRevisionId: fixtureIdentity(205), sourceText: "Original", currentSelection: null, currentText: null, status: "unique" }] };
 const emptyHistory: TranslationHistory = { unitId: fixtureIdentity(204), locale: "zh-CN", total: "0", current: null, currentText: null, rows: [], nextOrdinal: null };
 let history: TranslationHistory;
+let pluginAttempts: Map<string, AttemptDetail>;
 let applied: boolean;
 let conflicting: boolean;
 let identity: number;
@@ -42,7 +45,7 @@ function saveReceipt(request: Record<string, unknown>) {
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map();
-  protection = new Map(); protectionActions = new Map();
+  protection = new Map(); protectionActions = new Map(); pluginAttempts = new Map();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
@@ -70,12 +73,29 @@ beforeEach(async () => {
     }
     if (command === "resolve_terms") return { unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
     if (command === "read_context_revision") return { revisionId: fixtureIdentity(225), unitId: fixtureIdentity(204), locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
-    if (command === "select_source") return { selectionId: fixtureIdentity(207), folderName: "Example Mod" };
-    if (command === "list_translation_files") return ["zh.json"];
-    if (command === "preflight_translation") return { fileName: "zh.json", fileDigest: "file-digest", declaredLocale: "zh", targetLocale: "zh-CN", count: 1, sourceSnapshotId: fixtureIdentity(200) };
+    if (command === "read_plugin_inventory") return translationInventory;
+    if (command === "read_plugin_package") return translationPackage;
+    if (command === "read_plugin_translation") return translationView;
+    const source = { ...translationCapture.source, sourceSnapshotId: fixtureIdentity(200) };
+    if (command === "read_plugin_translation_source") return source;
+    if (command === "select_plugin_translation") return { ...translationSelection, source };
+    if (command === "list_plugin_translation_files") return ["zh.json"];
+    if (command === "preflight_plugin_translation") return { ...translationCapture, source, attemptId: args.request.attemptId };
     if (command === "create_execution_identity") return fixtureIdentity(++identity);
-    if (command === "start_translation_import") return fixtureIdentity(210);
-    if (command === "read_translation_preview") return applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: fixtureIdentity(221), unitId: fixtureIdentity(204), locale: "zh-CN", sequence: "1", revisionId: fixtureIdentity(222), actionId: fixtureIdentity(223), previousEventId: null } }] } : preview;
+    if (command === "start_plugin_translation" || command === "start_translation_check" || command === "start_translation_projection") {
+      const attemptId = String(args.request.attemptId), operation = command === "start_plugin_translation" ? "translation-extract" : command === "start_translation_check" ? "translation-semantic-check" : "translation-import";
+      pluginAttempts.set(attemptId, { ...executionFixture.detail, attemptId, taskId: fixtureIdentity(230 + identity), operation,
+        progress: { total: 1, queued: 0, running: 0, succeeded: 1, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
+        items: [{ scope: { kind: "translation-file", id: "i18n/zh.json", locale: "zh-CN" }, resultId: fixtureIdentity(240 + identity),
+          status: { itemId: fixtureIdentity(250 + identity), execution: "succeeded", validation: "pending", adoption: "unapplied", retrySafe: false, cancellationRequested: false, diagnostic: null } }],
+        recovery: { attemptId, units: [] }, nextOffset: null });
+      return attemptId;
+    }
+    if (command === "read_execution_attempt") return structuredClone(pluginAttempts.get(String(args.request.attemptId)) ?? null);
+    if (command === "prepare_translation_check") return { ...translationCheck, source, translation: translationView, attemptId: args.request.attemptId, translationAttemptId: args.request.translationAttemptId, translationResultId: args.request.translationResultId };
+    if (command === "finish_translation_check") { pluginAttempts.get(String(args.request.translationAttemptId))!.items[0].status.validation = "valid"; return null; }
+    if (command === "prepare_translation_projection") return { ...translationProjection, source, itemCount: 1, attemptId: args.request.attemptId, translationAttemptId: args.request.translationAttemptId, translationResultId: args.request.translationResultId };
+    if (command === "read_translation_preview") return applied ? { ...preview, attemptId: String(args.request.attemptId), unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, attemptId: String(args.request.attemptId), unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: fixtureIdentity(221), unitId: fixtureIdentity(204), locale: "zh-CN", sequence: "1", revisionId: fixtureIdentity(222), actionId: fixtureIdentity(223), previousEventId: null } }] } : { ...preview, attemptId: String(args.request.attemptId) };
     if (command === "prepare_translation_adoption") return { ...executionFixture.action, projectId: args.request.projectId, actionId: args.request.actionId, attemptId: args.request.attemptId, resultIds: [args.request.resultId], unitId: (args.request.confirmation as { targetUnitId: string }).targetUnitId };
     if (command === "adopt_execution") { applied = true; return { ...executionFixture.receipt, actionId: args.request.actionId, changes: [{ kind: "translation-revision", id: "revision", revision: "1" }] }; }
     if (command === "save_translation_revision") {
@@ -92,6 +112,26 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+async function captureDeclaredTranslation(user: ReturnType<typeof userEvent.setup>) {
+  const choose = await screen.findByRole("button", { name: "Choose translation folder" });
+  await waitFor(() => expect(choose).toBeEnabled()); await user.click(choose);
+  await user.click(await screen.findByRole("checkbox", { name: /I confirm that zh.json belongs to zh-CN/ }));
+  await user.click(screen.getByRole("button", { name: "Capture translation file" }));
+  expect(await screen.findByRole("button", { name: "Import for review" })).toBeDisabled();
+}
+
+async function importDeclaredTranslation(user: ReturnType<typeof userEvent.setup>) {
+  await captureDeclaredTranslation(user);
+  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract this captured translation file/ }));
+  await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I separately allow this exact checker/ }));
+  await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
+  await user.click(await screen.findByRole("button", { name: "Record translation check" }));
+  await user.click(await screen.findByRole("button", { name: "Prepare checked translation preview" }));
+  await user.click(await screen.findByRole("button", { name: "Review checked translation matches" }));
+}
+
 
 it("keeps the rejecting basis beside newer input without replaying the save", async () => {
   const original = invoke.getMockImplementation()!;
@@ -328,11 +368,7 @@ it("requires language mapping and applies only the reviewed unique result", asyn
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(screen.getByRole("button", { name: "Import file" }));
-  await user.click(await screen.findByRole("button", { name: "Choose Mod folder" }));
-  await user.click(await screen.findByRole("button", { name: "Check file" }));
-  expect(await screen.findByRole("button", { name: "Import for review" })).toBeDisabled();
-  await user.click(screen.getByRole("checkbox", { name: /I confirm that zh.json belongs to zh-CN/ }));
-  await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await importDeclaredTranslation(user);
   await screen.findByRole("heading", { name: "Review translation matches" });
   expect(screen.getByText("你好")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Apply 1 unique matches" }));
@@ -507,10 +543,7 @@ it("requires a separate comparison and confirmation before replacing a selected 
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(screen.getByRole("button", { name: "Import file" }));
-  await user.click(await screen.findByRole("button", { name: "Choose Mod folder" }));
-  await user.click(await screen.findByRole("button", { name: "Check file" }));
-  await user.click(screen.getByRole("checkbox", { name: /I confirm that zh.json/ }));
-  await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await importDeclaredTranslation(user);
   await screen.findByRole("heading", { name: "Review translation matches" });
   expect(screen.getByRole("button", { name: "Apply 0 unique matches" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Replace current selection" }));
@@ -534,10 +567,7 @@ it("reports a partial batch without treating an uncommitted conflict as applied"
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Translations" }));
   await user.click(screen.getByRole("button", { name: "Import file" }));
-  await user.click(await screen.findByRole("button", { name: "Choose Mod folder" }));
-  await user.click(await screen.findByRole("button", { name: "Check file" }));
-  await user.click(screen.getByRole("checkbox", { name: /I confirm that zh.json/ }));
-  await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await importDeclaredTranslation(user);
   await screen.findByRole("button", { name: "Apply 2 unique matches" });
   await user.click(screen.getByRole("button", { name: "Apply 2 unique matches" }));
   expect(await screen.findByText(/Applied 1; conflicted 1; failed 0; outcome unknown 0/)).toBeInTheDocument();
@@ -747,4 +777,136 @@ it.each(["newer-text", "composition"])("preserves %s when a manual selection ack
   expect(draft).toHaveValue(mode === "newer-text" ? "Newer input" : "");
   if (mode === "composition") fireEvent.compositionEnd(draft);
   expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+});
+
+
+it("reconciles an accepted translation start with the original attempt, grant and expiry", async () => {
+  const original = invoke.getMockImplementation()!, ref = createRef<TranslationHandle>(); let lost = true;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const value = await original(command, args);
+    if (command === "start_plugin_translation" && lost) { lost = false; throw new Error("Lost accepted acknowledgement"); }
+    return value;
+  });
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" }));
+  await captureDeclaredTranslation(user);
+  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract this captured translation file/ }));
+  await user.click(screen.getByRole("button", { name: "Import for review" }));
+  const retry = await screen.findByRole("button", { name: "Reconcile original translation operation" });
+  expect(await ref.current!.allowLeave()).toBe(false);
+  expect(screen.getByRole("button", { name: "Choose new translation input" })).toBeDisabled();
+  await user.click(retry);
+  await screen.findByRole("button", { name: "Review independent translation check" });
+  const starts = invoke.mock.calls.filter(([name]) => name === "start_plugin_translation");
+  expect(starts).toHaveLength(2); expect(starts[1][1]).toEqual(starts[0][1]);
+  expect(invoke.mock.calls.some(([name]) => name === "start_translation_check")).toBe(false);
+  expect(invoke.mock.calls.some(([name]) => name === "prepare_translation_projection")).toBe(false);
+});
+
+it("retains translation preparation across views and explicitly protects project departure", async () => {
+  const ref = createRef<TranslationHandle>(), user = userEvent.setup();
+  render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" }));
+  await captureDeclaredTranslation(user);
+  await user.click(screen.getByRole("button", { name: "Back to overview" }));
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible();
+  let leaving!: Promise<boolean>; await act(async () => { leaving = ref.current!.allowLeave(); });
+  await user.click(await screen.findByRole("button", { name: "Keep editing" }));
+  expect(await leaving).toBe(false); expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible();
+  expect(invoke.mock.calls.some(([name]) => name === "start_plugin_translation")).toBe(false);
+});
+
+it("blocks a rejected independent translation check and preserves the original proposal", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const value = await original(command, args);
+    if (command === "finish_translation_check") pluginAttempts.get(String(args.request.translationAttemptId))!.items[0].status.validation = "invalid";
+    return value;
+  });
+  const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" }));
+  await captureDeclaredTranslation(user);
+  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract/ })); await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
+  expect(await screen.findByRole("button", { name: "Run independent translation check" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: /I separately allow this exact checker/ })); await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
+  await user.click(await screen.findByRole("button", { name: "Record translation check" }));
+  await screen.findByText(/The mandatory translation check rejected/);
+  expect(screen.queryByRole("button", { name: "Prepare checked translation preview" })).not.toBeInTheDocument();
+  const producerStart = invoke.mock.calls.find(([name]) => name === "start_plugin_translation")![1].request;
+  const checkerStart = invoke.mock.calls.find(([name]) => name === "start_translation_check")![1].request;
+  expect(checkerStart.grantId).not.toBe(producerStart.grantId); expect(checkerStart.attemptId).not.toBe(producerStart.attemptId);
+  expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible();
+});
+
+it("derives import availability from declared capabilities while preserving editing", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_source_content"
+    ? Promise.resolve({ ...content, namespace: "webvtt:source" }) : command === "read_plugin_inventory"
+    ? Promise.resolve({ ...translationInventory, packageDecisions: [] }) : original(command, args));
+  const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" }));
+  await screen.findByText(/Enable a translation package matching the current source profile/);
+  expect(screen.getByRole("button", { name: "Choose translation folder" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Edit translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  expect(await screen.findByRole("textbox", { name: "Your draft" })).toBeEnabled();
+  expect(invoke.mock.calls.some(([name]) => ["select_source", "preflight_translation", "start_translation_import"].includes(name))).toBe(false);
+});
+
+
+it("shows a qualified empty file without a misleading page range or adoption", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_translation_preview"
+    ? Promise.resolve({ ...preview, attemptId: args.request.attemptId, total: 0, unique: 0, rows: [] }) : original(command, args));
+  const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" })); await importDeclaredTranslation(user);
+  expect(await screen.findByText(/The checked file contains no translation entries/)).toBeVisible();
+  expect(screen.queryByRole("table")).not.toBeInTheDocument(); expect(screen.getByRole("button", { name: "Apply 0 unique matches" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([name]) => name === "prepare_translation_adoption")).toBe(false);
+});
+
+it("reviews a new checker attempt after cancellation without recapturing the producer", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "cancel_execution_task") {
+      const detail = [...pluginAttempts.values()].find(value => value.taskId === args.request.taskId)!;
+      detail.items[0].status.execution = "cancelled-before-dispatch"; detail.items[0].status.cancellationRequested = true; detail.items[0].resultId = null;
+      detail.progress.succeeded = 0; detail.progress.cancelled = 1; return "1";
+    }
+    const value = await original(command, args);
+    if (command === "start_translation_check") {
+      const detail = pluginAttempts.get(String(args.request.attemptId))!;
+      detail.items[0].status.execution = "queued"; detail.items[0].status.validation = "absent"; detail.items[0].resultId = null;
+      detail.progress.succeeded = 0; detail.progress.queued = 1;
+    }
+    return value;
+  });
+  const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" })); await captureDeclaredTranslation(user);
+  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract/ })); await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
+  await user.click(await screen.findByRole("checkbox", { name: /I separately allow this exact checker/ })); await user.click(screen.getByRole("button", { name: "Run independent translation check" }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("execution.cancel") }));
+  await user.click(await screen.findByRole("button", { name: "Review independent translation check" }));
+  expect(await screen.findByRole("button", { name: "Run independent translation check" })).toBeDisabled();
+  const checks = invoke.mock.calls.filter(([name]) => name === "prepare_translation_check");
+  expect(checks).toHaveLength(2); expect(checks[1][1].request.attemptId).not.toBe(checks[0][1].request.attemptId);
+  expect(checks[1][1].request.translationResultId).toEqual(checks[0][1].request.translationResultId);
+  expect(invoke.mock.calls.filter(([name]) => name === "preflight_plugin_translation")).toHaveLength(1);
+});
+
+
+it("preserves captured input when installed settings change and blocks new authorization", async () => {
+  const original = invoke.getMockImplementation()!; let revision = "1";
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_plugin_translation"
+    ? Promise.resolve({ ...translationView, settingsRevision: revision }) : original(command, args));
+  const user = userEvent.setup(), view = render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(screen.getByRole("button", { name: "Import file" })); await captureDeclaredTranslation(user);
+  await user.click(screen.getByRole("checkbox", { name: /I allow this exact plugin to extract/ }));
+  revision = "2"; view.rerender(<TranslationWorkbench project={project} disabled />); view.rerender(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Refresh installed translation choices" }));
+  await screen.findByText(/Extension settings changed after capture/);
+  expect(screen.getByText(/Captured i18n\/zh.json/)).toBeVisible(); expect(screen.getByRole("button", { name: "Import for review" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([name]) => name === "start_plugin_translation")).toBe(false);
 });

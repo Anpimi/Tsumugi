@@ -9,8 +9,9 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import type { CommandError, ProjectView } from "./projectCommands";
 import { executionCommands as execution, executionContext } from "./executionCommands";
-import { sourceCommands, type ContentPage, type ContentRow, type SourceSelection } from "./sourceCommands";
-import { translationCommands as commands, translationHistoryAfter, type TranslationAdoptRequest, type TranslationHistory, type TranslationPreflight, type TranslationPreview, type TranslationPreviewRow, type TranslationSaveRequest, type TranslationStartRequest } from "./translationCommands";
+import { sourceCommands, type ContentPage, type ContentRow } from "./sourceCommands";
+import { translationCommands as commands, translationHistoryAfter, type TranslationAdoptRequest, type TranslationHistory, type TranslationPreview, type TranslationPreviewRow, type TranslationSaveRequest } from "./translationCommands";
+import { PluginTranslationControls, type PluginTranslationHandle, type PluginTranslationState } from "./PluginTranslationControls";
 import type { TranslationDecision, TranslationSelection } from "./translationCommands";
 import { type ContextRevision, type TermResolution } from "./resourceCommands";
 
@@ -69,12 +70,8 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const listBasis = useRef<string | null>(null);
   const listPosition = useRef({ query: "", after: 0 });
   const [targetLocale, setTargetLocale] = useState(project.metadata.targetLocales[0] ?? "");
-  const [folder, setFolder] = useState<SourceSelection | null>(null);
-  const [files, setFiles] = useState<string[]>([]);
-  const [fileName, setFileName] = useState("");
-  const [preflight, setPreflight] = useState<TranslationPreflight | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
-  const [pendingStart, setPendingStart] = useState<TranslationStartRequest | null>(null);
+  const importControls = useRef<PluginTranslationHandle>(null);
+  const [importState, setImportState] = useState<PluginTranslationState>({ busy: false, pending: false, hasDraft: false });
   const [attempt, setAttempt] = useState<string | null>(null);
   const [preview, setPreview] = useState<TranslationPreview | null>(null);
   const [selectIfEmpty, setSelectIfEmpty] = useState(false);
@@ -139,7 +136,6 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           listScope.current = next ? { id: next.scopeId, locale: targetLocale, query: position.query } : null;
           if (changed) { setQuery(""); setAppliedQuery(""); setListAfter(0); listPosition.current = position; }
           listBasis.current = scope.currentSnapshot;
-          if (page?.namespace === "webvtt:source") setTab("edit");
         }
       } catch (error) { if (mounted.current && sourceLoad.current === ticket) setFailure(commandFailure(error)); }
     })();
@@ -185,13 +181,13 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }, [open, tab, editorTarget?.unitId]);
   useImperativeHandle(ref, () => ({
     showAttempt(id) {
-      if (running.current || composingRef.current || dirty || protectionBlocked || pendingSave || uncertain.length) { setOpen(true); return; }
+      if (running.current || importState.pending || importState.busy || importState.hasDraft || composingRef.current || dirty || protectionBlocked || pendingSave || uncertain.length) { setOpen(true); return; }
       generation.current++;
       setEditorTarget(null); setHistory(null); setEditorBase(null); setDraft(""); draftRef.current = "";
       setTab("import"); setAttempt(id); setPreview(null); setFailure(null); setBatchOutcome(null); setOpen(true);
     },
     openUnit(target, locale, suggestedText) {
-      if (running.current || composingRef.current || dirty || protectionBlocked || pendingSave || uncertain.length) {
+      if (running.current || importState.pending || importState.busy || importState.hasDraft || composingRef.current || dirty || protectionBlocked || pendingSave || uncertain.length) {
         setOpen(true);
         return false;
       }
@@ -201,12 +197,17 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       return true;
     },
     allowLeave() {
-      if (running.current || composingRef.current) { setOpen(true); return Promise.resolve(false); }
-      if (protectionBlocked || pendingSave || uncertain.length) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
-      if (!dirty) return Promise.resolve(true);
-      setOpen(true);
-      setLeaveIntent({ kind: "project" });
-      return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
+      function editorLeave(): Promise<boolean> {
+        if (running.current || composingRef.current) { setOpen(true); return Promise.resolve(false); }
+        if (protectionBlocked || pendingSave || uncertain.length) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
+        if (!dirty) return Promise.resolve(true);
+        setOpen(true);
+        setLeaveIntent({ kind: "project" });
+        return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
+      }
+      return importControls.current && (importState.busy || importState.pending || importState.hasDraft)
+        ? importControls.current.allowLeave().then(allowed => allowed ? editorLeave() : false)
+        : editorLeave();
     },
   }));
 
@@ -221,27 +222,12 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }
   function changeTarget(locale: string) {
     if (protectionBlocked || running.current || composingRef.current) return;
-    setTargetLocale(locale); setPreflight(null); setConfirmed(false); setPreview(null); setAttempt(null); setPendingStart(null);
+    setTargetLocale(locale); setPreview(null); setAttempt(null);
     if (editorTarget) { setEditorTarget(null); setHistory(null); setEditorBase(null); setEditorResources(null); setDraft(""); draftRef.current = ""; }
   }
-  async function chooseFolder(current: () => boolean) {
-    const selected = await commands.selectFolder(context);
-    if (!current()) return;
-    setFolder(selected); setFiles([]); setFileName(""); setPreflight(null); setConfirmed(false); setPreview(null); setAttempt(null); setPendingStart(null);
-    if (selected) {
-      const found = await commands.files({ ...context, selectionId: selected.selectionId });
-      if (current()) { setFiles(found); setFileName(found[0] ?? ""); }
-    }
-  }
-  async function startImport(request: TranslationStartRequest, current: () => boolean) {
-    try {
-      const id = await commands.start(request);
-      if (current()) { setAttempt(id); setPendingStart(null); setPreview(null); setBatchOutcome(null); }
-    } catch (error) {
-      if (current() && !hasUnknownOutcome(error)) setPendingStart(null);
-      throw error;
-    }
-  }
+  const onProjectedAttempt = useCallback((id: string) => { setAttempt(id); setPreview(null); setBatchOutcome(null); }, []);
+  const resetImport = useCallback(() => { setAttempt(null); setPreview(null); setBatchOutcome(null); }, []);
+  function showImport() { setTab("import"); setOpen(true); }
   const importRead = useSessionQuery<TranslationPreview | null>({ key: ["translation-import-preview", attempt, 0, 50, null], scopes: ["execution", "translation"], enabled: open && !busy && !!attempt && !preview,
     read: async () => {
       try { return await commands.preview({ ...context, attemptId: attempt!, after: 0, limit: 50, basis: null }); }
@@ -426,7 +412,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (current()) { setHistory(next); setHistoryStale(false); }
   }
   function requestClose() {
-    if (running.current || composingRef.current || leaveIntent) return;
+    if (running.current || !importControls.current?.allowNavigate() || composingRef.current || leaveIntent) return;
     if (protectionBlocked || pendingSave || uncertain.length) { setFailure("outcome-unknown"); return; }
     if (dirty) setLeaveIntent({ kind: "close" });
     else { generation.current++; setOpen(false); }
@@ -457,7 +443,6 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (intent?.kind === "close") setOpen(false);
     if (intent?.kind === "switch") await switchEditor(intent, current);
   }
-  const canImport = Boolean(sourcePage && targetLocale && fileName);
   return <>
     <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || busy || protectionBlocked}>
         <div className="execution-content" aria-busy={busy}>
@@ -465,20 +450,16 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           {sourceMissing ? <p role="status">{t("translation.noSource")}</p> : null}
           {!project.metadata.targetLocales.length ? <p role="status">{t("translation.noTargets")}</p> : null}
-          <div className="execution-actions">{sourcePage?.namespace !== "webvtt:source" ? <button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} disabled={busy || protectionBlocked} onClick={() => setTab("import")}>{t("translation.importTab")}</button> : null}<button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} disabled={busy || protectionBlocked} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
-          {sourcePage && project.metadata.targetLocales.length ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || protectionBlocked || dirty || !!pendingSave || uncertain.length > 0} onChange={event => changeTarget(event.target.value)}>{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}
-          {tab === "import" && sourcePage && sourcePage.namespace !== "webvtt:source" && targetLocale ? <>
-            <section><button className="secondary-button" disabled={busy || uncertain.length > 0} onClick={() => void perform(chooseFolder)}>{t("translation.chooseFolder")}</button>
-              {folder ? <><p>{t("translation.folder", { name: folder.folderName })}</p>{files.length ? <label>{t("translation.file")}<select value={fileName} disabled={busy || uncertain.length > 0} onChange={event => { setFileName(event.target.value); setPreflight(null); setConfirmed(false); setAttempt(null); setPreview(null); setPendingStart(null); }}>{files.map(file => <option key={file} value={file}>{file}</option>)}</select></label> : <p role="status">{t("translation.noFiles")}</p>}
-                <button className="secondary-button" disabled={busy || !canImport} onClick={() => void perform(async current => { const checked = await commands.preflight({ ...context, selectionId: folder.selectionId, fileName, targetLocale }); if (current()) { setPreflight(checked); setConfirmed(false); } })}>{t("translation.inspect")}</button>
-              </> : null}
-              {preflight ? <><p>{t("translation.preflight", { count: preflight.count, file: preflight.fileName })}</p><label className="source-check"><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)} />{t("translation.languageConfirm", { file: preflight.fileName, target: preflight.targetLocale, declared: preflight.declaredLocale })}</label>
-                <button className="primary-button" disabled={busy || !confirmed || !!pendingStart || !!attempt} onClick={() => void perform(async current => { const request: TranslationStartRequest = { ...context, selectionId: folder!.selectionId, fileName: preflight.fileName, targetLocale: preflight.targetLocale, languageConfirmed: true, expectedFileDigest: preflight.fileDigest, expectedSourceSnapshotId: preflight.sourceSnapshotId, attemptId: await execution.identity(context) }; if (!current()) return; setPendingStart(request); await startImport(request, current); })}>{t("translation.start")}</button></> : null}
-              {pendingStart ? <div role="status"><p>{t("translation.startUnknown")}</p><button className="secondary-button" disabled={busy} onClick={() => void perform(current => startImport(pendingStart, current))}>{t("translation.checkStart")}</button></div> : null}
-              {attempt && !preview ? <p role="status">{t("translation.progress", { count: preflight?.count ?? 0 })}</p> : null}
-            </section>
+          <div className="execution-actions"><button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} disabled={busy || protectionBlocked} onClick={() => setTab("import")}>{t("translation.importTab")}</button><button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} disabled={busy || protectionBlocked} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
+          {sourcePage && project.metadata.targetLocales.length ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || importState.busy || importState.pending || importState.hasDraft || protectionBlocked || dirty || !!pendingSave || uncertain.length > 0} onChange={event => changeTarget(event.target.value)}>{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}
+          <div hidden={tab !== "import" || !sourcePage || !targetLocale}>
+            <PluginTranslationControls ref={importControls} project={project} open={open && tab === "import" && !!sourcePage && !!targetLocale} targetLocale={targetLocale}
+              disabled={disabled || busy || protectionBlocked || !!pendingSave || uncertain.length > 0} onState={setImportState}
+              onProjected={onProjectedAttempt} onReset={resetImport} onAttention={showImport} />
+          </div>
+          {tab === "import" && sourcePage && targetLocale ? <>
             {preview ? <section><h3>{t("translation.preview")}</h3><p>{t("translation.counts", { unique: String(preview.unique), unmatched: String(preview.unmatched), conflicts: String(preview.selectedConflicts), changed: String(preview.sourceChanged) })}</p><p>{preview.logicalPath} · {preview.targetLocale}</p>{preview.sourceChanged ? <p role="alert">{t("translation.sourceChanged")}</p> : null}
-              <div className="source-table-scroll"><table className="source-table"><caption>{t("translation.page", { first: String((preview.rows[0]?.entry.ordinal ?? 0) + 1), last: String((preview.rows.at(-1)?.entry.ordinal ?? -1) + 1), total: String(preview.total) })}</caption><thead><tr><th scope="col">{t("translation.key")}</th><th scope="col">{t("translation.sourceText")}</th><th scope="col">{t("translation.importedText")}</th><th scope="col">{t("translation.selectedText")}</th><th scope="col">{t("translation.match")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.ordinal}><th scope="row">{row.entry.nativeKey}<details><summary>{t("translation.evidence")}</summary><p>{preview.logicalPath} · {row.entry.valueByteRange[0]}–{row.entry.valueByteRange[1]}</p><code>{preview.fileDigest}</code></details></th><td><pre>{row.sourceText === "" ? t("translation.empty") : row.sourceText}</pre></td><td><pre>{row.entry.text === "" ? t("translation.empty") : row.entry.text}</pre></td><td><pre>{row.currentText === "" ? t("translation.empty") : row.currentText}</pre></td><td>{t(`translation.status.${row.status}`)}{row.status === "unique" || row.status === "selected-conflict" ? <div className="translation-row-actions"><button className="text-button" disabled={busy} onClick={() => setRowAction({ row, decision: "candidate-only" })}>{t("translation.addCandidate")}</button><button className="text-button" disabled={busy} onClick={() => setRowAction({ row, decision: row.status === "unique" ? "select-if-empty" : "replace" })}>{t(row.status === "unique" ? "translation.selectImported" : "translation.replaceSelected")}</button></div> : null}{targetFromTranslation(row) ? <button className="text-button" disabled={busy || protectionBlocked} onClick={() => chooseEditor(targetFromTranslation(row)!)}>{t("translation.openEditor")}</button> : null}</td></tr>)}</tbody></table></div>
+              {preview.total > 0 ? <div className="source-table-scroll"><table className="source-table"><caption>{t("translation.page", { first: String((preview.rows[0]?.entry.ordinal ?? 0) + 1), last: String((preview.rows.at(-1)?.entry.ordinal ?? -1) + 1), total: String(preview.total) })}</caption><thead><tr><th scope="col">{t("translation.key")}</th><th scope="col">{t("translation.sourceText")}</th><th scope="col">{t("translation.importedText")}</th><th scope="col">{t("translation.selectedText")}</th><th scope="col">{t("translation.match")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.ordinal}><th scope="row">{row.entry.nativeKey}<details><summary>{t("translation.evidence")}</summary><p>{preview.logicalPath} · {row.entry.valueByteRange[0]}–{row.entry.valueByteRange[1]}</p><code>{preview.fileDigest}</code></details></th><td><pre>{row.sourceText === "" ? t("translation.empty") : row.sourceText}</pre></td><td><pre>{row.entry.text === "" ? t("translation.empty") : row.entry.text}</pre></td><td><pre>{row.currentText === "" ? t("translation.empty") : row.currentText}</pre></td><td>{t(`translation.status.${row.status}`)}{row.status === "unique" || row.status === "selected-conflict" ? <div className="translation-row-actions"><button className="text-button" disabled={busy} onClick={() => setRowAction({ row, decision: "candidate-only" })}>{t("translation.addCandidate")}</button><button className="text-button" disabled={busy} onClick={() => setRowAction({ row, decision: row.status === "unique" ? "select-if-empty" : "replace" })}>{t(row.status === "unique" ? "translation.selectImported" : "translation.replaceSelected")}</button></div> : null}{targetFromTranslation(row) ? <button className="text-button" disabled={busy || protectionBlocked} onClick={() => chooseEditor(targetFromTranslation(row)!)}>{t("translation.openEditor")}</button> : null}</td></tr>)}</tbody></table></div> : <p role="status">{t("translationPlugin.emptyFile")}</p>}
               <div className="execution-actions"><button className="secondary-button" disabled={busy} onClick={() => void perform(current => loadPreview(0, null, current))}>{t("translation.refreshPreview")}</button>{preview.nextOrdinal !== null ? <button className="secondary-button" disabled={busy} onClick={() => void perform(current => loadPreview(preview.nextOrdinal!, preview.basis, current))}>{t("execution.nextPage")}</button> : null}</div>
               <p>{t("translation.applyHelp")}</p><label className="source-check"><input type="checkbox" checked={selectIfEmpty} disabled={busy} onChange={event => setSelectIfEmpty(event.target.checked)} />{t("translation.selectIfEmpty")}</label>
               <button className="primary-button" disabled={busy || preview.unique === 0 || preview.sourceChanged > 0} onClick={() => void perform(applyBatch)}>{t("translation.apply", { count: preview.unique })}</button>

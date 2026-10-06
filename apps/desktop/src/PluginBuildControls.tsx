@@ -8,6 +8,7 @@ import { releaseCommands, type PluginBuildPrepareRequest, type PluginBuildReview
 import { executionCommands, executionContext, type AttemptDetail, type PrepareRequest, type CancelRequest, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, projectCommands, type ProjectView } from "./projectCommands";
 import { reviewCommands, type Eligibility } from "./reviewCommands";
+import { readCompleteAttempt } from "./executionRead";
 import { reviewReasonKey } from "./reviewLabels";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { EditorTarget } from "./TranslationWorkbench";
@@ -22,31 +23,6 @@ type Intent =
   | { kind: "finish-check"; request: ArtifactCheckFinishRequest }
   | { kind: "cancel"; request: CancelRequest }
   | { kind: "adopt"; request: PrepareRequest; prepared: boolean };
-
-/** Read every requested item through the existing session query owner. A partial
- * page is never treated as a complete release or a substitute for Core checks. */
-async function readAttempt(context: ReturnType<typeof executionContext>, attemptId: string, operation: string): Promise<AttemptDetail | null> {
-  let detail: AttemptDetail | null = null;
-  let offset = 0;
-  const ids = new Set<string>();
-  for (;;) {
-    const page = await executionCommands.attempt({ ...context, attemptId, offset, limit: 100 });
-    if (!page) { if (detail) throw new Error("Missing execution page"); return null; }
-    if (page.attemptId !== attemptId || page.operation !== operation || (detail && (page.taskId !== detail.taskId || page.progress.total !== detail.progress.total))) throw new Error("Execution page identity changed");
-    for (const item of page.items) {
-      if (ids.has(item.status.itemId)) throw new Error("Duplicate execution item");
-      ids.add(item.status.itemId);
-    }
-    detail = detail ? { ...page, items: [...detail.items, ...page.items] } : page;
-    if (detail.items.length > detail.progress.total) throw new Error("Execution item coverage changed");
-    if (page.nextOffset === null) {
-      if (detail.items.length !== detail.progress.total) throw new Error("Incomplete execution coverage");
-      return detail;
-    }
-    if (page.nextOffset <= offset || page.nextOffset >= page.progress.total) throw new Error("Invalid execution cursor");
-    offset = page.nextOffset;
-  }
-}
 
 function BuildExecutionReview({ build, checker }: { build: PluginBuildView; checker: boolean }) {
   const { t } = useTranslation();
@@ -105,9 +81,9 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   const choice = choices.find(item => item.key === choiceKey);
   const buildChoice: PluginBuildRequest | null = choice && runtimeDigest ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest } : null;
   const buildRead = useSessionQuery({ key: ["release-plugin-build", attempt], scopes: ["execution"], enabled: open && !!attempt && !busy,
-    read: () => attempt ? readAttempt(context, attempt, "locale-build") : Promise.resolve(null) });
+    read: () => attempt ? readCompleteAttempt(context, attempt, "locale-build") : Promise.resolve(null) });
   const checkRead = useSessionQuery({ key: ["release-artifact-check", checkAttempt], scopes: ["execution"], enabled: open && !!checkAttempt && !busy,
-    read: () => checkAttempt ? readAttempt(context, checkAttempt, "artifact-semantic-check") : Promise.resolve(null) });
+    read: () => checkAttempt ? readCompleteAttempt(context, checkAttempt, "artifact-semantic-check") : Promise.resolve(null) });
   const detail = buildRead.data, checkDetail = checkRead.data, checkItem = checkDetail?.items[0];
   const checkActive = !!checkAttempt && (!checkDetail || checkDetail.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched"));
   const buildActive = !!attempt && (!detail || detail.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched"));

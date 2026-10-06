@@ -335,8 +335,8 @@ filename or text parser is added to the application, and capture creates no
 execution grant. This additive IPC and strengthened scope association retain
 project schema 21, SDK/process/Store formats and dependencies in the same
 undistributed application/SDK alpha.1 batch. Both Unreleased changelogs are
-synchronized; no additional bump or historical migration is required. Actual
-producer/checker execution and workbench integration remain separate.
+synchronized; no additional bump or historical migration is required.
+Execution and workbench integration use the existing owners described below.
 
 Desktop translation execution now connects the declared producer, separately
 consented checker, durable proof and per-entry projection to the existing Core
@@ -345,5 +345,10 @@ projection attempt origins; it never renews execution grants. The additive IPC
 and generic projection runner change no SDK/process/Store format, schema 21 or
 dependency metadata. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain
 in this same undistributed batch, with synchronized Unreleased changelogs and no
-additional bump or historical migration. Rendered workbench cutover and complete
-native acceptance remain pending.
+additional bump or historical migration. The translation workbench now uses the
+declared capability path, separate producer/checker consent and checked preview,
+while preserving the existing editor and per-entry adoption owner. Pending checks
+report incomplete qualification; missing proof for a qualified result remains a
+corruption error. This changes desktop behavior without new DTOs, SDK/process/Store
+formats, schema, dependencies or version sources. Complete native interaction
+acceptance and removal of legacy production translation entry points remain pending.
