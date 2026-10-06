@@ -152,7 +152,7 @@ fn register(
     }
     Ok(())
 }
-fn begin_job(active: &mut ActiveSession) -> Result<ExecutionId, CommandError> {
+pub(super) fn begin_job(active: &mut ActiveSession) -> Result<ExecutionId, CommandError> {
     let (host, _) = active.execution_parts()?;
     host.allow_mutation()?;
     if host.source.is_active() {

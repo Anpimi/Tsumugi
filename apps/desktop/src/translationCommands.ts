@@ -1,12 +1,12 @@
 import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import { sourceCommands } from "./sourceCommands";
-import type { TranslationFilesRequest, TranslationCaptureRequest, TranslationStartRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
+import type { TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationFilesRequest, TranslationCaptureRequest, TranslationStartRequest, TranslationPreviewRequest, TranslationAdoptRequest, TranslationHistoryRequest, TranslationActionRequest, TranslationSaveRequest, TranslationSelectRequest } from "./generated/translation.requests";
 import type { TranslationSaveReceipt } from "./generated/translation.responses";
-import { validateResponseFiles, validateResponsePreflight, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
+import { validateResponseSource, validateResponsePluginSelection, validateResponsePluginPreflight, validateResponseFiles, validateResponsePreflight, validateResponseAttempt, validateResponsePreview, validateResponsePrepared, validateResponseHistory, validateResponseAction, validateResponseSaved, validateResponseSelected } from "./generated/translation.validators";
 
-export type { TranslationStartRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
-export type { TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationPreflight, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
+export type { TranslationSourceRequest, PluginTranslationSelectRequest, PluginTranslationCaptureRequest, TranslationStartRequest, TranslationAdoptRequest, TranslationSaveRequest, TranslationSelectRequest, TranslationAdoptionConfirmation as TranslationConfirmation, TranslationSelectionDecision as TranslationDecision } from "./generated/translation.requests";
+export type { TranslationSourceContext, PluginTranslationSelection, PluginTranslationPreflight, TranslationMatch, TranslationOrigin, TranslationEntry, TranslationSelection, TranslationPreviewRow, TranslationPreview, TranslationPreflight, TranslationRevision, TranslationHistory, TranslationEditBasis, TranslationSaveReceipt } from "./generated/translation.responses";
 
 export function translationHistoryAfter(ordinal: string, pageSize: number): string {
   const after = BigInt(ordinal) - BigInt(pageSize);
@@ -14,6 +14,10 @@ export function translationHistoryAfter(ordinal: string, pageSize: number): stri
 }
 
 export const translationCommands = {
+  pluginSource: (request: TranslationSourceRequest) => checkedInvoke("read_plugin_translation_source", request, validateResponseSource),
+  selectPlugin: (request: PluginTranslationSelectRequest) => checkedInvoke("select_plugin_translation", request, validateResponsePluginSelection),
+  pluginFiles: (request: TranslationFilesRequest) => checkedInvoke("list_plugin_translation_files", request, validateResponseFiles),
+  preflightPlugin: (request: PluginTranslationCaptureRequest) => checkedInvoke("preflight_plugin_translation", request, validateResponsePluginPreflight),
   selectFolder: (request: SessionRequest) => sourceCommands.select(request),
   files: (request: TranslationFilesRequest) => checkedInvoke("list_translation_files", request, validateResponseFiles),
   preflight: (request: TranslationCaptureRequest) => checkedInvoke("preflight_translation", request, validateResponsePreflight),

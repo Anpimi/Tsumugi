@@ -30,6 +30,8 @@ macro_rules! handlers {
         source::read_source_history,source::read_source_history_content,source::read_source_lineage,
         source::estimate_source_update,source::read_source_impact,
         source::translation::list_translation_files,source::translation::preflight_translation,
+        source::plugin_translation::read_plugin_translation_source,source::plugin_translation::select_plugin_translation,
+        source::plugin_translation::list_plugin_translation_files,source::plugin_translation::preflight_plugin_translation,
         source::translation::start_translation_import,source::translation::read_translation_preview,
         source::translation::prepare_translation_adoption,source::translation::read_translation_history,
         source::translation::read_translation_action,

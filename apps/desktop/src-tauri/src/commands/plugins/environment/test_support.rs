@@ -7,19 +7,19 @@ use tsumugi_plugin_host::{
     catalog::{PackageApproval, PackageCatalog},
 };
 
-pub(in crate::commands::plugins) struct Fixture {
-    pub(in crate::commands::plugins) directory: tempfile::TempDir,
-    pub(in crate::commands::plugins) owner: Arc<ApplicationPlugins>,
-    pub(in crate::commands::plugins) image: PackageImage,
-    pub(in crate::commands::plugins) approval: PackageApproval,
+pub(in crate::commands) struct Fixture {
+    pub(in crate::commands) directory: tempfile::TempDir,
+    pub(in crate::commands) owner: Arc<ApplicationPlugins>,
+    pub(in crate::commands) image: PackageImage,
+    pub(in crate::commands) approval: PackageApproval,
 }
 impl Fixture {
-    pub(in crate::commands::plugins) fn new(
+    pub(in crate::commands) fn new(
         change: impl FnOnce(&mut sdk::PluginManifest, &mut BTreeMap<String, PackageFile>),
     ) -> Self {
         Self::with_owner(Arc::new(ApplicationPlugins::default()), change)
     }
-    pub(in crate::commands::plugins) fn with_owner(
+    pub(in crate::commands) fn with_owner(
         owner: Arc<ApplicationPlugins>,
         change: impl FnOnce(&mut sdk::PluginManifest, &mut BTreeMap<String, PackageFile>),
     ) -> Self {
@@ -35,7 +35,7 @@ impl Fixture {
             change,
         )
     }
-    pub(in crate::commands::plugins) fn with_resource(
+    pub(in crate::commands) fn with_resource(
         owner: Arc<ApplicationPlugins>,
         manifest: &[u8],
         resource_path: &str,
@@ -82,10 +82,10 @@ impl Fixture {
             approval,
         }
     }
-    pub(in crate::commands::plugins) fn root(&self) -> PathBuf {
+    pub(in crate::commands) fn root(&self) -> PathBuf {
         self.directory.path().join("application/plugins")
     }
-    pub(in crate::commands::plugins) fn request(&self) -> PluginSourceRequest {
+    pub(in crate::commands) fn request(&self) -> PluginSourceRequest {
         PluginSourceRequest {
             package: PluginPackageRequest {
                 plugin: self.approval.plugin.clone(),
@@ -101,7 +101,7 @@ impl Fixture {
                 .into(),
         }
     }
-    pub(in crate::commands::plugins) fn install(&self) {
+    pub(in crate::commands) fn install(&self) {
         let mut catalog = PackageCatalog::new();
         catalog
             .register(self.image.clone(), self.approval.clone())
@@ -119,11 +119,7 @@ impl Fixture {
             )
             .unwrap();
     }
-    pub(in crate::commands::plugins) fn decide(
-        &self,
-        enabled: bool,
-        runtimes: Vec<RuntimeApproval>,
-    ) {
+    pub(in crate::commands) fn decide(&self, enabled: bool, runtimes: Vec<RuntimeApproval>) {
         let mut manager = self.owner.try_manager().unwrap();
         self.owner.provision(&mut manager).unwrap();
         let store = manager.store.as_mut().unwrap();
@@ -141,6 +137,21 @@ impl Fixture {
                 },
                 || true,
             )
+            .unwrap();
+    }
+
+    pub(in crate::commands) fn install_runtime(
+        &self,
+        runtime: &tsumugi_plugin_host::CapturedRuntime,
+        approval: &RuntimeApproval,
+    ) {
+        let mut manager = self.owner.try_manager().unwrap();
+        self.owner.provision(&mut manager).unwrap();
+        manager
+            .store
+            .as_mut()
+            .unwrap()
+            .install_runtime(&ExecutionId::new().to_string(), runtime, approval, || true)
             .unwrap();
     }
 }

@@ -10,9 +10,12 @@ export interface Requests {
   capture: TranslationCaptureRequest;
   files: TranslationFilesRequest;
   history: TranslationHistoryRequest;
+  pluginCapture: PluginTranslationCaptureRequest;
+  pluginSelect: PluginTranslationSelectRequest;
   preview: TranslationPreviewRequest;
   save: TranslationSaveRequest;
   select: TranslationSelectRequest;
+  source: TranslationSourceRequest;
   start: TranslationStartRequest;
 }
 export interface TranslationActionRequest {
@@ -60,6 +63,56 @@ export interface TranslationHistoryRequest {
   sessionToken: string;
   unitId: ExecutionId;
 }
+export interface PluginTranslationCaptureRequest {
+  attemptId: ExecutionId;
+  fileName: string;
+  languageConfirmed: boolean;
+  projectId: ExecutionId;
+  selectionId: ExecutionId;
+  sessionToken: string;
+}
+export interface PluginTranslationSelectRequest {
+  expectedSourceSnapshotId: ExecutionId;
+  nativeScope: TranslationNativeScope;
+  projectId: ExecutionId;
+  sessionToken: string;
+  targetLocale: string;
+  translation: PluginTranslationRequest;
+}
+/**
+ * Captured from the current adopted source. The plugin supplies canonical
+ * native values under this exact policy; Core must never normalize them again.
+ */
+export interface TranslationNativeScope {
+  namespace: string;
+  policy: ContractRef;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface PluginTranslationRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
 export interface TranslationPreviewRequest {
   after: number;
   attemptId: ExecutionId;
@@ -87,6 +140,11 @@ export interface TranslationSelectRequest {
   sessionToken: string;
   sourceRevisionId: ExecutionId;
   unitId: ExecutionId;
+}
+export interface TranslationSourceRequest {
+  projectId: ExecutionId;
+  sessionToken: string;
+  targetLocale: string;
 }
 export interface TranslationStartRequest {
   attemptId: ExecutionId;

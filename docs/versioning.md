@@ -324,3 +324,16 @@ workbench. Project schema 21, SDK/process/Store formats, dependencies and versio
 sources remain unchanged in the same undistributed application
 `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch. Both Unreleased changelogs are
 synchronized, with no additional bump or historical migration.
+
+Desktop translation selection and capture now bind declared material to the
+current adopted source and an explicitly confirmed existing target language.
+Core reads exact native namespace/policy pairs from that source's immutable
+result and checks the selected pair at the existing enqueue boundary. The
+source-context observation stays within the existing complete 256 KiB read
+budget; larger observations are refused rather than truncated. No domain
+filename or text parser is added to the application, and capture creates no
+execution grant. This additive IPC and strengthened scope association retain
+project schema 21, SDK/process/Store formats and dependencies in the same
+undistributed application/SDK alpha.1 batch. Both Unreleased changelogs are
+synchronized; no additional bump or historical migration is required. Actual
+producer/checker execution and workbench integration remain separate.

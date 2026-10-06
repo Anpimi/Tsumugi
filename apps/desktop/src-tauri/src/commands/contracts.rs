@@ -133,6 +133,9 @@ struct SourceResponses {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct TranslationRequests {
+    source: execution::source::plugin_translation::TranslationSourceRequest,
+    plugin_select: execution::source::plugin_translation::PluginTranslationSelectRequest,
+    plugin_capture: execution::source::plugin_translation::PluginTranslationCaptureRequest,
     files: execution::source::translation::TranslationFilesRequest,
     capture: execution::source::translation::TranslationCaptureRequest,
     start: execution::source::translation::TranslationStartRequest,
@@ -147,6 +150,9 @@ struct TranslationRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct TranslationResponses {
+    source: tsumugi_core::TranslationSourceContext,
+    plugin_selection: Option<execution::source::plugin_translation::PluginTranslationSelection>,
+    plugin_preflight: execution::source::plugin_translation::PluginTranslationPreflight,
     files: Vec<String>,
     preflight: execution::source::translation::TranslationPreflight,
     attempt: tsumugi_core::execution::ExecutionId,

@@ -5,6 +5,7 @@ use tsumugi_core::content::{
 };
 pub(super) mod capture;
 pub mod plugin;
+pub mod plugin_translation;
 #[cfg(test)]
 mod tests;
 pub mod translation;
@@ -12,6 +13,7 @@ pub mod translation;
 #[derive(Default)]
 pub(super) struct SourceSession {
     plugin: plugin::PluginSourceSession,
+    translation: plugin_translation::PluginTranslationSession,
     selection: Option<(ExecutionId, Arc<capture::Selection>)>,
     picker: Option<ExecutionId>,
     pub(super) resource_picker: Option<ExecutionId>,
@@ -38,6 +40,7 @@ impl SourceSession {
         self.resource_picker = None;
         self.selection = None;
         self.plugin.discard_capture();
+        self.translation.discard_capture();
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

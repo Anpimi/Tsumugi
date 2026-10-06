@@ -3,6 +3,43 @@
 export type ExecutionId = string;
 export type Revision = string;
 export type TranslationOrigin = "import" | "manual" | "ai";
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+export type UnsignedDecimal = string;
 export type TranslationMatch =
   "unique" | "unmatched" | "ambiguous" | "selected-conflict" | "source-changed" | "applied";
 
@@ -11,11 +48,14 @@ export interface Responses {
   attempt: ExecutionId;
   files: string[];
   history: TranslationHistory;
+  pluginPreflight: PluginTranslationPreflight;
+  pluginSelection: PluginTranslationSelection | null;
   preflight: TranslationPreflight;
   prepared: AdoptionAction;
   preview: TranslationPreview;
   saved: TranslationSaveReceipt;
   selected: TranslationSelection;
+  source: TranslationSourceContext;
 }
 export interface TranslationSelection {
   actionId: ExecutionId;
@@ -54,6 +94,164 @@ export interface TranslationRevision {
   sourceSnapshotId: ExecutionId;
   text: string;
   unitId: ExecutionId;
+}
+export interface PluginTranslationPreflight {
+  attemptId: ExecutionId;
+  file: PluginSourceFile;
+  inputDigest: string;
+  source: TranslationSourceContext;
+  targetLocale: string;
+  translation: PluginTranslationView;
+}
+export interface PluginSourceFile {
+  byteLength: number;
+  logicalPath: string;
+  role: string;
+  sha256: string;
+}
+/**
+ * Immutable matching scopes from the current adopted source. This observation
+ * allocates no identities and grants neither execution nor adoption authority.
+ */
+export interface TranslationSourceContext {
+  contentRevision: Revision;
+  nativeScopes: TranslationNativeScope[];
+  profile: ContractRef;
+  sourceSetId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+}
+/**
+ * Captured from the current adopted source. The plugin supplies canonical
+ * native values under this exact policy; Core must never normalize them again.
+ */
+export interface TranslationNativeScope {
+  namespace: string;
+  policy: ContractRef;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+export interface PluginTranslationView {
+  checker: CapabilityBinding;
+  declaration: TranslationImportDeclaration;
+  environment: RuntimeEnvironmentDescriptor;
+  environmentDigest: string;
+  extractor: CapabilityBinding;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+export interface TranslationImportDeclaration {
+  checker: string;
+  displayName: string;
+  extractor: string;
+  material: TranslationMaterialDeclaration;
+  profile: ContractRef;
+  semanticRules: ContractRef[];
+}
+/**
+ * Metadata describing one selected file relative to an explicitly granted
+ * directory. No glob, executable discovery or filesystem authority is implied.
+ */
+export interface TranslationMaterialDeclaration {
+  extension: string;
+  logicalDirectory: string;
+  maxBytes: number;
+  role: string;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
+}
+export interface PluginTranslationSelection {
+  folderName: string;
+  nativeScope: TranslationNativeScope;
+  selectionId: ExecutionId;
+  source: TranslationSourceContext;
+  targetLocale: string;
+  translation: PluginTranslationView;
 }
 export interface TranslationPreflight {
   count: number;

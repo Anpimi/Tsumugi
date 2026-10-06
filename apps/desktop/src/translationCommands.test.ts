@@ -1,5 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/translation-commands.json";
+import captureFixture from "../test/fixtures/pluginTranslationCapture.contract.json";
 import * as validators from "./generated/translation.validators";
 import unicodeFixture from "../../../crates/core/tests/fixtures/source-unicode.contract.json";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -9,6 +10,39 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 beforeEach(() => invoke.mockReset());
+
+it("routes declared translation selection and capture through generated contracts", async () => {
+  expect(validators.validateRequestSource(captureFixture.sourceRequest)).toBe(true);
+  expect(validators.validateRequestPluginSelect(captureFixture.select)).toBe(true);
+  expect(validators.validateRequestPluginCapture(captureFixture.capture)).toBe(true);
+  invoke.mockResolvedValueOnce(captureFixture.source).mockResolvedValueOnce(captureFixture.selection)
+    .mockResolvedValueOnce(["zh.json"]).mockResolvedValueOnce(captureFixture.preflight);
+  expect(await translationCommands.pluginSource(captureFixture.sourceRequest)).toEqual(captureFixture.source);
+  expect(await translationCommands.selectPlugin(captureFixture.select)).toEqual(captureFixture.selection);
+  const files = { sessionToken: captureFixture.capture.sessionToken, projectId: captureFixture.capture.projectId, selectionId: captureFixture.capture.selectionId };
+  expect(await translationCommands.pluginFiles(files)).toEqual(["zh.json"]);
+  expect(await translationCommands.preflightPlugin(captureFixture.capture)).toEqual(captureFixture.preflight);
+  expect(invoke.mock.calls).toEqual([
+    ["read_plugin_translation_source", { request: captureFixture.sourceRequest }],
+    ["select_plugin_translation", { request: captureFixture.select }],
+    ["list_plugin_translation_files", { request: files }],
+    ["preflight_plugin_translation", { request: captureFixture.capture }],
+  ]);
+});
+
+it("keeps source counters exact and refuses added capture authority or invalid observations", async () => {
+  expect(validators.validateResponseSource(captureFixture.source)).toBe(true);
+  expect(validators.validateResponsePluginSelection(null)).toBe(true);
+  expect(validators.validateResponsePluginPreflight(captureFixture.preflight)).toBe(true);
+  expect(validators.validateResponseSource({ ...captureFixture.source, contentRevision: 9007199254740993 })).toBe(false);
+  for (const property of ["path", "directory", "targetLocale", "grantId", "approved"]) {
+    expect(validators.validateRequestPluginCapture({ ...captureFixture.capture, [property]: true })).toBe(false);
+  }
+  invoke.mockResolvedValue({ ...captureFixture.preflight, grantId: "forged" });
+  await expect(translationCommands.preflightPlugin(captureFixture.capture)).rejects.toThrow();
+  invoke.mockResolvedValueOnce(captureFixture.source);
+  expect((await translationCommands.pluginSource(captureFixture.sourceRequest)).contentRevision).toBe("9223372036854775807");
+});
 
 it("sends the shared translation command fixture without changing field names or values", async () => {
   const start: TranslationStartRequest = fixture.start;

@@ -34,7 +34,7 @@ pub use persistence::{
     TermRevision, TmMatchKind, TmSuggestion, TranslationAdoptionConfirmation,
     TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
     TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,
-    TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision, Waiver,
+    TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision, TranslationSourceContext, Waiver,
     WaiverWrite, WorkItem, WorkPage,
 };
 

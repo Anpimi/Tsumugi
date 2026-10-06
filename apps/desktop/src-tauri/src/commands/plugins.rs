@@ -22,6 +22,8 @@ pub(super) mod packages;
 pub(super) mod runtimes;
 pub(super) mod sources;
 pub(super) mod translations;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+pub(in crate::commands) use environment::test_support::Fixture as InstalledPluginFixture;
 pub use packages::{
     PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
     PluginPackageDetailsView, PluginPackageRequest,

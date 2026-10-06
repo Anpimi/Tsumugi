@@ -8,6 +8,103 @@ use crate::execution::{
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
+/// Immutable matching scopes from the current adopted source. This observation
+/// allocates no identities and grants neither execution nor adoption authority.
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TranslationSourceContext {
+    pub source_snapshot_id: ExecutionId,
+    pub source_set_id: ExecutionId,
+    pub content_revision: Revision,
+    pub profile: tsumugi_plugin_sdk::ContractRef,
+    pub native_scopes: Vec<tsumugi_plugin_sdk::TranslationNativeScope>,
+}
+
+fn checked_source_context(
+    context: TranslationSourceContext,
+) -> Result<TranslationSourceContext, ExecutionError> {
+    codec::encode(&context, crate::content::MAX_CONTENT_PAGE_BYTES)
+        .map_err(|failure| error(failure.code, "translation-source-budget"))?;
+    Ok(context)
+}
+
+fn native_scopes(
+    source: &crate::content::SourceOutput,
+) -> Vec<tsumugi_plugin_sdk::TranslationNativeScope> {
+    source
+        .occurrences
+        .iter()
+        .filter_map(|row| row.native_identity.as_ref())
+        .map(|identity| (identity.namespace.clone(), identity.policy.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|(namespace, policy)| tsumugi_plugin_sdk::TranslationNativeScope { namespace, policy })
+        .collect()
+}
+
+fn check_native_scope(
+    scopes: &[tsumugi_plugin_sdk::TranslationNativeScope],
+    selected: &tsumugi_plugin_sdk::TranslationNativeScope,
+) -> Result<(), ExecutionError> {
+    if !scopes
+        .iter()
+        .any(|scope| scope.namespace == selected.namespace)
+    {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-native-scope",
+        ));
+    }
+    if !scopes.contains(selected) {
+        return Err(error(
+            ErrorCode::DependencyConflict,
+            "translation-native-policy",
+        ));
+    }
+    Ok(())
+}
+
+impl ProjectStore {
+    pub fn translation_source_context(
+        &self,
+        target_locale: &str,
+    ) -> Result<TranslationSourceContext, ExecutionError> {
+        let project = ExecutionId::parse(
+            &self
+                .metadata()
+                .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?
+                .project_id()
+                .to_string(),
+        )?;
+        let connection = self
+            .connection()
+            .map_err(|_| error(ErrorCode::StorageFailed, "translation-read"))?;
+        check_target(connection, project, target_locale)?;
+        let snapshot = self
+            .content_scope()?
+            .current_snapshot
+            .ok_or_else(|| error(ErrorCode::DependencyConflict, "translation-source"))?;
+        // Reuse the adopted-source reader, including its original proof,
+        // receipt, row association and immutable-result checks.
+        let page = self.source_content(snapshot, 0, 1)?;
+        if page.scope.current_snapshot != Some(snapshot) {
+            return Err(error(ErrorCode::DependencyConflict, "translation-source"));
+        }
+        let input = self.execution_input(page.attempt_id)?;
+        let result = self.execution_result(page.attempt_id, page.result_id)?;
+        let bundle = crate::content::SourceBundle::from_input(&input)?;
+        let source = crate::content::validate_output(&input, &result)?;
+        checked_source_context(TranslationSourceContext {
+            source_snapshot_id: snapshot,
+            source_set_id: bundle.set_id,
+            content_revision: page.scope.revision,
+            profile: bundle.profile,
+            native_scopes: native_scopes(&source),
+        })
+    }
+}
+
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -418,7 +515,8 @@ fn record_plugin_input(connection: &Connection, input: &FixedInput) -> Result<()
     let source_result = super::ledger::load_result(connection, &source_input, id(result)?)?;
     let bundle = crate::content::SourceBundle::from_input(&source_input)?;
     let source = crate::content::validate_output(&source_input, &source_result)?;
-    if bundle.profile != material.profile || source.namespace != material.native_scope.namespace {
+    let scopes = native_scopes(&source);
+    if bundle.profile != material.profile {
         return Err(error(
             ErrorCode::DependencyConflict,
             "translation-native-scope",
@@ -426,18 +524,7 @@ fn record_plugin_input(connection: &Connection, input: &FixedInput) -> Result<()
     }
     // Compare the selected domain policy exactly. Display labels and text
     // equality cannot establish a policy or justify normalizing native values.
-    let policies: std::collections::BTreeSet<_> = source
-        .occurrences
-        .iter()
-        .filter_map(|occurrence| occurrence.native_identity.as_ref())
-        .map(|identity| &identity.policy)
-        .collect();
-    if !policies.is_empty() && !policies.contains(&material.native_scope.policy) {
-        return Err(error(
-            ErrorCode::DependencyConflict,
-            "translation-native-policy",
-        ));
-    }
+    check_native_scope(&scopes, &material.native_scope)?;
     Ok(())
 }
 
@@ -1850,6 +1937,165 @@ mod tests {
         let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
         let rows = store.source_content(snapshot, 0, 10).unwrap().rows;
         (temp, store, rows)
+    }
+
+    #[test]
+    fn translation_source_context_restores_exact_adopted_scope_without_business_writes() {
+        let (temp, store, rows) = project_with_source();
+        let before = store.content_scope().unwrap();
+        let context = store.translation_source_context("zh-CN").unwrap();
+        assert_eq!(context.source_snapshot_id, before.current_snapshot.unwrap());
+        assert_eq!(context.content_revision, before.revision);
+        let page = store
+            .source_content(context.source_snapshot_id, 0, 10)
+            .unwrap();
+        let bundle = crate::content::SourceBundle::from_input(
+            &store.execution_input(page.attempt_id).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(context.source_set_id, bundle.set_id);
+        assert_eq!(context.profile, bundle.profile);
+        assert_eq!(
+            context.native_scopes,
+            vec![tsumugi_plugin_sdk::TranslationNativeScope {
+                namespace: rows[0]
+                    .occurrence
+                    .native_identity
+                    .as_ref()
+                    .unwrap()
+                    .namespace
+                    .clone(),
+                policy: rows[0]
+                    .occurrence
+                    .native_identity
+                    .as_ref()
+                    .unwrap()
+                    .policy
+                    .clone(),
+            }]
+        );
+        assert_eq!(store.translation_source_context("ja").unwrap(), context);
+        assert!(store.translation_source_context("fr").is_err());
+        assert!(store.translation_source_context("zh-cn").is_err());
+        assert_eq!(store.content_scope().unwrap(), before);
+        drop(store);
+        let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
+        assert_eq!(
+            reopened.translation_source_context("zh-CN").unwrap(),
+            context
+        );
+        let empty = tempfile::tempdir().unwrap();
+        let store = ProjectStore::create(
+            empty.path().join("project"),
+            ProjectMetadata::create("Empty", "en", ["zh-CN"]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            store.translation_source_context("zh-CN").unwrap_err().stage,
+            "translation-source"
+        );
+    }
+
+    #[test]
+    fn translation_source_context_keeps_namespace_and_policy_paired() {
+        let bundle = SourceBundle::capture(
+            br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+            br#"{"first":"same","second":"same"}"#, "en",
+        ).unwrap();
+        let mut source =
+            crate::content::extract(&bundle, &crate::execution::Cancellation::default()).unwrap();
+        let first = source.occurrences[0].native_identity.clone().unwrap();
+        let second = source.occurrences[1].native_identity.as_mut().unwrap();
+        second.namespace = "Other.Mod".into();
+        second.policy.id = "other-native-key".into();
+        let selected = tsumugi_plugin_sdk::TranslationNativeScope {
+            namespace: second.namespace.clone(),
+            policy: second.policy.clone(),
+        };
+        let scopes = native_scopes(&source);
+        assert_eq!(scopes.len(), 2);
+        check_native_scope(&scopes, &selected).unwrap();
+        let borrowed = tsumugi_plugin_sdk::TranslationNativeScope {
+            namespace: first.namespace,
+            policy: selected.policy,
+        };
+        assert_eq!(
+            check_native_scope(&scopes, &borrowed).unwrap_err().stage,
+            "translation-native-policy"
+        );
+        let missing = tsumugi_plugin_sdk::TranslationNativeScope {
+            namespace: "Unknown.Mod".into(),
+            policy: first.policy,
+        };
+        assert_eq!(
+            check_native_scope(&scopes, &missing).unwrap_err().stage,
+            "translation-native-scope"
+        );
+        assert!(check_native_scope(&[], &missing).is_err());
+    }
+
+    #[test]
+    fn translation_source_context_enforces_complete_read_budget_at_n_and_n_plus_one() {
+        let mut context = TranslationSourceContext {
+            source_snapshot_id: ExecutionId::new(),
+            source_set_id: ExecutionId::new(),
+            content_revision: Revision::new(1).unwrap(),
+            profile: tsumugi_plugin_sdk::ContractRef {
+                id: "p".repeat(128),
+                schema_version: 1,
+                behavior_version: 1,
+            },
+            native_scopes: vec![],
+        };
+        while serde_json::to_vec(&context).unwrap().len() <= crate::content::MAX_CONTENT_PAGE_BYTES
+        {
+            let prefix = format!("scope-{}-", context.native_scopes.len());
+            context
+                .native_scopes
+                .push(tsumugi_plugin_sdk::TranslationNativeScope {
+                    namespace: format!("{prefix}{}", "n".repeat(256 - prefix.len())),
+                    policy: tsumugi_plugin_sdk::ContractRef {
+                        id: "k".repeat(128),
+                        schema_version: 1,
+                        behavior_version: 1,
+                    },
+                });
+        }
+        let mut extra =
+            serde_json::to_vec(&context).unwrap().len() - crate::content::MAX_CONTENT_PAGE_BYTES;
+        let last = context.native_scopes.last_mut().unwrap();
+        for field in [
+            &mut last.namespace,
+            &mut last.policy.id,
+            &mut context.profile.id,
+        ] {
+            let remove = extra.min(field.len() - 1);
+            field.truncate(field.len() - remove);
+            extra -= remove;
+        }
+        assert_eq!(extra, 0);
+        assert_eq!(
+            serde_json::to_vec(&context).unwrap().len(),
+            crate::content::MAX_CONTENT_PAGE_BYTES
+        );
+        assert_eq!(checked_source_context(context.clone()).unwrap(), context);
+        let last = context.native_scopes.last_mut().unwrap();
+        if context.profile.id.len() < 128 {
+            context.profile.id.push('x');
+        } else if last.policy.id.len() < 128 {
+            last.policy.id.push('x');
+        } else {
+            last.namespace.push('x');
+        }
+        assert_eq!(
+            serde_json::to_vec(&context).unwrap().len(),
+            crate::content::MAX_CONTENT_PAGE_BYTES + 1
+        );
+        let count = context.native_scopes.len();
+        let failure = checked_source_context(context.clone()).unwrap_err();
+        assert_eq!(failure.code, ErrorCode::LimitExceeded);
+        assert_eq!(failure.stage, "translation-source-budget");
+        assert_eq!(context.native_scopes.len(), count);
     }
 
     #[test]
