@@ -108,7 +108,7 @@ pub struct PluginPackageDecisionView {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct PluginRuntimeDecisionView {
-    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub environment: sdk::ExecutionEnvironmentDescriptor,
     pub environment_digest: String,
     pub origin: PluginOriginView,
 }
@@ -278,13 +278,20 @@ impl ApplicationPlugins {
             runtimes: inventory
                 .runtimes
                 .into_iter()
-                .map(|record| PluginRuntimeView {
-                    environment: record.receipt.approval().environment.clone(),
-                    environment_digest: record.receipt.environment_digest().into(),
-                    origin: (&record.receipt.approval().origin).into(),
-                    state: record.state.into(),
+                .map(|record| {
+                    Ok(PluginRuntimeView {
+                        environment: record
+                            .receipt
+                            .approval()
+                            .captured_environment()
+                            .map_err(map_store_error)?
+                            .clone(),
+                        environment_digest: record.receipt.environment_digest().into(),
+                        origin: (&record.receipt.approval().origin).into(),
+                        state: record.state.into(),
+                    })
                 })
-                .collect(),
+                .collect::<Result<Vec<_>, CommandError>>()?,
             package_decisions: settings
                 .packages()
                 .iter()

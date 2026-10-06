@@ -30,6 +30,13 @@ struct Fixture {
     runtime: CapturedRuntime,
 }
 
+fn node_environment_mut(approval: &mut RuntimeApproval) -> &mut sdk::RuntimeEnvironmentDescriptor {
+    match &mut approval.environment {
+        sdk::ExecutionEnvironmentDescriptor::Captured(environment) => environment,
+        sdk::ExecutionEnvironmentDescriptor::Native(_) => panic!("expected captured Node fixture"),
+    }
+}
+
 fn mode(path: &Path, value: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(value)).unwrap();
 }
@@ -121,7 +128,7 @@ impl Fixture {
             tool,
             host,
             approval: RuntimeApproval {
-                environment,
+                environment: environment.into(),
                 origin: origin(),
             },
             runtime,
@@ -248,7 +255,10 @@ fn reopen_uses_original_complete_bytes_after_sources_are_removed() {
     assert_eq!(inventory.runtimes[0].state, InstalledObjectState::Sealed);
     let loaded = store.load_runtime(&fixture.approval, || true).unwrap();
     assert_eq!(loaded.receipt(), &receipt);
-    assert_eq!(loaded.runtime().descriptor(), &fixture.approval.environment);
+    assert_eq!(
+        loaded.runtime().descriptor(),
+        fixture.approval.captured_environment().unwrap()
+    );
     let (catalog, approval) = package();
     assert!(!catalog.is_enabled(&approval.plugin).unwrap());
     assert_eq!(
@@ -270,7 +280,7 @@ fn independent_origin_and_every_descriptor_field_control_admission() {
     let fixture = Fixture::new();
     let mut store = PackageStore::open_existing(&fixture.root).unwrap();
     let mut wrong = fixture.approval.clone();
-    wrong.environment.tool_version = "26.10.1".into();
+    node_environment_mut(&mut wrong).tool_version = "26.10.1".into();
     assert_eq!(
         store
             .install_runtime(ACTION, &fixture.runtime, &wrong, || true)
@@ -325,11 +335,11 @@ fn independent_origin_and_every_descriptor_field_control_admission() {
 fn distinct_environments_coexist_and_old_approval_stays_exact() {
     let fixture = Fixture::new();
     let mut approval_b = fixture.approval.clone();
-    approval_b.environment.tool_version = "26.10.1".into();
+    node_environment_mut(&mut approval_b).tool_version = "26.10.1".into();
     let runtime_b = CapturedRuntime::capture_directories(
         &fixture.tool,
         &fixture.host,
-        &approval_b.environment,
+        approval_b.captured_environment().unwrap(),
         || true,
     )
     .unwrap();
@@ -354,7 +364,7 @@ fn distinct_environments_coexist_and_old_approval_stays_exact() {
             .unwrap()
             .runtime()
             .descriptor(),
-        &fixture.approval.environment
+        fixture.approval.captured_environment().unwrap()
     );
     assert_eq!(
         store
@@ -362,7 +372,7 @@ fn distinct_environments_coexist_and_old_approval_stays_exact() {
             .unwrap()
             .runtime()
             .descriptor(),
-        &approval_b.environment
+        approval_b.captured_environment().unwrap()
     );
     assert_eq!(
         fs::read_dir(fixture.root.join("runtimes")).unwrap().count(),
@@ -507,7 +517,14 @@ fn cached_bytes_flags_and_unsafe_entries_are_rejected_without_removal() {
 
 #[test]
 fn strict_receipts_cannot_replace_independent_approval() {
-    for damage in ["unknown", "duplicate", "origin", "digest", "action"] {
+    for damage in [
+        "unknown",
+        "duplicate",
+        "origin",
+        "digest",
+        "action",
+        "native-environment",
+    ] {
         let fixture = Fixture::new();
         let mut store = PackageStore::open_existing(&fixture.root).unwrap();
         let receipt = store
@@ -535,6 +552,12 @@ fn strict_receipts_cannot_replace_independent_approval() {
             }
             "action" => {
                 value["actionId"] = "invalid-action".into();
+                serde_json::to_vec(&value).unwrap()
+            }
+            "native-environment" => {
+                let native = native_approval();
+                value["approval"] = serde_json::to_value(&native).unwrap();
+                value["environmentDigest"] = native.environment.digest().unwrap().into();
                 serde_json::to_vec(&value).unwrap()
             }
             _ => unreachable!(),
@@ -698,11 +721,11 @@ fn full_runtime_namespace_allows_original_action_retry_only() {
     let mut store = PackageStore::open_existing(&fixture.root).unwrap();
     for index in 0..MAX_INSTALLED_RUNTIMES {
         let mut approval = fixture.approval.clone();
-        approval.environment.tool_version = format!("26.10.{index}");
+        node_environment_mut(&mut approval).tool_version = format!("26.10.{index}");
         let runtime = CapturedRuntime::capture_directories(
             &fixture.tool,
             &fixture.host,
-            &approval.environment,
+            approval.captured_environment().unwrap(),
             || true,
         )
         .unwrap();
@@ -718,11 +741,11 @@ fn full_runtime_namespace_allows_original_action_retry_only() {
     assert!(inventory.packages.is_empty());
     assert!(inventory.runtimes.windows(2).all(|pair| pair[0].receipt.environment_digest() < pair[1].receipt.environment_digest()));
     let mut approval = fixture.approval.clone();
-    approval.environment.tool_version = "26.10.0".into();
+    node_environment_mut(&mut approval).tool_version = "26.10.0".into();
     let first = CapturedRuntime::capture_directories(
         &fixture.tool,
         &fixture.host,
-        &approval.environment,
+        approval.captured_environment().unwrap(),
         || true,
     )
     .unwrap();
@@ -730,11 +753,11 @@ fn full_runtime_namespace_allows_original_action_retry_only() {
     store
         .install_runtime(&first_action, &first, &approval, || true)
         .unwrap();
-    approval.environment.tool_version = "26.10.999".into();
+    node_environment_mut(&mut approval).tool_version = "26.10.999".into();
     let extra = CapturedRuntime::capture_directories(
         &fixture.tool,
         &fixture.host,
-        &approval.environment,
+        approval.captured_environment().unwrap(),
         || true,
     )
     .unwrap();
@@ -817,11 +840,11 @@ fn receipt_roundtrip_is_data_without_activation_or_authority() {
 fn unselected_runtime_index_never_approves_its_cached_bytes() {
     let fixture = Fixture::new();
     let mut approval_b = fixture.approval.clone();
-    approval_b.environment.tool_version = "26.10.1".into();
+    node_environment_mut(&mut approval_b).tool_version = "26.10.1".into();
     let runtime_b = CapturedRuntime::capture_directories(
         &fixture.tool,
         &fixture.host,
-        &approval_b.environment,
+        approval_b.captured_environment().unwrap(),
         || true,
     )
     .unwrap();
@@ -897,7 +920,7 @@ fn settings_retains_exact_runtime_approval_without_capture_or_activation() {
     let mut store = PackageStore::open_existing(&fixture.root).unwrap();
     let (_, package_approval) = package();
     let mut second = fixture.approval.clone();
-    second.environment.tool_version = "26.10.1".into();
+    node_environment_mut(&mut second).tool_version = "26.10.1".into();
     let update = tsumugi_plugin_host::PluginSettingsUpdate {
         packages: vec![tsumugi_plugin_host::ApprovedPackageSetting {
             approval: package_approval,
@@ -932,7 +955,7 @@ fn settings_retains_exact_runtime_approval_without_capture_or_activation() {
             .unwrap()
             .runtime()
             .descriptor(),
-        &fixture.approval.environment
+        fixture.approval.captured_environment().unwrap()
     );
     let mut changed = fixture.approval.clone();
     changed.origin.source_id = "other-source".into();
@@ -960,7 +983,9 @@ fn settings_rejects_duplicate_invalid_and_excess_runtime_decisions_before_write(
             "duplicate" => update.runtimes.push(fixture.approval.clone()),
             "invalid-origin" => update.runtimes[0].origin.source_id = "invalid origin".into(),
             "invalid-descriptor" => {
-                update.runtimes[0].environment.tool.tree_digest = "invalid digest".into()
+                node_environment_mut(&mut update.runtimes[0])
+                    .tool
+                    .tree_digest = "invalid digest".into()
             }
             "capacity" => {
                 update.runtimes = vec![fixture.approval.clone(); MAX_INSTALLED_RUNTIMES + 1]
@@ -983,7 +1008,7 @@ fn settings_accepts_128_distinct_environments_without_loading_them() {
     let mut update = tsumugi_plugin_host::PluginSettingsUpdate::default();
     for index in 0..MAX_INSTALLED_RUNTIMES {
         let mut approval = fixture.approval.clone();
-        approval.environment.tool_version = format!("26.10.{index}");
+        node_environment_mut(&mut approval).tool_version = format!("26.10.{index}");
         update.runtimes.push(approval);
     }
     let mut store = PackageStore::open_existing(&fixture.root).unwrap();
@@ -995,7 +1020,7 @@ fn settings_accepts_128_distinct_environments_without_loading_them() {
     );
     let bytes = fs::read(fixture.root.join("settings.json")).unwrap();
     let mut extra = fixture.approval.clone();
-    extra.environment.tool_version = "26.10.128".into();
+    node_environment_mut(&mut extra).tool_version = "26.10.128".into();
     update.runtimes.push(extra);
     assert_eq!(
         store
@@ -1005,4 +1030,263 @@ fn settings_accepts_128_distinct_environments_without_loading_them() {
     );
     assert_eq!(store.settings(|| true).unwrap(), saved);
     assert_eq!(fs::read(fixture.root.join("settings.json")).unwrap(), bytes);
+}
+
+fn native_approval() -> RuntimeApproval {
+    RuntimeApproval {
+        environment: tsumugi_plugin_host::CapturedNativeRuntime::inspect_current()
+            .unwrap()
+            .into(),
+        origin: origin(),
+    }
+}
+
+#[test]
+fn native_and_node_decisions_share_one_snapshot_without_installing_native_trees() {
+    let fixture = Fixture::new();
+    let native = native_approval();
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    let update = tsumugi_plugin_host::PluginSettingsUpdate {
+        packages: vec![],
+        runtimes: vec![native.clone(), fixture.approval.clone()],
+    };
+    let saved = store.update_settings(0, ACTION, &update, || true).unwrap();
+    let bytes = fs::read(fixture.root.join("settings.json")).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["formatVersion"], 2);
+    assert_eq!(saved.runtimes().len(), 2);
+    assert!(saved.runtimes().contains(&native));
+    assert!(saved.runtimes().contains(&fixture.approval));
+    assert_eq!(
+        store.update_settings(0, ACTION, &update, || true).unwrap(),
+        saved
+    );
+    assert_eq!(fs::read(fixture.root.join("settings.json")).unwrap(), bytes);
+    assert!(store.inventory(|| true).unwrap().runtimes.is_empty());
+    assert!(store.inventory(|| true).unwrap().packages.is_empty());
+    drop(store);
+    let store = PackageStore::open_existing(&fixture.root).unwrap();
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    let sdk::ExecutionEnvironmentDescriptor::Native(environment) = &native.environment else {
+        panic!("expected observed Native Host");
+    };
+    let captured = tsumugi_plugin_host::CapturedNativeRuntime::capture(environment).unwrap();
+    assert_eq!(
+        captured.environment_digest(),
+        native.environment.digest().unwrap()
+    );
+    // Application approval neither installs a tree nor grants execution.
+    assert_eq!(
+        store.load_runtime(&native, || true).unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+    assert!(store.inventory(|| true).unwrap().runtimes.is_empty());
+}
+
+#[test]
+fn removing_native_approval_preserves_node_decisions_and_original_cas() {
+    let fixture = Fixture::new();
+    let native = native_approval();
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    let approved = tsumugi_plugin_host::PluginSettingsUpdate {
+        packages: vec![],
+        runtimes: vec![fixture.approval.clone(), native],
+    };
+    let saved = store
+        .update_settings(0, ACTION, &approved, || true)
+        .unwrap();
+    let removed = tsumugi_plugin_host::PluginSettingsUpdate {
+        packages: vec![],
+        runtimes: vec![fixture.approval.clone()],
+    };
+    assert_eq!(
+        store
+            .update_settings(0, OTHER_ACTION, &removed, || true)
+            .unwrap_err(),
+        InstallError::RevisionConflict
+    );
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    assert_eq!(
+        store
+            .update_settings(1, OTHER_ACTION, &removed, || false)
+            .unwrap_err(),
+        InstallError::AuthorityRevoked
+    );
+    assert_eq!(store.settings(|| true).unwrap(), saved);
+    let current = store
+        .update_settings(1, OTHER_ACTION, &removed, || true)
+        .unwrap();
+    assert_eq!(current.runtimes(), &[fixture.approval.clone()]);
+    let bytes = fs::read(fixture.root.join("settings.json")).unwrap();
+    assert_eq!(
+        store
+            .update_settings(1, OTHER_ACTION, &removed, || true)
+            .unwrap(),
+        current
+    );
+    assert_eq!(
+        store
+            .update_settings(0, ACTION, &approved, || true)
+            .unwrap_err(),
+        InstallError::RevisionConflict
+    );
+    assert_eq!(fs::read(fixture.root.join("settings.json")).unwrap(), bytes);
+    drop(store);
+    assert_eq!(
+        PackageStore::open_existing(&fixture.root)
+            .unwrap()
+            .settings(|| true)
+            .unwrap(),
+        current
+    );
+}
+
+#[test]
+fn native_approval_cannot_install_or_load_a_node_runtime() {
+    let fixture = Fixture::new();
+    let native = native_approval();
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    assert_eq!(
+        native.captured_environment().unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+    assert_eq!(
+        store
+            .install_runtime(ACTION, &fixture.runtime, &native, || true)
+            .unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+    assert_eq!(
+        store.load_runtime(&native, || true).unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+    assert!(fixture.candidates().is_empty());
+    assert!(store.inventory(|| true).unwrap().runtimes.is_empty());
+    assert!(!fixture.root.join("settings.json").exists());
+    store
+        .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
+        .unwrap();
+    let bytes = fs::read(fixture.receipt_path()).unwrap();
+    assert_eq!(
+        store
+            .install_runtime(OTHER_ACTION, &fixture.runtime, &native, || true)
+            .unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+    assert_eq!(
+        store.load_runtime(&native, || true).unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+    assert_eq!(fs::read(fixture.receipt_path()).unwrap(), bytes);
+    assert_eq!(
+        store
+            .load_runtime(&fixture.approval, || true)
+            .unwrap()
+            .runtime()
+            .descriptor(),
+        fixture.approval.captured_environment().unwrap()
+    );
+}
+
+#[test]
+fn a_consistent_native_receipt_cannot_approve_a_runtime_tree() {
+    let fixture = Fixture::new();
+    let native = native_approval();
+    let digest = native.environment.digest().unwrap();
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    let receipt = store
+        .install_runtime(ACTION, &fixture.runtime, &fixture.approval, || true)
+        .unwrap();
+    let mut value = serde_json::to_value(receipt).unwrap();
+    value["approval"] = serde_json::to_value(&native).unwrap();
+    value["environmentDigest"] = digest.clone().into();
+    mode(&fixture.receipt_path(), 0o600);
+    fs::write(fixture.receipt_path(), serde_json::to_vec(&value).unwrap()).unwrap();
+    mode(&fixture.receipt_path(), 0o400);
+    // The directory and derived digest agree, so rejection must come from the
+    // runtime profile boundary rather than a mismatched object name.
+    let object = fixture.root.join("runtimes").join(digest);
+    mode(&fixture.object(), 0o700);
+    fs::rename(fixture.object(), &object).unwrap();
+    mode(&object, 0o500);
+    let before = fs::read(object.join("receipt.json")).unwrap();
+    assert_eq!(
+        store.inventory(|| true).unwrap_err(),
+        InstallError::CorruptReceipt
+    );
+    assert_eq!(
+        store.load_runtime(&native, || true).unwrap_err(),
+        InstallError::ApprovalMismatch
+    );
+    assert_eq!(fs::read(object.join("receipt.json")).unwrap(), before);
+    assert!(object.join("tool/bin/node").is_file());
+    assert!(fixture.candidates().is_empty());
+}
+
+#[test]
+fn native_decisions_reject_invalid_duplicate_and_revoked_updates_before_write() {
+    for invalid in ["descriptor", "origin", "duplicate", "revoked"] {
+        let fixture = Fixture::new();
+        let mut native = native_approval();
+        if invalid == "descriptor" {
+            let sdk::ExecutionEnvironmentDescriptor::Native(environment) = &mut native.environment
+            else {
+                unreachable!();
+            };
+            environment.process_protocol += 1;
+        } else if invalid == "origin" {
+            native.origin.source_id = "invalid origin".into();
+        }
+        let mut update = tsumugi_plugin_host::PluginSettingsUpdate {
+            packages: vec![],
+            runtimes: vec![native.clone()],
+        };
+        if invalid == "duplicate" {
+            update.runtimes.push(native);
+        }
+        let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+        assert!(
+            store
+                .update_settings(0, ACTION, &update, || invalid != "revoked")
+                .is_err(),
+            "{invalid}"
+        );
+        assert_eq!(store.settings(|| true).unwrap().revision(), 0);
+        assert!(!fixture.root.join("settings.json").exists());
+        assert!(fixture.candidates().is_empty());
+        assert!(store.inventory(|| true).unwrap().runtimes.is_empty());
+    }
+}
+
+#[test]
+fn old_development_settings_are_refused_unchanged_instead_of_migrated() {
+    let fixture = Fixture::new();
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    let update = tsumugi_plugin_host::PluginSettingsUpdate {
+        packages: vec![],
+        runtimes: vec![fixture.approval.clone(), native_approval()],
+    };
+    let saved = store.update_settings(0, ACTION, &update, || true).unwrap();
+    let mut value = serde_json::to_value(saved).unwrap();
+    value["formatVersion"] = 1.into();
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let settings_path = fixture.root.join("settings.json");
+    mode(&settings_path, 0o600);
+    fs::write(&settings_path, &bytes).unwrap();
+    mode(&settings_path, 0o400);
+    drop(store);
+    let mut store = PackageStore::open_existing(&fixture.root).unwrap();
+    assert_eq!(
+        store.settings(|| true).unwrap_err(),
+        InstallError::CorruptSettings
+    );
+    assert_eq!(
+        store
+            .update_settings(1, OTHER_ACTION, &update, || true)
+            .unwrap_err(),
+        InstallError::CorruptSettings
+    );
+    assert_eq!(fs::read(fixture.root.join("settings.json")).unwrap(), bytes);
+    assert!(store.inventory(|| true).unwrap().runtimes.is_empty());
+    assert!(fixture.candidates().is_empty());
 }

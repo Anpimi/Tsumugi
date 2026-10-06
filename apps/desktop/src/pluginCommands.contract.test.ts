@@ -162,3 +162,23 @@ it("reads a declared translation pair and preserves metadata without accepting f
   invoke.mockResolvedValueOnce({ ...translation.view, runtimeOrigin: undefined });
   await expect(pluginCommands.translation(translation.request)).rejects.toThrow("Invalid IPC response: read_plugin_translation");
 });
+
+
+it("reads strict Native decisions without treating them as installed Node environments", async () => {
+  const environment = { protocolVersion: 1, platform: runtime.environment.platform,
+    sdkVersion: "0.1.0-alpha.1", processProtocol: 1, profile: "native-application-host-v1",
+    hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) } };
+  const decision = { environment, environmentDigest: "b".repeat(64), origin: runtime.origin };
+  const view = { ...fixture.empty, runtimeDecisions: [decision] };
+  expect(validateResponseInventory(view)).toBe(true);
+  expect(validateResponseInventory({ ...view, runtimes: [{ ...decision, state: "sealed" }] })).toBe(false);
+  for (const changed of [{ ...environment, tool: runtime.environment.tool },
+    { ...environment, host: runtime.environment.host }, { ...environment, executable: undefined }]) {
+    expect(validateResponseInventory({ ...view, runtimeDecisions: [{ ...decision, environment: changed }] })).toBe(false);
+  }
+  invoke.mockResolvedValueOnce(view);
+  await expect(pluginCommands.inventory()).resolves.toEqual(view);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_inventory", { request: {} });
+  invoke.mockResolvedValueOnce({ ...view, runtimeDecisions: [{ ...decision, environment: { ...environment, toolVersion: "26.10.0" } }] });
+  await expect(pluginCommands.inventory()).rejects.toThrow("Invalid IPC response: read_plugin_inventory");
+});

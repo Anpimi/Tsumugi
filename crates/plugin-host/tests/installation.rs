@@ -1672,7 +1672,7 @@ fn malformed_settings_are_preserved_and_never_rebuilt_from_installation_receipts
                 data
             }
             "version" => {
-                value["formatVersion"] = 2.into();
+                value["formatVersion"] = 99.into();
                 serde_json::to_vec(&value).unwrap()
             }
             "zero-revision" => {

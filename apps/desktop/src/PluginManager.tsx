@@ -206,7 +206,7 @@ export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; o
             {verifiedRuntime === record.environmentDigest ? <p role="status">{t("plugins.runtimeVerified")}</p> : null}
           </li>;
         })}</ul>}
-        {inventory.runtimeDecisions.filter(decision => !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)).map(decision => <p key={decision.environmentDigest}>{t("plugins.runtimeApprovedMissing", { version: decision.environment.toolVersion })}</p>)}
+        {inventory.runtimeDecisions.filter(decision => !inventory.runtimes.some(record => record.environmentDigest === decision.environmentDigest)).map(decision => <p key={decision.environmentDigest}>{decision.environment.profile === "native-application-host-v1" ? t("plugins.nativeHostApproved", { version: decision.environment.hostVersion }) : t("plugins.runtimeApprovedMissing", { version: decision.environment.toolVersion })}</p>)}
       </section> : null}
       {details ? <section className="plugin-section" aria-label={t("plugins.details")}><h3>{details.manifest.plugin.id} · {details.manifest.plugin.version}</h3><PluginPermissions permissions={details.manifest.permissions}/>
         <ul>{details.manifest.contributions.map(contribution => <li key={contribution.id}>{contribution.id} · {t(`plugins.contributions.${contribution.contribution.kind}`)}</li>)}</ul>

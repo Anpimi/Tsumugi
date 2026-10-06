@@ -305,7 +305,7 @@ mod unix {
                         enabled: true,
                     }],
                     runtimes: vec![RuntimeApproval {
-                        environment: environment(),
+                        environment: environment().into(),
                         origin: origin(),
                     }],
                 },
@@ -321,7 +321,7 @@ mod unix {
         assert_eq!(view.last_settings_action.as_deref(), Some(SETTINGS_ACTION));
         assert_eq!(view.package_decisions[0].plugin, missing.plugin);
         assert!(view.package_decisions[0].enabled);
-        assert_eq!(view.runtime_decisions[0].environment, environment());
+        assert_eq!(view.runtime_decisions[0].environment, environment().into());
         assert!(!catalog.is_enabled(&approval.plugin).unwrap());
         let bytes = serde_json::to_vec(&view).unwrap();
         assert!(
@@ -335,6 +335,50 @@ mod unix {
             fs::read(fixture.root().join("settings.json")).unwrap(),
             stored
         );
+    }
+
+    #[test]
+    fn native_approval_projection_is_metadata_and_not_an_installed_node_runtime() {
+        let fixture = Fixture::new();
+        let native = RuntimeApproval {
+            environment: tsumugi_plugin_host::CapturedNativeRuntime::inspect_current()
+                .unwrap()
+                .into(),
+            origin: origin(),
+        };
+        let digest = native.environment.digest().unwrap();
+        let mut store = fixture.store();
+        store
+            .update_settings(
+                0,
+                SETTINGS_ACTION,
+                &PluginSettingsUpdate {
+                    packages: vec![],
+                    runtimes: vec![native.clone()],
+                },
+                || true,
+            )
+            .unwrap();
+        drop(store);
+        let before = fs::read(fixture.root().join("settings.json")).unwrap();
+        let owner = fixture.owner();
+        let view = owner.inventory().unwrap();
+        assert_eq!(view.runtime_decisions.len(), 1);
+        assert_eq!(view.runtime_decisions[0].environment, native.environment);
+        assert_eq!(view.runtime_decisions[0].environment_digest, digest);
+        assert!(view.runtimes.is_empty());
+        assert!(view.packages.is_empty());
+        assert_eq!(view.settings_revision.get(), 1);
+        let error = owner.lookup_runtime(&digest).unwrap_err();
+        assert_eq!(error.reason.as_deref(), Some("plugin-approval-mismatch"));
+        assert_eq!(owner.inventory().unwrap(), view);
+        assert_eq!(
+            fs::read(fixture.root().join("settings.json")).unwrap(),
+            before
+        );
+        let round_trip: PluginInventoryView =
+            serde_json::from_slice(&serde_json::to_vec(&view).unwrap()).unwrap();
+        assert_eq!(round_trip, view);
     }
 
     #[test]
@@ -380,7 +424,7 @@ mod unix {
                 ACTION,
                 &runtime,
                 &RuntimeApproval {
-                    environment: environment.clone(),
+                    environment: environment.clone().into(),
                     origin: origin(),
                 },
                 || true,
@@ -538,46 +582,80 @@ mod unix {
             ipc::{CallbackFn, InvokeBody},
             webview::InvokeRequest,
         };
-        let fixture = Fixture::new();
-        let app = crate::commands::register_commands(tauri::test::mock_builder())
-            .build(tauri::test::mock_context(tauri::test::noop_assets()))
-            .unwrap();
-        // The mock builder does not invoke native setup. Supply only this test's
-        // synthetic application directory; no developer app-data is consulted.
-        app.state::<AppState>()
-            .plugins
-            .configure(fixture.application())
-            .unwrap();
-        let window = tauri::WebviewWindowBuilder::new(
-            &app,
-            "main",
-            tauri::WebviewUrl::App("index.html".into()),
-        )
-        .build()
-        .unwrap();
-        let invoke = |body| InvokeRequest {
-            cmd: "read_plugin_inventory".into(),
-            callback: CallbackFn(0),
-            error: CallbackFn(1),
-            url: crate::ipc_test_url().parse().unwrap(),
-            body: InvokeBody::Json(body),
-            headers: Default::default(),
-            invoke_key: tauri::test::INVOKE_KEY.into(),
-        };
-        let view =
-            tauri::test::get_ipc_response(&window, invoke(serde_json::json!({"request":{}})))
-                .unwrap()
-                .deserialize::<PluginInventoryView>()
+        for with_native in [false, true] {
+            let fixture = Fixture::new();
+            let native = with_native.then(|| RuntimeApproval {
+                environment: tsumugi_plugin_host::CapturedNativeRuntime::inspect_current()
+                    .unwrap()
+                    .into(),
+                origin: origin(),
+            });
+            if let Some(approval) = &native {
+                fixture
+                    .store()
+                    .update_settings(
+                        0,
+                        SETTINGS_ACTION,
+                        &PluginSettingsUpdate {
+                            packages: vec![],
+                            runtimes: vec![approval.clone()],
+                        },
+                        || true,
+                    )
+                    .unwrap();
+            }
+            let before = fs::read(fixture.root().join("settings.json")).ok();
+            let app = crate::commands::register_commands(tauri::test::mock_builder())
+                .build(tauri::test::mock_context(tauri::test::noop_assets()))
                 .unwrap();
-        assert_eq!(view.settings_revision.get(), 0);
-        assert!(fixture.root().join("objects").is_dir());
-        assert!(
-            tauri::test::get_ipc_response(
-                &window,
-                invoke(serde_json::json!({"request":{"directory":"/untrusted"}}))
+            // The mock builder does not invoke native setup. Supply only this test's
+            // synthetic application directory; no developer app-data is consulted.
+            app.state::<AppState>()
+                .plugins
+                .configure(fixture.application())
+                .unwrap();
+            let window = tauri::WebviewWindowBuilder::new(
+                &app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
             )
-            .is_err()
-        );
-        assert!(!fixture.root().join("settings.json").exists());
+            .build()
+            .unwrap();
+            let invoke = |body| InvokeRequest {
+                cmd: "read_plugin_inventory".into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: crate::ipc_test_url().parse().unwrap(),
+                body: InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            };
+            let view =
+                tauri::test::get_ipc_response(&window, invoke(serde_json::json!({"request":{}})))
+                    .unwrap()
+                    .deserialize::<PluginInventoryView>()
+                    .unwrap();
+            assert_eq!(view.settings_revision.get(), u64::from(with_native));
+            if let Some(approval) = native {
+                assert_eq!(view.runtime_decisions.len(), 1);
+                assert_eq!(view.runtime_decisions[0].environment, approval.environment);
+                assert_eq!(
+                    view.runtime_decisions[0].environment_digest,
+                    approval.environment.digest().unwrap()
+                );
+            } else {
+                assert!(view.runtime_decisions.is_empty());
+            }
+            assert!(view.runtimes.is_empty());
+            assert!(fixture.root().join("objects").is_dir());
+            assert!(
+                tauri::test::get_ipc_response(
+                    &window,
+                    invoke(serde_json::json!({"request":{"directory":"/untrusted"}}))
+                )
+                .is_err()
+            );
+            assert_eq!(fs::read(fixture.root().join("settings.json")).ok(), before);
+        }
     }
 }

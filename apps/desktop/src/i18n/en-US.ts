@@ -77,6 +77,7 @@ plugins: {
   runtimeFingerprint: "Exact environment fingerprint", installedRuntimes: "Installed environments", runtimeEmpty: "No runtime environments are installed.",
   runtimeRecovery: "Installation needs confirmation. Retry the original operation, or explicitly approve a matching bundled environment to recover it.",
   runtimeApproved: "Installed and independently approved. Exact files and execution permission are checked separately.",
+  nativeHostApproved: "Recorded approval for native application {{version}}. Execution requires the same Host and separate consent for each attempt.",
   runtimeApprovedMissing: "Node {{version}} has an approved environment that is not installed. Review a matching bundled environment to install it.",
   verifyRuntime: "Verify installed environment", runtimeVerified: "The exact approved installed files were verified. No worker was started or execution permission granted.",
   runtimeAvailability: { "unsupported-platform": "This bundled runtime supports Apple silicon macOS only.", "system-too-old": "Update macOS to the stated minimum before installing this runtime.", "system-version-unknown": "The macOS version could not be verified. Installation is unavailable.", "resources-unavailable": "Bundled runtime resources could not be located. Use a complete application build." },

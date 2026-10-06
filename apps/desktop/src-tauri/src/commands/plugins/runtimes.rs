@@ -212,13 +212,13 @@ pub(super) fn load_approved_runtime(
         .iter()
         .find(|entry| entry.environment.digest().ok().as_deref() == Some(digest))
         .ok_or_else(|| map_store_error(InstallError::ApprovalMismatch))?;
+    let environment = approval.captured_environment().map_err(map_store_error)?;
     let pin = runtime_bundle::node_pin().map_err(|_| unavailable())?;
     // Deliberately selected older Host snapshots can coexist. Their complete
     // descriptor and current independent decision must still match exactly.
     if approval.origin != runtime_bundle::bundled_origin()
-        || !runtime_bundle::supported_tool(&approval.environment, &pin)
-        || availability(&approval.environment, &pin.minimum_system_version)
-            != RuntimeAvailability::Available
+        || !runtime_bundle::supported_tool(environment, &pin)
+        || availability(environment, &pin.minimum_system_version) != RuntimeAvailability::Available
     {
         return Err(unavailable());
     }
@@ -260,7 +260,7 @@ pub(super) fn capture_offer(
     Ok((
         runtime,
         RuntimeApproval {
-            environment: bundle.metadata.environment.clone(),
+            environment: bundle.metadata.environment.clone().into(),
             origin: bundle.metadata.origin.clone(),
         },
     ))

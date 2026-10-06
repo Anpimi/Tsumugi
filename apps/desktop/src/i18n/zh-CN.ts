@@ -79,6 +79,7 @@ plugins: {
   runtimeFingerprint: "准确环境指纹", installedRuntimes: "已安装环境", runtimeEmpty: "尚未安装运行环境。",
   runtimeRecovery: "安装需要确认。请重试原操作，或明确批准匹配的随附环境进行恢复。",
   runtimeApproved: "已安装并独立批准。准确文件与执行权限分别核验。",
+  nativeHostApproved: "已记录原生应用 {{version}} 的环境批准。执行仍要求相同 Host，并需为每次尝试单独同意。",
   runtimeApprovedMissing: "Node {{version}} 的一个环境已批准但尚未安装。请审阅匹配的随附环境进行安装。",
   verifyRuntime: "核验已安装环境", runtimeVerified: "已核验独立批准的准确安装文件。没有启动 Worker 或授予执行权限。",
   runtimeAvailability: { "unsupported-platform": "此随附运行环境仅支持 Apple 芯片 macOS。", "system-too-old": "请先将 macOS 升级至声明的最低版本，再安装此运行环境。", "system-version-unknown": "无法核验 macOS 版本，暂不能安装。", "resources-unavailable": "无法定位随附运行环境文件。请使用完整应用构建。" },

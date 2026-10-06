@@ -168,6 +168,18 @@ is implied.
 
 ## Choosing the next version
 
+The experimental Host's independent environment decisions now use the SDK's
+`ExecutionEnvironmentDescriptor` for both Node and Native application Hosts.
+This breaks the Rust `RuntimeApproval.environment` field type and advances only
+the current local plugin-settings format to 2. Format 1 settings are refused
+unchanged without migration; Node runtime receipts and artifact trees, SDK wire
+profiles, process protocol, schema 27 and dependency metadata are unchanged.
+The desktop inventory exposes the same strict decision union and displays Native
+Host approval as metadata, separately from installed Node trees. Native desktop
+approval controls and execution selection remain in development. This stays in
+the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+with synchronized Unreleased changelogs and no additional SemVer bump or release.
+
 The experimental Native/Core route adds the SDK's strict
 `native-application-host-v1` descriptor and changes Core's fixed environment
 port to `ExecutionEnvironmentDescriptor`. Actual native Host identity is bound

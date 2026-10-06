@@ -201,7 +201,7 @@ mod unix {
         )
         .unwrap();
         let approval = RuntimeApproval {
-            environment: metadata.environment.clone(),
+            environment: metadata.environment.clone().into(),
             origin: runtime_bundle::bundled_origin(),
         };
         let mut request = fixture.request();
@@ -244,7 +244,7 @@ mod unix {
             view.extractor.provider.package_digest,
             fixture.approval.package_digest
         );
-        assert_eq!(view.environment, approval.environment);
+        assert_eq!(&view.environment, approval.captured_environment().unwrap());
         assert_eq!(view.settings_revision.get(), 1);
         assert_eq!(
             fs::read(fixture.root().join("settings.json")).unwrap(),

@@ -3,7 +3,7 @@ use super::*;
 use crate::catalog::PackageApprovalIndex;
 use std::collections::BTreeSet;
 
-pub(super) const SETTINGS_VERSION: u32 = 1;
+pub(super) const SETTINGS_VERSION: u32 = 2;
 pub(super) const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
 
 /// An independently approved exact package version. Enablement only permits

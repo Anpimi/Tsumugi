@@ -918,13 +918,12 @@ fn altered_installer_environment_is_rejected_before_staging() {
     let proxy = proxy("normal", dir.path(), None);
     let original = input(&mut store, &proxy);
     let mut envelope = original.envelope().clone();
-    envelope
-        .plugin
-        .as_mut()
-        .unwrap()
-        .environment
-        .host
-        .tree_digest = sdk::payload_digest("different runtime");
+    let sdk::ExecutionEnvironmentDescriptor::Captured(environment) =
+        &mut envelope.plugin.as_mut().unwrap().environment
+    else {
+        panic!("expected captured Node fixture");
+    };
+    environment.host.tree_digest = sdk::payload_digest("different runtime");
     let input = FixedInput::capture(envelope).unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
     runtime.register(proxy).unwrap();
@@ -1076,7 +1075,7 @@ fn approved_runtime_installation_reopens_and_runs_without_acquisition_paths() {
     // independently of the installation receipt. The official tool stays read-only.
     let (captured, descriptor, acquisition) = variant_runtime_source("installed");
     let approval = RuntimeApproval {
-        environment: descriptor,
+        environment: descriptor.into(),
         origin: PackageOrigin {
             source_id: "explicit-offline-runtime-test".into(),
             publisher_id: "reviewed-runtime-source".into(),
@@ -1096,7 +1095,7 @@ fn approved_runtime_installation_reopens_and_runs_without_acquisition_paths() {
     drop(captured);
     let original_host = acquisition.path().join("host");
     std::fs::write(
-        original_host.join(&approval.environment.host.entrypoint),
+        original_host.join(&approval.captured_environment().unwrap().host.entrypoint),
         b"throw new Error('changed original Host');",
     )
     .unwrap();
@@ -1113,11 +1112,19 @@ fn approved_runtime_installation_reopens_and_runs_without_acquisition_paths() {
     wrong_origin.origin.source_id = "different-runtime-source".into();
     assert!(packages.load_runtime(&wrong_origin, || true).is_err());
     let mut wrong_environment = approval.clone();
-    wrong_environment.environment.host.tree_digest = sdk::payload_digest("different runtime");
+    let sdk::ExecutionEnvironmentDescriptor::Captured(environment) =
+        &mut wrong_environment.environment
+    else {
+        panic!("expected captured Node fixture");
+    };
+    environment.host.tree_digest = sdk::payload_digest("different runtime");
     assert!(packages.load_runtime(&wrong_environment, || true).is_err());
     let installed = packages.load_runtime(&approval, || true).unwrap();
     assert_eq!(installed.receipt(), &receipt);
-    assert_eq!(installed.runtime().descriptor(), &approval.environment);
+    assert_eq!(
+        installed.runtime().descriptor(),
+        approval.captured_environment().unwrap()
+    );
     assert_eq!(installed.runtime().environment_digest(), expected_digest);
     drop(packages);
 
@@ -1197,7 +1204,10 @@ fn approved_runtime_installation_reopens_and_runs_without_acquisition_paths() {
     assert_eq!(evidence.result.context.environment_digest, expected_digest);
     let output = result.envelope().output.as_ref().unwrap();
     assert_eq!(output["runtime"], "installed");
-    assert_eq!(output["nodeVersion"], approval.environment.tool_version);
+    assert_eq!(
+        output["nodeVersion"],
+        approval.captured_environment().unwrap().tool_version
+    );
     let tool = Path::new(output["toolPath"].as_str().unwrap());
     let host_url = output["hostPath"].as_str().unwrap();
     assert!(tool.starts_with(&staging) && tool.ends_with("runtime/tool/bin/node"));
@@ -1235,11 +1245,11 @@ fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
     // Both approvals precede installation and come from the independent
     // descriptor plus each actual Host tree, never from an install receipt.
     let approval_a = RuntimeApproval {
-        environment: descriptor_a,
+        environment: descriptor_a.into(),
         origin: origin.clone(),
     };
     let approval_b = RuntimeApproval {
-        environment: descriptor_b,
+        environment: descriptor_b.into(),
         origin,
     };
     let action_a = "00000000-0000-4000-8000-000000000003";
@@ -1266,8 +1276,14 @@ fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
     let installed_b = packages.load_runtime(&approval_b, || true).unwrap();
     assert_eq!(installed_a.receipt().action_id(), action_a);
     assert_eq!(installed_b.receipt().action_id(), action_b);
-    assert_eq!(installed_a.runtime().descriptor(), &approval_a.environment);
-    assert_eq!(installed_b.runtime().descriptor(), &approval_b.environment);
+    assert_eq!(
+        installed_a.runtime().descriptor(),
+        approval_a.captured_environment().unwrap()
+    );
+    assert_eq!(
+        installed_b.runtime().descriptor(),
+        approval_b.captured_environment().unwrap()
+    );
     drop(packages);
     let package = image("environment", None);
     let a = Arc::new(
@@ -1351,13 +1367,12 @@ fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
         assert_eq!(output["runtime"], label);
         assert_eq!(
             output["nodeVersion"],
-            input
-                .envelope()
-                .plugin
-                .as_ref()
-                .unwrap()
-                .environment
-                .tool_version
+            match &input.envelope().plugin.as_ref().unwrap().environment {
+                sdk::ExecutionEnvironmentDescriptor::Captured(environment) =>
+                    environment.tool_version.as_str(),
+                sdk::ExecutionEnvironmentDescriptor::Native(_) =>
+                    panic!("expected captured Node fixture"),
+            }
         );
         let tool = Path::new(output["toolPath"].as_str().unwrap());
         let host_url = output["hostPath"].as_str().unwrap();

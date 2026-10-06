@@ -99,3 +99,20 @@ it("does not clear an earlier unknown runtime outcome after a rejected retry", a
   expect(screen.queryByRole("button", { name: "Review current state" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Choose plugin folder" })).toBeDisabled();
 });
+
+it.each([["en-US", "Extensions", "Recorded approval for native application"],
+  ["zh-CN", "扩展", "已记录原生应用"]])("shows Native approval separately from installed Node trees in %s", async (locale, entry, label) => {
+  await i18n.changeLanguage(locale);
+  const environment = { protocolVersion: 1, platform: runtime.environment.platform,
+    sdkVersion: "0.1.0-alpha.1", processProtocol: 1, profile: "native-application-host-v1",
+    hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) } };
+  const view = { ...inventory.empty, runtimeDecisions: [{ environment, environmentDigest: "b".repeat(64), origin: runtime.origin }] };
+  expect(validateResponseInventory(view)).toBe(true);
+  invoke.mockResolvedValue(view);
+  const user = userEvent.setup(); render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  await user.click(screen.getByRole("button", { name: entry }));
+  await screen.findByText(new RegExp(label));
+  expect(screen.queryByText(/Node .*has an approved environment that is not installed|Node .*已批准但尚未安装/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Verify installed environment|核验已安装环境/ })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.every(([command]) => command === "read_plugin_inventory")).toBe(true);
+});

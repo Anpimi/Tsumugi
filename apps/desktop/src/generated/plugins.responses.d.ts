@@ -176,6 +176,27 @@ export type CommandStage =
   | "execution-quiesce";
 export type DefaultsAvailability = "available" | "resources-unavailable" | "runtime-unavailable";
 export type PluginObjectState = "sealed" | "recovery-required";
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
 export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
 
@@ -417,9 +438,23 @@ export interface PluginPackageView {
   state: PluginObjectState;
 }
 export interface PluginRuntimeDecisionView {
-  environment: RuntimeEnvironmentDescriptor;
+  environment: ExecutionEnvironmentDescriptor;
   environmentDigest: string;
   origin: PluginOriginView;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
 }
 export interface PluginRuntimeOfferView {
   availability: RuntimeAvailability;

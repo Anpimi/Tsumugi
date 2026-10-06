@@ -146,18 +146,27 @@ impl fmt::Debug for InstalledPackage {
     }
 }
 
-/// Independent trusted installer metadata for a complete captured environment.
+/// An independent trusted decision for an exact execution environment.
 /// This value does not authenticate a publisher, inspect system libraries or
 /// grant execution permission. Applications must obtain approval independently
-/// of stored receipts.
+/// of stored receipts. Native application Hosts have no installable runtime
+/// tree; their approval lives in the same application decision snapshot.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimeApproval {
-    pub environment: sdk::RuntimeEnvironmentDescriptor,
+    pub environment: sdk::ExecutionEnvironmentDescriptor,
     pub origin: PackageOrigin,
 }
 
 impl RuntimeApproval {
+    /// Only the captured Node profile has installable tool/Host trees. Native
+    /// approval must never be interpreted as a runtime installation receipt.
+    pub fn captured_environment(&self) -> InstallResult<&sdk::RuntimeEnvironmentDescriptor> {
+        match &self.environment {
+            sdk::ExecutionEnvironmentDescriptor::Captured(environment) => Ok(environment),
+            sdk::ExecutionEnvironmentDescriptor::Native(_) => Err(InstallError::ApprovalMismatch),
+        }
+    }
     fn validate(&self) -> InstallResult<String> {
         crate::catalog::validate_origin(&self.origin)?;
         self.environment
@@ -192,6 +201,7 @@ impl RuntimeInstallReceipt {
             || validate_action(&self.action_id).is_err()
             || !valid_digest(&self.environment_digest)
             || self.approval.validate().ok().as_deref() != Some(self.environment_digest.as_str())
+            || self.approval.captured_environment().is_err()
         {
             return Err(InstallError::CorruptReceipt);
         }
@@ -1921,7 +1931,7 @@ mod platform {
             let runtime = CapturedRuntime::capture_directories(
                 &path.join("tool"),
                 &path.join("host"),
-                &object.receipt.approval.environment,
+                object.receipt.approval.captured_environment()?,
                 || match self.check_runtime_object(digest, object, authorized) {
                     Ok(()) => true,
                     Err(error) => {
@@ -2002,6 +2012,7 @@ mod platform {
             let guard = OperationGuard::new(authorized);
             let result = (|| {
                 self.check(&|| guard.allowed())?;
+                approval.captured_environment()?;
                 let digest = approval.validate()?;
                 let names =
                     self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, &|| guard.allowed())?;
@@ -2047,7 +2058,7 @@ mod platform {
         ) -> InstallResult<RuntimeInstallReceipt> {
             self.check(authorized)?;
             let digest = approval.validate()?;
-            if runtime.descriptor() != &approval.environment
+            if runtime.descriptor() != approval.captured_environment()?
                 || runtime.environment_digest() != digest
             {
                 return Err(InstallError::ApprovalMismatch);
@@ -2171,7 +2182,7 @@ mod platform {
             let staged = CapturedRuntime::capture_directories(
                 &path.join("tool"),
                 &path.join("host"),
-                &approval.environment,
+                approval.captured_environment()?,
                 || match check_candidate() {
                     Ok(()) => true,
                     Err(error) => {
@@ -2634,7 +2645,7 @@ mod platform {
             (
                 runtime,
                 RuntimeApproval {
-                    environment,
+                    environment: environment.into(),
                     origin: PackageOrigin {
                         source_id: "approved-source".into(),
                         publisher_id: "approved-key".into(),

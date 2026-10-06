@@ -305,6 +305,24 @@ validation environment. Network acquisition/signatures, complete project
 environment selection, uninstall/garbage collection and desktop runtime controls remain
 separate work.
 
+### Exact application environment decisions
+
+`RuntimeApproval.environment` uses the SDK's strict `ExecutionEnvironmentDescriptor`:
+complete captured Node environments and observed Native application Hosts share
+one `PluginSettings.runtimes` decision snapshot, revision check and original-action
+reconciliation. Reading or persisting a decision grants no execution authority.
+Native Hosts have no installable tool/Host trees. `captured_environment`,
+`install_runtime`, `load_runtime` and runtime receipts explicitly refuse the Native
+variant; callers must use `CapturedNativeRuntime::capture` to compare a separately
+approved Native descriptor with the actual current Host before execution.
+
+The current-only local settings format is 2. Earlier development settings are
+refused unchanged, without conversion, implicit approval or receipt-derived
+replacement. Preserve old settings when creating a new development profile.
+Node runtime object and receipt formats remain unchanged. Desktop observation of
+recorded Native decisions is metadata only; Native approval controls and execution
+selection remain in development.
+
 ### Reopening an approved runtime
 
 `PackageStore::install_runtime` retains a `CapturedRuntime` under its SDK-derived

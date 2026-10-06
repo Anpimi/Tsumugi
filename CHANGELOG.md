@@ -6,6 +6,8 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental environment decisions now retain complete Node and Native application Host descriptions in one revisioned local snapshot. Native decisions do not install runtime trees or grant execution permission. Current development settings use format 2; earlier settings are refused unchanged without migration. The extension inventory distinguishes recorded Native approval from missing Node installations. Native desktop approval and execution controls remain in development.
+
 Development target: **0.2.0-alpha.1**.
 
 This initial backfill summarizes development commits `e76ef39` through `7febd7e` (2026-09-17 through 2026-10-02), which used `0.1.0` as their development version. No historical release tags exist, so these changes form one unreleased batch without invented release versions or dates.
