@@ -43,7 +43,8 @@
       "effects": [
         "save-candidate"
       ],
-      "expiresAt": "18446744073709551615"
+      "expiresAt": "18446744073709551615",
+      "checkerExecution": false
     },
     "start": {
       "projectId": "60000000-0000-4000-8000-000000000001",
@@ -60,7 +61,8 @@
       "expectedGeneration": "9007199254740993",
       "command": "pause",
       "confirmed": false,
-      "expiresAt": null
+      "expiresAt": null,
+      "checkerExecution": false
     },
     "status": {
       "projectId": "60000000-0000-4000-8000-000000000001",
@@ -163,7 +165,8 @@
         },
         "recipe": "direct-translation-1"
       },
-      "attemptId": "60000000-0000-4000-8000-000000000002"
+      "attemptId": "60000000-0000-4000-8000-000000000002",
+      "checker": null
     },
     "receipt": {
       "actionId": "60000000-0000-4000-8000-000000000008",
@@ -257,7 +260,8 @@
           },
           "recipe": "direct-translation-1"
         },
-        "attemptId": "60000000-0000-4000-8000-000000000002"
+        "attemptId": "60000000-0000-4000-8000-000000000002",
+        "checker": null
       },
       "lease": {
         "planId": "60000000-0000-4000-8000-000000000007",

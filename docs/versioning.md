@@ -483,3 +483,11 @@ and a fixed grant; consumers must use the current generated requests. Project
 schema 26, SDK/process contracts and installed Store formats are unchanged.
 This stays in the same undistributed application `0.2.0-alpha.1` batch, with
 no additional version bump, compatibility path or development migration.
+
+WorkPlan checked-selection orchestration now derives the exact checker from its
+existing immutable source snapshot. The experimental WorkPlan IPC adds captured
+checker availability and explicit local-execution consent; callers must use the
+current generated client. Plans retain their existing stored shape and digest;
+project schema 26, SDK/process and Store formats are unchanged. This is the same
+undistributed application `0.2.0-alpha.1` batch and needs no additional bump or
+development migration. Reopened history does not restore local execution consent.

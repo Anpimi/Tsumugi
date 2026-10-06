@@ -1,7 +1,7 @@
 //! Authorized selection orchestration owns values and action identities, not a store.
 use super::*;
 use tsumugi_core::{
-    ComputedAutomaticSelection,
+    ComputedAutomaticSelection, PreparedAutomaticSelection,
     application::{AutomaticSelectionReceipt, AutomaticSelectionRequest, SelectionPolicy},
 };
 
@@ -34,10 +34,23 @@ struct Item {
     selection_action: ExecutionId,
     revision: Option<ExecutionId>,
     view: EffectView,
+    checker: Option<CheckerAttempt>,
+}
+struct CheckerAttempt {
+    prepared: PreparedAutomaticSelection,
+    input: FixedInput,
+    grant_id: ExecutionId,
+    expires_at_ms: u64,
+    cancellation: Cancellation,
+    cancel_action: ExecutionId,
+    cancellation_sent: bool,
+    submitted: bool,
+    pending: bool,
 }
 struct Attempt {
     input: FixedInput,
     items: BTreeMap<ExecutionId, Item>,
+    consent: Option<work_plans::CheckerConsent>,
 }
 enum Computed {
     Candidate(PreparedAdoption),
@@ -55,6 +68,8 @@ pub(super) struct Automation {
     attempts: BTreeMap<ExecutionId, Attempt>,
     jobs: Vec<Job>,
     retired: Vec<JoinHandle<()>>,
+    #[cfg(test)]
+    pub(super) compute_probe: Option<review::ComputeProbe>,
 }
 fn phase_for(receipt: &AutomaticSelectionReceipt) -> EffectPhase {
     if receipt.blocked.is_some() {
@@ -108,6 +123,7 @@ impl Automation {
         &mut self,
         store: &ProjectStore,
         input: &FixedInput,
+        consent: Option<work_plans::CheckerConsent>,
     ) -> Result<(), ExecutionError> {
         let Some(lease) = input.envelope().automation else {
             return Ok(());
@@ -117,10 +133,22 @@ impl Automation {
         if plan.options.selection_policy == SelectionPolicy::CandidatesOnly {
             return Ok(());
         }
+        if let Some(binding) = store.work_plan_review_binding(&plan)? {
+            if consent
+                .as_ref()
+                .is_none_or(|consent| consent.lease != lease || consent.binding != binding)
+            {
+                return Err(ExecutionError::new(
+                    ErrorCode::Unauthorized,
+                    "plugin-consent-required",
+                ));
+            }
+        }
         self.attempts
             .entry(input.envelope().attempt_id)
             .or_insert_with(|| Attempt {
                 input: input.clone(),
+                consent,
                 items: input
                     .envelope()
                     .items
@@ -132,6 +160,7 @@ impl Automation {
                                 candidate_action: ExecutionId::new(),
                                 selection_action: ExecutionId::new(),
                                 revision: None,
+                                checker: None,
                                 view: EffectView {
                                     phase: EffectPhase::Waiting,
                                     action_id: None,
@@ -148,20 +177,23 @@ impl Automation {
     }
     pub(super) fn active(&self) -> bool {
         !self.jobs.is_empty()
+            || !self.retired.is_empty()
             || self.attempts.values().any(|attempt| {
-                attempt
-                    .items
-                    .values()
-                    .any(|item| item.view.phase == EffectPhase::Waiting)
+                attempt.items.values().any(|item| {
+                    item.view.phase == EffectPhase::Waiting
+                        || item.checker.as_ref().is_some_and(|check| check.pending)
+                })
             })
     }
     pub(super) fn stop(&mut self) {
-        for job in self.jobs.drain(..) {
+        for job in &self.jobs {
             job.cancellation.request();
-            self.retired.push(job.thread);
         }
         for attempt in self.attempts.values_mut() {
             for item in attempt.items.values_mut() {
+                if let Some(checker) = &item.checker {
+                    checker.cancellation.request();
+                }
                 if matches!(
                     item.view.phase,
                     EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
@@ -207,15 +239,18 @@ impl Automation {
         item.view.retryable = false;
         Ok(())
     }
-    pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &ExecutionRuntime) {
+    pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
         self.retired.retain(|thread| !thread.is_finished());
-        // Revoke before polling prepared completions; Core also rechecks commit.
+        // Control is checked before accepting results or dispatching another checker.
         for (id, attempt) in &mut self.attempts {
             if let Err(error) = store.check_work_plan_input(&attempt.input) {
                 for job in self.jobs.iter().filter(|job| job.attempt == *id) {
                     job.cancellation.request();
                 }
                 for item in attempt.items.values_mut() {
+                    if let Some(checker) = &item.checker {
+                        checker.cancellation.request();
+                    }
                     if matches!(
                         item.view.phase,
                         EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
@@ -245,7 +280,7 @@ impl Automation {
             let Some(item) = self
                 .attempts
                 .get_mut(&job.attempt)
-                .and_then(|a| a.items.get_mut(&job.item))
+                .and_then(|attempt| attempt.items.get_mut(&job.item))
             else {
                 continue;
             };
@@ -270,8 +305,152 @@ impl Automation {
                 failure(item, error);
             }
         }
+        // The ordinary runtime owns native execution and its cancellation. Only
+        // owned evidence leaves the project thread for Core/domain computation.
         for (attempt_id, attempt) in &mut self.attempts {
-            if self.jobs.len() >= MAX_COMPUTATIONS {
+            for (item_id, item) in &mut attempt.items {
+                let Some(checker) = item.checker.as_mut().filter(|checker| checker.pending) else {
+                    continue;
+                };
+                if checker.cancellation.is_requested()
+                    && checker.submitted
+                    && !checker.cancellation_sent
+                {
+                    match runtime.cancel(
+                        store,
+                        checker.input.envelope().task_id,
+                        checker.cancel_action,
+                    ) {
+                        Ok(_) => checker.cancellation_sent = true,
+                        Err(error) => {
+                            failure(item, error);
+                            continue;
+                        }
+                    }
+                }
+                let status = match runtime.attempt(store, checker.input.envelope().attempt_id) {
+                    Ok(status) => status,
+                    Err(error)
+                        if matches!(
+                            error.code,
+                            ErrorCode::Busy | ErrorCode::StorageFailed | ErrorCode::OutcomeUnknown
+                        ) =>
+                    {
+                        // An uncertain read cannot prove the accepted checker stopped.
+                        item.view.error = Some(map_read(error));
+                        continue;
+                    }
+                    Err(error) => {
+                        checker.pending = false;
+                        failure(item, error);
+                        continue;
+                    }
+                };
+                let Some(detail) = status.items.first() else {
+                    checker.pending = false;
+                    failure(
+                        item,
+                        ExecutionError::new(ErrorCode::CorruptLedger, "work-check-item"),
+                    );
+                    continue;
+                };
+                if matches!(
+                    detail.execution,
+                    ExecutionState::Queued | ExecutionState::Dispatched
+                ) {
+                    continue;
+                }
+                if self.jobs.len() >= MAX_COMPUTATIONS
+                    && detail.execution == ExecutionState::Succeeded
+                    && !checker.cancellation.is_requested()
+                {
+                    continue;
+                }
+                checker.pending = false;
+                if checker.cancellation.is_requested() {
+                    item.view.phase = EffectPhase::Cancelled;
+                    item.view.retryable = false;
+                    continue;
+                }
+                if detail.execution != ExecutionState::Succeeded {
+                    failure(
+                        item,
+                        ExecutionError::new(
+                            if detail.execution == ExecutionState::Unknown {
+                                ErrorCode::OutcomeUnknown
+                            } else {
+                                ErrorCode::OutputInvalid
+                            },
+                            "work-check-execution",
+                        ),
+                    );
+                    continue;
+                }
+                let captured = store
+                    .execution_current_result(checker.input.envelope().attempt_id, detail.item_id)
+                    .and_then(|result| {
+                        result.ok_or_else(|| {
+                            ExecutionError::new(ErrorCode::CorruptLedger, "work-check-result")
+                        })
+                    })
+                    .and_then(|result| {
+                        store.capture_automatic_selection_execution(
+                            checker.prepared.clone(),
+                            checker.input.envelope().attempt_id,
+                            result,
+                        )
+                    });
+                let captured = match captured {
+                    Ok(captured) => captured,
+                    Err(error) => {
+                        failure(item, error);
+                        continue;
+                    }
+                };
+                let cancellation = checker.cancellation.clone();
+                let cancel = cancellation.clone();
+                let (sender, receiver) = mpsc::sync_channel(1);
+                #[cfg(test)]
+                let probe = self
+                    .compute_probe
+                    .take_if(|probe| probe.action == *attempt_id);
+                match std::thread::Builder::new()
+                    .name("work-plan-check".into())
+                    .spawn(move || {
+                        #[cfg(test)]
+                        if let Some(probe) = probe {
+                            probe.reached.send(()).unwrap();
+                            probe.release.recv_timeout(Duration::from_secs(10)).unwrap();
+                        }
+                        let _ = sender.send(captured.compute(&cancel).map(Computed::Selection));
+                    }) {
+                    Ok(thread) => {
+                        item.view.phase = EffectPhase::Checking;
+                        item.view.error = None;
+                        self.jobs.push(Job {
+                            attempt: *attempt_id,
+                            item: *item_id,
+                            cancellation,
+                            receiver,
+                            thread,
+                        });
+                    }
+                    Err(_) => failure(
+                        item,
+                        ExecutionError::new(ErrorCode::StorageFailed, "work-effect-worker"),
+                    ),
+                }
+            }
+        }
+        let mut occupied = self.jobs.len()
+            + self
+                .attempts
+                .values()
+                .flat_map(|attempt| attempt.items.values())
+                .filter(|item| item.checker.as_ref().is_some_and(|checker| checker.pending))
+                .count();
+        for (attempt_id, attempt) in &mut self.attempts {
+            if occupied >= MAX_COMPUTATIONS {
                 break;
             }
             let status = match store.execution_attempt(*attempt_id, runtime.is_active(*attempt_id))
@@ -281,7 +460,7 @@ impl Automation {
                     for item in attempt
                         .items
                         .values_mut()
-                        .filter(|i| i.view.phase == EffectPhase::Waiting)
+                        .filter(|item| item.view.phase == EffectPhase::Waiting)
                     {
                         failure(item, error.clone());
                     }
@@ -289,13 +468,17 @@ impl Automation {
                 }
             };
             for (item_id, item) in &mut attempt.items {
-                if self.jobs.len() >= MAX_COMPUTATIONS {
+                if occupied >= MAX_COMPUTATIONS {
                     break;
                 }
                 if item.view.phase != EffectPhase::Waiting {
                     continue;
                 }
-                let Some(status) = status.items.iter().find(|s| s.item_id == *item_id) else {
+                let Some(status) = status
+                    .items
+                    .iter()
+                    .find(|status| status.item_id == *item_id)
+                else {
                     continue;
                 };
                 if status.execution != ExecutionState::Succeeded {
@@ -313,17 +496,15 @@ impl Automation {
                     }
                     continue;
                 }
-                let input = &attempt.input;
                 let launch = (|| {
+                    let input = &attempt.input;
                     let result = store
                         .execution_current_result(*attempt_id, *item_id)?
                         .ok_or_else(|| {
                             ExecutionError::new(ErrorCode::CorruptLedger, "work-effect-result")
                         })?;
                     item.revision = store.saved_ai_candidate(*attempt_id, *item_id)?;
-                    let cancellation = Cancellation::default();
-                    let (sender, receiver) = mpsc::sync_channel(1);
-                    let thread = if let Some(revision) = item.revision {
+                    if let Some(revision) = item.revision {
                         let payload = tsumugi_core::ai::item_payload(input, *item_id)?;
                         let request = AutomaticSelectionRequest {
                             project_id: input.envelope().project_id,
@@ -333,8 +514,6 @@ impl Automation {
                             locale: payload.target_locale,
                             revision_id: revision,
                         };
-                        // Read-only reconciliation survives historical ACKs and
-                        // project reopen. A new generation never resumes this item.
                         if let Some(receipt) =
                             store.automatic_selection_for_candidate(request.lease, revision)?
                         {
@@ -343,16 +522,108 @@ impl Automation {
                             item.view.receipt = Some(receipt);
                             return Ok(None);
                         }
-                        let prepared = store.prepare_automatic_selection(&request)?;
+                        let prepared = match &item.checker {
+                            Some(checker) => checker.prepared.clone(),
+                            None => store.prepare_automatic_selection(&request)?,
+                        };
                         item.view.phase = EffectPhase::Checking;
                         item.view.action_id = Some(item.selection_action);
+                        if let Some(plan) = prepared.review_check().and_then(|check| check.plan()) {
+                            let consent = attempt
+                                .consent
+                                .as_ref()
+                                .filter(|consent| {
+                                    consent.lease == request.lease
+                                        && &consent.binding == plan.binding()
+                                })
+                                .ok_or_else(|| {
+                                    ExecutionError::new(
+                                        ErrorCode::Unauthorized,
+                                        "plugin-consent-required",
+                                    )
+                                })?;
+                            if item.checker.is_none() {
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map_err(|_| {
+                                        ExecutionError::new(
+                                            ErrorCode::StorageFailed,
+                                            "work-check-clock",
+                                        )
+                                    })?
+                                    .as_millis();
+                                let now = u64::try_from(now).map_err(|_| {
+                                    ExecutionError::new(
+                                        ErrorCode::StorageFailed,
+                                        "work-check-clock",
+                                    )
+                                })?;
+                                let expires_at_ms =
+                                    consent.expires_at_ms.min(now.saturating_add(600_000));
+                                if expires_at_ms <= now {
+                                    return Err(ExecutionError::new(
+                                        ErrorCode::Cancelled,
+                                        "work-plan-control",
+                                    ));
+                                }
+                                let domain = prepared
+                                    .review_check()
+                                    .unwrap()
+                                    .domain_execution_input(ExecutionId::new())?;
+                                item.checker = Some(CheckerAttempt {
+                                    prepared,
+                                    input: domain,
+                                    grant_id: ExecutionId::new(),
+                                    expires_at_ms,
+                                    cancellation: Cancellation::default(),
+                                    cancel_action: ExecutionId::new(),
+                                    cancellation_sent: false,
+                                    submitted: false,
+                                    pending: false,
+                                });
+                            }
+                            let checker = item.checker.as_mut().unwrap();
+                            if checker.cancellation.is_requested() {
+                                return Err(ExecutionError::new(
+                                    ErrorCode::Cancelled,
+                                    "work-check-cancelled",
+                                ));
+                            }
+                            // The fixed plan consents to this derived input; grant,
+                            // input and deadline remain original on every retry.
+                            runtime.authorize_plugin(
+                                store,
+                                checker.grant_id,
+                                &checker.input,
+                                checker.expires_at_ms,
+                                PluginConsent {
+                                    unsandboxed_execution: true,
+                                },
+                            )?;
+                            checker.submitted = true;
+                            checker.pending = true;
+                            runtime.submit(store, &checker.input)?;
+                            return Ok(None);
+                        }
+                        let cancellation = Cancellation::default();
                         let cancel = cancellation.clone();
-                        std::thread::Builder::new()
+                        let (sender, receiver) = mpsc::sync_channel(1);
+                        let thread = std::thread::Builder::new()
                             .name("work-plan-check".into())
                             .spawn(move || {
                                 let _ =
                                     sender.send(prepared.compute(&cancel).map(Computed::Selection));
                             })
+                            .map_err(|_| {
+                                ExecutionError::new(ErrorCode::StorageFailed, "work-effect-worker")
+                            })?;
+                        Ok(Some(Job {
+                            attempt: *attempt_id,
+                            item: *item_id,
+                            cancellation,
+                            receiver,
+                            thread,
+                        }))
                     } else {
                         let unit = input
                             .envelope()
@@ -372,7 +643,9 @@ impl Automation {
                         let capture = store.capture_execution_adoption(&action)?;
                         item.view.phase = EffectPhase::SavingCandidate;
                         item.view.action_id = Some(item.candidate_action);
-                        std::thread::Builder::new()
+                        let cancellation = Cancellation::default();
+                        let (sender, receiver) = mpsc::sync_channel(1);
+                        let thread = std::thread::Builder::new()
                             .name("work-plan-candidate".into())
                             .spawn(move || {
                                 let _ = sender.send(
@@ -381,21 +654,28 @@ impl Automation {
                                         .map(Computed::Candidate),
                                 );
                             })
+                            .map_err(|_| {
+                                ExecutionError::new(ErrorCode::StorageFailed, "work-effect-worker")
+                            })?;
+                        Ok(Some(Job {
+                            attempt: *attempt_id,
+                            item: *item_id,
+                            cancellation,
+                            receiver,
+                            thread,
+                        }))
                     }
-                    .map_err(|_| {
-                        ExecutionError::new(ErrorCode::StorageFailed, "work-effect-worker")
-                    })?;
-                    Ok(Some(Job {
-                        attempt: *attempt_id,
-                        item: *item_id,
-                        cancellation,
-                        receiver,
-                        thread,
-                    }))
                 })();
                 match launch {
-                    Ok(Some(job)) => self.jobs.push(job),
-                    Ok(None) => {}
+                    Ok(Some(job)) => {
+                        self.jobs.push(job);
+                        occupied += 1;
+                    }
+                    Ok(None) => {
+                        if item.checker.as_ref().is_some_and(|checker| checker.pending) {
+                            occupied += 1;
+                        }
+                    }
                     Err(error) => failure(item, error),
                 }
             }

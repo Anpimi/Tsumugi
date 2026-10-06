@@ -1,5 +1,13 @@
 //! Human-facing work-plan commands share the ordinary project session and runtime.
 use super::{ai_wire::AiPreviewView, *};
+use crate::commands::{
+    dispatch::BlockingExecutor,
+    plugins::{
+        ApplicationPlugins,
+        reviews::{PluginReviewView, ReviewEnvironment},
+    },
+};
+use tsumugi_core::content::SourceReviewBinding;
 use tsumugi_core::{
     ai::{self, AiConfig, AiPreview},
     application::{
@@ -8,10 +16,137 @@ use tsumugi_core::{
         WorkPlanState, WorkPlanStatus, WorkProtection,
     },
 };
+use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 
 #[derive(Default)]
 pub(super) struct WorkPlanSession {
     prepared: Option<WorkPlan>,
+    environments: BTreeMap<ExecutionId, (String, ReviewEnvironment)>,
+    checker_consents: BTreeMap<ExecutionId, CheckerConsent>,
+}
+impl WorkPlanSession {
+    pub(super) fn stop(&mut self) {
+        self.prepared = None;
+        self.environments.clear();
+        self.checker_consents.clear();
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct CheckerConsent {
+    pub lease: AutomationLease,
+    pub binding: SourceReviewBinding,
+    pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum WorkPlanCheckerView {
+    Ready { plugin: PluginReviewView },
+    Unavailable { error: CommandError },
+}
+
+async fn load_checker(
+    io: BlockingExecutor,
+    plugins: Arc<ApplicationPlugins>,
+    binding: Option<SourceReviewBinding>,
+    cached: Option<ReviewEnvironment>,
+) -> Result<(Option<ReviewEnvironment>, Option<WorkPlanCheckerView>), CommandError> {
+    let Some(binding) = binding else {
+        return Ok((None, None));
+    };
+    io.run(CommandStage::ExecutionRead, move || {
+        if let Some(environment) = cached {
+            if plugins.environment_settings_revision().ok() == Some(environment.settings_revision) {
+                let plugin = environment.view()?;
+                return Ok((
+                    Some(environment),
+                    Some(WorkPlanCheckerView::Ready { plugin }),
+                ));
+            }
+        }
+        Ok(
+            match plugins
+                .capture_review(&binding)
+                .and_then(|environment| environment.view().map(|view| (environment, view)))
+            {
+                Ok((environment, plugin)) => (
+                    Some(environment),
+                    Some(WorkPlanCheckerView::Ready { plugin }),
+                ),
+                Err(error) => (None, Some(WorkPlanCheckerView::Unavailable { error })),
+            },
+        )
+    })
+    .await
+}
+
+fn consent_environment(
+    host: &ExecutionHost,
+    store: &ProjectStore,
+    plan: &WorkPlan,
+    confirmed: bool,
+) -> Result<Option<(ReviewEnvironment, SourceReviewBinding)>, CommandError> {
+    let Some(binding) = store.work_plan_review_binding(plan).map_err(map_recover)? else {
+        return Ok(None);
+    };
+    if !confirmed {
+        return Err(map_recover(ExecutionError::new(
+            ErrorCode::Unauthorized,
+            "plugin-consent-required",
+        )));
+    }
+    let environment = host
+        .work_plans
+        .environments
+        .get(&plan.plan_id)
+        .filter(|(digest, _)| digest == &plan.digest)
+        .ok_or_else(|| {
+            map_recover(ExecutionError::new(
+                ErrorCode::DependencyConflict,
+                "work-plan-checker-preview",
+            ))
+        })?;
+    if environment.1.binding.checker != binding.checker.capability
+        || environment.1.runtime.descriptor() != &binding.checker.environment
+    {
+        return Err(map_recover(ExecutionError::new(
+            ErrorCode::DependencyConflict,
+            "work-plan-checker-preview",
+        )));
+    }
+    Ok(Some((environment.1.clone(), binding)))
+}
+
+async fn checker_runner(
+    io: BlockingExecutor,
+    plugins: Arc<ApplicationPlugins>,
+    environment: Option<(ReviewEnvironment, SourceReviewBinding)>,
+) -> Result<Option<(Arc<RunnerProxy>, SourceReviewBinding)>, CommandError> {
+    let Some((environment, binding)) = environment else {
+        return Ok(None);
+    };
+    io.run(CommandStage::ExecutionRecover, move || {
+        let current = plugins.capture_review(&binding)?;
+        if current.settings_revision != environment.settings_revision {
+            return Err(map_recover(ExecutionError::new(
+                ErrorCode::DependencyConflict,
+                "work-plan-checker-preview",
+            )));
+        }
+        let environment = current;
+        RunnerProxy::new(
+            environment.package.image().clone(),
+            &environment.binding.declaration.checker,
+            environment.runtime,
+            environment.staging_parent,
+            HostLimits::default(),
+        )
+        .map(|runner| Some((Arc::new(runner), binding)))
+        .map_err(map_recover)
+    })
+    .await
 }
 
 request!(
@@ -30,6 +165,7 @@ request!(
         digest: String,
         action_id: ExecutionId,
         confirmed: bool,
+        checker_execution: bool,
         effects: Vec<AutomationEffect>,
         expires_at: UnsignedDecimal
     }
@@ -50,6 +186,7 @@ request!(
         expected_generation: Revision,
         command: WorkPlanCommand,
         confirmed: bool,
+        checker_execution: bool,
         expires_at: Option<UnsignedDecimal>
     }
 );
@@ -97,6 +234,7 @@ pub struct WorkPlanView {
     pub scope: Vec<PlanSelectionBasis>,
     pub preview: Option<AiPreviewView>,
     pub attempt_id: Option<ExecutionId>,
+    pub checker: Option<WorkPlanCheckerView>,
 }
 
 impl TryFrom<&WorkPlan> for WorkPlanView {
@@ -131,6 +269,7 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
             scope: plan.selection_basis.clone(),
             preview,
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),
+            checker: None,
         })
     }
 }
@@ -186,34 +325,71 @@ pub async fn prepare_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanPrepareRequest,
 ) -> Result<WorkPlanView, CommandError> {
-    state
-        .sessions
-        .run(
-            "prepare_work_plan",
-            CommandStage::ExecutionRead,
-            move |sessions| {
-                let active = authorized(
-                    sessions,
-                    &request.session_token,
-                    request.project_id,
-                    CommandStage::ExecutionRead,
-                )?;
-                let (host, store) = active.execution_parts()?;
-                host.allow_mutation()?;
-                let plan = store
-                    .prepare_work_plan(
-                        request.config,
-                        &request.locale,
-                        &request.unit_ids,
-                        request.options,
-                    )
-                    .map_err(map_read)?;
-                let view = WorkPlanView::try_from(&plan).map_err(map_read)?;
-                host.work_plans.prepared = Some(plan);
-                Ok(view)
-            },
-        )
-        .await
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let captured = lease.submit(
+        "prepare_work_plan.capture",
+        CommandStage::ExecutionRead,
+        move |sessions| {
+            let active = authorized(
+                sessions,
+                &initial.session_token,
+                initial.project_id,
+                CommandStage::ExecutionRead,
+            )?;
+            let (host, store) = active.execution_parts()?;
+            host.allow_mutation()?;
+            let plan = store
+                .prepare_work_plan(
+                    initial.config,
+                    &initial.locale,
+                    &initial.unit_ids,
+                    initial.options,
+                )
+                .map_err(map_read)?;
+            let binding = store.work_plan_review_binding(&plan).map_err(map_read)?;
+            Ok((plan, binding))
+        },
+    )?;
+    let io = state.io.clone();
+    let plugins = state.plugins.clone();
+    tauri::async_runtime::spawn(async move {
+        let (plan, binding) = captured.await?;
+        let (environment, checker) = load_checker(io, plugins, binding, None).await?;
+        lease
+            .run(
+                "prepare_work_plan.finish",
+                CommandStage::ExecutionRead,
+                move |sessions| {
+                    let active = authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionRead,
+                    )?;
+                    let (host, store) = active.execution_parts()?;
+                    host.allow_mutation()?;
+                    store.verify_work_plan(&plan).map_err(map_read)?;
+                    let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
+                    view.checker = checker;
+                    if let Some(environment) = environment {
+                        if host.work_plans.environments.len() >= 8 {
+                            host.work_plans.environments.clear();
+                        }
+                        host.work_plans
+                            .environments
+                            .insert(plan.plan_id, (plan.digest.clone(), environment));
+                    } else {
+                        host.work_plans.environments.remove(&plan.plan_id);
+                    }
+                    host.work_plans.prepared = Some(plan);
+                    Ok(view)
+                },
+            )
+            .await
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?
 }
 
 #[tauri::command]
@@ -221,58 +397,153 @@ pub async fn authorize_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanAuthorizeRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
-    state
-        .sessions
-        .run(
-            "authorize_work_plan",
-            CommandStage::ExecutionRecover,
-            move |sessions| {
-                let active = authorized(
-                    sessions,
-                    &request.session_token,
-                    request.project_id,
-                    CommandStage::ExecutionRecover,
-                )?;
-                let (host, store) = active.execution_parts()?;
-                host.allow_mutation()?;
-                let plan = if let Some(plan) =
-                    host.work_plans.prepared.as_ref().filter(|plan| {
-                        plan.plan_id == request.plan_id && plan.digest == request.digest
-                    }) {
-                    plan.clone()
-                } else {
-                    // Reconcile an already committed action after a lost response or
-                    // session reopen. A new grant still requires this session's preview.
-                    let receipt = store
-                        .work_plan_receipt(request.action_id)
-                        .map_err(map_recover)?
-                        .filter(|receipt| receipt.lease.plan_id == request.plan_id)
-                        .ok_or_else(|| {
-                            map_recover(ExecutionError::new(
-                                ErrorCode::DependencyConflict,
-                                "work-plan-preview",
-                            ))
-                        })?;
-                    store
-                        .work_plan(receipt.lease.plan_id)
-                        .map_err(map_recover)?
-                };
+    let lease = state.sessions.lease(CommandStage::ExecutionRecover)?;
+    let initial = request.clone();
+    let captured = lease.submit(
+        "authorize_work_plan.capture",
+        CommandStage::ExecutionRecover,
+        move |sessions| {
+            let active = authorized(
+                sessions,
+                &initial.session_token,
+                initial.project_id,
+                CommandStage::ExecutionRecover,
+            )?;
+            let (host, store) = active.execution_parts()?;
+            host.allow_mutation()?;
+            if let Some(receipt) = store
+                .work_plan_receipt(initial.action_id)
+                .map_err(map_recover)?
+            {
+                if receipt.lease.plan_id != initial.plan_id {
+                    return Err(map_recover(ExecutionError::new(
+                        ErrorCode::ResultMismatch,
+                        "work-plan-action",
+                    )));
+                }
+                let plan = store
+                    .work_plan(receipt.lease.plan_id)
+                    .map_err(map_recover)?;
                 let receipt = store
                     .authorize_work_plan(
                         &plan,
                         &AuthorizeWorkPlan {
-                            action_id: request.action_id,
-                            plan_digest: request.digest,
-                            confirmed: request.confirmed,
-                            effects: request.effects,
-                            expires_at: request.expires_at.get(),
+                            action_id: initial.action_id,
+                            plan_digest: initial.digest,
+                            confirmed: initial.confirmed,
+                            effects: initial.effects,
+                            expires_at: initial.expires_at.get(),
                         },
                     )
                     .map_err(map_recover)?;
-                Ok(receipt.into())
-            },
-        )
-        .await
+                return Ok(Err(WorkPlanReceiptView::from(receipt)));
+            }
+            let prepared =
+                host.work_plans.prepared.as_ref().filter(|plan| {
+                    plan.plan_id == initial.plan_id && plan.digest == initial.digest
+                });
+            if let Some(plan) = prepared {
+                Ok(Ok((
+                    plan.clone(),
+                    consent_environment(host, store, plan, initial.checker_execution)?,
+                )))
+            } else {
+                // Read-only replay returns historical authority without recreating local consent.
+                let receipt = store
+                    .work_plan_receipt(initial.action_id)
+                    .map_err(map_recover)?
+                    .filter(|receipt| receipt.lease.plan_id == initial.plan_id)
+                    .ok_or_else(|| {
+                        map_recover(ExecutionError::new(
+                            ErrorCode::DependencyConflict,
+                            "work-plan-preview",
+                        ))
+                    })?;
+                let plan = store
+                    .work_plan(receipt.lease.plan_id)
+                    .map_err(map_recover)?;
+                let receipt = store
+                    .authorize_work_plan(
+                        &plan,
+                        &AuthorizeWorkPlan {
+                            action_id: initial.action_id,
+                            plan_digest: initial.digest,
+                            confirmed: initial.confirmed,
+                            effects: initial.effects,
+                            expires_at: initial.expires_at.get(),
+                        },
+                    )
+                    .map_err(map_recover)?;
+                Ok(Err(WorkPlanReceiptView::from(receipt)))
+            }
+        },
+    )?;
+    let io = state.io.clone();
+    let plugins = state.plugins.clone();
+    tauri::async_runtime::spawn(async move {
+        let (plan, environment) = match captured.await? {
+            Ok(value) => value,
+            Err(receipt) => return Ok(receipt),
+        };
+        let runner = checker_runner(io, plugins, environment).await?;
+        lease
+            .run(
+                "authorize_work_plan.finish",
+                CommandStage::ExecutionRecover,
+                move |sessions| {
+                    let active = authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionRecover,
+                    )?;
+                    let (host, store) = active.execution_parts()?;
+                    host.allow_mutation()?;
+                    store.verify_work_plan(&plan).map_err(map_recover)?;
+                    let binding = if let Some((runner, binding)) = runner {
+                        host.register_plugin(runner, binding.checker.clone())
+                            .map_err(map_recover)?;
+                        Some(binding)
+                    } else {
+                        None
+                    };
+                    let receipt = store
+                        .authorize_work_plan(
+                            &plan,
+                            &AuthorizeWorkPlan {
+                                action_id: request.action_id,
+                                plan_digest: request.digest,
+                                confirmed: request.confirmed,
+                                effects: request.effects,
+                                expires_at: request.expires_at.get(),
+                            },
+                        )
+                        .map_err(map_recover)?;
+                    if let Some(binding) = binding {
+                        let status = store
+                            .work_plan_status(plan.plan_id)
+                            .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?;
+                        if status.lease == receipt.lease
+                            && status.state == WorkPlanState::Active
+                            && status.expires_at == request.expires_at.get()
+                        {
+                            host.work_plans.checker_consents.insert(
+                                plan.plan_id,
+                                CheckerConsent {
+                                    lease: receipt.lease,
+                                    binding,
+                                    expires_at_ms: status.expires_at.saturating_mul(1000),
+                                },
+                            );
+                        }
+                    }
+                    Ok(receipt.into())
+                },
+            )
+            .await
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?
 }
 
 #[tauri::command]
@@ -352,6 +623,24 @@ pub async fn start_work_plan(
                             && error.stage == "execution-storage" => {}
                     Err(error) => return Err(map_recover(error)),
                 }
+                let plan = store.work_plan(request.plan_id).map_err(map_recover)?;
+                let checker = host
+                    .work_plans
+                    .checker_consents
+                    .get(&request.plan_id)
+                    .filter(|consent| consent.lease == receipt.lease)
+                    .cloned();
+                if let Some(binding) = store.work_plan_review_binding(&plan).map_err(map_recover)? {
+                    if checker
+                        .as_ref()
+                        .is_none_or(|consent| consent.binding != binding)
+                    {
+                        return Err(map_recover(ExecutionError::new(
+                            ErrorCode::Unauthorized,
+                            "plugin-consent-required",
+                        )));
+                    }
+                }
                 if let Some(parent) = receipt.parent_task {
                     host.runtime
                         .submit_child(store, &input, parent)
@@ -359,7 +648,7 @@ pub async fn start_work_plan(
                 } else {
                     host.runtime.submit(store, &input).map_err(map_recover)?;
                 }
-                host.ai.track(store, &input).map_err(map_recover)?;
+                host.ai.track(store, &input, checker).map_err(map_recover)?;
                 Ok(input.envelope().attempt_id)
             },
         )
@@ -371,39 +660,108 @@ pub async fn control_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanControlRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
-    state
-        .sessions
-        .run(
-            "control_work_plan",
-            CommandStage::ExecutionCancel,
-            move |sessions| {
-                let active = authorized(
-                    sessions,
-                    &request.session_token,
-                    request.project_id,
-                    CommandStage::ExecutionCancel,
-                )?;
-                if request.command == WorkPlanCommand::Continue {
-                    let (host, _) = active.execution_parts()?;
-                    host.allow_mutation()?;
-                }
+    let lease = state.sessions.lease(CommandStage::ExecutionCancel)?;
+    let initial = request.clone();
+    let captured = lease.submit(
+        "control_work_plan.capture",
+        CommandStage::ExecutionCancel,
+        move |sessions| {
+            let active = authorized(
+                sessions,
+                &initial.session_token,
+                initial.project_id,
+                CommandStage::ExecutionCancel,
+            )?;
+            if active
+                .store
+                .work_plan_receipt(initial.action_id)
+                .map_err(map_recover)?
+                .is_some()
+            {
                 let receipt = active
                     .store
                     .control_work_plan(&ControlWorkPlan {
-                        action_id: request.action_id,
-                        plan_id: request.plan_id,
-                        expected_generation: request.expected_generation,
-                        command: request.command,
-                        confirmed: request.confirmed,
-                        expires_at: request.expires_at.map(UnsignedDecimal::get),
+                        action_id: initial.action_id,
+                        plan_id: initial.plan_id,
+                        expected_generation: initial.expected_generation,
+                        command: initial.command,
+                        confirmed: initial.confirmed,
+                        expires_at: initial.expires_at.map(UnsignedDecimal::get),
                     })
                     .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
-                // The regular host clock observes the committed generation and
-                // cancels workers. A later tick failure cannot reject this receipt.
-                Ok(receipt.into())
-            },
-        )
-        .await
+                return Ok(Err(WorkPlanReceiptView::from(receipt)));
+            }
+            if initial.command != WorkPlanCommand::Continue {
+                return Ok(Ok(None));
+            }
+            let (host, store) = active.execution_parts()?;
+            host.allow_mutation()?;
+            let plan = store.work_plan(initial.plan_id).map_err(map_recover)?;
+            consent_environment(host, store, &plan, initial.checker_execution).map(Ok)
+        },
+    )?;
+    let io = state.io.clone();
+    let plugins = state.plugins.clone();
+    tauri::async_runtime::spawn(async move {
+        let environment = match captured.await? {
+            Ok(environment) => environment,
+            Err(receipt) => return Ok(receipt),
+        };
+        let runner = checker_runner(io, plugins, environment).await?;
+        lease
+            .run(
+                "control_work_plan.finish",
+                CommandStage::ExecutionCancel,
+                move |sessions| {
+                    let active = authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionCancel,
+                    )?;
+                    let binding = if let Some((runner, binding)) = runner {
+                        let (host, _) = active.execution_parts()?;
+                        host.allow_mutation()?;
+                        host.register_plugin(runner, binding.checker.clone())
+                            .map_err(map_recover)?;
+                        Some(binding)
+                    } else {
+                        None
+                    };
+                    let receipt = active
+                        .store
+                        .control_work_plan(&ControlWorkPlan {
+                            action_id: request.action_id,
+                            plan_id: request.plan_id,
+                            expected_generation: request.expected_generation,
+                            command: request.command,
+                            confirmed: request.confirmed,
+                            expires_at: request.expires_at.map(UnsignedDecimal::get),
+                        })
+                        .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
+                    if let Some(binding) = binding {
+                        let (host, store) = active.execution_parts()?;
+                        let status = store
+                            .work_plan_status(request.plan_id)
+                            .map_err(|_| CommandError::unknown(CommandStage::ExecutionCancel))?;
+                        if status.lease == receipt.lease && status.state == WorkPlanState::Active {
+                            host.work_plans.checker_consents.insert(
+                                request.plan_id,
+                                CheckerConsent {
+                                    lease: receipt.lease,
+                                    binding,
+                                    expires_at_ms: status.expires_at.saturating_mul(1000),
+                                },
+                            );
+                        }
+                    }
+                    Ok(receipt.into())
+                },
+            )
+            .await
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionCancel))?
 }
 
 #[tauri::command]
@@ -411,27 +769,69 @@ pub async fn read_work_plan_status(
     state: State<'_, AppState>,
     request: WorkPlanStatusRequest,
 ) -> Result<WorkPlanStatusView, CommandError> {
-    state
-        .sessions
-        .run(
-            "read_work_plan_status",
-            CommandStage::ExecutionRead,
-            move |sessions| {
-                let active = authorized(
-                    sessions,
-                    &request.session_token,
-                    request.project_id,
-                    CommandStage::ExecutionRead,
-                )?;
-                let plan = active.store.work_plan(request.plan_id).map_err(map_read)?;
-                let status = active
-                    .store
-                    .work_plan_status(request.plan_id)
-                    .map_err(map_read)?;
-                WorkPlanStatusView::capture(&plan, status).map_err(map_read)
-            },
-        )
-        .await
+    let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
+    let initial = request.clone();
+    let captured = lease.submit(
+        "read_work_plan_status.capture",
+        CommandStage::ExecutionRead,
+        move |sessions| {
+            let active = authorized(
+                sessions,
+                &initial.session_token,
+                initial.project_id,
+                CommandStage::ExecutionRead,
+            )?;
+            let plan = active.store.work_plan(initial.plan_id).map_err(map_read)?;
+            let binding = active
+                .store
+                .work_plan_review_binding(&plan)
+                .map_err(map_read)?;
+            let cached = active
+                .execution
+                .as_ref()
+                .and_then(|host| host.work_plans.environments.get(&plan.plan_id))
+                .filter(|(digest, _)| digest == &plan.digest)
+                .map(|(_, environment)| environment.clone());
+            Ok((plan, binding, cached))
+        },
+    )?;
+    let io = state.io.clone();
+    let plugins = state.plugins.clone();
+    tauri::async_runtime::spawn(async move {
+        let (plan, binding, cached) = captured.await?;
+        let (environment, checker) = load_checker(io, plugins, binding, cached).await?;
+        lease
+            .run(
+                "read_work_plan_status.finish",
+                CommandStage::ExecutionRead,
+                move |sessions| {
+                    let active = authorized(
+                        sessions,
+                        &request.session_token,
+                        request.project_id,
+                        CommandStage::ExecutionRead,
+                    )?;
+                    let (host, store) = active.execution_parts()?;
+                    let status = store.work_plan_status(request.plan_id).map_err(map_read)?;
+                    let mut view = WorkPlanStatusView::capture(&plan, status).map_err(map_read)?;
+                    view.plan.checker = checker;
+                    if let Some(environment) = environment {
+                        if host.work_plans.environments.len() >= 8 {
+                            host.work_plans.environments.clear();
+                        }
+                        host.work_plans
+                            .environments
+                            .insert(plan.plan_id, (plan.digest.clone(), environment));
+                    } else {
+                        host.work_plans.environments.remove(&plan.plan_id);
+                    }
+                    Ok(view)
+                },
+            )
+            .await
+    })
+    .await
+    .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?
 }
 
 #[tauri::command]

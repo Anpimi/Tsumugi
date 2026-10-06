@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { PluginPermissions } from "./PluginManager";
+import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { useTranslation } from "react-i18next";
 import { aiCommands } from "./aiCommands";
 import { executionCommands, type SessionRequest } from "./executionCommands";
@@ -29,6 +31,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   const { t, i18n } = useTranslation();
   const [minutes, setMinutes] = useState(60);
   const [renewConsent, setRenewConsent] = useState(false);
+  const [checkerConsent, setCheckerConsent] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [ready, setReady] = useState<WorkPlanReceiptView | null>(null);
   const [missing, setMissing] = useState(false);
@@ -36,6 +39,9 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   useEffect(() => { onBlockedChange(Boolean(pending || ready)); }, [pending, ready, onBlockedChange]);
   const validMinutes = Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
   const plan = status?.plan ?? prepared;
+  const checkerRequired = Boolean(plan?.preview && plan.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted"));
+  const checkerKey = plan?.checker?.kind === "ready" ? JSON.stringify([context.sessionToken, context.projectId, plan.planId, plan.digest, status?.lease.generation ?? "prepared", plan.checker.plugin]) : null;
+  const checkerConfirmed = !checkerRequired || (checkerKey !== null && checkerConsent === checkerKey);
   const blocked = busy || disabled || Boolean(pending);
 
   function expiry() {
@@ -92,6 +98,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     if (!current()) return;
     await mutate({ kind: "control", request: { ...context, planId: status.lease.planId, actionId,
       expectedGeneration: status.lease.generation, command, confirmed: command === "continue" && renewConsent,
+      checkerExecution: command === "continue" && checkerRequired && checkerConfirmed,
       expiresAt } }, current, command === "continue");
   }
 
@@ -127,15 +134,27 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
             sourceRevisionId: unit.sourceRevisionId, key: unit.nativeKey, sourceText: plan.preview?.items.find(item => item.unitId === unit.unitId)?.sourceText ?? "" }, plan.locale)}>{t("ai.plan.edit")}</button></li>)}</ul>
       </details>
       {!plan.preview ? <p>{t("ai.plan.manualHelp")}</p> : null}
+      {checkerRequired && plan.checker?.kind === "ready" ? <section aria-label={t("sourcePlugin.executionReview")}>
+        <p>{t("review.qaRun")} · {plan.checker.plugin.checker.provider.plugin.id} {plan.checker.plugin.checker.provider.plugin.version}</p>
+        <p>{t("sourcePlugin.runtimeDetails", { version: plan.checker.plugin.environment.toolVersion,
+          system: plan.checker.plugin.environment.platform.operatingSystem, architecture: plan.checker.plugin.environment.platform.architecture })}</p>
+        <PluginPermissions permissions={plan.checker.plugin.checker.declaration.permissions} />
+        <p>{t("sourcePlugin.unsandboxed")}</p>
+        {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
+          <input type="checkbox" checked={checkerKey !== null && checkerConsent === checkerKey} disabled={blocked || Boolean(ready)}
+            onChange={event => setCheckerConsent(event.target.checked ? checkerKey : null)} />{t("ai.plan.checkerConsent")}
+        </label> : null}
+      </section> : checkerRequired ? <div role="alert"><p>{t("ai.plan.checkerUnavailable")}</p>
+        {plan.checker?.kind === "unavailable" ? <CommandFailureDetails failure={commandFailure(plan.checker.error)} /> : null}</div> : null}
     </> : null}
     {prepared?.preview && !status && !ready && !pending ? <>
       {duration}
-      <button className="primary-button" disabled={blocked || !consent || !validMinutes} onClick={() => void run(async current => {
+      <button className="primary-button" disabled={blocked || !consent || !checkerConfirmed || !validMinutes} onClick={() => void run(async current => {
         const expiresAt = expiry();
         const actionId = await executionCommands.identity(context);
         if (!current()) return;
         await mutate({ kind: "authorize", request: { ...context, planId: prepared.planId, digest: prepared.digest,
-          actionId, confirmed: consent, effects: (prepared.options.selectionPolicy === "candidates-only" ? ["save-candidate"] : ["save-candidate", "run-checks", prepared.options.selectionPolicy === "missing-only" ? "select-missing" : "replace-captured-selection"]) satisfies AutomationEffect[], expiresAt } }, current, true);
+          actionId, confirmed: consent, checkerExecution: checkerRequired && checkerConfirmed, effects: (prepared.options.selectionPolicy === "candidates-only" ? ["save-candidate"] : ["save-candidate", "run-checks", prepared.options.selectionPolicy === "missing-only" ? "select-missing" : "replace-captured-selection"]) satisfies AutomationEffect[], expiresAt } }, current, true);
       })}>{t("ai.generate")}</button>
     </> : null}
     {status ? <>
@@ -153,7 +172,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         <p>{t("ai.plan.continueHelp")}</p>{duration}
         <label className="source-check"><input type="checkbox" checked={renewConsent} disabled={blocked || Boolean(ready)}
           onChange={event => setRenewConsent(event.target.checked)} />{t("ai.plan.renewConsent")}</label>
-        <button className="primary-button" disabled={blocked || Boolean(ready) || !renewConsent || !validMinutes}
+        <button className="primary-button" disabled={blocked || Boolean(ready) || !renewConsent || !checkerConfirmed || !validMinutes}
           onClick={() => void run(current => control("continue", current))}>{t("ai.plan.continue")}</button>
       </> : null}
       <button className="secondary-button" disabled={blocked} onClick={() => void run(async current => {

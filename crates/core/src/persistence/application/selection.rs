@@ -35,7 +35,7 @@ fn checks_allow_selection(
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Capture {
     request: AutomaticSelectionRequest,
     target: ReviewTarget,
@@ -46,14 +46,14 @@ struct Capture {
     selection_event: ExecutionId,
     check: Option<crate::PreparedReviewCheck>,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Prepared {
     Pending(Capture),
     Recorded(AutomaticSelectionReceipt),
 }
 
 /// Store-created evidence cannot be constructed or deserialized by a caller.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PreparedAutomaticSelection(Prepared);
 #[derive(Debug)]
 pub struct ComputedAutomaticSelection {
@@ -365,6 +365,11 @@ fn capture(
         &text,
         &terms,
     )?;
+    if check.plan().map(|plan| plan.binding())
+        != store.work_plan_review_binding(&stored.plan)?.as_ref()
+    {
+        return Err(error(ErrorCode::DependencyConflict, "work-plan-checker"));
+    }
     Ok(Capture {
         request: request.clone(),
         target,

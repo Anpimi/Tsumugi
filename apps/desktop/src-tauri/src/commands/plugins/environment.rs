@@ -21,6 +21,20 @@ pub(super) fn invalid() -> CommandError {
 }
 
 impl ApplicationPlugins {
+    pub(in crate::commands) fn environment_settings_revision(
+        &self,
+    ) -> Result<UnsignedDecimal, CommandError> {
+        let mut manager = self.try_manager()?;
+        self.provision(&mut manager)?;
+        let allowed = || self.open.load(Ordering::Acquire);
+        let settings = manager
+            .store
+            .as_ref()
+            .expect("store provisioned")
+            .settings(allowed)
+            .map_err(map_store_error)?;
+        Ok(settings.revision().into())
+    }
     pub(super) fn capture_declared_environment<B, const N: usize>(
         &self,
         requested: &PluginPackageRequest,

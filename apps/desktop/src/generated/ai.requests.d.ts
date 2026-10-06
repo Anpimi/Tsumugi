@@ -73,6 +73,7 @@ export interface WorkPlanActionRequest {
 }
 export interface WorkPlanAuthorizeRequest {
   actionId: ExecutionId;
+  checkerExecution: boolean;
   confirmed: boolean;
   digest: string;
   effects: AutomationEffect[];
@@ -83,6 +84,7 @@ export interface WorkPlanAuthorizeRequest {
 }
 export interface WorkPlanControlRequest {
   actionId: ExecutionId;
+  checkerExecution: boolean;
   command: WorkPlanCommand;
   confirmed: boolean;
   expectedGeneration: Revision;

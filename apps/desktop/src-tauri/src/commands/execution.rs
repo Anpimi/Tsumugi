@@ -280,6 +280,9 @@ impl ExecutionHost {
         if self.review.active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "review-check-active"));
         }
+        if self.ai.active() {
+            return Err(ExecutionError::new(ErrorCode::Busy, "work-effect-active"));
+        }
         self.runtime.finish_quiesce(store)?;
         self.quiescing = false;
         Ok(())
@@ -288,9 +291,8 @@ impl ExecutionHost {
         self.poll_queries(store)?;
         self.review.tick(store, &mut self.runtime)?;
         self.runtime.tick(store).map_err(map_read)?;
-        if !self.quiescing {
-            self.ai.tick(store, &self.runtime);
-        } else {
+        self.ai.tick(store, &mut self.runtime);
+        if self.quiescing {
             match self.finish_quiesce(store) {
                 Ok(()) => {}
                 Err(error) if error.code == ErrorCode::Busy => {}
@@ -357,6 +359,7 @@ impl ExecutionHost {
         self.source.stop();
         self.review.stop();
         self.ai.stop();
+        self.work_plans.stop();
         self.release.stop();
         for job in self.queries.drain(..) {
             self.retired_queries.push(job.thread);

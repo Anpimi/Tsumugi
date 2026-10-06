@@ -16,6 +16,22 @@ pub use selection::{
 };
 
 impl ProjectStore {
+    /// The original immutable source snapshot owns a plan's checker selection.
+    /// Reading this binding neither discovers a replacement nor grants execution.
+    pub fn work_plan_review_binding(
+        &self,
+        plan: &WorkPlan,
+    ) -> Result<Option<crate::content::SourceReviewBinding>, ExecutionError> {
+        plan.validate()?;
+        if !plan
+            .options
+            .requests(crate::application::AutomationEffect::RunChecks)
+        {
+            return Ok(None);
+        }
+        self.source_review_binding(plan.selection_basis[0].source_snapshot_id)
+    }
+
     pub fn prepare_work_plan(
         &self,
         config: Option<AiConfig>,
@@ -129,6 +145,24 @@ impl ProjectStore {
                 .collect::<Vec<_>>();
             let current =
                 super::review::targets_in(connection, plan.project_id, &units, &plan.locale)?;
+            let review = self.work_plan_review_binding(plan)?;
+            if plan
+                .options
+                .requests(crate::application::AutomationEffect::RunChecks)
+            {
+                for snapshot in current
+                    .iter()
+                    .map(|t| t.source_snapshot_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    if self.source_review_binding(snapshot)? != review {
+                        return Err(ExecutionError::new(
+                            ErrorCode::DependencyConflict,
+                            "work-plan-checker",
+                        ));
+                    }
+                }
+            }
             for basis in &plan.selection_basis {
                 let target = current.iter().find(|target| {
                     target.unit_id == basis.unit_id

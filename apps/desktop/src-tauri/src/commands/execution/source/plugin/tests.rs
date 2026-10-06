@@ -555,6 +555,301 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         call(&window, "prepare_review_checks", reopened_intent).unwrap(),
         json!({"kind":"recorded","run":checked})
     );
+    // AI output is a controlled ledger fixture; the selected Review worker is
+    // still the actual installed WebVTT package through the production commands.
+    // No model request or external network is made by this acceptance path.
+    fn candidate(state: &AppState, authorization: &Value, text: &str) {
+        let action: ExecutionId =
+            serde_json::from_value(authorization["actionId"].clone()).unwrap();
+        let text = text.to_owned();
+        state.sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            let receipt = store.work_plan_receipt(action).unwrap().unwrap();
+            let input = FixedInput::capture(receipt.input.unwrap()).unwrap();
+            if let Some(parent) = receipt.parent_task {
+                host.runtime.submit_child(store, &input, parent).unwrap();
+            } else {
+                host.runtime.submit(store, &input).unwrap();
+            }
+            let item = &input.envelope().items[0];
+            let payload = tsumugi_core::ai::item_payload(&input, item.item_id).unwrap();
+            let dispatch = store
+                .dispatch_execution_item(input.envelope().attempt_id, item.item_id)
+                .unwrap();
+            let result = tsumugi_core::execution::FixedResult::capture(
+                tsumugi_core::execution::ResultEnvelope {
+                    plugin: None,
+                    project_id: input.envelope().project_id,
+                    attempt_id: input.envelope().attempt_id,
+                    item_id: item.item_id,
+                    result_id: ExecutionId::new(),
+                    supersedes: None,
+                    dispatch_token: dispatch.dispatch_token,
+                    capability_id: tsumugi_core::ai::CAPABILITY.into(),
+                    capability_version: "1".into(),
+                    outcome: ExecutionState::Succeeded,
+                    output: Some(
+                        serde_json::to_value(tsumugi_core::ai::AiOutput {
+                            unit_id: payload.unit_id,
+                            target_locale: payload.target_locale,
+                            text,
+                            usage: None,
+                            requests: 1,
+                            usage_incomplete: true,
+                        })
+                        .unwrap(),
+                    ),
+                    diagnostic: None,
+                },
+                &input,
+                dispatch.dispatch_token,
+            )
+            .unwrap();
+            store.save_execution_result(&result).unwrap();
+            store
+                .validate_execution_result(input.envelope().attempt_id, result.envelope().result_id)
+                .unwrap();
+        });
+    }
+    let context = json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"]});
+    let target_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN"});
+    let mut options = tsumugi_core::application::PlanOptions::default();
+    options.selection_policy = tsumugi_core::application::SelectionPolicy::MissingOnly;
+    options
+        .stages
+        .iter_mut()
+        .find(|stage| stage.stage == tsumugi_core::application::WorkStage::Checks)
+        .unwrap()
+        .mode = tsumugi_core::application::StageMode::Assisted;
+    let config = tsumugi_core::ai::AiConfig {
+        endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+        model: "synthetic-ledger-only".into(),
+        credential_env: String::new(),
+        ..Default::default()
+    };
+    let prepared_plan = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options})).unwrap();
+    assert_eq!(prepared_plan["checker"]["kind"], "ready");
+    assert_eq!(
+        prepared_plan["checker"]["plugin"]["checker"],
+        review["view"]["plugin"]["checker"]
+    );
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let authorization = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":prepared_plan["planId"],"digest":prepared_plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":true,"effects":["save-candidate","run-checks","select-missing"],"expiresAt":(now+600).to_string()});
+    let mut denied = authorization.clone();
+    denied["checkerExecution"] = json!(false);
+    assert_eq!(
+        call(&window, "authorize_work_plan", denied).unwrap_err()["code"],
+        "permission-denied"
+    );
+    assert!(call(&window, "read_work_plan_action", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"actionId":authorization["actionId"]})).unwrap().is_null());
+    let authorized_plan = call(&window, "authorize_work_plan", authorization.clone()).unwrap();
+    candidate(&state, &authorized_plan, "已捕获 👩🏽‍💻");
+    let start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":prepared_plan["planId"],"actionId":authorization["actionId"],"expectedGeneration":authorized_plan["lease"]["generation"]});
+    let typed = serde_json::from_value(start.clone()).unwrap();
+    let mut lost = Box::pin(crate::commands::execution::work_plans::start_work_plan(
+        app.state(),
+        typed,
+    ));
+    assert!(matches!(
+        lost.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Pending
+    ));
+    drop(lost);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let selected = loop {
+        let view = call(&window, "read_ai_translation", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":authorized_plan["attemptId"]})).unwrap();
+        let effect = &view["rows"][0]["automation"];
+        if effect["phase"] == "selected" {
+            break effect["receipt"].clone();
+        }
+        assert!(
+            !matches!(
+                effect["phase"].as_str(),
+                Some("failed" | "blocked" | "cancelled")
+            ),
+            "AI effect: {effect}"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "actual AI Review checker did not finish: {view}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(selected["evidence"].is_object());
+    assert!(selected["checkRunId"].is_string());
+    let saved_target = call(&window, "read_review_target", target_request.clone()).unwrap();
+    assert!(saved_target["currentDecision"].is_null());
+    assert_eq!(
+        saved_target["currentCheck"]["runId"],
+        selected["checkRunId"]
+    );
+    assert_eq!(
+        call(&window, "start_work_plan", start).unwrap(),
+        authorized_plan["attemptId"]
+    );
+
+    options.selection_policy = tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection;
+    let replacement = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options})).unwrap();
+    let replacement_auth = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"digest":replacement["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":true,"effects":["save-candidate","run-checks","replace-captured-selection"],"expiresAt":(now+600).to_string()});
+    let replacement_receipt = call(&window, "authorize_work_plan", replacement_auth).unwrap();
+    let replacement_attempt: ExecutionId =
+        serde_json::from_value(replacement_receipt["attemptId"].clone()).unwrap();
+    let (reached, waiting) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    state.sessions.with(move |sessions| {
+        sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .execution_parts()
+            .unwrap()
+            .0
+            .ai
+            .pause_check_computation(crate::commands::execution::review::ComputeProbe {
+                action: replacement_attempt,
+                reached,
+                release: resume,
+            });
+    });
+    candidate(&state, &replacement_receipt, "新的译文 👩🏽‍💻");
+    call(&window, "start_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":replacement_receipt["actionId"],"expectedGeneration":replacement_receipt["lease"]["generation"]})).unwrap();
+    waiting.recv_timeout(Duration::from_secs(30)).unwrap();
+    assert!(
+        call(
+            &window,
+            "close_project",
+            json!({"sessionToken":context["sessionToken"]})
+        )
+        .is_err()
+    );
+    let paused = call(&window, "control_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":ExecutionId::new(),"expectedGeneration":replacement_receipt["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecution":false,"expiresAt":null})).unwrap();
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while state.sessions.with(|sessions| {
+        sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .execution_parts()
+            .unwrap()
+            .0
+            .ai
+            .active()
+    }) {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        call(&window, "read_review_target", target_request.clone()).unwrap(),
+        saved_target
+    );
+    // A changed installed-settings revision invalidates cached preflight metadata.
+    // Disabled checkers remain unavailable while history and paused authority survive.
+    let set_enabled = |enabled, expected_revision| {
+        tauri::async_runtime::block_on(crate::commands::plugins::packages::set_plugin_enabled(
+            app.state(),
+            crate::commands::plugins::PluginEnableRequest {
+                package: crate::commands::plugins::PluginPackageRequest {
+                    plugin: approval.plugin.clone(),
+                    package_digest: approval.package_digest.clone(),
+                },
+                enabled,
+                expected_revision,
+                action_id: ExecutionId::new(),
+            },
+        ))
+        .unwrap()
+    };
+    let disabled = set_enabled(
+        false,
+        serde_json::from_value(replacement["checker"]["plugin"]["settingsRevision"].clone())
+            .unwrap(),
+    );
+    let unavailable = call(&window, "read_work_plan_status", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"]})).unwrap();
+    assert_eq!(unavailable["plan"]["checker"]["kind"], "unavailable");
+    assert_eq!(unavailable["state"], "paused");
+    assert_eq!(unavailable["lease"], paused["lease"]);
+    let enabled = set_enabled(true, disabled.settings_revision);
+    let available = call(&window, "read_work_plan_status", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"]})).unwrap();
+    assert_eq!(available["plan"]["checker"]["kind"], "ready");
+    assert_eq!(
+        available["plan"]["checker"]["plugin"]["settingsRevision"],
+        enabled.settings_revision.get().to_string()
+    );
+    let continuation = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],"command":"continue","confirmed":true,"checkerExecution":true,"expiresAt":(now+600).to_string()});
+    let mut denied = continuation.clone();
+    denied["checkerExecution"] = json!(false);
+    assert_eq!(
+        call(&window, "control_work_plan", denied).unwrap_err()["code"],
+        "permission-denied"
+    );
+    let continued = call(&window, "control_work_plan", continuation).unwrap();
+    let continued_attempt: ExecutionId =
+        serde_json::from_value(continued["attemptId"].clone()).unwrap();
+    let (reached, waiting) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    state.sessions.with(move |sessions| {
+        sessions
+            .active
+            .as_mut()
+            .unwrap()
+            .execution_parts()
+            .unwrap()
+            .0
+            .ai
+            .pause_check_computation(crate::commands::execution::review::ComputeProbe {
+                action: continued_attempt,
+                reached,
+                release: resume,
+            });
+    });
+    candidate(&state, &continued, "再次译文 👩🏽‍💻");
+    call(&window, "start_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":continued["actionId"],"expectedGeneration":continued["lease"]["generation"]})).unwrap();
+    waiting.recv_timeout(Duration::from_secs(30)).unwrap();
+    call(&window, "quiesce_execution", context.clone()).unwrap();
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while call(&window, "execution_status", context.clone()).unwrap()["active"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "AI computation did not drain on project stop"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        call(&window, "read_review_target", target_request.clone()).unwrap(),
+        saved_target
+    );
+    call(
+        &window,
+        "close_project",
+        json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
+    let reopened = call(
+        &window,
+        "open_project",
+        json!({"locator":temporary.path().join("project")}),
+    )
+    .unwrap();
+    let historic = call(&window, "read_ai_translation", json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"],"attemptId":authorized_plan["attemptId"]})).unwrap();
+    assert_eq!(historic["rows"][0]["automation"]["receipt"], selected);
+    let mut original_authorization = authorization.clone();
+    original_authorization["sessionToken"] = reopened["sessionToken"].clone();
+    let mut wrong_plan = original_authorization.clone();
+    wrong_plan["planId"] = json!(ExecutionId::new());
+    assert_eq!(
+        call(&window, "authorize_work_plan", wrong_plan).unwrap_err()["reason"],
+        "work-plan-action"
+    );
+    assert_eq!(
+        call(&window, "authorize_work_plan", original_authorization).unwrap(),
+        authorized_plan
+    );
+    assert!(call(&window, "start_work_plan", json!({"sessionToken":reopened["sessionToken"],"projectId":context["projectId"],"planId":prepared_plan["planId"],"actionId":authorization["actionId"],"expectedGeneration":authorized_plan["lease"]["generation"]})).is_err());
     // Owned process stages were reaped. Only synthetic fixture directories are
     // made removable; no user application directory is changed.
     state.plugins.close();

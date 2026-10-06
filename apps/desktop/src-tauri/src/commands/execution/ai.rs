@@ -11,14 +11,19 @@ pub(super) struct AiSession {
     automation: automation::Automation,
 }
 impl AiSession {
+    #[cfg(test)]
+    pub(super) fn pause_check_computation(&mut self, probe: review::ComputeProbe) {
+        self.automation.compute_probe = Some(probe);
+    }
     pub(super) fn track(
         &mut self,
         store: &ProjectStore,
         input: &FixedInput,
+        consent: Option<work_plans::CheckerConsent>,
     ) -> Result<(), ExecutionError> {
-        self.automation.track(store, input)
+        self.automation.track(store, input, consent)
     }
-    pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &ExecutionRuntime) {
+    pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
         self.automation.tick(store, runtime);
     }
     pub(super) fn active(&self) -> bool {

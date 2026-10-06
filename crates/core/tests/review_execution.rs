@@ -776,6 +776,19 @@ fn adoption_policy_refresh_expires_qa_but_preserves_unchanged_manual_approval_an
         .commit_review_evidence(computed, &Cancellation::default())
         .unwrap();
     let before = store.review_target(project(&store), unit, "zh-CN").unwrap();
+    let automatic = automatic::candidate_request(
+        &mut store,
+        unit,
+        "候选",
+        tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
+    );
+    let original_plan = store.work_plan(automatic.lease.plan_id).unwrap();
+    assert_eq!(
+        store.work_plan_review_binding(&original_plan).unwrap(),
+        store
+            .source_review_binding(before.source_snapshot_id)
+            .unwrap()
+    );
     let mut runtime = support::source_runtime(&store);
     let mut envelope = support::source_input(&store).envelope().clone();
     envelope.settings["review"]["declaration"]["rules"] =
@@ -818,6 +831,17 @@ fn adoption_policy_refresh_expires_qa_but_preserves_unchanged_manual_approval_an
         .adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler)
         .unwrap();
     let after = store.review_target(project(&store), unit, "zh-CN").unwrap();
+    assert_eq!(
+        store.verify_work_plan(&original_plan).unwrap_err().stage,
+        "work-plan-checker"
+    );
+    assert_eq!(
+        store
+            .prepare_automatic_selection(&automatic)
+            .unwrap_err()
+            .stage,
+        "work-plan-checker"
+    );
     assert_eq!(after.basis, before.basis);
     assert_eq!(after.current_decision, before.current_decision);
     assert!(after.current_check.is_none());

@@ -9,6 +9,7 @@ import {AiWorkbench} from "./AiWorkbench";
 import {defaultAiConfig,type AiPrepared, type AiItem} from "./aiCommands";
 import type {ProjectView} from "./projectCommands";
 import {i18n} from "./i18n";
+import reviewFixture from "../test/fixtures/reviewCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -32,7 +33,7 @@ beforeEach(async()=>{
   if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},rows:[sourceRowFixture({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId},{key:"first",text:item.sourceText})]});
   if(command==="prepare_work_plan"){
    if(request.config)prepared.preview.config=request.config as typeof defaultAiConfig;
-   plan={planId,digest:"plan-digest",locale:String(request.locale),options:request.options as WorkPlanView["options"],scope:[{unitId:item.unitId,sourceSnapshotId:item.sourceSnapshotId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,selectionId:null}],attemptId:request.config?aiAttempt:null,preview:request.config?prepared.preview:null};return plan;
+   plan={checker: request.options && (request.options as WorkPlanView["options"]).selectionPolicy !== "candidates-only" ? { kind: "ready", plugin: reviewFixture.responses.prepareCheck.view.plugin } as unknown as WorkPlanView["checker"] : null,planId,digest:"plan-digest",locale:String(request.locale),options:request.options as WorkPlanView["options"],scope:[{unitId:item.unitId,sourceSnapshotId:item.sourceSnapshotId,sourceRevisionId:item.sourceRevisionId,nativeKey:item.nativeKey,selectionId:null}],attemptId:request.config?aiAttempt:null,preview:request.config?prepared.preview:null};return plan;
   }
   if(command==="authorize_work_plan"){
    const receipt:WorkPlanReceiptView={actionId:String(request.actionId),lease:{planId,generation:"1"},state:"active",attemptId:aiAttempt,parentTask:null};
@@ -77,7 +78,7 @@ it("keeps a draft on stay and clears it only after explicit discard",async()=>{
 });
 
 it("ignores a preview from a project that was replaced while the request was pending",async()=>{
- const user=userEvent.setup();const rendered=render(<AiWorkbench key="session" project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"AI translation"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));let resolve:(value:WorkPlanView)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="prepare_work_plan"?new Promise<WorkPlanView>(done=>{resolve=done;}):original(command,args));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<AiWorkbench key="replacement" project={{...project,sessionToken:"replacement"}} disabled={false} onOpenTranslation={()=>true}/>);resolve({...plan,planId,digest:"plan-digest",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false},attemptId:aiAttempt,preview:prepared.preview,scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:"first",selectionId:null}]});await user.click(screen.getByRole("button",{name:"AI translation"}));await screen.findByRole("checkbox",{name:"first: Hello"});expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);
+ const user=userEvent.setup();const rendered=render(<AiWorkbench key="session" project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"AI translation"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));let resolve:(value:WorkPlanView)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="prepare_work_plan"?new Promise<WorkPlanView>(done=>{resolve=done;}):original(command,args));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<AiWorkbench key="replacement" project={{...project,sessionToken:"replacement"}} disabled={false} onOpenTranslation={()=>true}/>);resolve({...plan,checker:null,planId,digest:"plan-digest",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false},attemptId:aiAttempt,preview:prepared.preview,scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:"first",selectionId:null}]});await user.click(screen.getByRole("button",{name:"AI translation"}));await screen.findByRole("checkbox",{name:"first: Hello"});expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);
 });
 async function preview(){const user=userEvent.setup();render(<AiWorkbench project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"AI translation"}));await user.type(screen.getByRole("textbox",{name:"Chat Completions URL"}),"http://127.0.0.1:4000/v1/chat/completions");await user.type(screen.getByRole("textbox",{name:"Model"}),"test-model");await user.clear(screen.getByRole("textbox",{name:"API key environment variable name"}));await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));await screen.findByRole("heading",{name:"Data sharing preview"});return user;}
 it("requires exact sharing confirmation and invalidates it on configuration edits",async()=>{const user=await preview();expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();expect(screen.getByRole("checkbox",{name:"Share applicable adopted terms"})).not.toBeChecked();expect(invoke.mock.calls.some(([c])=>c==="start_work_plan")).toBe(false);await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();await user.type(screen.getByRole("textbox",{name:"Model"}),"-changed");expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();});
@@ -193,7 +194,7 @@ it("retains an unknown control action and retries it only after its receipt is m
 
 it("reopens a persisted plan through its execution view and reads current control authority without dispatch",async()=>{
  const user=userEvent.setup(),ref=createRef<AiHandle>();
- plan={planId,digest:"old",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false},scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null}],preview:prepared.preview,attemptId:aiAttempt};
+ plan={checker: null,planId,digest:"old",locale:"zh-CN",options:{stages:[{stage:"generation",mode:"assisted"}],selectionPolicy:"candidates-only",adoptResources:false,deliver:false},scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null}],preview:prepared.preview,attemptId:aiAttempt};
  authority={plan,lease:{planId,generation:"3"},state:"paused",effects:["save-candidate"],expiresAt:String(Math.floor(Date.now()/1000)+600)};
  render(<AiWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
  ref.current!.showAttempt(aiAttempt);await screen.findByText("Automation paused");
@@ -215,9 +216,33 @@ it("confirms the displayed checked selection effects before dispatch", async () 
   expect(request.options.selectionPolicy).toBe("missing-only");
   expect(request.options.stages.find((choice: {stage: string}) => choice.stage === "checks").mode).toBe("assisted");
   await user.click(screen.getByRole("checkbox", { name: /I confirm sending/ }));
+  expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: /I authorize this checker/ }));
   await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
   await screen.findByText("你好");
   expect(invoke.mock.calls.find(([command]) => command === "authorize_work_plan")![1].request.effects).toEqual(["save-candidate", "run-checks", "select-missing"]);
+  expect(invoke.mock.calls.find(([command]) => command === "authorize_work_plan")![1].request.checkerExecution).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Pause automation" }));
+  await screen.findByText("Automation paused");
+  expect(screen.getByRole("checkbox", { name: /I authorize this checker/ })).not.toBeChecked();
+  await user.click(screen.getByRole("checkbox", { name: /I authorize the displayed generation/ }));
+  expect(screen.getByRole("button", { name: "Continue with renewed authorization" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: /I authorize this checker/ }));
+  const checker = authority!.plan.checker;
+  if (checker?.kind !== "ready") throw new Error("captured checker required");
+  authority = { ...authority!, plan: { ...authority!.plan, checker: {
+    kind: "ready", plugin: { ...checker.plugin,
+      settingsRevision: checker.plugin.settingsRevision === "0" ? "1" : "0" },
+  } } };
+  await user.click(screen.getByRole("button", { name: "Refresh plan status" }));
+  await waitFor(() => expect(screen.getByRole("checkbox", { name: /I authorize this checker/ })).not.toBeChecked());
+  expect(screen.getByRole("button", { name: "Continue with renewed authorization" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: /I authorize this checker/ }));
+  await user.click(screen.getByRole("button", { name: "Continue with renewed authorization" }));
+  await screen.findByText("Automation authorized");
+  const continued = invoke.mock.calls.filter(([command]) => command === "control_work_plan").at(-1)![1].request;
+  expect(continued.checkerExecution).toBe(true);
+  expect(continued.expectedGeneration).toBe("2");
 });
 
 it("resets automatic selection when generation is changed to manual", async () => {
@@ -229,5 +254,24 @@ it("resets automatic selection when generation is changed to manual", async () =
   const request = invoke.mock.calls.filter(([command]) => command === "prepare_work_plan").at(-1)![1].request;
   expect(request.options.selectionPolicy).toBe("candidates-only");
   expect(request.options.stages.find((choice: {stage: string}) => choice.stage === "checks").mode).toBe("manual");
+  expect(invoke.mock.calls.some(([command]) => command === "authorize_work_plan")).toBe(false);
+});
+
+
+it("keeps a checked plan unavailable when its installed checker cannot be prepared", async () => {
+  const user = await preview();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Choose generated translations" }), "missing-only");
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    const value = await original(command, args);
+    if (command === "prepare_work_plan") value.checker = { kind: "unavailable", error: {
+      code: "permission-denied", stage: "read", outcome: "rejected", recoveryRequired: false,
+    } };
+    return value;
+  });
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await user.click(screen.getByRole("checkbox", { name: /I confirm sending/ }));
+  expect(screen.getByText(/captured checker or approved runtime is unavailable/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "authorize_work_plan")).toBe(false);
 });
