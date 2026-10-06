@@ -1,5 +1,5 @@
 #![cfg(all(unix, feature = "core-adapter", feature = "javascript-conformance"))]
-//! Actual installed builder/checker processes reach Core release persistence.
+//! Actual captured builder/checker processes reach Core release persistence.
 //! Domain byte expectations are literal; desktop interaction is a separate gate.
 use std::{path::PathBuf, sync::Arc};
 use tsumugi_core::{
@@ -16,7 +16,7 @@ mod runtime_fixture;
 use core_execution::{authorize, execute, execute_all};
 
 #[test]
-fn installed_builders_need_each_locale_proof_and_preserve_original_release_after_reopen() {
+fn captured_builders_need_each_locale_proof_and_preserve_original_release_after_reopen() {
     let selected = PathBuf::from(
         std::env::var_os("TSUMUGI_TEST_PLUGIN_PACKAGE")
             .expect("explicit prebuilt package required"),

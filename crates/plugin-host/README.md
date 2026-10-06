@@ -464,7 +464,9 @@ migration.
 The `release_validation` test uses the same explicit SMAPI package/runtime
 configuration and `core-adapter,javascript-conformance` features. It adopts checked
 source, qualifies manual translations through the existing review policy, and
-runs the installed builder and independent artifact checker for two languages.
+runs the captured builder and independent artifact checker for two languages.
+It directly captures approved package bytes; package installation and enablement
+are separate conformance requirements.
 Missing either proof blocks release adoption. Literal Unicode and deliberately
 empty source output, original receipts, frozen edits and reopening after grant
 revocation are checked against the actual Core store. Empty source output uses
