@@ -586,3 +586,11 @@ schema 27, settings
 format 2, SDK/process/receipt formats, dependencies and the same undistributed
 application/SDK alpha.1 batch remain unchanged; no extra bump or historical
 migration is required. Both Unreleased changelogs describe the behavior.
+
+Execution envelope depth validation now traverses borrowed serialized fields
+without creating a duplicate JSON payload tree. Strict decoding, the same depth
+limit, complete byte digests and associations remain authoritative. This changes
+internal allocation only: project schema 27, settings format 2, SDK/process/receipt
+formats, public DTOs and dependencies are unchanged. Both Unreleased changelogs
+are synchronized; the same undistributed application/SDK alpha.1 batch requires
+no additional bump or historical migration.

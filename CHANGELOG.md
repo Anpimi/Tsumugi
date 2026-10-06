@@ -14,6 +14,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Execution envelope depth checks now traverse borrowed fields directly, avoiding
+  a duplicate JSON payload tree during QA and ledger restoration. The same depth
+  limit, exact stored bytes, digest checks and result associations remain required.
+
 - The experimental Host/Core adapter now runs captured Native Worker packages with an independently approved identity of the actual application Host, exact live consent and original channel evidence. Core stores the strict Native or Node environment in the existing ledger and reopens historical results without restoring execution grants. Native environments carry no artificial Node artifacts; desktop discovery and approval use the current application Host; desktop capability selection resolves the same strict SDK environment union and refuses mixed or mismatched provider runtime families. The experimental Rust environment port now uses `ExecutionEnvironmentDescriptor`, and current project schema 27 refuses earlier development directories unchanged, without migration.
 
 - The experimental public SDK offers an optional Rust native component entry point that owns strict framing, exact request/result identity, cooperative cancellation and cleanup. Authors return opaque capability output through the existing protocol; captured package/channel authorization and complete Native/Core environment binding remain Host responsibilities.

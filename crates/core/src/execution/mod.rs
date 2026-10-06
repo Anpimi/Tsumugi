@@ -543,9 +543,9 @@ impl InputEnvelope {
         if reused.len() == items.len() {
             return Err(ExecutionError::new(ErrorCode::InvalidInput, "empty-retry"));
         }
-        let value = serde_json::to_value(self)
-            .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "input"))?;
-        codec::validate_depth(&value, 0)
+        codec::validate_serialized_depth(self, || {
+            ExecutionError::new(ErrorCode::InvalidInput, "input")
+        })
     }
 }
 
@@ -868,11 +868,9 @@ impl ResultEnvelope {
                 ));
             }
         }
-        codec::validate_depth(
-            &serde_json::to_value(self)
-                .map_err(|_| ExecutionError::new(ErrorCode::OutputInvalid, "result"))?,
-            0,
-        )
+        codec::validate_serialized_depth(self, || {
+            ExecutionError::new(ErrorCode::OutputInvalid, "result")
+        })
     }
 }
 
