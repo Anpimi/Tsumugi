@@ -1,0 +1,23 @@
+{
+  "protocolVersion": 1,
+  "plugin": { "publisher": "example", "id": "reference", "version": "0.1.0" },
+  "permissions": [{ "kind": "captured-input" }],
+  "components": [
+    { "id": "worker", "scope": "project", "runtime": "javascript", "entrypoint": "component.mjs", "dependencies": [], "exit": { "stopTimeoutMs": 1000, "cleanupTimeoutMs": 1000 } },
+    { "id": "reference", "scope": "application", "runtime": "data", "entrypoint": null, "dependencies": [], "exit": { "stopTimeoutMs": 1000, "cleanupTimeoutMs": 1000 } }
+  ],
+  "contributions": [
+    { "id": "query", "componentId": "worker", "contribution": { "kind": "capability", "declaration": {
+      "contract": { "id": "example.query", "schemaVersion": 1, "behaviorVersion": 1 },
+      "inputSchema": { "id": "example.query-input", "schemaVersion": 1, "behaviorVersion": 1 },
+      "outputSchema": { "id": "example.query-output", "schemaVersion": 1, "behaviorVersion": 1 },
+      "errorSchema": { "id": "example.query-error", "schemaVersion": 1, "behaviorVersion": 1 },
+      "profiles": [{ "id": "example.reference", "schemaVersion": 1, "behaviorVersion": 1 }],
+      "effect": "read-only", "permissions": [{ "kind": "captured-input" }],
+      "limits": { "maxInputBytes": 1024, "maxOutputBytes": 2048, "concurrency": 1, "timeoutMs": 5000 }
+    } } },
+    { "id": "terms", "componentId": "reference", "contribution": { "kind": "resource", "schema": { "id": "example.terms", "schemaVersion": 1, "behaviorVersion": 1 }, "path": "terms.bin" } },
+    { "id": "guidance", "componentId": "reference", "contribution": { "kind": "skill", "path": "guidance.md" } },
+    { "id": "query-tool", "componentId": "reference", "contribution": { "kind": "resource", "schema": { "id": "tsumugi.capability-tool-declaration", "schemaVersion": 1, "behaviorVersion": 1 }, "path": "tool.json" } }
+  ]
+}

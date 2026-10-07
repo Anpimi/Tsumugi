@@ -42,6 +42,12 @@ for (const kind of ['review-check-input', 'review-declaration', 'review-check-er
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   reviewSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
+const toolSchemas = new Map();
+for (const kind of ['tool-declaration', 'tool-types']) {
+  const url = new URL(`crates/plugin-sdk/schemas/${kind}.schema.json`, root);
+  cargo(`check-${kind}-schema`, fileURLToPath(url));
+  toolSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
+}
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
 const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
 const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
@@ -104,6 +110,14 @@ for (const kind of ['review-check-input', 'review-declaration', 'review-check-er
   }
   outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
 }
+outputs.push([new URL('crates/plugin-sdk/javascript/tool.d.ts', root), await compile(toolSchemas.get('tool-types'), 'ToolTypes', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+const toolValidator = standaloneCode(ajv, ajv.compile(toolSchemas.get('tool-declaration')));
+if (/^\s*import\s/m.test(toolValidator) || /\brequire\s*\(/.test(toolValidator)) {
+  throw new Error('The generated tool validator requires a runtime dependency.');
+}
+outputs.push([new URL('crates/plugin-sdk/javascript/validate-tool-declaration.mjs', root), banner + sourceValidatorAttribution + toolValidator]);
 for (const [url, source] of outputs) {
   if (process.argv.includes('--check')) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);

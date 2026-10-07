@@ -21,7 +21,9 @@ fn print<T: serde::Serialize>(value: &T) -> Result<(), Box<dyn std::error::Error
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let data_schemas: [(&str, fn() -> schemars::Schema); 15] = [
+    let data_schemas: [(&str, fn() -> schemars::Schema); 17] = [
+        ("tool-declaration", tool_declaration_schema),
+        ("tool-types", tool_types_schema),
         ("review-check-input", review_check_input_schema),
         ("review-declaration", review_declaration_schema),
         ("review-check-error", review_check_error_schema),
@@ -63,6 +65,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     if args.len() == 2 {
         let bytes = |limit| read(&args[1], limit);
+        if args[0] == "validate-tool-declaration" {
+            return print(&parse_tool_declaration(&bytes(
+                MAX_TOOL_DECLARATION_BYTES,
+            )?)?);
+        }
         if args[0] == "validate-review-check-input" {
             return print(&parse_review_check_input(&bytes(
                 MAX_INVOCATION_PAYLOAD_BYTES,
@@ -277,7 +284,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             &serde_json::json!({"coverageComplete": coverage.complete, "entries": coverage.entries.len()}),
         );
     }
-    Err("usage: tsumugi-plugin-contract schema-review-check-input | schema-review-declaration | schema-review-check-error | schema-review-types | validate-review-check-input <file> | validate-review-declaration <file> | validate-review-check-error <file> | schema-build-input | schema-artifact-set | schema-artifact-check-input | schema-build-declaration | schema-build-error | schema-build-types | validate-build-input <file> | validate-artifact-set <file> | validate-artifact-check-input <file> | validate-build-declaration <file> | validate-build-error <file> | schema-translation-extraction-input | schema-translation-exchange | schema-translation-extraction-check-input | schema-translation-import-declaration | schema-translation-types | validate-translation-extraction-input <file> | validate-translation-exchange <file> | validate-translation-extraction-check-input <file> | validate-translation-import-declaration <file> | match-translation-extraction <input> <proposal> | check-<build-or-translation-or-review-kind>-schema <file> | schema | schema-exchange | schema-process | schema-source-extraction-input | schema-source-import-declaration | schema-source-extraction-error | schema-source-extraction-check-input | schema-check-results | schema-content-types | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | check-source-extraction-input-schema <file> | check-source-import-declaration-schema <file> | check-source-extraction-error-schema <file> | check-source-extraction-check-input-schema <file> | check-check-results-schema <file> | check-content-types-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | validate-source-extraction-input <file> | validate-source-import-declaration <file> | validate-source-extraction-error <file> | validate-source-extraction-check-input <file> | validate-check-results <file> | match-source-extraction <input> <content-exchange> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
+    Err("usage: tsumugi-plugin-contract schema-tool-declaration | schema-tool-types | validate-tool-declaration <file> | schema-review-check-input | schema-review-declaration | schema-review-check-error | schema-review-types | validate-review-check-input <file> | validate-review-declaration <file> | validate-review-check-error <file> | schema-build-input | schema-artifact-set | schema-artifact-check-input | schema-build-declaration | schema-build-error | schema-build-types | validate-build-input <file> | validate-artifact-set <file> | validate-artifact-check-input <file> | validate-build-declaration <file> | validate-build-error <file> | schema-translation-extraction-input | schema-translation-exchange | schema-translation-extraction-check-input | schema-translation-import-declaration | schema-translation-types | validate-translation-extraction-input <file> | validate-translation-exchange <file> | validate-translation-extraction-check-input <file> | validate-translation-import-declaration <file> | match-translation-extraction <input> <proposal> | check-<build-or-translation-or-review-or-tool-kind>-schema <file> | schema | schema-exchange | schema-process | schema-source-extraction-input | schema-source-import-declaration | schema-source-extraction-error | schema-source-extraction-check-input | schema-check-results | schema-content-types | profile-process | check-schema <file> | check-exchange-schema <file> | check-process-schema <file> | check-source-extraction-input-schema <file> | check-source-import-declaration-schema <file> | check-source-extraction-error-schema <file> | check-source-extraction-check-input-schema <file> | check-check-results-schema <file> | check-content-types-schema <file> | validate <manifest> | validate-exchange <file> | validate-process <file> | validate-source-extraction-input <file> | validate-source-import-declaration <file> | validate-source-extraction-error <file> | validate-source-extraction-check-input <file> | validate-check-results <file> | match-source-extraction <input> <content-exchange> | match-result <request> <result> <channel-binding> | check-coverage <captured-set> <results>".into())
 }
 fn main() {
     if let Err(error) = run() {

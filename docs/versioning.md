@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+The experimental SDK's additive read-only tool selector uses its own
+`tsumugi.capability-tool-declaration` schema/behavior 1/1. Generated public
+JavaScript contracts and Host metadata binding extend existing owners without
+changing process frames, project schema 28, installed Store/settings formats,
+desktop IPC or dependencies. This remains the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with synchronized Unreleased
+changelogs and no additional version bump or historical migration. Knowledge
+examples explicitly select the SDK artifact containing this contract; their
+earlier package-specific tool descriptions are not a compatibility path.
+
 The experimental Host's public captured Resource and Skill readers extend the
 existing immutable package owner without changing SDK/process contracts, project
 schema, installed Store layout or dependency versions. This is an additive Host

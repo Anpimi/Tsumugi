@@ -153,6 +153,22 @@ impl PackageImage {
         .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
         .map_err(|_| HostError::InvalidContract)
     }
+    /// Resolve a read-only tool to the original capability and same-package
+    /// resources/Skill. This performs no activation, dispatch or model request.
+    pub fn capability_tool(&self, contribution_id: &str) -> HostResult<CapabilityToolBinding> {
+        let binding = parse_tool_declaration(
+            self.resource_bytes(contribution_id, &tool_declaration_contract())?,
+        )
+        .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+        .map_err(|_| HostError::InvalidContract)?;
+        for resource in &binding.resources {
+            self.resource_bytes(&resource.contribution_id, &resource.schema)?;
+        }
+        if let Some(skill) = &binding.declaration.skill {
+            self.skill_bytes(skill)?;
+        }
+        Ok(binding)
+    }
     /// Read one declared resource from the captured package, with an exact
     /// schema and behavior match. Bytes remain opaque: the caller owns domain
     /// validation. This does not open source paths, activate code or grant

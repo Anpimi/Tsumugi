@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ToolTypes",
+  "type": "object",
+  "properties": {
+    "binding": {
+      "$ref": "#/$defs/CapabilityToolBinding"
+    },
+    "declaration": {
+      "$ref": "#/$defs/CapabilityToolDeclaration"
+    }
+  },
+  "required": [
+    "declaration",
+    "binding"
+  ],
+  "$defs": {
+    "CapabilityBinding": {
+      "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+      "type": "object",
+      "properties": {
+        "declaration": {
+          "$ref": "#/$defs/CapabilityDeclaration"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderSelectionBinding"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "declaration"
+      ]
+    },
+    "CapabilityDeclaration": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "effect": {
+          "$ref": "#/$defs/EffectKind"
+        },
+        "errorSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "limits": {
+          "$ref": "#/$defs/CapabilityLimits"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PermissionRequest"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema",
+        "profiles",
+        "effect",
+        "permissions",
+        "limits"
+      ]
+    },
+    "CapabilityLimits": {
+      "description": "Requested upper bounds. The host must also enforce its own current limits.",
+      "type": "object",
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "maxInputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxInputBytes",
+        "maxOutputBytes",
+        "concurrency",
+        "timeoutMs"
+      ]
+    },
+    "CapabilityToolBinding": {
+      "description": "A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.",
+      "type": "object",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/CapabilityBinding"
+        },
+        "declaration": {
+          "$ref": "#/$defs/CapabilityToolDeclaration"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolResourceBinding"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "declaration",
+        "capability",
+        "resources"
+      ]
+    },
+    "CapabilityToolDeclaration": {
+      "description": "A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.",
+      "type": "object",
+      "properties": {
+        "capabilityId": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "profile": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ContractRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skill": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supportingResources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "title",
+        "description",
+        "capabilityId",
+        "supportingResources"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "EffectKind": {
+      "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+      "type": "string",
+      "enum": [
+        "read-only",
+        "proposal",
+        "external"
+      ]
+    },
+    "PermissionRequest": {
+      "description": "These are requested permissions, never an authorization token.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "captured-input"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "staged-output"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "$ref": "#/$defs/ContractRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "project-service"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "contract"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "destination": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "network"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "destination"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "process"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "program"
+          ]
+        }
+      ]
+    },
+    "PluginIdentity": {
+      "description": "Claimed package identity; a host must authenticate the actual package source.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "publisher",
+        "id",
+        "version"
+      ]
+    },
+    "ProviderSelectionBinding": {
+      "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+      "type": "object",
+      "properties": {
+        "componentId": {
+          "type": "string"
+        },
+        "contributionId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "contributionId",
+        "packageDigest"
+      ]
+    },
+    "ToolResourceBinding": {
+      "type": "object",
+      "properties": {
+        "contributionId": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contributionId",
+        "schema"
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "reference_query",
+  "title": "Reference lookup",
+  "description": "Query selected reference data. Guidance and results grant no permission.",
+  "capabilityId": "query",
+  "profile": { "id": "example.reference", "schemaVersion": 1, "behaviorVersion": 1 },
+  "supportingResources": ["terms"],
+  "skill": "guidance"
+}

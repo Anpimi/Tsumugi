@@ -191,13 +191,16 @@ fn actual_knowledge_package_reopens_resources_and_runs_original_query_and_check_
         let body: serde_json::Value = serde_json::from_slice(resource).unwrap();
         assert_eq!(body["authority"], "unadopted-editorial-suggestion");
         assert!(std::str::from_utf8(image.skill_bytes("concept-review").unwrap()).unwrap().contains("grants no tools"));
-        let tool: serde_json::Value = serde_json::from_slice(image.resource_bytes("agent-query-tool", &contract("org.tsumugi.examples.capability-tool")).unwrap()).unwrap();
-        assert_eq!(tool["contributionId"], "query");
+        let tool = image.capability_tool("agent-query-tool").unwrap();
+        assert_eq!(tool.declaration.capability_id, "query");
+        assert_eq!(tool.declaration.supporting_resources, vec!["terminology"]);
+        assert_eq!(tool.declaration.skill.as_deref(), Some("concept-review"));
         let pin = serde_json::json!({"id":body["id"], "revision":body["revision"], "sha256":sdk::payload_digest(std::str::from_utf8(resource).unwrap())});
         let query = serde_json::json!({"resource":pin, "sourceLanguage":"en", "targetLanguage":"zh-CN",
             "queries":[{"id":"u-1", "text":"👩🏽‍💻 e\u{301} sound premises", "conceptIds":["soundness", "premise"]}]});
         let mut session = official::launch(&image, "query", temporary.path()).await;
-        let binding = sdk::bind_capability(image.manifest(), "query", image.package_digest()).unwrap();
+        let binding = tool.capability;
+        assert_eq!(binding, sdk::bind_capability(image.manifest(), "query", image.package_digest()).unwrap());
         let first_pid = session.channel().child_pid;
         let output = official::success_payload(official::invoke(&mut session, &binding, "query-1", &query).await);
         let output: serde_json::Value = serde_json::from_str(&output.utf8).unwrap();

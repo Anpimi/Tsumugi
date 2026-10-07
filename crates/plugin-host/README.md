@@ -68,6 +68,13 @@ copying the Host's package digest algorithm.
 
 ## Fixed runtime environment
 
+`PackageImage::capability_tool` resolves an SDK [read-only tool declaration](../plugin-sdk/docs/tools.md)
+from its immutable Resource, retaining the original capability and checking
+same-package Resource/Skill support. Wrong contracts, writable effects, extra
+permissions and executable supporting bytes are refused. Metadata inspection
+does not activate a component or grant execution; application consumers must
+recheck current availability, fixed selections and actual per-attempt authority.
+
 `PackageImage::resource_bytes` reads one explicitly selected Resource from the
 immutable captured package after an exact schema and behavior match.
 `skill_bytes` reads one declared Skill from the same image. Both reject a wrong

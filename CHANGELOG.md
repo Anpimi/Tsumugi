@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental SDK and Host consumers can bind read-only tool Resources to an
+  original captured capability, exact profile and same-package Resource/Skill
+  support. Generated JavaScript contracts share the Rust definition; inspection
+  refuses writable effects, extra permissions and executable support. Tool
+  guidance grants no authority; desktop manual, batch and Agent integration is
+  still in development.
+
 - Experimental Host consumers can read explicitly selected opaque Resources and
   Skills from immutable captured packages, with exact resource schema/behavior
   matching and executable-content rejection. Reading guidance grants no tools,

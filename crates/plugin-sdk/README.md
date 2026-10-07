@@ -41,6 +41,11 @@ versioned mandatory domain rules and an immutable checker Resource. Results reus
 the existing check coverage contract. Core qualification and desktop execution
 remain separate consumers; reading metadata grants no execution or review approval.
 
+[Read-only capability tools](docs/tools.md) select an existing capability, exact
+profile and same-package Resource/Skill support without duplicating its contracts
+or permissions. The SDK and Host validate fixed metadata; application discovery,
+current authorization and manual/batch/Agent journeys remain separate consumers.
+
 From the repository root:
 
 ```sh

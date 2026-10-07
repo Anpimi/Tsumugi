@@ -21,6 +21,7 @@ mod review;
 mod source_extraction;
 mod source_import;
 mod text;
+mod tool;
 mod translation;
 mod validation;
 
@@ -39,6 +40,7 @@ pub use review::*;
 pub use source_extraction::*;
 pub use source_import::*;
 pub use text::*;
+pub use tool::*;
 pub use translation::*;
 pub use validation::{ContractError, ContractErrorCode, ValidatedManifest, parse_manifest};
 
