@@ -181,6 +181,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Manual checks rejected before dispatch no longer keep a project active or
+  repeatedly read extension settings. Retrying preserves the original consent;
+  partially submitted or uncertain authorized checks retain recovery and cancellation.
+
 - Source-update estimates now reflect the QA needed after adopting a new source
   snapshot. Unchanged translations and applicable manual decisions remain;
   checks bound to the complete previous input remain historical until rerun.

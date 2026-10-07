@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Manual checker lifecycle now distinguishes explicit metadata rejection from
+attempted authorization and real execution channels. Inert rejected checks do
+not poll settings or block project closure; original consent, partial submission,
+uncertain authorization and cancellation remain authoritative. This internal
+repair changes no schema, IPC, SDK/process contract or dependency. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch and bilingual
+Unreleased entries require no extra version bump or historical migration.
+
 Source-update estimates now use the existing QA applicability owner for a new
 adopted snapshot. Complete-input checks remain historical while translations and
 applicable manual decisions retain their existing semantics. This fixes the

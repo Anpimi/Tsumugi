@@ -1,4 +1,4 @@
-//! Two revocation timings reuse the real joint IPC fixture and its workers.
+//! Manual checker lifecycle and revocation reuse the real joint IPC fixture.
 use super::*;
 use std::{
     future::Future,
@@ -181,6 +181,221 @@ pub(super) fn rejects_revoked_manual_computation(
         project_path,
         false,
     );
+    rejects_pre_dispatch_busy(
+        app,
+        window,
+        context,
+        recorded_intent,
+        recorded_check,
+        project_path,
+    );
+}
+
+fn rejects_pre_dispatch_busy(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    window: &Window,
+    context: &Value,
+    recorded_intent: &Value,
+    recorded_check: &Value,
+    project_path: &Path,
+) {
+    let state = app.state::<AppState>();
+    // The preceding partial-submission fixture registered a one-shot gate.
+    // Begin this independent scenario with an idle runtime whose registrations
+    // will be the real captured RunnerProxy values, preserving saved receipts.
+    state.sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        let (host, store) = active.execution_parts().unwrap();
+        host.tick(store).unwrap();
+        assert!(!host.active(store).unwrap());
+        assert!(host.review.jobs.is_empty());
+        active.execution = None;
+    });
+    let connection = rusqlite::Connection::open(project_path.join("project.sqlite3")).unwrap();
+    let counts = || {
+        connection.query_row(
+            "SELECT (SELECT COUNT(*) FROM plugin_execution_grants), (SELECT COUNT(*) FROM execution_tasks), (SELECT COUNT(*) FROM review_checks)",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+        ).unwrap()
+    };
+    let before = counts();
+    let target = scoped(
+        context,
+        json!({"unitId":recorded_intent["unitId"], "locale":recorded_intent["locale"]}),
+    );
+    let before_check =
+        call(window, "read_review_target", Some(target.clone())).unwrap()["currentCheck"].clone();
+    assert!(!before_check.is_null());
+    let mut last = None;
+    // More than the two-job limit must remain possible when each preceding
+    // failure created no durable grant or execution input.
+    for _ in 0..3 {
+        let action = ExecutionId::new();
+        let mut intent = recorded_intent.clone();
+        intent["actionId"] = json!(action);
+        let preparation = call(window, "prepare_review_checks", Some(intent.clone())).unwrap();
+        let slots = preparation["view"]["checkers"].as_array().unwrap();
+        let grants = slots
+            .iter()
+            .map(|slot| consent(context, slot))
+            .collect::<Vec<_>>();
+        let start = scoped(context, json!({"check":intent, "executions":grants}));
+        let (release, holder) = hold_settings(&state.plugins);
+        let error = call(window, "run_review_checks", Some(start.clone())).unwrap_err();
+        assert_eq!(error["code"], "busy", "{error}");
+        assert_eq!(error["outcome"], "rejected", "{error}");
+        assert_eq!(error["reason"], "plugin-store-busy", "{error}");
+        state.sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            // Holding the actual manager proves that an inert rejected job
+            // neither polls installed settings nor guards runtime dispatch.
+            host.tick(store).unwrap();
+            let job = host.review.jobs.get(&action).unwrap();
+            assert!(!job.attached);
+            assert!(job.terminal);
+            assert!(!job.authorization_attempted);
+            assert!(job.rejected_before_dispatch);
+            assert!(job.slots.iter().all(|slot| slot.start.is_none()));
+            for slot in &job.slots {
+                let missing = store
+                    .execution_input(slot.input.envelope().attempt_id)
+                    .unwrap_err();
+                assert_eq!(missing.code, ErrorCode::InvalidInput);
+                assert_eq!(missing.stage, "execution-storage");
+            }
+            assert_eq!(host.review.jobs.len(), 1);
+            assert!(!host.active(store).unwrap());
+        });
+        assert_eq!(
+            counts(),
+            before,
+            "metadata rejection cannot grant, enqueue or adopt"
+        );
+        assert_eq!(
+            call(window, "execution_status", Some(context.clone())).unwrap()["active"],
+            false
+        );
+        assert_eq!(
+            call(window, "prepare_review_checks", Some(intent.clone())).unwrap(),
+            preparation
+        );
+        let mut renewed = start.clone();
+        renewed["executions"][0]["grantId"] = json!(ExecutionId::new());
+        let changed = call(window, "run_review_checks", Some(renewed)).unwrap_err();
+        assert_eq!(changed["code"], "dependency-conflict", "{changed}");
+        assert_eq!(
+            call(window, "read_review_target", Some(target.clone())).unwrap()["currentCheck"],
+            before_check
+        );
+        release.send(()).unwrap();
+        holder.join().unwrap();
+        last = Some((intent, preparation, start));
+    }
+    let (intent, preparation, start) = last.unwrap();
+    assert_eq!(
+        call(window, "prepare_review_checks", Some(intent.clone())).unwrap(),
+        preparation
+    );
+    let checked = call(window, "run_review_checks", Some(start.clone())).unwrap();
+    assert_eq!(checked["actionId"], intent["actionId"]);
+    for (slot, grant) in preparation["view"]["checkers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(start["executions"].as_array().unwrap())
+    {
+        let saved = connection.query_row(
+            "SELECT grant_id,input_digest,expires_at_ms FROM plugin_execution_grants WHERE attempt_id=?1",
+            [slot["attemptId"].as_str().unwrap()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
+        ).unwrap();
+        assert_eq!(saved.0, grant["grantId"].as_str().unwrap());
+        assert_eq!(saved.1, grant["inputDigest"].as_str().unwrap());
+        assert_eq!(saved.2.to_string(), grant["expiresAtMs"].as_str().unwrap());
+    }
+    assert_eq!(
+        call(window, "execution_status", Some(context.clone())).unwrap()["active"],
+        false
+    );
+    assert_eq!(
+        call(window, "read_review_target", Some(target)).unwrap()["currentCheck"],
+        checked
+    );
+    assert_eq!(
+        call(
+            window,
+            "prepare_review_checks",
+            Some(recorded_intent.clone())
+        )
+        .unwrap(),
+        json!({"kind":"recorded", "run":recorded_check})
+    );
+    // Leave one explicitly rejected metadata action for the fixture's original
+    // registered close_project call. It must not require quiescing active work.
+    let before_close = counts();
+    let mut close_intent = recorded_intent.clone();
+    let close_action = ExecutionId::new();
+    close_intent["actionId"] = json!(close_action);
+    let close_preparation =
+        call(window, "prepare_review_checks", Some(close_intent.clone())).unwrap();
+    let close_grants = close_preparation["view"]["checkers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|slot| consent(context, slot))
+        .collect::<Vec<_>>();
+    let (release, holder) = hold_settings(&state.plugins);
+    let close_error = call(
+        window,
+        "run_review_checks",
+        Some(scoped(
+            context,
+            json!({"check":close_intent, "executions":close_grants}),
+        )),
+    )
+    .unwrap_err();
+    assert_eq!(close_error["reason"], "plugin-store-busy", "{close_error}");
+    assert_eq!(close_error["outcome"], "rejected", "{close_error}");
+    assert_eq!(counts(), before_close);
+    assert_eq!(
+        call(window, "execution_status", Some(context.clone())).unwrap()["active"],
+        false
+    );
+    state.sessions.with(move |sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        host.tick(store).unwrap();
+        assert!(
+            host.review
+                .jobs
+                .get(&close_action)
+                .unwrap()
+                .rejected_before_dispatch
+        );
+        assert!(!host.active(store).unwrap());
+    });
+    release.send(()).unwrap();
+    holder.join().unwrap();
+}
+
+fn hold_settings(
+    plugins: &Arc<crate::commands::plugins::ApplicationPlugins>,
+) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+    let expected = plugins.environment_settings_revision().unwrap();
+    let plugins = plugins.clone();
+    let (acquired, waiting) = std::sync::mpsc::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        plugins
+            .with_environment_revision(expected, || {
+                acquired.send(()).unwrap();
+                resume.recv_timeout(Duration::from_secs(30)).unwrap();
+                Ok(())
+            })
+            .unwrap();
+    });
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    (release, holder)
 }
 
 struct GatedRunner {
@@ -353,6 +568,8 @@ fn partial_submission(
         let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
         let job = host.review.jobs.get(&action).unwrap();
         assert!(!job.attached);
+        assert!(job.authorization_attempted);
+        assert!(!job.rejected_before_dispatch);
         assert_eq!(job.slots[0].input.bytes(), observed_inputs[0].bytes());
         let first = host
             .runtime
@@ -444,6 +661,17 @@ fn partial_submission(
     } else {
         release.send(()).unwrap();
         let first_result = completed_result(window, context, slots[0]["attemptId"].clone());
+        state.sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            host.tick(store).unwrap();
+            let job = host.review.jobs.get(&action).unwrap();
+            assert!(job.authorization_attempted);
+            assert!(
+                !job.terminal,
+                "a granted but missing second input remains recoverable work"
+            );
+            assert!(host.review.active());
+        });
         assert_eq!(
             call(window, "read_review_target", Some(target.clone())).unwrap()["currentCheck"],
             *recorded_check,

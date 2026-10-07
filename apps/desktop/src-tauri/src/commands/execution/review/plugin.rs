@@ -67,6 +67,8 @@ struct Job {
     attached: bool,
     observing: bool,
     terminal: bool,
+    authorization_attempted: bool,
+    rejected_before_dispatch: bool,
     reply: Option<Reply>,
     cancellation_sent: bool,
     cancellation_actions: Vec<ExecutionId>,
@@ -109,7 +111,12 @@ pub(in crate::commands::execution) struct ReviewSession {
 }
 impl ReviewSession {
     pub(in crate::commands::execution) fn active(&self) -> bool {
-        self.jobs.values().any(|job| job.attached || !job.terminal)
+        self.jobs.values().any(|job| {
+            job.attached
+                || ((job.authorization_attempted
+                    || job.slots.iter().any(|slot| slot.start.is_some()))
+                    && !job.terminal)
+        })
     }
     pub(in crate::commands::execution) fn stop(&mut self) {
         self.preflight = None;
@@ -126,7 +133,9 @@ impl ReviewSession {
     ) -> Result<Option<(Arc<ApplicationPlugins>, UnsignedDecimal)>, CommandError> {
         let mut authority = None;
         for job in self.jobs.values_mut() {
-            if !job.cancellation.is_requested() {
+            let needs_authority = job.slots.iter().any(|slot| slot.start.is_some())
+                && (job.attached || !job.terminal);
+            if !job.cancellation.is_requested() && needs_authority {
                 if let Err(error) = job
                     .plugins
                     .with_environment_revision(job.settings_revision, || Ok(()))
@@ -144,7 +153,7 @@ impl ReviewSession {
             }
             if job.cancellation.is_requested() {
                 job.cancel_channels(store, runtime)?;
-            } else if job.slots.iter().any(|slot| slot.start.is_some()) {
+            } else if needs_authority {
                 if authority.as_ref().is_some_and(|(plugins, revision)| {
                     *revision != job.settings_revision || !Arc::ptr_eq(plugins, &job.plugins)
                 }) {
@@ -193,7 +202,12 @@ impl ReviewSession {
                             if error.code == ErrorCode::InvalidInput
                                 && error.stage == "execution-storage" =>
                         {
-                            job.terminal = false
+                            // Metadata rejection creates neither an input nor a
+                            // channel. An attempted authorization may instead
+                            // have committed before returning an unknown error.
+                            if slot.start.is_some() || job.authorization_attempted {
+                                job.terminal = false;
+                            }
                         }
                         Err(error) => return Err(map_read(error)),
                     }
@@ -494,6 +508,12 @@ pub async fn prepare_review_checks(
                         .map_err(map_adopt)?;
                 }
                 let view = preflight_view(&request, &slots)?;
+                // A new preview replaces only an explicitly rejected metadata
+                // attempt. Accepted or uncertain channels retain their exact
+                // original consent and their recovery/cancellation entry.
+                host.review.jobs.retain(|action, job| {
+                    *action == request.action_id || job.attached || !job.rejected_before_dispatch
+                });
                 host.review.preflight = Some(Preflight {
                     prepared,
                     request,
@@ -658,6 +678,8 @@ pub async fn run_review_checks(
                         attached: true,
                         observing: false,
                         terminal: false,
+                        authorization_attempted: false,
+                        rejected_before_dispatch: false,
                         reply: None,
                         cancellation_sent: false,
                         cancellation_actions: slots.iter().map(|_| ExecutionId::new()).collect(),
@@ -684,6 +706,7 @@ pub async fn run_review_checks(
     };
     tauri::async_runtime::spawn(async move {
         let mut attached = false;
+        let mut metadata_rejected = false;
         let work = async {
             let (prepared, slots) = match admitted.await? {
                 Ok(value) => {
@@ -707,7 +730,12 @@ pub async fn run_review_checks(
                         })
                         .collect::<Result<Vec<_>, CommandError>>()
                 })
-                .await?;
+                .await;
+            metadata_rejected = loaded
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.outcome == CommandOutcome::Rejected);
+            let loaded = loaded?;
             let settings_revision = loaded.first().ok_or_else(stale)?.1.settings_revision();
             if loaded
                 .iter()
@@ -759,6 +787,14 @@ pub async fn run_review_checks(
                                                 .ok_or_else(stale)?,
                                         )
                                         .map_err(map_adopt)?;
+                                        // COMMIT can precede a failing grant
+                                        // activation. Such a retry must not be
+                                        // discarded as a metadata-only failure.
+                                        host.review
+                                            .jobs
+                                            .get_mut(&dispatch.check.action_id)
+                                            .ok_or_else(stale)?
+                                            .authorization_attempted = true;
                                         host.runtime
                                             .authorize_plugin(
                                                 store,
@@ -880,6 +916,9 @@ pub async fn run_review_checks(
                         job.attached = false;
                         job.observing = false;
                         job.reply = None;
+                        job.rejected_before_dispatch = metadata_rejected
+                            && !job.authorization_attempted
+                            && job.slots.iter().all(|slot| slot.start.is_none());
                         if stop_channels && !job.cancellation_sent {
                             job.cancellation.request();
                             job.cancel_channels(store, &mut host.runtime)?;
