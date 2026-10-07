@@ -84,3 +84,11 @@ rendering markup or following links. `ToolQueryError` exposes a stable code and
 field for the host to localize. Caller-supplied bindings remain claims; this
 helper neither authenticates them nor bypasses original domain validation or
 per-attempt application consent.
+
+Rust consumers use `ToolQueryDeclaration::prepare_payload(text, target,
+selections, max_input_bytes)` to construct the same original capability payload.
+The binding's capability supplies `max_input_bytes`; the declared text bound,
+explicit option membership, selection bounds, existing paths and complete
+encoded input bound are checked together. Fixed template fields and exact UTF-8
+source text remain intact. This helper neither grants execution nor creates
+missing paths, and it leaves domain input validation to the original worker.

@@ -1,5 +1,6 @@
 //! Work-plan commands share the ordinary project session and runtime.
 pub(crate) mod agent;
+pub(crate) mod broker;
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
     dispatch::BlockingExecutor,
@@ -13,8 +14,9 @@ use tsumugi_core::{
     ai::{self, AiConfig, AiPreview},
     application::{
         AuthorizeWorkPlan, AutomationEffect, AutomationLease, ControlWorkPlan, PlanOptions,
-        PlanSelectionBasis, SetWorkProtection, WorkPlan, WorkPlanAgentScope, WorkPlanCommand, WorkPlanReceipt,
-        WorkPlanState, WorkPlanStatus, WorkProtection,
+        PlanSelectionBasis, SetWorkProtection, WorkPlan, WorkPlanAgentScope, WorkPlanCommand,
+        WorkPlanReceipt, WorkPlanState, WorkPlanStatus, WorkPlanToolConsent, WorkPlanTools,
+        WorkProtection,
     },
 };
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
@@ -25,6 +27,9 @@ pub(super) struct WorkPlanSession {
     environments: BTreeMap<ExecutionId, (String, ReviewEnvironment)>,
     checker_consents: BTreeMap<ExecutionId, CheckerConsent>,
     agent_scopes: BTreeMap<ExecutionId, WorkPlanAgentScope>,
+    tool_consents: BTreeMap<ExecutionId, (AutomationLease, Arc<WorkPlanToolConsent>)>,
+    tool_starts: BTreeMap<ExecutionId, broker::ToolStart>,
+    tool_intents: BTreeMap<ExecutionId, broker::HumanToolIntent>,
 }
 impl WorkPlanSession {
     pub(super) fn stop(&mut self) {
@@ -32,6 +37,9 @@ impl WorkPlanSession {
         self.environments.clear();
         self.checker_consents.clear();
         self.agent_scopes.clear();
+        self.tool_consents.clear();
+        self.tool_starts.clear();
+        self.tool_intents.clear();
     }
 }
 
@@ -184,7 +192,8 @@ request!(
         config: Option<AiConfig>,
         locale: String,
         unit_ids: Vec<ExecutionId>,
-        options: PlanOptions
+        options: PlanOptions,
+        tool_selection: Option<broker::WorkPlanToolSelection>
     }
 );
 request!(
@@ -195,6 +204,7 @@ request!(
         action_id: ExecutionId,
         confirmed: bool,
         checker_execution: bool,
+        tool_execution: bool,
         effects: Vec<AutomationEffect>,
         expires_at: UnsignedDecimal
     }
@@ -216,6 +226,7 @@ request!(
         command: WorkPlanCommand,
         confirmed: bool,
         checker_execution: bool,
+        tool_execution: bool,
         expires_at: Option<UnsignedDecimal>
     }
 );
@@ -264,6 +275,7 @@ pub struct WorkPlanView {
     pub preview: Option<AiPreviewView>,
     pub attempt_id: Option<ExecutionId>,
     pub checker: Option<WorkPlanCheckerView>,
+    pub tools: Option<WorkPlanTools>,
 }
 
 impl TryFrom<&WorkPlan> for WorkPlanView {
@@ -299,6 +311,7 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
             preview,
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),
             checker: None,
+            tools: plan.tools.clone(),
         })
     }
 }
@@ -335,6 +348,7 @@ pub struct WorkPlanStatusView {
     pub state: WorkPlanState,
     pub effects: Vec<AutomationEffect>,
     pub expires_at: UnsignedDecimal,
+    pub tool_invocations: Option<broker::WorkPlanToolUsage>,
 }
 
 impl WorkPlanStatusView {
@@ -345,6 +359,7 @@ impl WorkPlanStatusView {
             state: status.state,
             effects: status.effects,
             expires_at: status.expires_at.into(),
+            tool_invocations: None,
         })
     }
 }
@@ -377,14 +392,22 @@ pub async fn prepare_work_plan(
                 )
                 .map_err(map_read)?;
             let binding = store.work_plan_review_binding(&plan).map_err(map_read)?;
-            Ok((plan, binding))
+            Ok((plan, binding, host.runtime.generation()))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, binding) = captured.await?;
-        let (environment, checker) = load_checker(io, plugins, binding, None).await?;
+        let (plan, binding, generation) = captured.await?;
+        let selected = request.tool_selection.clone();
+        let current_plugins = plugins.clone();
+        let tools = io
+            .clone()
+            .run(CommandStage::ExecutionRead, move || {
+                broker::capture_selection(&current_plugins, selected.as_ref())
+            })
+            .await?;
+        let (environment, checker) = load_checker(io, plugins.clone(), binding, None).await?;
         lease
             .run(
                 "prepare_work_plan.finish",
@@ -398,21 +421,42 @@ pub async fn prepare_work_plan(
                     )?;
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
-                    store.verify_work_plan(&plan).map_err(map_read)?;
-                    let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
-                    view.checker = checker;
-                    if let Some(environment) = environment {
-                        if host.work_plans.environments.len() >= 8 {
-                            host.work_plans.environments.clear();
-                        }
-                        host.work_plans
-                            .environments
-                            .insert(plan.plan_id, (plan.digest.clone(), environment));
-                    } else {
-                        host.work_plans.environments.remove(&plan.plan_id);
+                    if host.runtime.generation() != generation {
+                        return Err(map_read(ExecutionError::new(
+                            ErrorCode::DependencyConflict,
+                            "work-plan-session",
+                        )));
                     }
-                    host.work_plans.prepared = Some(plan);
-                    Ok(view)
+                    store.verify_work_plan(&plan).map_err(map_read)?;
+                    let plan = if tools.is_some() {
+                        store
+                            .prepare_work_plan_with_tools(
+                                request.config.clone(),
+                                &request.locale,
+                                &request.unit_ids,
+                                request.options.clone(),
+                                tools,
+                            )
+                            .map_err(map_read)?
+                    } else {
+                        plan
+                    };
+                    broker::with_tools_revision(&plugins, &plan, || {
+                        let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
+                        view.checker = checker;
+                        if let Some(environment) = environment {
+                            if host.work_plans.environments.len() >= 8 {
+                                host.work_plans.environments.clear();
+                            }
+                            host.work_plans
+                                .environments
+                                .insert(plan.plan_id, (plan.digest.clone(), environment));
+                        } else {
+                            host.work_plans.environments.remove(&plan.plan_id);
+                        }
+                        host.work_plans.prepared = Some(plan.clone());
+                        Ok(view)
+                    })
                 },
             )
             .await
@@ -458,23 +502,35 @@ pub async fn authorize_work_plan(
                         &plan,
                         &AuthorizeWorkPlan {
                             action_id: initial.action_id,
-                            plan_digest: initial.digest,
+                            plan_digest: initial.digest.clone(),
                             confirmed: initial.confirmed,
-                            effects: initial.effects,
+                            effects: initial.effects.clone(),
                             expires_at: initial.expires_at.get(),
                         },
                     )
                     .map_err(map_recover)?;
+                broker::restore_consent(host, store, &plan, &receipt, &initial)?;
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
             }
-            let prepared =
-                host.work_plans.prepared.as_ref().filter(|plan| {
-                    plan.plan_id == initial.plan_id && plan.digest == initial.digest
-                });
+            let prepared = host
+                .work_plans
+                .prepared
+                .as_ref()
+                .filter(|plan| plan.plan_id == initial.plan_id && plan.digest == initial.digest)
+                .cloned();
             if let Some(plan) = prepared {
+                broker::require_consent(&plan, initial.tool_execution, Some(&initial.effects))?;
+                broker::capture_human_intent(
+                    host,
+                    &plan,
+                    initial.action_id,
+                    initial.expires_at.get(),
+                    &initial,
+                )?;
                 Ok(Ok((
                     plan.clone(),
-                    consent_environment(host, store, plan, initial.checker_execution)?,
+                    consent_environment(host, store, &plan, initial.checker_execution)?,
+                    host.runtime.generation(),
                 )))
             } else {
                 // Read-only replay returns historical authority without recreating local consent.
@@ -510,11 +566,11 @@ pub async fn authorize_work_plan(
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, environment) = match captured.await? {
+        let (plan, environment, generation) = match captured.await? {
             Ok(value) => value,
             Err(receipt) => return Ok(receipt),
         };
-        let runner = checker_runner(io, plugins, environment).await?;
+        let runner = checker_runner(io, plugins.clone(), environment).await?;
         lease
             .run(
                 "authorize_work_plan.finish",
@@ -528,45 +584,55 @@ pub async fn authorize_work_plan(
                     )?;
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
-                    store.verify_work_plan(&plan).map_err(map_recover)?;
-                    let binding = if let Some((runner, binding)) = runner {
-                        host.register_plugin(runner, binding.checker.clone())
-                            .map_err(map_recover)?;
-                        Some(binding)
-                    } else {
-                        None
-                    };
-                    let receipt = store
-                        .authorize_work_plan(
-                            &plan,
-                            &AuthorizeWorkPlan {
-                                action_id: request.action_id,
-                                plan_digest: request.digest,
-                                confirmed: request.confirmed,
-                                effects: request.effects,
-                                expires_at: request.expires_at.get(),
-                            },
-                        )
-                        .map_err(map_recover)?;
-                    if let Some(binding) = binding {
-                        let status = store
-                            .work_plan_status(plan.plan_id)
-                            .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?;
-                        if status.lease == receipt.lease
-                            && status.state == WorkPlanState::Active
-                            && status.expires_at == request.expires_at.get()
-                        {
-                            host.work_plans.checker_consents.insert(
-                                plan.plan_id,
-                                CheckerConsent {
-                                    lease: receipt.lease,
-                                    binding,
-                                    expires_at_ms: status.expires_at.saturating_mul(1000),
-                                },
-                            );
-                        }
+                    if host.runtime.generation() != generation {
+                        return Err(map_recover(ExecutionError::new(
+                            ErrorCode::Unauthorized,
+                            "work-plan-session",
+                        )));
                     }
-                    Ok(receipt.into())
+                    store.verify_work_plan(&plan).map_err(map_recover)?;
+                    broker::with_tools_revision(&plugins, &plan, || {
+                        let binding = if let Some((runner, binding)) = runner {
+                            host.register_plugin(runner, binding.checker.clone())
+                                .map_err(map_recover)?;
+                            Some(binding)
+                        } else {
+                            None
+                        };
+                        let receipt = store
+                            .authorize_work_plan(
+                                &plan,
+                                &AuthorizeWorkPlan {
+                                    action_id: request.action_id,
+                                    plan_digest: request.digest,
+                                    confirmed: request.confirmed,
+                                    effects: request.effects,
+                                    expires_at: request.expires_at.get(),
+                                },
+                            )
+                            .map_err(map_recover)?;
+                        broker::save_consent(host, store, &plan, &receipt)
+                            .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?;
+                        if let Some(binding) = binding {
+                            let status = store.work_plan_status(plan.plan_id).map_err(|_| {
+                                CommandError::unknown(CommandStage::ExecutionRecover)
+                            })?;
+                            if status.lease == receipt.lease
+                                && status.state == WorkPlanState::Active
+                                && status.expires_at == request.expires_at.get()
+                            {
+                                host.work_plans.checker_consents.insert(
+                                    plan.plan_id,
+                                    CheckerConsent {
+                                        lease: receipt.lease,
+                                        binding,
+                                        expires_at_ms: status.expires_at.saturating_mul(1000),
+                                    },
+                                );
+                            }
+                        }
+                        Ok(receipt.into())
+                    })
                 },
             )
             .await
@@ -702,25 +768,49 @@ pub async fn control_work_plan(
                         expires_at: initial.expires_at.map(UnsignedDecimal::get),
                     })
                     .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
+                let plan = active
+                    .store
+                    .work_plan(receipt.lease.plan_id)
+                    .map_err(map_recover)?;
+                let (host, store) = active.execution_parts()?;
+                broker::restore_consent(host, store, &plan, &receipt, &initial)?;
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
             }
             if initial.command != WorkPlanCommand::Continue {
-                return Ok(Ok(None));
+                return Ok(Ok((None, None, None)));
             }
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
             let plan = store.work_plan(initial.plan_id).map_err(map_recover)?;
-            consent_environment(host, store, &plan, initial.checker_execution).map(Ok)
+            broker::require_consent(&plan, initial.tool_execution, None)?;
+            if plan.tools.is_some() {
+                let expiry = initial
+                    .expires_at
+                    .ok_or_else(|| {
+                        map_recover(ExecutionError::new(
+                            ErrorCode::InvalidInput,
+                            "work-plan-expiry",
+                        ))
+                    })?
+                    .get();
+                broker::capture_human_intent(host, &plan, initial.action_id, expiry, &initial)?;
+            }
+            let environment = consent_environment(host, store, &plan, initial.checker_execution)?;
+            Ok(Ok((
+                Some(plan),
+                environment,
+                Some(host.runtime.generation()),
+            )))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let environment = match captured.await? {
+        let (plan, environment, generation) = match captured.await? {
             Ok(environment) => environment,
             Err(receipt) => return Ok(receipt),
         };
-        let runner = checker_runner(io, plugins, environment).await?;
+        let runner = checker_runner(io, plugins.clone(), environment).await?;
         lease
             .run(
                 "control_work_plan.finish",
@@ -732,43 +822,70 @@ pub async fn control_work_plan(
                         request.project_id,
                         CommandStage::ExecutionCancel,
                     )?;
-                    let binding = if let Some((runner, binding)) = runner {
-                        let (host, _) = active.execution_parts()?;
-                        host.allow_mutation()?;
-                        host.register_plugin(runner, binding.checker.clone())
-                            .map_err(map_recover)?;
-                        Some(binding)
-                    } else {
-                        None
-                    };
-                    let receipt = active
-                        .store
-                        .control_work_plan(&ControlWorkPlan {
-                            action_id: request.action_id,
-                            plan_id: request.plan_id,
-                            expected_generation: request.expected_generation,
-                            command: request.command,
-                            confirmed: request.confirmed,
-                            expires_at: request.expires_at.map(UnsignedDecimal::get),
-                        })
-                        .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
-                    if let Some(binding) = binding {
-                        let (host, store) = active.execution_parts()?;
-                        let status = store
-                            .work_plan_status(request.plan_id)
-                            .map_err(|_| CommandError::unknown(CommandStage::ExecutionCancel))?;
-                        if status.lease == receipt.lease && status.state == WorkPlanState::Active {
-                            host.work_plans.checker_consents.insert(
-                                request.plan_id,
-                                CheckerConsent {
-                                    lease: receipt.lease,
-                                    binding,
-                                    expires_at_ms: status.expires_at.saturating_mul(1000),
-                                },
-                            );
+                    let finish = || {
+                        if let Some(generation) = generation {
+                            let (host, _) = active.execution_parts()?;
+                            host.allow_mutation()?;
+                            if host.runtime.generation() != generation {
+                                return Err(map_recover(ExecutionError::new(
+                                    ErrorCode::Unauthorized,
+                                    "work-plan-session",
+                                )));
+                            }
                         }
+                        let binding = if let Some((runner, binding)) = runner {
+                            let (host, _) = active.execution_parts()?;
+                            host.allow_mutation()?;
+                            host.register_plugin(runner, binding.checker.clone())
+                                .map_err(map_recover)?;
+                            Some(binding)
+                        } else {
+                            None
+                        };
+                        let receipt = active
+                            .store
+                            .control_work_plan(&ControlWorkPlan {
+                                action_id: request.action_id,
+                                plan_id: request.plan_id,
+                                expected_generation: request.expected_generation,
+                                command: request.command,
+                                confirmed: request.confirmed,
+                                expires_at: request.expires_at.map(UnsignedDecimal::get),
+                            })
+                            .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
+                        if let Some(plan) = &plan {
+                            let (host, store) = active.execution_parts()?;
+                            broker::save_consent(host, store, plan, &receipt).map_err(|_| {
+                                CommandError::unknown(CommandStage::ExecutionCancel)
+                            })?;
+                        } else if let Some(host) = active.execution.as_mut() {
+                            host.work_plans.tool_consents.remove(&request.plan_id);
+                        }
+                        if let Some(binding) = binding {
+                            let (host, store) = active.execution_parts()?;
+                            let status = store.work_plan_status(request.plan_id).map_err(|_| {
+                                CommandError::unknown(CommandStage::ExecutionCancel)
+                            })?;
+                            if status.lease == receipt.lease
+                                && status.state == WorkPlanState::Active
+                            {
+                                host.work_plans.checker_consents.insert(
+                                    request.plan_id,
+                                    CheckerConsent {
+                                        lease: receipt.lease,
+                                        binding,
+                                        expires_at_ms: status.expires_at.saturating_mul(1000),
+                                    },
+                                );
+                            }
+                        }
+                        Ok(receipt.into())
+                    };
+                    if let Some(plan) = &plan {
+                        broker::with_tools_revision(&plugins, plan, finish)
+                    } else {
+                        finish()
                     }
-                    Ok(receipt.into())
                 },
             )
             .await
@@ -827,6 +944,14 @@ pub async fn read_work_plan_status(
                     let (host, store) = active.execution_parts()?;
                     let status = store.work_plan_status(request.plan_id).map_err(map_read)?;
                     let mut view = WorkPlanStatusView::capture(&plan, status).map_err(map_read)?;
+                    if let Some(tools) = &plan.tools {
+                        view.tool_invocations = Some(broker::WorkPlanToolUsage {
+                            reserved: store
+                                .work_plan_tool_invocations(plan.plan_id)
+                                .map_err(map_read)?,
+                            limit: tools.max_invocations,
+                        });
+                    }
                     view.plan.checker = checker;
                     if let Some(environment) = environment {
                         if host.work_plans.environments.len() >= 8 {
@@ -939,6 +1064,7 @@ pub async fn set_work_protection(
 
 #[cfg(test)]
 mod tests {
+    mod broker_tests;
     use super::*;
     use serde_json::{Value, json};
     use std::{net::TcpListener, time::SystemTime};
@@ -982,6 +1108,38 @@ mod tests {
         let mut invalid = fixture["requests"]["control"].clone();
         invalid["expectedGeneration"] = json!("9223372036854775808");
         assert!(serde_json::from_value::<WorkPlanControlRequest>(invalid).is_err());
+    }
+
+    #[test]
+    fn shared_work_plan_agent_tool_fixture_round_trips_through_serde() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/workPlanAgentTools.contract.json"
+        ))
+        .unwrap();
+        macro_rules! round_trip {
+            ($value:expr, $ty:ty) => {{
+                let value = $value.clone();
+                let decoded: $ty = serde_json::from_value(value.clone()).unwrap();
+                assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+            }};
+        }
+        round_trip!(
+            fixture["requests"]["prepare"],
+            broker::WorkPlanAgentToolPrepareRequest
+        );
+        round_trip!(
+            fixture["requests"]["start"],
+            broker::WorkPlanAgentToolStartRequest
+        );
+        round_trip!(
+            fixture["responses"]["prepared"],
+            broker::WorkPlanAgentToolView
+        );
+        round_trip!(
+            fixture["toolView"],
+            crate::commands::plugins::PluginToolView
+        );
+        round_trip!(fixture["spec"], tsumugi_core::application::WorkPlanToolSpec);
     }
 
     type MockWebview = tauri::WebviewWindow<tauri::test::MockRuntime>;
@@ -1166,7 +1324,23 @@ mod tests {
     }
     fn local_provider_sequence(
         texts: Vec<&'static str>,
+        gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_sequence_after_setup(texts, gate, None)
+    }
+    /// Acquisition can precede dispatch without consuming the HTTP accept
+    /// deadline. The original model timeout and request/usage budgets remain fixed.
+    fn local_provider_after_setup(
+        text: &'static str,
+    ) -> (AiConfig, mpsc::Sender<()>, JoinHandle<Value>) {
+        let (ready, setup) = mpsc::channel();
+        let (config, thread) = local_provider_sequence_after_setup(vec![text], None, Some(setup));
+        (config, ready, thread)
+    }
+    fn local_provider_sequence_after_setup(
+        texts: Vec<&'static str>,
         mut gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        setup: Option<mpsc::Receiver<()>>,
     ) -> (AiConfig, JoinHandle<Value>) {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1183,6 +1357,11 @@ mod tests {
             ..AiConfig::default()
         };
         let thread = std::thread::spawn(move || {
+            if let Some(setup) = setup {
+                setup
+                    .recv_timeout(Duration::from_secs(60))
+                    .expect("provider setup did not reach the dispatch gate");
+            }
             let mut last = Value::Null;
             for text in texts {
                 let deadline = Instant::now() + Duration::from_secs(5);
@@ -1275,7 +1454,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             };
-            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":false,"effects":effects,"expiresAt":expiry()})).unwrap();
+            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":false,"toolExecution":false,"effects":effects,"expiresAt":expiry()})).unwrap();
             assert_eq!(self.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap(), plan["attemptId"]);
             plan
         }
@@ -1306,7 +1485,7 @@ mod tests {
             })).unwrap();
             let grant = self.call("authorize_work_plan", json!({
                 "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
-                "confirmed":true,"checkerExecution":false,"effects":["save-candidate"],"expiresAt":expiry()
+                "confirmed":true,"checkerExecution":false,"toolExecution":false,"effects":["save-candidate"],"expiresAt":expiry()
             })).unwrap();
             assert!(
                 self.call(
@@ -1548,7 +1727,7 @@ mod tests {
         let count = fixture.attempt_count();
         let paused = fixture.call("control_work_plan", json!({
             "planId":plan["planId"],"actionId":ExecutionId::new(),
-            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecution":false
+            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecution":false,"toolExecution":false
         })).unwrap();
         assert!(
             fixture
@@ -1566,7 +1745,7 @@ mod tests {
                 json!({
                     "planId":plan["planId"],"actionId":ExecutionId::new(),
                     "expectedGeneration":paused["lease"]["generation"],"command":"continue",
-                    "confirmed":true,"checkerExecution":false,"expiresAt":expiry()
+                    "confirmed":true,"checkerExecution":false,"toolExecution":false,"expiresAt":expiry()
                 }),
             )
             .unwrap();
@@ -1772,7 +1951,7 @@ mod tests {
         assert_eq!(status["state"], "paused");
         let continue_request = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),
             "expectedGeneration":status["lease"]["generation"],"command":"continue",
-            "confirmed":true,"checkerExecution":false,"expiresAt":expiry()});
+            "confirmed":true,"checkerExecution":false,"toolExecution":false,"expiresAt":expiry()});
         let resumed = fixture
             .call("control_work_plan", continue_request.clone())
             .unwrap();
@@ -1860,7 +2039,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":"3","command":"pause",
-            "confirmed":false,"checkerExecution":false,"expiresAt":null}),
+            "confirmed":false,"checkerExecution":false,"toolExecution":false,"expiresAt":null}),
             )
             .unwrap();
         let third = fixture
@@ -1868,7 +2047,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],
-            "command":"continue","confirmed":true,"checkerExecution":false,"expiresAt":expiry()}),
+            "command":"continue","confirmed":true,"checkerExecution":false,"toolExecution":false,"expiresAt":expiry()}),
             )
             .unwrap();
         fixture
@@ -2020,7 +2199,7 @@ mod tests {
             tsumugi_core::application::SelectionPolicy::MissingOnly,
         );
         waiting.recv_timeout(Duration::from_secs(3)).unwrap();
-        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecution":false,"expiresAt":null})).unwrap();
+        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecution":false,"toolExecution":false,"expiresAt":null})).unwrap();
         release.send(()).unwrap();
         provider.join().unwrap();
         let view = fixture.wait_effect(&plan);
@@ -2294,12 +2473,12 @@ mod tests {
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true,"checkerExecution":false, "effects":["save-candidate"], "expiresAt":expiry(),
+            "confirmed":true,"checkerExecution":false,"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry(),
             "semanticAnswer":"yes"
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true,"checkerExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true,"checkerExecution":false,"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         })).is_err());
         assert!(fixture.call("prepare_work_plan", json!({
             "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(),
@@ -2373,7 +2552,7 @@ mod tests {
         assert_eq!(fixture.bytes(), before);
         let grant = json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true,"checkerExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true,"checkerExecution":false,"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         });
         let mut unconfirmed = grant.clone();
         unconfirmed["confirmed"] = json!(false);
@@ -2428,7 +2607,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":receipt["lease"]["generation"], "command":"pause",
-                    "confirmed":false,"checkerExecution":false, "expiresAt":null
+                    "confirmed":false,"checkerExecution":false,"toolExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();
@@ -2437,7 +2616,7 @@ mod tests {
         let resume = json!({
             "planId":prepared["planId"], "actionId":ExecutionId::new(),
             "expectedGeneration":paused["lease"]["generation"], "command":"continue",
-            "confirmed":true,"checkerExecution":false, "expiresAt":expiry()
+            "confirmed":true,"checkerExecution":false,"toolExecution":false, "expiresAt":expiry()
         });
         let resumed = fixture.call("control_work_plan", resume.clone()).unwrap();
         assert_eq!(resumed["state"], "active");
@@ -2465,7 +2644,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":resumed["lease"]["generation"], "command":"take-over",
-                    "confirmed":false,"checkerExecution":false, "expiresAt":null
+                    "confirmed":false,"checkerExecution":false,"toolExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();

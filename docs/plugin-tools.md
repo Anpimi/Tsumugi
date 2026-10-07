@@ -30,8 +30,8 @@ same query draft. The editor's unsaved text and existing query rows stay intact;
 a lone empty query row is reused. New text invalidates the previous reviewed
 consent and requires a new capture. Routing sends no query or save command;
 a pending unknown action refuses incoming text without losing the editor draft.
-Composition blocks routing until the user finishes entering text. Agent
-scope/budget orchestration and native acceptance remain separate work.
+Composition blocks routing until the user finishes entering text. Manual query
+consent is independent of the bounded [work-plan Agent](work-plans.md).
 
 `read_plugin_tool` accepts an exact package identity/digest, tool Resource ID
 and independently approved environment digest. It reopens the installed object,
@@ -80,9 +80,16 @@ execution commands, and cancel running tasks through their original task ID.
 Results retain the actual worker channel, authorization ID and original SDK
 output/error bytes. Query results stay unadopted and create no project Resource,
 terminology or translation mutation. Historical output remains readable after
-a provider is disabled. Tool guidance remains untrusted material. Agent
-orchestration must separately satisfy scope, budget and human-control
-requirements; the manual query consent does not supply Agent authority.
+a provider is disabled. Tool guidance remains untrusted material. Work-plan
+tools fix their package, environment, options, source subset and shared total
+invocation limit through the original plan owner. They require independent
+human local-execution consent for at most ten minutes, preserve its original
+deadline on recovery, and use a Core-created caller identity and atomic delegated
+grant/enqueue. The Agent's `prepareTool` and `startTool` accept only captured
+handles, unit subsets and original prepared identities; they cannot submit free
+payloads or renew consent. Results use this same ledger and reference
+presentation and remain unapplied. Complete autonomous model orchestration and
+native product acceptance have their own gates.
 
 Rust/Serde owns these internal IPC shapes. Regenerate frontend types, schemas
 and validators with `pnpm generate:contracts`; use the centralized

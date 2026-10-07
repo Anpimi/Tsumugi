@@ -20,7 +20,7 @@ impl ToolSession {
     pub(super) fn stop(&mut self) {
         *self = Self::default();
     }
-    fn begin(&mut self, attempt: ExecutionId) -> Result<ExecutionId, CommandError> {
+    pub(super) fn begin(&mut self, attempt: ExecutionId) -> Result<ExecutionId, CommandError> {
         if self.active() {
             return Err(map_recover(ExecutionError::new(
                 ErrorCode::Busy,
@@ -108,7 +108,7 @@ fn finish<'a>(
 ) -> Result<&'a mut ActiveSession, CommandError> {
     finish_job(sessions, &request.session_token, request.project_id, ticket)
 }
-fn finish_job<'a>(
+pub(super) fn finish_job<'a>(
     sessions: &'a mut SessionManager,
     token: &str,
     project: ExecutionId,

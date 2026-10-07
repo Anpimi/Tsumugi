@@ -8,7 +8,7 @@ use crate::{
     ai::{self, AiPreview},
     execution::{
         ErrorCode, ExecutionError, ExecutionId, FixedInput, InputEnvelope, MAX_INPUT_BYTES,
-        Revision, codec,
+        Revision, UnsignedDecimal, codec,
     },
 };
 use serde::{Deserialize, Serialize};
@@ -62,6 +62,158 @@ pub enum AutomationEffect {
     ReplaceCapturedSelection,
     AdoptResources,
     Deliver,
+    QueryTools,
+}
+
+/// Captured by the trusted host from an installed package, never model text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanToolSpec {
+    pub handle: ExecutionId,
+    pub binding: tsumugi_plugin_sdk::CapabilityToolBinding,
+    pub environment: tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor,
+    pub resource_id: String,
+    pub settings_revision: UnsignedDecimal,
+    pub package_origin: serde_json::Value,
+    pub runtime_origin: serde_json::Value,
+    pub target: String,
+    pub selections: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct WorkPlanTools {
+    #[cfg_attr(feature = "wire-schema", schemars(range(min = 1, max = 300)))]
+    pub max_invocations: u32,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 32)))]
+    pub entries: Vec<WorkPlanToolSpec>,
+}
+
+impl WorkPlanTools {
+    pub fn validate(&self) -> Result<(), ExecutionError> {
+        if !(1..=300).contains(&self.max_invocations)
+            || self.entries.is_empty()
+            || self.entries.len() > 32
+            || self
+                .entries
+                .iter()
+                .map(|tool| tool.handle)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != self.entries.len()
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "work-plan-tools",
+            ));
+        }
+        for tool in &self.entries {
+            tool.binding
+                .validate()
+                .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool"))?;
+            let binding = crate::execution::PluginExecutionBinding {
+                capability: tool.binding.capability.clone(),
+                profile: tool.binding.declaration.profile.clone(),
+                environment: tool.environment.clone(),
+            };
+            binding.validate()?;
+            if tool.resource_id.is_empty()
+                || tool.resource_id.len() > 128
+                || !tool.package_origin.is_object()
+                || !tool.runtime_origin.is_object()
+            {
+                return Err(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "work-plan-tool-metadata",
+                ));
+            }
+            tool.binding
+                .declaration
+                .query
+                .as_ref()
+                .ok_or_else(|| {
+                    ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool-query")
+                })?
+                .prepare_payload(
+                    "q",
+                    &tool.target,
+                    &tool.selections,
+                    tool.binding.capability.declaration.limits.max_input_bytes,
+                )
+                .map_err(|_| {
+                    ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool-options")
+                })?;
+        }
+        Ok(())
+    }
+    pub(crate) fn digest(&self) -> Result<String, ExecutionError> {
+        Ok(codec::digest(&codec::encode(self, MAX_INPUT_BYTES)?))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct AgentToolRequest {
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    pub tool_handle: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 100)))]
+    pub unit_ids: Vec<ExecutionId>,
+}
+
+/// Application-created proof. Possession does not bypass current ledger checks.
+#[derive(Clone, Debug)]
+pub struct PreparedWorkPlanTool {
+    pub(crate) scope: WorkPlanAgentScope,
+    pub(crate) request: AgentToolRequest,
+    pub(crate) input: FixedInput,
+    pub(crate) tool: WorkPlanToolSpec,
+}
+impl PreparedWorkPlanTool {
+    pub fn input(&self) -> &FixedInput {
+        &self.input
+    }
+    pub fn tool(&self) -> &WorkPlanToolSpec {
+        &self.tool
+    }
+}
+
+/// Independent, session-bound process consent captured by a human entry point.
+/// It has no serialization or renewal API and is never a dispatch permit.
+#[derive(Clone, Debug)]
+pub struct WorkPlanToolConsent {
+    pub(crate) project_id: ExecutionId,
+    pub(crate) lease: AutomationLease,
+    pub(crate) parent_task: ExecutionId,
+    pub(crate) store_epoch: String,
+    pub(crate) tools_digest: String,
+    pub(crate) runtime_generation: ExecutionId,
+    pub(crate) expires_at_ms: u64,
+    pub(crate) deadline: std::time::Instant,
+}
+impl WorkPlanToolConsent {
+    pub(crate) fn matches_scope(&self, scope: &WorkPlanAgentScope) -> bool {
+        self.project_id == scope.project_id
+            && self.lease == scope.lease
+            && self.parent_task == scope.parent_task
+            && self.store_epoch == scope.store_epoch
+    }
+    pub fn expires_at_ms(&self) -> u64 {
+        self.expires_at_ms
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct WorkPlanToolDelegation {
+    pub lease: AutomationLease,
+    pub root_task: ExecutionId,
+    pub tool_handle: ExecutionId,
+    pub caller: String,
+    pub caller_id: ExecutionId,
 }
 
 /// A reference to durable authority. Possessing or editing this reference does
@@ -77,15 +229,19 @@ pub struct AutomationLease {
 /// A session-bound application handle. The host may give an Agent this scope,
 /// without giving it the plan authorizer, Store or runtime. Editing model text
 /// cannot create this handle or change its original lease and budget anchor.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkPlanAgentScope {
     pub(crate) project_id: ExecutionId,
     pub(crate) lease: AutomationLease,
     pub(crate) parent_task: ExecutionId,
     pub(crate) store_epoch: String,
+    pub(crate) caller_id: ExecutionId,
 }
 
 impl WorkPlanAgentScope {
+    pub fn caller_id(&self) -> ExecutionId {
+        self.caller_id
+    }
     pub fn project_id(&self) -> ExecutionId {
         self.project_id
     }
@@ -282,6 +438,7 @@ impl PlanOptions {
             }
             AutomationEffect::AdoptResources => self.adopt_resources,
             AutomationEffect::Deliver => self.deliver,
+            AutomationEffect::QueryTools => false,
         }
     }
 
@@ -384,6 +541,7 @@ pub struct WorkPlan {
     pub locale: String,
     pub selection_basis: Vec<PlanSelectionBasis>,
     pub options: PlanOptions,
+    pub tools: Option<WorkPlanTools>,
     pub digest: String,
 }
 
@@ -413,13 +571,14 @@ impl WorkPlan {
         selection_basis.sort_by_key(|basis| basis.unit_id);
         options.stages.sort_by_key(|choice| choice.stage);
         let mut plan = Self {
-            version: 1,
+            version: 2,
             plan_id: ExecutionId::new(),
             project_id: ExecutionId::parse(&project.to_string())?,
             input,
             locale,
             selection_basis,
             options,
+            tools: None,
             digest: String::new(),
         };
         plan.digest = plan.computed_digest()?;
@@ -437,6 +596,7 @@ impl WorkPlan {
                 &self.locale,
                 &self.selection_basis,
                 &self.options,
+                &self.tools,
             ),
             MAX_INPUT_BYTES,
         )?))
@@ -452,18 +612,38 @@ impl WorkPlan {
         selection_basis.sort_by_key(|basis| basis.unit_id);
         options.stages.sort_by_key(|choice| choice.stage);
         let mut plan = Self {
-            version: 1,
+            version: 2,
             plan_id: ExecutionId::new(),
             project_id: ExecutionId::parse(&project.to_string())?,
             input: None,
             locale,
             selection_basis,
             options,
+            tools: None,
             digest: String::new(),
         };
         plan.digest = plan.computed_digest()?;
         plan.validate()?;
         Ok(plan)
+    }
+
+    pub(crate) fn with_tools(
+        mut self,
+        tools: Option<WorkPlanTools>,
+    ) -> Result<Self, ExecutionError> {
+        self.tools = tools;
+        self.digest = self.computed_digest()?;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn authorization_effects(&self) -> Result<Vec<AutomationEffect>, ExecutionError> {
+        self.validate()?;
+        let mut effects = self.options.authorization_effects()?;
+        if self.tools.is_some() {
+            effects.push(AutomationEffect::QueryTools);
+        }
+        Ok(effects)
     }
 
     /// Only plans requesting candidate generation have a model execution input.
@@ -475,9 +655,18 @@ impl WorkPlan {
 
     pub fn validate(&self) -> Result<(), ExecutionError> {
         self.options.validate()?;
+        if let Some(tools) = &self.tools {
+            tools.validate()?;
+            if self.input.is_none() {
+                return Err(ExecutionError::new(
+                    ErrorCode::Unauthorized,
+                    "work-plan-tool-root",
+                ));
+            }
+        }
         let locale = crate::Locale::parse(&self.locale)
             .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "work-plan-locale"))?;
-        if self.version != 1
+        if self.version != 2
             || locale.as_str() != self.locale
             || self.selection_basis.is_empty()
             || self.selection_basis.len() > 1000

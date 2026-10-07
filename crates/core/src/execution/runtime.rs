@@ -128,6 +128,39 @@ impl ExecutionRuntime {
     pub fn generation(&self) -> ExecutionId {
         self.plugin_epoch.generation()
     }
+    fn retire_completed_tool(
+        &self,
+        store: &mut ProjectStore,
+        request: &DispatchRequest,
+    ) -> Result<(), ExecutionError> {
+        let attempt = request.input.envelope().attempt_id;
+        let Some(permit) = request
+            .plugin_permit
+            .as_ref()
+            .filter(|permit| permit.is_work_plan_tool() && permit.is_authorized())
+        else {
+            return Ok(());
+        };
+        if self.is_active(attempt) || self.retired.iter().any(|(id, _)| *id == attempt) {
+            return Ok(());
+        }
+        if store
+            .execution_attempt(attempt, false)?
+            .items
+            .iter()
+            .any(|item| {
+                matches!(
+                    item.execution,
+                    ExecutionState::Queued | ExecutionState::Dispatched
+                )
+            })
+        {
+            return Ok(());
+        }
+        // Query tools cannot adopt output. Once every child item is durable and
+        // its producer has ended, retain provenance but release the live slot.
+        self.revoke_plugin(store, permit.grant_id())
+    }
     pub fn register(&mut self, runner: Arc<dyn Runner>) -> Result<(), ExecutionError> {
         self.register_with_policy(runner, RecoveryPolicy::ExternalUnknown)
     }
@@ -191,6 +224,92 @@ impl ExecutionRuntime {
         }
         store.authorize_plugin_input(self.generation, grant_id, input, expires_at_ms, consent)
     }
+    /// Trusted human entry only: capture independent process consent now, even
+    /// before the model root is queued. Later calls cannot extend its deadline.
+    pub fn authorize_work_plan_tools(
+        &self,
+        store: &ProjectStore,
+        lease: crate::application::AutomationLease,
+        expires_at_ms: u64,
+        deadline: Instant,
+        consent: PluginConsent,
+    ) -> Result<crate::application::WorkPlanToolConsent, ExecutionError> {
+        if !self.accepting || !self.plugin_epoch.is_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        store.check_plugin_epoch_owner(&self.plugin_epoch)?;
+        store.capture_work_plan_tool_consent(
+            lease,
+            self.generation,
+            expires_at_ms,
+            deadline,
+            consent,
+        )
+    }
+
+    pub fn submit_work_plan_tool(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedWorkPlanTool,
+        consent: &crate::application::WorkPlanToolConsent,
+        grant_id: ExecutionId,
+    ) -> Result<(), ExecutionError> {
+        let input = prepared.input();
+        if !self.accepting
+            || !self.plugin_epoch.is_active()
+            || !self.runners.contains_key(&input_key(input)?)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        if store
+            .execution_input_if_present(input.envelope().attempt_id)?
+            .is_none()
+            && (store.queued_execution_item_count(self.initial_sequence)?
+                + input.envelope().items.len()
+                > MAX_QUEUED_ITEMS
+                || store
+                    .queued_execution_attempts(self.initial_sequence)?
+                    .len()
+                    >= MAX_QUEUED_ATTEMPTS)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "execution-queue",
+            ));
+        }
+        store.enqueue_work_plan_tool(
+            prepared,
+            consent,
+            grant_id,
+            self.generation,
+            self.policies[&input_key(input)?],
+        )
+    }
+
+    pub fn check_work_plan_tool_consent(
+        &self,
+        store: &ProjectStore,
+        scope: &crate::application::WorkPlanAgentScope,
+        consent: &crate::application::WorkPlanToolConsent,
+    ) -> Result<(), ExecutionError> {
+        if !self.accepting
+            || !self.plugin_epoch.is_active()
+            || self.generation != consent.runtime_generation
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        store.check_work_plan_tool_consent(scope, consent)
+    }
+
     pub fn revoke_plugin(
         &self,
         store: &mut ProjectStore,
@@ -345,6 +464,20 @@ impl ExecutionRuntime {
                 .and_then(|_| store.check_plugin_input(&worker.request.input))
             {
                 if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
+                    if worker.cancellation_started.is_none()
+                        && worker
+                            .request
+                            .plugin_permit
+                            .as_ref()
+                            .is_some_and(PluginPermit::is_work_plan_tool)
+                    {
+                        // Retire only this broker child. Root/model control and
+                        // unrelated human plugin grants keep their own lifecycle.
+                        store.cancel_execution(
+                            worker.request.input.envelope().task_id,
+                            ExecutionId::new(),
+                        )?;
+                    }
                     worker.cancellation.request();
                     worker.cancellation_started.get_or_insert(now);
                 } else {
@@ -450,6 +583,7 @@ impl ExecutionRuntime {
                 store.note_execution_unknown(attempt, item, reason)?;
                 let worker = self.workers.remove(index);
                 let _ = worker.thread.join();
+                self.retire_completed_tool(store, &worker.request)?;
                 continue;
             }
             index += 1;

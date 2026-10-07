@@ -6,6 +6,17 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Work plans can capture read-only reference tools with exact installed package,
+  runtime and query options, and one shared invocation limit. Independent local
+  execution consent lasts at most ten minutes; recovering the same action cannot
+  renew it. Bounded Agent controls query captured source subsets through the
+  original worker and ledger, show escaped unapplied references, and generate
+  further candidates through the original model service. Pause, source changes,
+  expiry and reopen preserve history without restoring authority. Current
+  development projects use schema 29 and WorkPlan format 2; earlier development
+  formats are refused unchanged without migration. Full autonomous orchestration
+  and native product acceptance remain in development.
+
 - Scoped Agent generation can prepare captured source subsets and run them
   through the original work-plan runtime, candidate service and ancestor budget.
   Model, destination, sharing and effects stay fixed; pause, takeover, expiry and
@@ -37,7 +48,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   Editors can add source or explicitly selected draft text to the same query
   inputs while retaining unsaved edits and existing rows. Routing grants no
   execution and invalidates earlier query consent; composition and unknown
-  actions are protected. Agent integration and native acceptance remain in development.
+  actions are protected. Bounded work-plan integration uses separate explicit
+  scope and consent; full autonomous orchestration and native acceptance remain
+  in development.
 
 - Experimental Host consumers can read explicitly selected opaque Resources and
   Skills from immutable captured packages, with exact resource schema/behavior

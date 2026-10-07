@@ -19,7 +19,7 @@ const TABLES: &[(&str, &str)] = &[
     ),
     (
         "application_executions",
-        "CREATE TABLE application_executions (attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_attempts(attempt_id), plan_id TEXT NOT NULL REFERENCES application_plans(plan_id), generation INTEGER NOT NULL CHECK(generation>0))",
+        "CREATE TABLE application_executions (attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_attempts(attempt_id), plan_id TEXT NOT NULL REFERENCES application_plans(plan_id), generation INTEGER NOT NULL CHECK(generation>0), kind TEXT NOT NULL CHECK(kind IN ('model','tool')), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 4096), root_task TEXT NOT NULL REFERENCES execution_tasks(task_id), CHECK((kind='model' AND delegation IS NULL) OR (kind='tool' AND delegation IS NOT NULL)))",
     ),
     (
         "application_protections",
@@ -99,7 +99,7 @@ pub(super) fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, Execut
         || generation <= 0
         || expires <= 0
         || cancellation < 0
-        || plan.options.authorization_effects().ok().as_ref() != Some(&effects)
+        || plan.authorization_effects().ok().as_ref() != Some(&effects)
     {
         return Err(err(ErrorCode::CorruptLedger, "work-plan-authority"));
     }
@@ -346,11 +346,16 @@ pub(in crate::persistence) fn record_input(
 ) -> Result<(), ExecutionError> {
     if let Some(lease) = input.envelope().automation {
         c.execute(
-            "INSERT INTO application_executions VALUES (?1,?2,?3)",
+            "INSERT INTO application_executions VALUES (?1,?2,?3,'model',NULL,?4)",
             params![
                 input.envelope().attempt_id.to_string(),
                 lease.plan_id.to_string(),
-                lease.generation.get() as i64
+                lease.generation.get() as i64,
+                load(c, lease.plan_id)?
+                    .plan
+                    .execution_input()?
+                    .task_id
+                    .to_string()
             ],
         )
         .map_err(sql)?;
@@ -361,6 +366,20 @@ pub(in crate::persistence) fn check_input(
     c: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().plugin.is_some() && input.envelope().automation.is_some() {
+        let bytes: Option<Vec<u8>> = c
+            .query_row(
+                "SELECT delegation FROM application_executions WHERE attempt_id=?1 AND kind='tool'",
+                [input.envelope().attempt_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let bytes =
+            bytes.ok_or_else(|| err(ErrorCode::Unauthorized, "work-plan-tool-association"))?;
+        let delegation: WorkPlanToolDelegation = codec::decode(&bytes, 4096)?;
+        return super::tools::check_tool_delegation(c, input, &delegation);
+    }
     let association: Option<(String, i64)> = c
         .query_row(
             "SELECT plan_id,generation FROM application_executions WHERE attempt_id=?1",
@@ -502,6 +521,7 @@ impl ProjectStore {
                 lease,
                 parent_task: root.task_id,
                 store_epoch: self.changes.snapshot(Revision::new(0)?).epoch,
+                caller_id: ExecutionId::new(),
             };
             self.check_work_plan_agent_scope(&scope)?;
             Ok(scope)
@@ -705,7 +725,7 @@ impl ProjectStore {
         }
         if !authorization.confirmed
             || authorization.plan_digest != plan.digest
-            || plan.options.authorization_effects().ok().as_ref() != Some(&authorization.effects)
+            || plan.authorization_effects().ok().as_ref() != Some(&authorization.effects)
         {
             return Err(err(ErrorCode::Unauthorized, "work-plan-consent"));
         }
@@ -760,6 +780,7 @@ impl ProjectStore {
         let request = Request::Control {
             request: control.clone(),
         };
+        let authority = self.plugin_authority.clone();
         let mut tx = self.execution_write()?;
         if let Some(receipt) = existing(&tx, &request)? {
             return Ok(receipt);
@@ -825,6 +846,7 @@ impl ProjectStore {
             ],
         )
         .map_err(sql)?;
+        revoke_tools_in(&tx, &authority, control.plan_id, lease.generation)?;
         tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND generation<?2)",params![control.plan_id.to_string(),lease.generation.get() as i64]).map_err(sql)?;
         let receipt = WorkPlanReceipt {
             cancellation_revision,
@@ -1071,9 +1093,23 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
                     && lease.generation.get() as i64 == generation =>
             {
                 let stored = load(c, lease.plan_id)?;
+                let (kind, delegation, root): (String, Option<Vec<u8>>, String) = c.query_row("SELECT kind,delegation,root_task FROM application_executions WHERE attempt_id=?1", [&attempt], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).map_err(sql)?;
+                let valid_scope = if kind == "tool" {
+                    let bytes = delegation.ok_or_else(|| {
+                        err(ErrorCode::CorruptLedger, "work-plan-tool-association")
+                    })?;
+                    let delegation: WorkPlanToolDelegation = codec::decode(&bytes, 4096)?;
+                    super::tools::validate_tool_input(c, &input, &delegation)?;
+                    true
+                } else {
+                    kind == "model"
+                        && delegation.is_none()
+                        && matches_scope(input.envelope(), stored.plan.execution_input()?)
+                };
                 if generation == 0
                     || generation as u64 > stored.lease.generation.get()
-                    || !matches_scope(input.envelope(), stored.plan.execution_input()?)
+                    || root != stored.plan.execution_input()?.task_id.to_string()
+                    || !valid_scope
                 {
                     return Err(err(ErrorCode::CorruptLedger, "work-plan-execution"));
                 }
@@ -1155,5 +1191,26 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
         ));
     }
     super::selection::validate(c)?;
+    Ok(())
+}
+
+fn revoke_tools_in(
+    c: &Connection,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
+    plan: ExecutionId,
+    generation: Revision,
+) -> Result<(), ExecutionError> {
+    let mut statement = c.prepare("SELECT a.task_id FROM application_executions x JOIN execution_attempts a USING(attempt_id) WHERE x.plan_id=?1 AND x.kind='tool' AND x.generation<?2").map_err(sql)?;
+    let tasks = statement
+        .query_map(params![plan.to_string(), generation.get() as i64], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(sql)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sql)?;
+    for task in tasks {
+        authority.revoke_task(ExecutionId::parse(&task)?)?;
+    }
+    c.execute("UPDATE plugin_execution_grants SET revoked=1 WHERE attempt_id IN (SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND kind='tool' AND generation<?2)", params![plan.to_string(), generation.get() as i64]).map_err(sql)?;
     Ok(())
 }

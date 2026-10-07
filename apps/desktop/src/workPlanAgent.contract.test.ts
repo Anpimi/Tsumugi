@@ -21,7 +21,7 @@ it("shares strict Rust contracts and exposes only bounded preparation and start"
     [validators.validateResponseWorkPlanAgentGeneration, fixture.responses.generation],
   ] as const) expect(validate(value), validate.name).toBe(true);
   const agent = await opened();
-  expect(Object.keys(agent).sort()).toEqual(["prepare", "start"]);
+  expect(Object.keys(agent).sort()).toEqual(["prepare", "prepareTool", "start", "startTool"]);
   expect(invoke).toHaveBeenLastCalledWith("open_work_plan_agent_scope", { request: fixture.requests.open });
   invoke.mockResolvedValueOnce(structuredClone(fixture.responses.generation));
   const prepared = await agent.prepare(fixture.requests.prepare.generation);

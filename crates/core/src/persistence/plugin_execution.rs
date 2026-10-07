@@ -16,7 +16,7 @@ use std::{
 // to a row that does not yet exist.
 pub(super) const TABLES: &[(&str, &str)] = &[(
     "plugin_execution_grants",
-    "CREATE TABLE plugin_execution_grants (grant_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE, task_id TEXT NOT NULL, input_digest TEXT NOT NULL CHECK(length(input_digest)=64), generation TEXT NOT NULL, expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0), unsandboxed_execution INTEGER NOT NULL CHECK(unsandboxed_execution=1), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)))",
+    "CREATE TABLE plugin_execution_grants (grant_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL UNIQUE, task_id TEXT NOT NULL, input_digest TEXT NOT NULL CHECK(length(input_digest)=64), generation TEXT NOT NULL, expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>0), unsandboxed_execution INTEGER NOT NULL CHECK(unsandboxed_execution=1), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 4096))",
 )];
 
 pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
@@ -46,8 +46,19 @@ struct GrantRecord {
     expires_at_ms: u64,
     unsandboxed_execution: bool,
     revoked: bool,
+    delegation: Option<crate::application::WorkPlanToolDelegation>,
 }
-type RawRecord = (String, String, String, String, String, i64, i64, i64);
+type RawRecord = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+    Option<Vec<u8>>,
+);
 
 fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRecord> {
     Ok((
@@ -59,6 +70,7 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRecord> {
         row.get(5)?,
         row.get(6)?,
         row.get(7)?,
+        row.get(8)?,
     ))
 }
 fn decode(raw: RawRecord) -> Result<GrantRecord, ExecutionError> {
@@ -89,6 +101,10 @@ fn decode(raw: RawRecord) -> Result<GrantRecord, ExecutionError> {
         expires_at_ms: raw.5 as u64,
         unsandboxed_execution: true,
         revoked: raw.7 == 1,
+        delegation: raw
+            .8
+            .map(|bytes| crate::execution::codec::decode(&bytes, 4096))
+            .transpose()?,
     })
 }
 fn for_attempt(
@@ -96,7 +112,7 @@ fn for_attempt(
     attempt: ExecutionId,
 ) -> Result<Option<GrantRecord>, ExecutionError> {
     connection.query_row(
-        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked FROM plugin_execution_grants WHERE attempt_id=?1",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation FROM plugin_execution_grants WHERE attempt_id=?1",
         [attempt.to_string()], row,
     ).optional().map_err(sql)?.map(decode).transpose()
 }
@@ -105,7 +121,7 @@ fn for_grant(
     grant: ExecutionId,
 ) -> Result<Option<GrantRecord>, ExecutionError> {
     connection.query_row(
-        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked FROM plugin_execution_grants WHERE grant_id=?1",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation FROM plugin_execution_grants WHERE grant_id=?1",
         [grant.to_string()], row,
     ).optional().map_err(sql)?.map(decode).transpose()
 }
@@ -124,12 +140,11 @@ fn not_cancelled(connection: &Connection, task: ExecutionId) -> Result<(), Execu
 }
 
 fn not_delegated(connection: &Connection, task: ExecutionId) -> Result<(), ExecutionError> {
-    // The initial native execution profile has no delegation broker. A grant
-    // cannot borrow a parent task's authority, even for an otherwise identical
-    // fixed input or a task registered after consent was recorded.
+    // Direct grants cannot borrow either provider-child or broker authority,
+    // including a task registered after direct consent was recorded.
     let delegated: bool = connection
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1 AND parent_id IS NOT NULL) OR EXISTS(SELECT 1 FROM execution_budget_ancestry WHERE task_id=?1 AND ancestor_id<>task_id)",
+            "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1 AND parent_id IS NOT NULL) OR EXISTS(SELECT 1 FROM execution_budget_ancestry WHERE task_id=?1 AND ancestor_id<>task_id) OR EXISTS(SELECT 1 FROM application_executions x JOIN execution_attempts a USING(attempt_id) WHERE a.task_id=?1 AND x.kind='tool')",
             [task.to_string()],
             |row| row.get(0),
         )
@@ -157,6 +172,23 @@ fn check_record(record: &GrantRecord, input: &FixedInput) -> Result<(), Executio
     Ok(())
 }
 
+/// Historical provenance uses the original persisted grant, never a live permit.
+pub(super) fn validate_result_in(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &crate::execution::FixedResult,
+) -> Result<(), ExecutionError> {
+    if let Some(evidence) = &result.envelope().plugin {
+        let record = for_attempt(connection, input.envelope().attempt_id)?
+            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "plugin-result-grant"))?;
+        check_record(&record, input)?;
+        if evidence.authorization_id != record.grant_id {
+            return Err(failure(ErrorCode::CorruptLedger, "plugin-result-grant"));
+        }
+    }
+    Ok(())
+}
+
 /// Runs inside the caller's existing read or write transaction. A query never
 /// writes the database, renews, or reconstructs a persisted authorization.
 pub(super) fn check_input_in(
@@ -172,9 +204,6 @@ pub(super) fn check_input_in(
             Err(failure(ErrorCode::ResultMismatch, "plugin-grant-input"))
         };
     }
-    if input.envelope().automation.is_some() {
-        return Err(denied());
-    }
     check_project(connection, input)?;
     let record = record.ok_or_else(denied)?;
     check_record(&record, input)?;
@@ -183,8 +212,21 @@ pub(super) fn check_input_in(
         return Err(denied());
     }
     not_cancelled(connection, record.task_id)?;
-    not_delegated(connection, record.task_id)?;
+    match &record.delegation {
+        None => {
+            if input.envelope().automation.is_some() {
+                return Err(denied());
+            }
+            not_delegated(connection, record.task_id)?;
+        }
+        Some(delegation) => {
+            super::application::check_tool_delegation(connection, input, delegation)?
+        }
+    }
     let permit = authority.permit(input)?;
+    if permit.delegation() != record.delegation.as_ref() {
+        return Err(denied());
+    }
     if !permit.matches_record(
         input,
         record.grant_id,
@@ -211,13 +253,15 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         }
     }
     let mut statement = connection.prepare(
-        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked FROM plugin_execution_grants",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation FROM plugin_execution_grants",
     ).map_err(sql)?;
     let records = statement.query_map([], row).map_err(sql)?;
     for record in records {
         let record = decode(record.map_err(sql)?)?;
-        not_delegated(connection, record.task_id)
-            .map_err(|_| failure(ErrorCode::CorruptLedger, "plugin-grant-delegation"))?;
+        if record.delegation.is_none() {
+            not_delegated(connection, record.task_id)
+                .map_err(|_| failure(ErrorCode::CorruptLedger, "plugin-grant-delegation"))?;
+        }
         let captured = connection
             .query_row(
                 &format!(
@@ -233,9 +277,36 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
             let input = stored.restore(record.attempt_id)?;
             check_record(&record, &input)?;
             check_project(connection, &input)?;
-            if input.envelope().plugin.is_none() || input.envelope().automation.is_some() {
+            if input.envelope().plugin.is_none() {
                 return Err(failure(ErrorCode::CorruptLedger, "plugin-grant-input"));
             }
+            match &record.delegation {
+                Some(delegation) => {
+                    super::application::validate_tool_input(connection, &input, delegation)?
+                }
+                None if input.envelope().automation.is_some() => {
+                    return Err(failure(ErrorCode::CorruptLedger, "plugin-grant-input"));
+                }
+                None => {}
+            }
+            let mut results = connection
+                .prepare("SELECT result_id FROM execution_results WHERE attempt_id=?1")
+                .map_err(sql)?;
+            let ids = results
+                .query_map([record.attempt_id.to_string()], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(sql)?;
+            for id in ids {
+                let id = ExecutionId::parse(&id.map_err(sql)?)?;
+                // load_result also checks the immutable input/item/channel binding.
+                ledger::load_result(connection, &input, id)?;
+            }
+        } else if record.delegation.is_some() {
+            return Err(failure(
+                ErrorCode::CorruptLedger,
+                "plugin-grant-association",
+            ));
         }
     }
     Ok(())
@@ -313,6 +384,7 @@ impl ProjectStore {
                 || record.generation != generation
                 || record.expires_at_ms != expires_at_ms
                 || !record.unsandboxed_execution
+                || record.delegation.is_some()
             {
                 return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
             }
@@ -386,4 +458,61 @@ impl ProjectStore {
         .map_err(sql)?;
         ledger::commit(tx)
     }
+}
+
+/// Stage a delegated grant in the caller's enqueue transaction. No live handle
+/// exists before this transaction commits; only the opaque broker path calls it.
+pub(super) fn record_delegated_grant_in(
+    c: &Connection,
+    authority: &PluginAuthority,
+    generation: ExecutionId,
+    grant_id: ExecutionId,
+    input: &FixedInput,
+    expires_at_ms: u64,
+    delegation: &crate::application::WorkPlanToolDelegation,
+) -> Result<bool, ExecutionError> {
+    authority.require_generation(generation)?;
+    check_project(c, input)?;
+    not_cancelled(c, input.envelope().task_id)?;
+    let existing = for_grant(c, grant_id)?;
+    let attempt = for_attempt(c, input.envelope().attempt_id)?;
+    if existing.is_some() || attempt.is_some() {
+        let record = existing.ok_or_else(denied)?;
+        if attempt.as_ref().map(|record| record.grant_id) != Some(grant_id)
+            || record.generation != generation
+            || record.expires_at_ms != expires_at_ms
+            || record.delegation.as_ref() != Some(delegation)
+            || record.revoked
+        {
+            return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-identity"));
+        }
+        check_record(&record, input)?;
+        check_input_in(c, input, authority)?;
+        return Ok(false);
+    }
+    authority.check_new_grant(generation)?;
+    let reused_task: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM plugin_execution_grants WHERE task_id=?1)",
+            [input.envelope().task_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(sql)?;
+    if reused_task {
+        return Err(failure(ErrorCode::ResultMismatch, "plugin-grant-task"));
+    }
+    c.execute(
+        "INSERT INTO plugin_execution_grants VALUES (?1,?2,?3,?4,?5,?6,1,0,?7)",
+        params![
+            grant_id.to_string(),
+            input.envelope().attempt_id.to_string(),
+            input.envelope().task_id.to_string(),
+            input.digest(),
+            generation.to_string(),
+            expires_at_ms as i64,
+            crate::execution::codec::encode(delegation, 4096)?
+        ],
+    )
+    .map_err(sql)?;
+    Ok(true)
 }

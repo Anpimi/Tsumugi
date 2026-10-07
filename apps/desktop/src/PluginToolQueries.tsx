@@ -6,8 +6,9 @@ import { commandFailure, CommandFailureDetails, type CommandFailure } from "./Co
 import { executionCommands, executionContext, type PluginToolPrepareRequest, type PluginToolPreflight, type PluginStartRequest, type PluginToolDiscardRequest, type CancelRequest } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
 import { pluginCommands, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
-import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
+import { matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
 import { PluginPermissions } from "./PluginManager";
+import { jsonIdentity, queryField as field, matchesTool as matches, readPluginToolChoices } from "./pluginToolChoices";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 
@@ -21,24 +22,6 @@ type Intent =
   | { kind: "cancel"; request: CancelRequest };
 type Capture = { review: PluginToolPreflight; sequence: number };
 
-// Compare opaque JSON identity independently of object key order. This is a
-// presentation check; the original native boundary still captures and binds it.
-function jsonIdentity(value: unknown): string | undefined {
-  return JSON.stringify(value, (_key, item: unknown) => item !== null && typeof item === "object" && !Array.isArray(item)
-    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) : item);
-}
-function field(value: unknown, path: readonly (string | number)[]): unknown {
-  for (const key of path) {
-    if (value === null || typeof value !== "object") return undefined;
-    value = Object.getOwnPropertyDescriptor(value, String(key))?.value;
-  }
-  return value;
-}
-function matches(view: PluginToolView, request: PluginToolRequest): boolean {
-  const provider = view.binding.capability.provider;
-  return view.resourceId === request.resourceId && view.environmentDigest === request.environmentDigest
-    && provider.packageDigest === request.package.packageDigest && jsonIdentity(provider.plugin) === jsonIdentity(request.package.plugin);
-}
 function presentation(view: PluginToolView | undefined): { value: ToolQueryPresentation | null; failed: boolean } {
   if (!view) return { value: null, failed: false };
   try { return { value: createToolQuery(view.binding), failed: false }; }
@@ -64,19 +47,7 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null), leaveTrigger = useRef<HTMLElement | null>(null);
   const errorRegion = useRef<HTMLDivElement>(null);
   const inventory = useSessionQuery({ key: ["tool-query-inventory", refresh], scopes: [], enabled: open && !disabled,
-    read: async () => {
-      const value = await pluginCommands.inventory();
-      const enabled = value.packages.filter(item => item.state === "sealed" && value.packageDecisions.some(decision => decision.enabled
-        && decision.packageDigest === item.packageDigest && jsonIdentity(decision.plugin) === jsonIdentity(item.plugin)));
-      const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
-      const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource"
-        && contribution.contribution.schema.id === "tsumugi.capability-tool-declaration" && contribution.contribution.schema.schemaVersion === 1
-        && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`,
-          label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`,
-          package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id,
-          runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
-      return { choices, runtimes: approvedPluginEnvironments(value) };
-    } });
+    read: readPluginToolChoices });
   const choices = inventory.data?.choices ?? [], effectiveChoice = choiceKey || (choices.length === 1 ? choices[0].key : "");
   const choice = choices.find(item => item.key === effectiveChoice);
   const runtimes = matchingPluginEnvironments(inventory.data?.runtimes ?? [], choice?.runtimeKinds ?? []);

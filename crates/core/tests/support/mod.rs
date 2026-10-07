@@ -67,8 +67,17 @@ pub fn source_input(store: &ProjectStore) -> FixedInput {
     source_input_with_count(store, 2)
 }
 fn source_input_with_count(store: &ProjectStore, count: usize) -> FixedInput {
-    assert!((1..=2000).contains(&count));
-    let raw = vec!["same"; count].join("\n");
+    source_input_with_texts(store, &vec!["same"; count])
+}
+#[allow(dead_code)]
+pub fn source_input_with_texts(store: &ProjectStore, texts: &[&str]) -> FixedInput {
+    assert!((1..=2000).contains(&texts.len()));
+    assert!(
+        texts
+            .iter()
+            .all(|text| !text.is_empty() && !text.contains('\n'))
+    );
+    let raw = texts.join("\n");
     let binding = declaration();
     let bundle = SourceBundle::capture_declared(
         &binding,
@@ -98,9 +107,10 @@ fn source_input_with_count(store: &ProjectStore, count: usize) -> FixedInput {
 fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
     assert_eq!(source.artifacts[1].utf8, "opaque companion");
     let lines: Vec<_> = source.artifacts[0].utf8.split('\n').collect();
-    assert!(lines.iter().all(|line| *line == "same"));
+    assert!(lines.iter().all(|line| !line.is_empty()));
     let count = lines.len();
     let mut order = Vec::with_capacity(count);
+    let mut start = 0u32;
     let units = (0..count)
         .map(|index| {
             let key = if count == 2 {
@@ -109,12 +119,11 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
                 format!("item-{index:04}")
             };
             order.push(format!("occurrence-{key}"));
-            let start = index as u32 * 5;
-            let end = start + 4;
-            sdk::ContentUnit {
+            let end = start + lines[index].len() as u32;
+            let unit = sdk::ContentUnit {
                 id: format!("unit-{key}"),
                 source_revision_id: format!("source-{key}"),
-                text: "same".into(),
+                text: lines[index].into(),
                 occurrences: vec![sdk::ContentOccurrence {
                     id: format!("occurrence-{key}"),
                     source: sdk::SourceReference {
@@ -136,7 +145,9 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
                     }),
                 }],
                 protected_fragments: vec![],
-            }
+            };
+            start = end + 1;
+            unit
         })
         .collect();
     sdk::ContentExchange {
@@ -438,14 +449,19 @@ fn source_fixture_config(
 }
 
 pub fn source_runtime(store: &ProjectStore) -> ExecutionRuntime {
-    let binding = declaration();
     let mut runtime = ExecutionRuntime::new(store).unwrap();
+    register_source_runners(&mut runtime);
+    runtime
+}
+
+#[allow(dead_code)]
+pub fn register_source_runners(runtime: &mut ExecutionRuntime) {
+    let binding = declaration();
     for capability in [binding.extractor, binding.checker] {
         runtime
             .register_read_only(Arc::new(FixtureRunner(selected(capability))))
             .unwrap();
     }
-    runtime
 }
 
 #[allow(dead_code)]

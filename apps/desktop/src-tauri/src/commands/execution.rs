@@ -60,6 +60,7 @@ macro_rules! handlers {
         work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,
         work_plans::agent::open_work_plan_agent_scope,
         work_plans::agent::prepare_work_plan_agent_generation,work_plans::agent::start_work_plan_agent_generation,
+        work_plans::broker::prepare_work_plan_agent_tool,work_plans::broker::start_work_plan_agent_tool,
         work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,
         work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
     ] };

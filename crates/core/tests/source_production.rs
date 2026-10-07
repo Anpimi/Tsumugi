@@ -68,7 +68,7 @@ fn production_source_schema_refuses_previous_format_without_changing_files() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 28);
+    assert_eq!(version, 29);
     connection.pragma_update(None, "user_version", 27).unwrap();
     drop(connection);
     let files = || {

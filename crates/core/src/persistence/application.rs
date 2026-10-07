@@ -1,6 +1,7 @@
 //! Work plans use the existing project and execution authorities.
 mod control;
 mod selection;
+mod tools;
 use super::ProjectStore;
 use crate::{
     ai::{self, AiConfig},
@@ -13,6 +14,9 @@ pub(super) use control::{
 };
 pub use selection::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
+};
+pub(in crate::persistence) use tools::{
+    check_prepared_tool, check_tool_delegation, record_tool_input, validate_tool_input,
 };
 
 impl ProjectStore {
@@ -39,7 +43,21 @@ impl ProjectStore {
         units: &[ExecutionId],
         options: PlanOptions,
     ) -> Result<WorkPlan, ExecutionError> {
+        self.prepare_work_plan_with_tools(config, locale, units, options, None)
+    }
+
+    pub fn prepare_work_plan_with_tools(
+        &self,
+        config: Option<AiConfig>,
+        locale: &str,
+        units: &[ExecutionId],
+        options: PlanOptions,
+        tools: Option<crate::application::WorkPlanTools>,
+    ) -> Result<WorkPlan, ExecutionError> {
         options.validate()?;
+        if let Some(tools) = &tools {
+            tools.validate()?;
+        }
         let connection = self
             .connection()
             .map_err(|_| ExecutionError::new(ErrorCode::StorageFailed, "work-plan-read"))?;
@@ -77,7 +95,7 @@ impl ProjectStore {
                     ExecutionError::new(ErrorCode::InvalidInput, "work-plan-model")
                 })?;
                 let preview = self.preview_ai(config, locale, units)?;
-                WorkPlan::capture(project, preview, selection_basis, options)
+                WorkPlan::capture(project, preview, selection_basis, options)?.with_tools(tools)
             } else {
                 if config.is_some() {
                     return Err(ExecutionError::new(
@@ -85,7 +103,8 @@ impl ProjectStore {
                         "work-plan-model-unused",
                     ));
                 }
-                WorkPlan::capture_manual(project, locale.into(), selection_basis, options)
+                WorkPlan::capture_manual(project, locale.into(), selection_basis, options)?
+                    .with_tools(tools)
             }
         })
     }

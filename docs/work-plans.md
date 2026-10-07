@@ -40,9 +40,10 @@ validation, not execution or mutation authorization.
 
 The current schema stores plan authority, control generations, action receipts,
 execution associations, checked selection receipts and unit protection beside
-the existing execution ledger. This development build opens current schema 28
+the existing execution ledger. This development build opens current schema 29
 only. Unsupported development projects are preserved and refused; recreate
-projects and reimport source files.
+projects and reimport source files. Current work plans use internal format 2;
+earlier development plan formats are not migrated.
 
 `authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit
 confirmation, the exact plan digest, the exact supported effect set and an expiry
@@ -88,10 +89,58 @@ same candidate/check/selection service and independent checker consent.
 All HTTP requests charge the original ancestors. Pause, stop, takeover, expiry
 or closing the project invalidates the scope; explicit Continue needs a new
 scope and retains the original cumulative budget. An old scope cannot cross
-project-open sessions. The bounded Agent adapter exposes generation preparation
-and starting; the trusted scope opener and human authorizer/control methods
-remain outside it. This service does not authorize plugin-tool execution or
-provide a complete autonomous tool loop.
+project-open sessions. The bounded Agent adapter exposes generation and tool
+preparation and starting; the trusted scope opener and human authorizer/control
+methods remain outside it. This is a bounded application consumer, rather than
+a complete autonomous model loop.
+
+An assisted plan can additionally capture read-only reference tools through
+`prepare_work_plan_with_tools`. Each entry fixes an opaque handle, the actual
+SDK binding and approved environment, installed settings revision, package and
+runtime origins, and explicit query target and category choices. The plan fixes
+one total invocation limit across all entries, attempts and control generations.
+Preparing this metadata grants no execution. The Desktop captures it from
+selected installed tools and displays the exact package, runtime, permissions,
+options and invocation limit before authorization.
+
+`query-tools` requires a separate human confirmation of unsandboxed local
+execution. The host captures its original wall-clock expiry and monotonic
+deadline when the human request is accepted. The tool deadline is the earlier
+of the plan expiry and ten minutes; a longer model-plan duration does not extend
+it. Replaying or recovering the same action cannot refresh either deadline.
+Only a new explicit Continue can confirm another tool period, within the
+original cumulative invocation limit. A project reopen restores history without
+restoring local execution consent. Model sharing and checker consent remain
+independent of this tool permission.
+
+An Agent tool proposal contains only stable task/attempt identities, a captured
+tool handle and a nonempty subset of the plan's units. Core creates the caller
+identity, derives literal source text from the captured plan and builds the
+original SDK query payload. It refuses arbitrary payload, destination, target,
+options, caller, grant, expiry or permission substitutions. Preparation is
+read-only. Starting rechecks the exact installed environment and original
+consent, then commits the delegated grant, fixed input, execution association
+and shared invocation reservation in one original ledger transaction. Each
+accepted item uses one invocation; control, failure, cancellation or uncertain
+acknowledgements do not refund reservations. Exact recovery preserves the
+original attempt and grant rather than issuing new authority.
+
+Tools run through the original `RunnerProxy`, worker channel and live grant
+checks. Source changes cancel only the affected delegated tool, while unrelated
+work continues. Pause, stop, takeover, expiry and root cancellation prevent new
+dispatch and signal active workers. Completed read-only tool permits retire
+after their original attempt settles; ordinary producer/checker permits retain
+their existing adoption lifecycle. Stored tool output stays unapplied and binds
+the original durable grant identity even after expiry or reopen. It does not
+create terms, translations, checks, selections or human approval.
+
+The Desktop's bounded Agent controls explicitly select captured units, query
+references, display escaped SDK reference columns or empty matches, and generate
+another candidate for that subset using the original model service. Reference
+output is displayed separately and is not automatically shared with the model.
+An uncertain start retains its original prepared identity and exposes read-only
+reconciliation without resending the request. Result-read failures can be
+refreshed. Tool results remain visible across plan control changes.
 
 Manual saves and manual selections protect the unit in the same transaction.
 Protection survives project reopen. Explicit release requires confirmation and
@@ -106,9 +155,10 @@ new saves. A prepared plan alone never starts this effect.
 
 
 `prepare_automatic_selection` accepts a saved AI revision from this plan generation
-and returns an opaque, store-created capture. Its `compute` method runs the current
-bundled deterministic checks on owned source, candidate and term data without a
-SQLite transaction. `commit_automatic_selection` rechecks the current grant,
+and returns an opaque, store-created capture. The normal host runs the exact
+adopted checker through independently consented original plugin execution, then
+computes the complete Core/domain check union from the saved ledger evidence
+outside a SQLite transaction. `commit_automatic_selection` rechecks the current grant,
 source, selection, shared resources, scoped resource changes and protection in a
 short transaction. A candidate from another plan, revoked generation, cancelled
 attempt or changed basis cannot acquire selection authority. Selecting one entry
@@ -128,9 +178,10 @@ selection never transfers approval or makes a release eligible.
 A human-facing host must record protection through `set_work_protection` before
 accepting an editable draft. This uses the existing persistent protection gate;
 draft text is not sent to automation. Hosts must retain unknown protection writes
-and keep input read-only until reconciliation. Current bundled checks are limited to
-the existing validator profile; they do not certify future domain check sets or
-external model quality.
+and keep input read-only until reconciliation. The required check set is the
+adopted Core/domain policy union. Synchronous bundled check fixtures are
+test-host-only; a reference query cannot substitute for required checker evidence
+or certify external model quality.
 
 The desktop command API uses the existing project session and execution runtime
 for plan preparation, authorization, start, control, status and action recovery,

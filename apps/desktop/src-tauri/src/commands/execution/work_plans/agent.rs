@@ -53,7 +53,7 @@ pub struct WorkPlanAgentGenerationView {
     pub budget: ProviderBudget,
 }
 
-fn scope(
+pub(super) fn scope(
     host: &ExecutionHost,
     store: &ProjectStore,
     id: ExecutionId,
@@ -146,7 +146,7 @@ pub async fn open_work_plan_agent_scope(
                             "work-plan-agent-session",
                         )));
                     }
-                    let id = ExecutionId::new();
+                    let id = opened.caller_id();
                     host.work_plans.agent_scopes.insert(id, opened.clone());
                     id
                 };

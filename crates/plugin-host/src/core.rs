@@ -157,7 +157,10 @@ impl RunnerProxy {
         if *captured != expected
             || envelope.capability_id != self.capability_id()
             || envelope.capability_version != self.capability_version()
-            || envelope.automation.is_some()
+            || (envelope.automation.is_some()
+                && !request.plugin_permit().is_some_and(|permit| {
+                    permit.is_work_plan_tool() && permit.matches(&request.input)
+                }))
         {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,

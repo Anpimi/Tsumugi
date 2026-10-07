@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Bounded work-plan tools add fixed installed SDK bindings, independent local
+execution consent, source-derived Agent queries and one cumulative invocation
+limit to the original Core/Host/Desktop execution chain. Current project schema
+advances to 29 and internal WorkPlan format to 2; earlier development formats
+are refused unchanged without migration. Internal AI IPC adds strict tool
+selection, consent, usage and scoped prepare/start shapes; consumers regenerate
+their contracts. The SDK's Rust query-payload builder is additive. SDK tool
+schema/behavior 1/1, process frames, installed settings 2, JavaScript runtime and
+dependencies are unchanged. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1`
+remain the same undistributed batch with synchronized Unreleased entries and no
+extra version bump. Full autonomous orchestration and native product acceptance
+remain in development.
+
 The application adds scoped Agent generation entry points to the existing
 work-plan service and generated internal Desktop IPC. Child inputs derive from
 the original plan and charge its ancestor budget. The existing candidate service

@@ -6,7 +6,13 @@ export type Revision = string;
  * Requested automatic effects, never a human language-review approval.
  */
 export type AutomationEffect =
-  "save-candidate" | "run-checks" | "select-missing" | "replace-captured-selection" | "adopt-resources" | "deliver";
+  | "save-candidate"
+  | "run-checks"
+  | "select-missing"
+  | "replace-captured-selection"
+  | "adopt-resources"
+  | "deliver"
+  | "query-tools";
 export type UnsignedDecimal = string;
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
@@ -22,6 +28,8 @@ export interface Requests {
   workPlanAgentOpen: WorkPlanAgentOpenRequest;
   workPlanAgentPrepare: WorkPlanAgentPrepareRequest;
   workPlanAgentStart: WorkPlanAgentStartRequest;
+  workPlanAgentToolPrepare: WorkPlanAgentToolPrepareRequest;
+  workPlanAgentToolStart: WorkPlanAgentToolStartRequest;
   workPlanAuthorize: WorkPlanAuthorizeRequest;
   workPlanControl: WorkPlanControlRequest;
   workPlanPrepare: WorkPlanPrepareRequest;
@@ -113,6 +121,29 @@ export interface WorkPlanAgentStartRequest {
   scopeId: ExecutionId;
   sessionToken: string;
 }
+export interface WorkPlanAgentToolPrepareRequest {
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  tool: AgentToolRequest;
+}
+export interface AgentToolRequest {
+  attemptId: ExecutionId;
+  taskId: ExecutionId;
+  toolHandle: ExecutionId;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [ExecutionId, ...ExecutionId[]];
+}
+export interface WorkPlanAgentToolStartRequest {
+  inputDigest: string;
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  tool: AgentToolRequest;
+}
 export interface WorkPlanAuthorizeRequest {
   actionId: ExecutionId;
   checkerExecution: boolean;
@@ -123,6 +154,7 @@ export interface WorkPlanAuthorizeRequest {
   planId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
+  toolExecution: boolean;
 }
 export interface WorkPlanControlRequest {
   actionId: ExecutionId;
@@ -134,6 +166,7 @@ export interface WorkPlanControlRequest {
   planId: ExecutionId;
   projectId: ExecutionId;
   sessionToken: string;
+  toolExecution: boolean;
 }
 export interface WorkPlanPrepareRequest {
   config?: AiConfig | null;
@@ -141,6 +174,7 @@ export interface WorkPlanPrepareRequest {
   options: PlanOptions;
   projectId: ExecutionId;
   sessionToken: string;
+  toolSelection?: WorkPlanToolSelection | null;
   unitIds: ExecutionId[];
 }
 export interface PlanOptions {
@@ -152,6 +186,37 @@ export interface PlanOptions {
 export interface StageChoice {
   mode: StageMode;
   stage: WorkStage;
+}
+export interface WorkPlanToolSelection {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  entries: [WorkPlanToolSelectionEntry, ...WorkPlanToolSelectionEntry[]];
+  maxInvocations: number;
+}
+export interface WorkPlanToolSelectionEntry {
+  handle: ExecutionId;
+  selections: string[];
+  target: string;
+  tool: PluginToolRequest;
+}
+export interface PluginToolRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
 }
 export interface WorkPlanStartRequest {
   actionId: ExecutionId;

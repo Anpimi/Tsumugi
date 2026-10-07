@@ -42,6 +42,7 @@ struct GrantState {
     generation: ExecutionId,
     expires_at_ms: u64,
     deadline: Instant,
+    delegation: Option<crate::application::WorkPlanToolDelegation>,
     revoked: AtomicBool,
 }
 impl GrantState {
@@ -62,7 +63,10 @@ impl GrantState {
     fn matches(&self, input: &FixedInput) -> bool {
         let envelope = input.envelope();
         envelope.plugin.is_some()
-            && envelope.automation.is_none()
+            && match &self.delegation {
+                None => envelope.automation.is_none(),
+                Some(delegation) => envelope.automation == Some(delegation.lease),
+            }
             && self.attempt_id == envelope.attempt_id
             && self.task_id == envelope.task_id
             && self.input_digest == input.digest()
@@ -87,6 +91,23 @@ impl PluginPermit {
 
     pub fn matches(&self, input: &FixedInput) -> bool {
         self.grant.matches(input)
+    }
+
+    /// Only Core can issue this delegated mode; an envelope lease is not proof.
+    pub fn is_work_plan_tool(&self) -> bool {
+        self.grant.delegation.is_some()
+    }
+    pub fn originating_caller_id(&self) -> Option<ExecutionId> {
+        self.grant.delegation.as_ref().map(|d| d.caller_id)
+    }
+    pub fn originating_caller(&self) -> Option<&str> {
+        self.grant.delegation.as_ref().map(|d| d.caller.as_str())
+    }
+    pub fn parent_task(&self) -> Option<ExecutionId> {
+        self.grant.delegation.as_ref().map(|d| d.root_task)
+    }
+    pub(crate) fn delegation(&self) -> Option<&crate::application::WorkPlanToolDelegation> {
+        self.grant.delegation.as_ref()
     }
 
     pub fn grant_id(&self) -> ExecutionId {
@@ -252,6 +273,18 @@ impl PluginAuthority {
         expires_at_ms: u64,
         deadline: Instant,
     ) -> Result<PluginPermit, ExecutionError> {
+        self.activate_with_delegation(generation, grant_id, input, expires_at_ms, deadline, None)
+    }
+
+    pub(crate) fn activate_with_delegation(
+        &self,
+        generation: ExecutionId,
+        grant_id: ExecutionId,
+        input: &FixedInput,
+        expires_at_ms: u64,
+        deadline: Instant,
+        delegation: Option<crate::application::WorkPlanToolDelegation>,
+    ) -> Result<PluginPermit, ExecutionError> {
         let epoch = self.require_generation(generation)?;
         let now = plugin_now_ms()?;
         expires_at_ms
@@ -284,6 +317,7 @@ impl PluginAuthority {
             generation,
             expires_at_ms,
             deadline,
+            delegation,
             revoked: AtomicBool::new(false),
         });
         let permit = PluginPermit {
