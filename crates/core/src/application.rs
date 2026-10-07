@@ -74,6 +74,41 @@ pub struct AutomationLease {
     pub generation: Revision,
 }
 
+/// A session-bound application handle. The host may give an Agent this scope,
+/// without giving it the plan authorizer, Store or runtime. Editing model text
+/// cannot create this handle or change its original lease and budget anchor.
+#[derive(Clone, Debug)]
+pub struct WorkPlanAgentScope {
+    pub(crate) project_id: ExecutionId,
+    pub(crate) lease: AutomationLease,
+    pub(crate) parent_task: ExecutionId,
+    pub(crate) store_epoch: String,
+}
+
+impl WorkPlanAgentScope {
+    pub fn project_id(&self) -> ExecutionId {
+        self.project_id
+    }
+    pub fn lease(&self) -> AutomationLease {
+        self.lease
+    }
+    pub fn parent_task(&self) -> ExecutionId {
+        self.parent_task
+    }
+}
+
+/// A bounded proposal within an already-authorized plan. It contains no model,
+/// destination, payload, effect, human confirmation or authority override.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct AgentGenerationRequest {
+    pub task_id: ExecutionId,
+    pub attempt_id: ExecutionId,
+    #[cfg_attr(feature = "wire-schema", schemars(length(min = 1, max = 100)))]
+    pub unit_ids: Vec<ExecutionId>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

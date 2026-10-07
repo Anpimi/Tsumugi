@@ -2,6 +2,32 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AgentGenerationRequest": {
+        "additionalProperties": false,
+        "description": "A bounded proposal within an already-authorized plan. It contains no model,\ndestination, payload, effect, human confirmation or authority override.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "AiConfig": {
         "additionalProperties": false,
         "properties": {
@@ -191,6 +217,23 @@
         ],
         "type": "string"
       },
+      "AutomationLease": {
+        "additionalProperties": false,
+        "description": "A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "planId",
+          "generation"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "type": "string"
       },
@@ -278,6 +321,79 @@
           "sessionToken",
           "projectId",
           "actionId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentOpenRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "lease"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/AgentGenerationRequest"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "generation"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/AgentGenerationRequest"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "generation",
+          "inputDigest"
         ],
         "type": "object"
       },
@@ -581,6 +697,15 @@
       "workPlanAction": {
         "$ref": "#/definitions/WorkPlanActionRequest"
       },
+      "workPlanAgentOpen": {
+        "$ref": "#/definitions/WorkPlanAgentOpenRequest"
+      },
+      "workPlanAgentPrepare": {
+        "$ref": "#/definitions/WorkPlanAgentPrepareRequest"
+      },
+      "workPlanAgentStart": {
+        "$ref": "#/definitions/WorkPlanAgentStartRequest"
+      },
       "workPlanAuthorize": {
         "$ref": "#/definitions/WorkPlanAuthorizeRequest"
       },
@@ -611,6 +736,9 @@
       "workPlanPrepare",
       "workPlanAuthorize",
       "workPlanStart",
+      "workPlanAgentOpen",
+      "workPlanAgentPrepare",
+      "workPlanAgentStart",
       "workPlanControl",
       "workPlanStatus",
       "workPlanAction",
@@ -2183,6 +2311,7 @@
         "enum": [
           "waiting",
           "saving-candidate",
+          "saved",
           "checking",
           "selected",
           "blocked",
@@ -3302,6 +3431,77 @@
         ],
         "type": "string"
       },
+      "WorkPlanAgentGenerationView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scopeId",
+          "parentTask",
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "scope",
+          "budget"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentView": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scopeId",
+          "lease",
+          "parentTask",
+          "scope",
+          "budget"
+        ],
+        "type": "object"
+      },
       "WorkPlanCheckerView": {
         "oneOf": [
           {
@@ -3547,6 +3747,12 @@
           }
         ]
       },
+      "workPlanAgent": {
+        "$ref": "#/definitions/WorkPlanAgentView"
+      },
+      "workPlanAgentGeneration": {
+        "$ref": "#/definitions/WorkPlanAgentGenerationView"
+      },
       "workPlanReceipt": {
         "$ref": "#/definitions/WorkPlanReceiptView"
       },
@@ -3563,6 +3769,8 @@
       "view",
       "effectRetry",
       "workPlan",
+      "workPlanAgent",
+      "workPlanAgentGeneration",
       "workPlanReceipt",
       "workPlanStatus",
       "workPlanAction",

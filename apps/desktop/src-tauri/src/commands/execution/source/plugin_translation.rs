@@ -502,4 +502,4 @@ pub async fn preflight_plugin_translation(
 mod tests;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
-pub(super) use tests::native::choose as choose_translation_for_test;
+pub(super) use tests::choose as choose_translation_for_test;

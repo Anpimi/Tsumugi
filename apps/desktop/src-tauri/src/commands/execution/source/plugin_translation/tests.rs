@@ -69,6 +69,32 @@ fn translation_capture_wire_does_not_accept_paths_or_execution_grants() {
     assert!(serde_json::from_value::<TranslationSourceContext>(lossy).is_err());
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(in crate::commands::execution::source) fn choose(
+    state: &AppState,
+    directory: std::path::PathBuf,
+    request: PluginTranslationSelectRequest,
+) -> ExecutionId {
+    state.sessions.with(move |sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        let source = source_context(store, &request).unwrap();
+        host.source.stop();
+        let selection_id = ExecutionId::new();
+        // A real owned native handle replaces only the interactive picker.
+        // No path-grant IPC is exposed by either production configuration.
+        host.source.selection = Some((
+            selection_id,
+            Arc::new(capture::Selection::authorize(directory).unwrap()),
+        ));
+        host.source.translation.choice = Some(TranslationChoice {
+            selection_id,
+            request,
+            source,
+        });
+        selection_id
+    })
+}
+
 #[cfg(all(
     feature = "bundled-runtime",
     target_os = "macos",
@@ -373,30 +399,6 @@ pub(super) mod native {
             );
             std::thread::sleep(Duration::from_millis(1));
         }
-    }
-    pub(in crate::commands::execution::source) fn choose(
-        state: &AppState,
-        directory: PathBuf,
-        request: PluginTranslationSelectRequest,
-    ) -> ExecutionId {
-        state.sessions.with(move |sessions| {
-            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-            let source = source_context(store, &request).unwrap();
-            host.source.stop();
-            let selection_id = ExecutionId::new();
-            // A real owned native handle replaces only the interactive picker.
-            // No path-grant IPC is exposed by either production configuration.
-            host.source.selection = Some((
-                selection_id,
-                Arc::new(capture::Selection::authorize(directory).unwrap()),
-            ));
-            host.source.translation.choice = Some(TranslationChoice {
-                selection_id,
-                request,
-                source,
-            });
-            selection_id
-        })
     }
 }
 

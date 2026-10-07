@@ -267,7 +267,7 @@ ai: {
   effects: {
     title: "自动选择", policy: "政策：{{policy}}。此回执记录已发生的操作，当前译文请以编辑器为准；人工批准仍需独立操作。",
     checks: "机械检查依据", failed: "自动工作未能完成。候选及此前保存的成果已保留，请刷新核对结果。", retry: "核对已存结果并重试原操作",
-    phases: { waiting: "等待生成结果", "saving-candidate": "正在保存候选…", checking: "正在检查已存候选…", selected: "此候选曾按政策选用", blocked: "候选已保留，自动选择受阻", failed: "自动选择未能完成", cancelled: "自动选择未运行，继续前请核对计划。" },
+    phases: { saved: "候选已保存，尚未选择译文", waiting: "等待生成结果", "saving-candidate": "正在保存候选…", checking: "正在检查已存候选…", selected: "此候选曾按政策选用", blocked: "候选已保留，自动选择受阻", failed: "自动选择未能完成", cancelled: "自动选择未运行，继续前请核对计划。" },
     blocks: { protected: "此条目受保护，原译文已保留，机械检查仍已执行。", "already-selected": "此条目已有译文，仅补缺失政策保留了它。", checks: "机械检查发现问题，请审阅已存候选后再选择。" }
   },
   plan: {

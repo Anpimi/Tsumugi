@@ -1,4 +1,5 @@
-//! Human-facing work-plan commands share the ordinary project session and runtime.
+//! Work-plan commands share the ordinary project session and runtime.
+pub(crate) mod agent;
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
     dispatch::BlockingExecutor,
@@ -12,7 +13,7 @@ use tsumugi_core::{
     ai::{self, AiConfig, AiPreview},
     application::{
         AuthorizeWorkPlan, AutomationEffect, AutomationLease, ControlWorkPlan, PlanOptions,
-        PlanSelectionBasis, SetWorkProtection, WorkPlan, WorkPlanCommand, WorkPlanReceipt,
+        PlanSelectionBasis, SetWorkProtection, WorkPlan, WorkPlanAgentScope, WorkPlanCommand, WorkPlanReceipt,
         WorkPlanState, WorkPlanStatus, WorkProtection,
     },
 };
@@ -23,12 +24,14 @@ pub(super) struct WorkPlanSession {
     prepared: Option<WorkPlan>,
     environments: BTreeMap<ExecutionId, (String, ReviewEnvironment)>,
     checker_consents: BTreeMap<ExecutionId, CheckerConsent>,
+    agent_scopes: BTreeMap<ExecutionId, WorkPlanAgentScope>,
 }
 impl WorkPlanSession {
     pub(super) fn stop(&mut self) {
         self.prepared = None;
         self.environments.clear();
         self.checker_consents.clear();
+        self.agent_scopes.clear();
     }
 }
 
@@ -37,6 +40,32 @@ pub(super) struct CheckerConsent {
     pub lease: AutomationLease,
     pub binding: SourceReviewBinding,
     pub expires_at_ms: u64,
+}
+
+fn current_checker_consent(
+    host: &ExecutionHost,
+    store: &ProjectStore,
+    plan: &WorkPlan,
+    lease: AutomationLease,
+) -> Result<Option<CheckerConsent>, CommandError> {
+    let checker = host
+        .work_plans
+        .checker_consents
+        .get(&plan.plan_id)
+        .filter(|consent| consent.lease == lease)
+        .cloned();
+    if let Some(binding) = store.work_plan_review_binding(plan).map_err(map_recover)? {
+        if checker
+            .as_ref()
+            .is_none_or(|consent| consent.binding != binding)
+        {
+            return Err(map_recover(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-consent-required",
+            )));
+        }
+    }
+    Ok(checker)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -624,23 +653,7 @@ pub async fn start_work_plan(
                     Err(error) => return Err(map_recover(error)),
                 }
                 let plan = store.work_plan(request.plan_id).map_err(map_recover)?;
-                let checker = host
-                    .work_plans
-                    .checker_consents
-                    .get(&request.plan_id)
-                    .filter(|consent| consent.lease == receipt.lease)
-                    .cloned();
-                if let Some(binding) = store.work_plan_review_binding(&plan).map_err(map_recover)? {
-                    if checker
-                        .as_ref()
-                        .is_none_or(|consent| consent.binding != binding)
-                    {
-                        return Err(map_recover(ExecutionError::new(
-                            ErrorCode::Unauthorized,
-                            "plugin-consent-required",
-                        )));
-                    }
-                }
+                let checker = current_checker_consent(host, store, &plan, receipt.lease)?;
                 if let Some(parent) = receipt.parent_task {
                     host.runtime
                         .submit_child(store, &input, parent)
@@ -1262,7 +1275,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             };
-            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"effects":effects,"expiresAt":expiry()})).unwrap();
+            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":false,"effects":effects,"expiresAt":expiry()})).unwrap();
             assert_eq!(self.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap(), plan["attemptId"]);
             plan
         }
@@ -1286,6 +1299,390 @@ mod tests {
         }
     }
 
+    impl Fixture {
+        fn start_candidates(&self, config: AiConfig) -> (Value, Value) {
+            let plan = self.call("prepare_work_plan", json!({
+                "config":config,"locale":"zh-CN","unitIds":[self.unit],"options":PlanOptions::default()
+            })).unwrap();
+            let grant = self.call("authorize_work_plan", json!({
+                "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
+                "confirmed":true,"checkerExecution":false,"effects":["save-candidate"],"expiresAt":expiry()
+            })).unwrap();
+            assert!(
+                self.call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":grant["lease"]})
+                )
+                .is_err()
+            );
+            assert_eq!(self.call("start_work_plan", json!({
+                "planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]
+            })).unwrap(), plan["attemptId"]);
+            (plan, grant)
+        }
+
+        fn wait_saved(&self, attempt: &Value) -> Value {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let view = self
+                    .call("read_ai_translation", json!({"attemptId":attempt}))
+                    .unwrap();
+                if view["rows"][0]["savedRevisionId"].is_string()
+                    && view["rows"][0]["automation"]["phase"] == "saved"
+                {
+                    return view;
+                }
+                assert!(Instant::now() < deadline, "{view}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[test]
+    fn agent_generation_uses_original_runtime_candidates_and_cumulative_budget() {
+        let fixture = Fixture::create();
+        let (config, provider) = local_provider_sequence(vec!["根候选", "子候选"], None);
+        let (plan, grant) = fixture.start_candidates(config);
+        let first = fixture.wait_saved(&plan["attemptId"]);
+        assert_eq!(first["rows"][0]["output"]["text"], "根候选");
+        let open = json!({"lease":grant["lease"]});
+        let before = fixture.bytes();
+        let agent = fixture
+            .call("open_work_plan_agent_scope", open.clone())
+            .unwrap();
+        assert_eq!(
+            fixture
+                .call("open_work_plan_agent_scope", open.clone())
+                .unwrap(),
+            agent
+        );
+        assert_eq!(agent["scope"], plan["scope"]);
+        assert_eq!(agent["budget"]["dispatched"], 1);
+        let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
+        let request = json!({"scopeId":agent["scopeId"],"generation":generation});
+        let count = fixture.attempt_count();
+        let prepared = fixture
+            .call("prepare_work_plan_agent_generation", request.clone())
+            .unwrap();
+        assert_eq!(
+            fixture
+                .call("prepare_work_plan_agent_generation", request.clone())
+                .unwrap(),
+            prepared
+        );
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(prepared["parentTask"], agent["parentTask"]);
+        assert_eq!(prepared["scope"], plan["scope"]);
+        let mut forged = request.clone();
+        forged["scopeId"] = json!(ExecutionId::new());
+        assert!(
+            fixture
+                .call("prepare_work_plan_agent_generation", forged)
+                .is_err()
+        );
+        for ids in [
+            json!([]),
+            json!([fixture.unit, fixture.unit]),
+            json!([ExecutionId::new()]),
+        ] {
+            let mut forged = request.clone();
+            forged["generation"]["unitIds"] = ids;
+            assert!(
+                fixture
+                    .call("prepare_work_plan_agent_generation", forged)
+                    .is_err()
+            );
+        }
+        for field in [
+            "confirmed",
+            "effects",
+            "config",
+            "payload",
+            "lease",
+            "parentTask",
+        ] {
+            let mut forged = request.clone();
+            forged["generation"][field] = json!(true);
+            assert!(
+                fixture
+                    .call("prepare_work_plan_agent_generation", forged)
+                    .is_err()
+            );
+        }
+        let mut start = request.clone();
+        start["inputDigest"] = prepared["inputDigest"].clone();
+        let mut forged = start.clone();
+        forged["inputDigest"] = json!("b".repeat(64));
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", forged)
+                .is_err()
+        );
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(
+            fixture
+                .call("start_work_plan_agent_generation", start.clone())
+                .unwrap(),
+            generation["attemptId"]
+        );
+        let second = fixture.wait_saved(&generation["attemptId"]);
+        assert_eq!(second["rows"][0]["output"]["text"], "子候选");
+        assert_ne!(
+            second["rows"][0]["savedRevisionId"],
+            first["rows"][0]["savedRevisionId"]
+        );
+        assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+        let saved = fixture.bytes();
+        assert_eq!(
+            fixture
+                .call("start_work_plan_agent_generation", start)
+                .unwrap(),
+            generation["attemptId"]
+        );
+        assert_eq!(fixture.attempt_count(), count + 1);
+        assert_eq!(fixture.bytes(), saved);
+        let budget = fixture.call("open_work_plan_agent_scope", open).unwrap()["budget"].clone();
+        assert_eq!(budget["limit"], 2);
+        assert_eq!(budget["dispatched"], 2);
+        assert_eq!(budget["unresolved"], 0);
+        assert_eq!(budget["promptTokens"], "2");
+        assert_eq!(budget["completionTokens"], "2");
+        let exhausted_request = json!({"scopeId":agent["scopeId"],"generation":{
+            "taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]
+        }});
+        let exhausted_prepared = fixture
+            .call(
+                "prepare_work_plan_agent_generation",
+                exhausted_request.clone(),
+            )
+            .unwrap();
+        let mut exhausted_start = exhausted_request.clone();
+        exhausted_start["inputDigest"] = exhausted_prepared["inputDigest"].clone();
+        fixture
+            .call("start_work_plan_agent_generation", exhausted_start)
+            .unwrap();
+        let exhausted =
+            fixture.wait_effect(&json!({"attemptId":exhausted_request["generation"]["attemptId"]}));
+        assert_eq!(
+            exhausted["detail"]["items"][0]["status"]["diagnostic"],
+            "ai-budget"
+        );
+        assert!(exhausted["rows"][0]["output"].is_null());
+        assert!(exhausted["rows"][0]["savedRevisionId"].is_null());
+        assert_eq!(
+            fixture
+                .call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":grant["lease"]})
+                )
+                .unwrap()["budget"],
+            budget
+        );
+        let parent: ExecutionId = serde_json::from_value(agent["parentTask"].clone()).unwrap();
+        let attempt: ExecutionId = serde_json::from_value(generation["attemptId"].clone()).unwrap();
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let store = &sessions.active.as_ref().unwrap().store;
+                let root = FixedInput::capture(
+                    store
+                        .work_plan_receipt(
+                            serde_json::from_value(grant["actionId"].clone()).unwrap(),
+                        )
+                        .unwrap()
+                        .unwrap()
+                        .input
+                        .unwrap(),
+                )
+                .unwrap();
+                let child = store.execution_input(attempt).unwrap();
+                assert_eq!(child.envelope().items, root.envelope().items);
+                assert_eq!(child.envelope().settings, root.envelope().settings);
+                assert_eq!(child.envelope().limits, root.envelope().limits);
+                assert_eq!(
+                    store.provider_budget(parent).unwrap().unwrap().dispatched,
+                    2
+                );
+                let project =
+                    ExecutionId::parse(&store.metadata().unwrap().project_id().to_string())
+                        .unwrap();
+                let history = store
+                    .translation_history(project, fixture.unit, "zh-CN", 0, 100)
+                    .unwrap();
+                assert_eq!(history.rows.len(), 2);
+                assert!(history.current.is_none());
+                assert!(
+                    store
+                        .review_target(project, fixture.unit, "zh-CN")
+                        .unwrap()
+                        .current_check
+                        .is_none()
+                );
+            });
+    }
+
+    #[test]
+    fn agent_scope_cannot_resume_control_or_survive_reopen() {
+        let mut fixture = Fixture::create();
+        let (config, provider) = local_provider("保留候选");
+        let (plan, grant) = fixture.start_candidates(config);
+        fixture.wait_saved(&plan["attemptId"]);
+        provider.join().unwrap();
+        let agent = fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":grant["lease"]}),
+            )
+            .unwrap();
+        let request = json!({"scopeId":agent["scopeId"],"generation":{
+            "taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]
+        }});
+        let prepared = fixture
+            .call("prepare_work_plan_agent_generation", request.clone())
+            .unwrap();
+        let mut start = request.clone();
+        start["inputDigest"] = prepared["inputDigest"].clone();
+        let count = fixture.attempt_count();
+        let paused = fixture.call("control_work_plan", json!({
+            "planId":plan["planId"],"actionId":ExecutionId::new(),
+            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecution":false
+        })).unwrap();
+        assert!(
+            fixture
+                .call("prepare_work_plan_agent_generation", request.clone())
+                .is_err()
+        );
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", start.clone())
+                .is_err()
+        );
+        let resumed = fixture
+            .call(
+                "control_work_plan",
+                json!({
+                    "planId":plan["planId"],"actionId":ExecutionId::new(),
+                    "expectedGeneration":paused["lease"]["generation"],"command":"continue",
+                    "confirmed":true,"checkerExecution":false,"expiresAt":expiry()
+                }),
+            )
+            .unwrap();
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", start.clone())
+                .is_err()
+        );
+        let fresh = fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":resumed["lease"]}),
+            )
+            .unwrap();
+        assert_ne!(fresh["scopeId"], agent["scopeId"]);
+        assert_eq!(fresh["parentTask"], agent["parentTask"]);
+        assert_eq!(fresh["budget"], agent["budget"]);
+        assert_eq!(fixture.attempt_count(), count);
+        let mut fresh_request = request.clone();
+        fresh_request["scopeId"] = fresh["scopeId"].clone();
+        fixture
+            .call("prepare_work_plan_agent_generation", fresh_request.clone())
+            .unwrap();
+        fixture.reopen();
+        let before = fixture.bytes();
+        assert!(
+            fixture
+                .call("prepare_work_plan_agent_generation", fresh_request)
+                .is_err()
+        );
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", start)
+                .is_err()
+        );
+        assert!(
+            fixture
+                .call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":resumed["lease"]})
+                )
+                .is_err()
+        );
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(fixture.bytes(), before);
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        assert_eq!(status["state"], "paused");
+        assert_eq!(
+            fixture
+                .call(
+                    "read_ai_translation",
+                    json!({"attemptId":plan["attemptId"]})
+                )
+                .unwrap()["budget"],
+            agent["budget"]
+        );
+    }
+
+    #[test]
+    fn agent_generation_reuses_independent_checks_and_original_selection_service() {
+        let fixture = Fixture::create();
+        let (config, provider) = local_provider_sequence(vec!["第一稿", "第二稿"], None);
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
+        );
+        let first = fixture.wait_effect(&plan);
+        assert_eq!(
+            first["rows"][0]["automation"]["phase"], "selected",
+            "{first}"
+        );
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        let agent = fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":status["lease"]}),
+            )
+            .unwrap();
+        let mut request = json!({"scopeId":agent["scopeId"],"generation":{
+            "taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]
+        }});
+        let prepared = fixture
+            .call("prepare_work_plan_agent_generation", request.clone())
+            .unwrap();
+        request["inputDigest"] = prepared["inputDigest"].clone();
+        fixture
+            .call("start_work_plan_agent_generation", request.clone())
+            .unwrap();
+        let second = fixture.wait_effect(&json!({"attemptId":request["generation"]["attemptId"]}));
+        assert_eq!(
+            second["rows"][0]["automation"]["phase"], "selected",
+            "{second}"
+        );
+        let receipt = &second["rows"][0]["automation"]["receipt"];
+        assert_eq!(receipt["request"]["lease"], agent["lease"]);
+        assert_eq!(
+            receipt["request"]["revisionId"],
+            second["rows"][0]["savedRevisionId"]
+        );
+        assert!(receipt["checkRunId"].is_string());
+        assert_eq!(receipt["rules"].as_array().unwrap().len(), 4);
+        assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+        assert_eq!(
+            fixture
+                .call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":status["lease"]})
+                )
+                .unwrap()["budget"]["dispatched"],
+            2
+        );
+    }
     #[test]
     fn checked_worker_selects_ordinary_candidate_and_reopen_only_reads_receipt() {
         let mut fixture = Fixture::create();
@@ -1375,7 +1772,7 @@ mod tests {
         assert_eq!(status["state"], "paused");
         let continue_request = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),
             "expectedGeneration":status["lease"]["generation"],"command":"continue",
-            "confirmed":true,"expiresAt":expiry()});
+            "confirmed":true,"checkerExecution":false,"expiresAt":expiry()});
         let resumed = fixture
             .call("control_work_plan", continue_request.clone())
             .unwrap();
@@ -1463,7 +1860,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":"3","command":"pause",
-            "confirmed":false,"expiresAt":null}),
+            "confirmed":false,"checkerExecution":false,"expiresAt":null}),
             )
             .unwrap();
         let third = fixture
@@ -1471,7 +1868,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],
-            "command":"continue","confirmed":true,"expiresAt":expiry()}),
+            "command":"continue","confirmed":true,"checkerExecution":false,"expiresAt":expiry()}),
             )
             .unwrap();
         fixture
@@ -1623,7 +2020,7 @@ mod tests {
             tsumugi_core::application::SelectionPolicy::MissingOnly,
         );
         waiting.recv_timeout(Duration::from_secs(3)).unwrap();
-        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"expiresAt":null})).unwrap();
+        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecution":false,"expiresAt":null})).unwrap();
         release.send(()).unwrap();
         provider.join().unwrap();
         let view = fixture.wait_effect(&plan);
@@ -1897,12 +2294,12 @@ mod tests {
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "effects":["save-candidate"], "expiresAt":expiry(),
+            "confirmed":true,"checkerExecution":false, "effects":["save-candidate"], "expiresAt":expiry(),
             "semanticAnswer":"yes"
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true,"checkerExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         })).is_err());
         assert!(fixture.call("prepare_work_plan", json!({
             "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(),
@@ -1976,7 +2373,7 @@ mod tests {
         assert_eq!(fixture.bytes(), before);
         let grant = json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true,"checkerExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         });
         let mut unconfirmed = grant.clone();
         unconfirmed["confirmed"] = json!(false);
@@ -2031,7 +2428,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":receipt["lease"]["generation"], "command":"pause",
-                    "confirmed":false, "expiresAt":null
+                    "confirmed":false,"checkerExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();
@@ -2040,7 +2437,7 @@ mod tests {
         let resume = json!({
             "planId":prepared["planId"], "actionId":ExecutionId::new(),
             "expectedGeneration":paused["lease"]["generation"], "command":"continue",
-            "confirmed":true, "expiresAt":expiry()
+            "confirmed":true,"checkerExecution":false, "expiresAt":expiry()
         });
         let resumed = fixture.call("control_work_plan", resume.clone()).unwrap();
         assert_eq!(resumed["state"], "active");
@@ -2068,7 +2465,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":resumed["lease"]["generation"], "command":"take-over",
-                    "confirmed":false, "expiresAt":null
+                    "confirmed":false,"checkerExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();

@@ -115,7 +115,8 @@ export type CommandStage =
   | "execution-recover"
   | "execution-adopt"
   | "execution-quiesce";
-export type EffectPhase = "waiting" | "saving-candidate" | "checking" | "selected" | "blocked" | "failed" | "cancelled";
+export type EffectPhase =
+  "waiting" | "saving-candidate" | "saved" | "checking" | "selected" | "blocked" | "failed" | "cancelled";
 export type AutomaticSelectionBlock = "protected" | "already-selected" | "checks";
 export type CheckImplementation =
   | {
@@ -228,6 +229,8 @@ export interface Responses {
   view: AiView;
   workPlan: WorkPlanView;
   workPlanAction: WorkPlanReceiptView | null;
+  workPlanAgent: WorkPlanAgentView;
+  workPlanAgentGeneration: WorkPlanAgentGenerationView;
   workPlanReceipt: WorkPlanReceiptView;
   workPlanStatus: WorkPlanStatusView;
   workProtection: WorkProtection;
@@ -671,6 +674,22 @@ export interface WorkPlanReceiptView {
   lease: AutomationLease;
   parentTask: ExecutionId | null;
   state: WorkPlanState;
+}
+export interface WorkPlanAgentView {
+  budget: ProviderBudget;
+  lease: AutomationLease;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+}
+export interface WorkPlanAgentGenerationView {
+  attemptId: ExecutionId;
+  budget: ProviderBudget;
+  inputDigest: string;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface WorkPlanStatusView {
   effects: AutomationEffect[];

@@ -13,6 +13,7 @@ const MAX_COMPUTATIONS: usize = 2;
 pub enum EffectPhase {
     Waiting,
     SavingCandidate,
+    Saved,
     Checking,
     Selected,
     Blocked,
@@ -130,9 +131,6 @@ impl Automation {
         };
         store.check_work_plan_input(input)?;
         let plan = store.work_plan(lease.plan_id)?;
-        if plan.options.selection_policy == SelectionPolicy::CandidatesOnly {
-            return Ok(());
-        }
         if let Some(binding) = store.work_plan_review_binding(&plan)? {
             if consent
                 .as_ref()
@@ -505,6 +503,14 @@ impl Automation {
                         })?;
                     item.revision = store.saved_ai_candidate(*attempt_id, *item_id)?;
                     if let Some(revision) = item.revision {
+                        if store.work_plan(input.envelope().automation.unwrap().plan_id)?
+                            .options.selection_policy == SelectionPolicy::CandidatesOnly
+                        {
+                            // Saving is an independently authorized effect. A
+                            // candidate-only plan never requests checks or selection.
+                            item.view.phase = EffectPhase::Saved;
+                            return Ok(None);
+                        }
                         let payload = tsumugi_core::ai::item_payload(input, *item_id)?;
                         let request = AutomaticSelectionRequest {
                             project_id: input.envelope().project_id,

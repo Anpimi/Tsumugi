@@ -277,7 +277,7 @@ ai: {
   effects: {
     title: "Automatic selection", policy: "Policy: {{policy}}. This receipt records past work; review the editor for the current translation. Human approval remains separate.",
     checks: "Mechanical check evidence", failed: "Automatic work could not finish. The candidate and earlier saved work are retained. Refresh to check the result.", retry: "Check saved result and retry original action",
-    phases: { waiting: "Waiting for a generated result", "saving-candidate": "Saving the candidate…", checking: "Checking the saved candidate…", selected: "This candidate was selected by policy", blocked: "Candidate kept; automatic selection was blocked", failed: "Automatic selection could not finish", cancelled: "Automatic selection is inactive. Review the plan before continuing." },
+    phases: { saved: "Candidate saved; no translation was selected", waiting: "Waiting for a generated result", "saving-candidate": "Saving the candidate…", checking: "Checking the saved candidate…", selected: "This candidate was selected by policy", blocked: "Candidate kept; automatic selection was blocked", failed: "Automatic selection could not finish", cancelled: "Automatic selection is inactive. Review the plan before continuing." },
     blocks: { protected: "This entry is protected. Its translation was retained; mechanical checks still ran.", "already-selected": "This entry already has a translation. The missing-only policy kept it.", checks: "Mechanical checks found issues. Review the saved candidate before choosing it." }
   },
   plan: {

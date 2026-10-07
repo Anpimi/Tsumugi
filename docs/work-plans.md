@@ -76,11 +76,33 @@ baseline; a newer root cancellation or cancellation of a child still prevents
 requests. Closing the project pauses all active grants, including grants without
 queued work, and signals their workers. Reopening requires explicit continuation.
 
+The trusted application host can open a session-bound Agent scope for an active,
+authorized plan whose original task budget is already registered. The scope
+fixes the original lease and budget anchor; it cannot issue or renew authority.
+An Agent generation proposal supplies only stable child task/attempt identities
+and a nonempty subset of captured source units. Core derives exact child input
+bytes from the plan, preserving model, destination, sharing, payload, dependencies,
+output limits and effects. Preparation is read-only. Starting requires the exact
+prepared digest, uses the original runtime and Provider service, and retains the
+same candidate/check/selection service and independent checker consent.
+All HTTP requests charge the original ancestors. Pause, stop, takeover, expiry
+or closing the project invalidates the scope; explicit Continue needs a new
+scope and retains the original cumulative budget. An old scope cannot cross
+project-open sessions. The bounded Agent adapter exposes generation preparation
+and starting; the trusted scope opener and human authorizer/control methods
+remain outside it. This service does not authorize plugin-tool execution or
+provide a complete autonomous tool loop.
+
 Manual saves and manual selections protect the unit in the same transaction.
 Protection survives project reopen. Explicit release requires confirmation and
 matching protection revision, source revision and selection identity. Historical
 release receipts report their original result without clearing newer protection.
 Saving a candidate does not select it or give human language-review approval.
+The existing effect service also honors candidate-only plans with explicit
+`SaveCandidate` authorization. It uses the ordinary candidate adoption boundary
+and finishes with `saved`, without requesting checks or selection. Failed saves
+retain the original action for explicit recovery; stopped authority prevents
+new saves. A prepared plan alone never starts this effect.
 
 
 `prepare_automatic_selection` accepts a saved AI revision from this plan generation

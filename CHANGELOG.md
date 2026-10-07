@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Scoped Agent generation can prepare captured source subsets and run them
+  through the original work-plan runtime, candidate service and ancestor budget.
+  Model, destination, sharing and effects stay fixed; pause, takeover, expiry and
+  project closure revoke the scope. Human controls and plugin execution consent
+  remain separate. Complete autonomous tool integration is still in development.
+  Candidate-only plans now honor explicitly authorized candidate saving and
+  report completion without running checks, selecting a translation or approval.
+
 - Provider child tasks cannot add, remove or change their parent's captured
   input dependencies. Exact dependency identities and expected revisions remain
   fixed while children share the original ancestor budgets.

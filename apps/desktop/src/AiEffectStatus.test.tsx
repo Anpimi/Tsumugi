@@ -22,6 +22,17 @@ it("presents a historical policy selection without claiming current translation 
   expect(screen.getByText(/Required translation/)).toBeVisible();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
+it("shows candidate-only completion in both languages without implying checks or selection", async () => {
+  const effect: EffectView = { phase: "saved", actionId: null, receipt: null, error: null, retryable: false };
+  const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText("Candidate saved; no translation was selected")).toBeInTheDocument();
+  expect(screen.queryByText("Mechanical check evidence")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  await i18n.changeLanguage("zh-CN");
+  rerender(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);
+  expect(screen.getByText("候选已保存，尚未选择译文")).toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+});
 it("explains protection while retaining mechanical evidence in both languages", async () => {
   const effect = recorded(); effect.phase = "blocked"; effect.receipt!.blocked = "protected";
   effect.receipt!.selection = null; effect.receipt!.checkRunId = null;

@@ -58,6 +58,8 @@ macro_rules! handlers {
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
         arena::reveal_arena_identity,arena::save_arena_merge,
         work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,
+        work_plans::agent::open_work_plan_agent_scope,
+        work_plans::agent::prepare_work_plan_agent_generation,work_plans::agent::start_work_plan_agent_generation,
         work_plans::control_work_plan,work_plans::read_work_plan_status,work_plans::read_work_plan_action,
         work_plans::read_work_protection,work_plans::set_work_protection,$($extra),*
     ] };

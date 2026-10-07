@@ -409,6 +409,182 @@ mod tests {
                 + 600,
         }
     }
+
+    #[test]
+    fn agent_generation_derives_exact_subsets_without_expanding_authority() {
+        use crate::application::AgentGenerationRequest;
+        let (_temp, mut store, units) = fixture();
+        assert!(units.len() >= 2);
+        let plan = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let grant = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
+        assert!(store.work_plan_agent_scope(grant.lease).is_err());
+        let root = crate::execution::FixedInput::capture(grant.input.unwrap()).unwrap();
+        store.enqueue_execution(&root).unwrap();
+        let scope = store.work_plan_agent_scope(grant.lease).unwrap();
+        let request = AgentGenerationRequest {
+            task_id: ExecutionId::new(),
+            attempt_id: ExecutionId::new(),
+            unit_ids: vec![units[0]],
+        };
+        let before = fs::read(store.directory().join(super::super::DATABASE_FILENAME)).unwrap();
+        let child = store
+            .prepare_work_plan_agent_generation(&scope, &request)
+            .unwrap();
+        assert_eq!(
+            child.bytes(),
+            store
+                .prepare_work_plan_agent_generation(&scope, &request)
+                .unwrap()
+                .bytes()
+        );
+        assert_eq!(
+            fs::read(store.directory().join(super::super::DATABASE_FILENAME)).unwrap(),
+            before
+        );
+        assert_eq!(child.envelope().items.len(), 1);
+        let captured = root
+            .envelope()
+            .items
+            .iter()
+            .find(|item| item.scope.id == units[0].to_string())
+            .unwrap();
+        assert_eq!(&child.envelope().items[0], captured);
+        assert_eq!(child.envelope().settings, root.envelope().settings);
+        assert_eq!(child.envelope().limits, root.envelope().limits);
+        assert_eq!(child.envelope().automation, Some(grant.lease));
+        assert_eq!(scope.parent_task(), root.envelope().task_id);
+        for ids in [vec![], vec![units[0], units[0]], vec![ExecutionId::new()]] {
+            let mut outside = request.clone();
+            outside.unit_ids = ids;
+            assert_eq!(
+                store
+                    .prepare_work_plan_agent_generation(&scope, &outside)
+                    .unwrap_err()
+                    .code,
+                ErrorCode::Unauthorized
+            );
+        }
+        let mut collision = request.clone();
+        collision.task_id = root.envelope().task_id;
+        assert!(
+            store
+                .prepare_work_plan_agent_generation(&scope, &collision)
+                .is_err()
+        );
+        for field in ["confirmed", "effects", "config", "payload", "lease"] {
+            let mut forged = serde_json::to_value(&request).unwrap();
+            forged[field] = serde_json::json!(true);
+            assert!(serde_json::from_value::<AgentGenerationRequest>(forged).is_err());
+        }
+        store
+            .enqueue_execution_with_policy(
+                &child,
+                crate::execution::RecoveryPolicy::ExternalUnknown,
+                Some(scope.parent_task()),
+            )
+            .unwrap();
+        assert_eq!(
+            store.execution_input(request.attempt_id).unwrap().bytes(),
+            child.bytes()
+        );
+        let budget = store.provider_budget(scope.parent_task()).unwrap().unwrap();
+        assert_eq!((budget.dispatched, budget.unresolved), (0, 0));
+        assert_eq!(
+            store
+                .provider_budget(request.task_id)
+                .unwrap()
+                .unwrap()
+                .limit,
+            budget.limit
+        );
+    }
+
+    #[test]
+    fn agent_generation_scope_revokes_on_control_and_cannot_cross_store_sessions() {
+        use crate::application::AgentGenerationRequest;
+        let (_temp, mut store, units) = fixture();
+        let plan = store
+            .prepare_work_plan(Some(config()), "zh-CN", &units, PlanOptions::default())
+            .unwrap();
+        let grant = store.authorize_work_plan(&plan, &consent(&plan)).unwrap();
+        let root = crate::execution::FixedInput::capture(grant.input.unwrap()).unwrap();
+        store.enqueue_execution(&root).unwrap();
+        let old = store.work_plan_agent_scope(grant.lease).unwrap();
+        let request = AgentGenerationRequest {
+            task_id: ExecutionId::new(),
+            attempt_id: ExecutionId::new(),
+            unit_ids: vec![units[0]],
+        };
+        let prepared = store
+            .prepare_work_plan_agent_generation(&old, &request)
+            .unwrap();
+        store
+            .control_work_plan(&control(
+                &plan,
+                1,
+                crate::application::WorkPlanCommand::Pause,
+            ))
+            .unwrap();
+        assert_eq!(
+            store
+                .prepare_work_plan_agent_generation(&old, &request)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert_eq!(
+            store
+                .enqueue_execution_with_policy(
+                    &prepared,
+                    crate::execution::RecoveryPolicy::ExternalUnknown,
+                    Some(old.parent_task())
+                )
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        let resumed = store
+            .control_work_plan(&control(
+                &plan,
+                2,
+                crate::application::WorkPlanCommand::Continue,
+            ))
+            .unwrap();
+        assert!(store.check_work_plan_agent_scope(&old).is_err());
+        let fresh = store.work_plan_agent_scope(resumed.lease).unwrap();
+        assert_eq!(fresh.parent_task(), old.parent_task());
+        let child = store
+            .prepare_work_plan_agent_generation(&fresh, &request)
+            .unwrap();
+        store
+            .enqueue_execution_with_policy(
+                &child,
+                crate::execution::RecoveryPolicy::ExternalUnknown,
+                Some(fresh.parent_task()),
+            )
+            .unwrap();
+        let before = store.provider_budget(fresh.parent_task()).unwrap().unwrap();
+        let directory = store.directory().to_path_buf();
+        store.close().unwrap();
+        let reopened = ProjectStore::open(directory).unwrap();
+        assert_eq!(
+            reopened
+                .check_work_plan_agent_scope(&fresh)
+                .unwrap_err()
+                .stage,
+            "work-plan-agent-session"
+        );
+        assert_eq!(
+            reopened
+                .provider_budget(fresh.parent_task())
+                .unwrap()
+                .unwrap(),
+            before
+        );
+    }
+
     fn control(
         plan: &WorkPlan,
         generation: u64,

@@ -485,6 +485,126 @@ impl ProjectStore {
     }
 }
 impl ProjectStore {
+    /// Open a bounded application handle only after the original task's durable
+    /// budget exists. This reads authority; it cannot issue or renew a grant.
+    pub fn work_plan_agent_scope(
+        &self,
+        lease: AutomationLease,
+    ) -> Result<WorkPlanAgentScope, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        super::super::review::read_snapshot(c, |_| {
+            let stored = load(c, lease.plan_id)?;
+            let root = stored.plan.execution_input()?;
+            let scope = WorkPlanAgentScope {
+                project_id: root.project_id,
+                lease,
+                parent_task: root.task_id,
+                store_epoch: self.changes.snapshot(Revision::new(0)?).epoch,
+            };
+            self.check_work_plan_agent_scope(&scope)?;
+            Ok(scope)
+        })
+    }
+
+    pub fn check_work_plan_agent_scope(
+        &self,
+        scope: &WorkPlanAgentScope,
+    ) -> Result<(), ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        if scope.store_epoch != self.changes.snapshot(Revision::new(0)?).epoch {
+            return Err(err(ErrorCode::Unauthorized, "work-plan-agent-session"));
+        }
+        let stored = load(c, scope.lease.plan_id)?;
+        if stored.lease != scope.lease
+            || stored.state != WorkPlanState::Active
+            || stored.expires_at <= now()?
+        {
+            return Err(err(ErrorCode::Cancelled, "work-plan-control"));
+        }
+        let root = stored.plan.execution_input()?;
+        if root.project_id != scope.project_id
+            || root.task_id != scope.parent_task
+            || !stored.effects.contains(&AutomationEffect::SaveCandidate)
+        {
+            return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
+        }
+        let registered: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
+                [scope.parent_task.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        if !registered {
+            return Err(err(ErrorCode::Unauthorized, "work-plan-budget-owner"));
+        }
+        Ok(())
+    }
+
+    /// Derive exact child bytes in one read snapshot. The caller selects only
+    /// captured units; original configuration, sharing, evidence and limits stay
+    /// fixed. Enqueue and HTTP dispatch still check the durable control lease.
+    pub fn prepare_work_plan_agent_generation(
+        &self,
+        scope: &WorkPlanAgentScope,
+        request: &AgentGenerationRequest,
+    ) -> Result<FixedInput, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        super::super::review::read_snapshot(c, |_| {
+            self.check_work_plan_agent_scope(scope)?;
+            let stored = load(c, scope.lease.plan_id)?;
+            let original = stored.plan.fixed_input()?;
+            if request.unit_ids.len() > 100 {
+                return Err(err(ErrorCode::LimitExceeded, "work-plan-agent-items"));
+            }
+            let selected = request
+                .unit_ids
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            if selected.is_empty()
+                || selected.len() != request.unit_ids.len()
+                || selected.len() > original.envelope().items.len()
+                || request.task_id == scope.parent_task
+                || request.attempt_id == original.envelope().attempt_id
+                || selected
+                    .iter()
+                    .any(|id| !stored.plan.selection_basis.iter().any(|b| b.unit_id == *id))
+            {
+                return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
+            }
+            self.verify_work_plan(&stored.plan)?;
+            let mut envelope = original.envelope().clone();
+            envelope.task_id = request.task_id;
+            envelope.attempt_id = request.attempt_id;
+            envelope.automation = Some(scope.lease);
+            let scopes = selected
+                .iter()
+                .map(ToString::to_string)
+                .collect::<std::collections::BTreeSet<_>>();
+            envelope
+                .items
+                .retain(|item| scopes.contains(&item.scope.id));
+            let item_ids = envelope
+                .items
+                .iter()
+                .map(|item| item.item_id)
+                .collect::<std::collections::BTreeSet<_>>();
+            envelope
+                .units
+                .retain(|unit| unit.item_ids.iter().all(|id| item_ids.contains(id)));
+            let input = FixedInput::capture(envelope)?;
+            check_enqueue(c, &input, Some(scope.parent_task))?;
+            Ok(input)
+        })
+    }
+
     pub fn check_work_plan_input(&self, input: &FixedInput) -> Result<(), ExecutionError> {
         check_input(
             self.connection()

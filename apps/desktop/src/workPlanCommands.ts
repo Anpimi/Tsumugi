@@ -3,7 +3,9 @@ import type {
   WorkPlanPrepareRequest, WorkPlanAuthorizeRequest, WorkPlanStartRequest,
   WorkPlanControlRequest, WorkPlanStatusRequest, WorkPlanActionRequest,
   WorkProtectionReadRequest, WorkProtectionSetRequest,
+  WorkPlanAgentOpenRequest, WorkPlanAgentStartRequest,
 } from "./generated/ai.requests";
+import type { WorkPlanAgentView, WorkPlanAgentGenerationView, PlanSelectionBasis } from "./generated/ai.responses";
 import * as validators from "./generated/ai.validators";
 export type {
   WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkProtection,
@@ -88,3 +90,62 @@ export const workPlanCommands = {
     return value;
   },
 };
+
+/** Only the trusted host opens a scope. Give Agent callers the returned consumer. */
+export async function openWorkPlanAgent(
+  request: WorkPlanAgentOpenRequest, expectedScope: readonly PlanSelectionBasis[],
+) {
+  const opening = structuredClone(request);
+  const capturedScope = structuredClone(expectedScope);
+  if (!validators.validateRequestWorkPlanAgentOpen(opening)) throw new Error("Invalid Agent scope request");
+  const opened = await checkedInvoke("open_work_plan_agent_scope", opening, (value: unknown): value is WorkPlanAgentView => {
+    if (!validators.validateResponseWorkPlanAgent(value)) invalidAcknowledgement();
+    return true;
+  });
+  const sameBasis = (actual: PlanSelectionBasis, expected: PlanSelectionBasis) =>
+    actual.unitId === expected.unitId && actual.sourceSnapshotId === expected.sourceSnapshotId
+    && actual.sourceRevisionId === expected.sourceRevisionId && actual.nativeKey === expected.nativeKey
+    && actual.selectionId === expected.selectionId;
+  const basis = new Map(capturedScope.map(unit => [unit.unitId, unit]));
+  const matchesScope = (actual: PlanSelectionBasis[], ids: readonly string[]) =>
+    actual.length === ids.length && new Set(actual.map(unit => unit.unitId)).size === ids.length
+    && actual.every(unit => ids.includes(unit.unitId) && basis.has(unit.unitId)
+      && sameBasis(unit, basis.get(unit.unitId)!));
+  if (basis.size !== capturedScope.length || opened.lease.planId !== opening.lease.planId
+    || opened.lease.generation !== opening.lease.generation
+    || !matchesScope(opened.scope, [...basis.keys()])) invalidAcknowledgement();
+  const preparedRequests = new WeakMap<WorkPlanAgentGenerationView, WorkPlanAgentStartRequest>();
+  // Copy once before awaiting. Caller edits to requests or DTOs cannot change
+  // the session, authority, captured basis or exact bytes selected for start.
+  const context = { projectId: opening.projectId, sessionToken: opening.sessionToken, scopeId: opened.scopeId };
+  const parentTask = opened.parentTask;
+  return Object.freeze({
+    prepare: async (generation: unknown) => {
+      const preparing = { ...context, generation: structuredClone(generation) };
+      if (!validators.validateRequestWorkPlanAgentPrepare(preparing))
+        throw new Error("Invalid Agent generation request");
+      const ids = preparing.generation.unitIds;
+      if (new Set(ids).size !== ids.length || ids.some(id => !basis.has(id)))
+        throw new Error("Invalid Agent generation request");
+      const value = await checkedInvoke("prepare_work_plan_agent_generation", preparing, (value: unknown): value is WorkPlanAgentGenerationView => {
+        if (!validators.validateResponseWorkPlanAgentGeneration(value)) invalidAcknowledgement();
+        return true;
+      });
+      if (value.scopeId !== context.scopeId || value.parentTask !== parentTask
+        || value.taskId !== preparing.generation.taskId || value.attemptId !== preparing.generation.attemptId
+        || !matchesScope(value.scope, ids)) invalidAcknowledgement();
+      preparedRequests.set(value, { ...preparing, inputDigest: value.inputDigest });
+      return value;
+    },
+    start: async (prepared: WorkPlanAgentGenerationView) => {
+      const starting = preparedRequests.get(prepared);
+      if (!starting) throw new Error("Generation was not prepared by this Agent scope");
+      const value = await checkedInvoke("start_work_plan_agent_generation", structuredClone(starting), (value: unknown): value is string => {
+        if (!validators.validateResponseIdentity(value)) invalidAcknowledgement();
+        return true;
+      });
+      if (value !== starting.generation.attemptId) invalidAcknowledgement();
+      return value;
+    },
+  });
+}

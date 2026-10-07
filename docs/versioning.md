@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+The application adds scoped Agent generation entry points to the existing
+work-plan service and generated internal Desktop IPC. Child inputs derive from
+the original plan and charge its ancestor budget. The existing candidate service
+now honors explicit candidate-only saving and adds its terminal `saved` effect
+status to generated IPC and both supported languages; selection and checks stay
+separate. No authority, storage table,
+project schema 28, settings format 2, SDK/process profile or dependency changes
+are introduced. Internal IPC consumers must regenerate their contracts.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch, with synchronized Unreleased entries and no extra bump or historical
+migration. Full plugin-tool and autonomous Agent acceptance remains separate.
+
 The experimental SDK's advisory text-review declaration, input and report use
 new schema/behavior 1/1 identities and reuse the original CheckResult and finite
 ReviewCheckError contracts. They add same-package Host resource-pin validation

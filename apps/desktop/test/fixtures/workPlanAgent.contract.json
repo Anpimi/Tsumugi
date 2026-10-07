@@ -1,0 +1,97 @@
+{
+  "requests": {
+    "open": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "9007199254740993"
+      }
+    },
+    "prepare": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "generation": {
+        "taskId": "60000000-0000-4000-8000-000000000013",
+        "attemptId": "60000000-0000-4000-8000-000000000014",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      }
+    },
+    "start": {
+      "projectId": "60000000-0000-4000-8000-000000000001",
+      "sessionToken": "isolated-ai-arena-session",
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "generation": {
+        "taskId": "60000000-0000-4000-8000-000000000013",
+        "attemptId": "60000000-0000-4000-8000-000000000014",
+        "unitIds": [
+          "60000000-0000-4000-8000-000000000003"
+        ]
+      },
+      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "responses": {
+    "scope": {
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "lease": {
+        "planId": "60000000-0000-4000-8000-000000000007",
+        "generation": "9007199254740993"
+      },
+      "parentTask": "60000000-0000-4000-8000-000000000012",
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        },
+        {
+          "unitId": "60000000-0000-4000-8000-000000000016",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000017",
+          "nativeKey": "第二条 👩🏽‍💻 é",
+          "selectionId": null
+        }
+      ],
+      "budget": {
+        "limit": 2,
+        "dispatched": 1,
+        "legacyHeld": 0,
+        "unresolved": 0,
+        "usageUnknown": 0,
+        "promptTokens": "1",
+        "completionTokens": "1"
+      }
+    },
+    "generation": {
+      "scopeId": "60000000-0000-4000-8000-000000000011",
+      "parentTask": "60000000-0000-4000-8000-000000000012",
+      "taskId": "60000000-0000-4000-8000-000000000013",
+      "attemptId": "60000000-0000-4000-8000-000000000014",
+      "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope": [
+        {
+          "unitId": "60000000-0000-4000-8000-000000000003",
+          "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+          "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+          "nativeKey": "barrel",
+          "selectionId": null
+        }
+      ],
+      "budget": {
+        "limit": 2,
+        "dispatched": 1,
+        "legacyHeld": 0,
+        "unresolved": 0,
+        "usageUnknown": 0,
+        "promptTokens": "1",
+        "completionTokens": "1"
+      }
+    }
+  }
+}
