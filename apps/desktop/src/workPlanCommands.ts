@@ -133,31 +133,38 @@ export const workPlanCommands = {
   },
 };
 
-/** Only the trusted host opens a scope. Give Agent callers the returned consumer. */
-export async function openWorkPlanAgent(
-  request: WorkPlanAgentOpenRequest, expectedScope: readonly PlanSelectionBasis[], expectedTools: readonly WorkPlanToolSpec[] = [],
-) {
+/** The human workbench and bounded Agent consumer share one scope observation. */
+export async function openWorkPlanAgentScope(request: WorkPlanAgentOpenRequest, expectedScope: readonly PlanSelectionBasis[]) {
   const opening = structuredClone(request);
   const capturedScope = structuredClone(expectedScope);
-  const tools = new Map(structuredClone(expectedTools).map(tool => [tool.handle, tool]));
-  if (tools.size !== expectedTools.length) throw new Error("Invalid Agent tool scope");
   if (!validators.validateRequestWorkPlanAgentOpen(opening)) throw new Error("Invalid Agent scope request");
   const opened = await checkedInvoke("open_work_plan_agent_scope", opening, (value: unknown): value is WorkPlanAgentView => {
     if (!validators.validateResponseWorkPlanAgent(value)) invalidAcknowledgement();
     return true;
   });
-  const sameBasis = (actual: PlanSelectionBasis, expected: PlanSelectionBasis) =>
-    actual.unitId === expected.unitId && actual.sourceSnapshotId === expected.sourceSnapshotId
-    && actual.sourceRevisionId === expected.sourceRevisionId && actual.nativeKey === expected.nativeKey
-    && actual.selectionId === expected.selectionId;
-  const basis = new Map(capturedScope.map(unit => [unit.unitId, unit]));
-  const matchesScope = (actual: PlanSelectionBasis[], ids: readonly string[]) =>
-    actual.length === ids.length && new Set(actual.map(unit => unit.unitId)).size === ids.length
-    && actual.every(unit => ids.includes(unit.unitId) && basis.has(unit.unitId)
-      && sameBasis(unit, basis.get(unit.unitId)!));
-  if (basis.size !== capturedScope.length || opened.lease.planId !== opening.lease.planId
+  if (opened.lease.planId !== opening.lease.planId
     || opened.lease.generation !== opening.lease.generation
-    || !matchesScope(opened.scope, [...basis.keys()])) invalidAcknowledgement();
+    || !matchesCapturedScope(opened.scope, capturedScope, capturedScope.map(unit => unit.unitId))) invalidAcknowledgement();
+  return opened;
+}
+
+function matchesCapturedScope(actual: readonly PlanSelectionBasis[], captured: readonly PlanSelectionBasis[], ids: readonly string[]) {
+  const basis = new Map(captured.map(unit => [unit.unitId, unit]));
+  return basis.size === captured.length && new Set(ids).size === ids.length
+    && actual.length === ids.length && new Set(actual.map(unit => unit.unitId)).size === ids.length
+    && actual.every(unit => ids.includes(unit.unitId) && jsonIdentity(unit) === jsonIdentity(basis.get(unit.unitId)));
+}
+
+/** Only the trusted host opens a scope. Give Agent callers the returned consumer. */
+export async function openWorkPlanAgent(
+  request: WorkPlanAgentOpenRequest, expectedScope: readonly PlanSelectionBasis[], expectedTools: readonly WorkPlanToolSpec[] = [],
+) {
+  const opening = structuredClone(request), capturedScope = structuredClone(expectedScope);
+  const tools = new Map(structuredClone(expectedTools).map(tool => [tool.handle, tool]));
+  if (tools.size !== expectedTools.length) throw new Error("Invalid Agent tool scope");
+  const opened = await openWorkPlanAgentScope(opening, capturedScope);
+  const basis = new Map(capturedScope.map(unit => [unit.unitId, unit]));
+  const matchesScope = (actual: PlanSelectionBasis[], ids: readonly string[]) => matchesCapturedScope(actual, capturedScope, ids);
   const preparedRequests = new WeakMap<WorkPlanAgentGenerationView, WorkPlanAgentStartRequest>();
   const preparedTools = new WeakMap<WorkPlanAgentToolView, WorkPlanAgentToolStartRequest>();
   // Copy once before awaiting. Caller edits to requests or DTOs cannot change

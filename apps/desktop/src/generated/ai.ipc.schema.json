@@ -5518,12 +5518,16 @@
           },
           "scopeId": {
             "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
           }
         },
         "required": [
           "scopeId",
           "parentTask",
           "attemptId",
+          "taskId",
           "inputDigest",
           "component",
           "generation",

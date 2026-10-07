@@ -254,6 +254,36 @@ fn generation_component_real_ipc_process_factory_preserves_two_original_plans_an
         assert_eq!(fixture.attempt_count(), count);
         assert_eq!(preflight["parentTask"], scope["parentTask"]);
         assert_eq!(preflight["generation"], generation);
+        let mut unused = preparing.clone();
+        unused["attemptId"] = json!(ExecutionId::new());
+        unused["generation"]["taskId"] = json!(ExecutionId::new());
+        unused["generation"]["attemptId"] = json!(ExecutionId::new());
+        fixture
+            .call("prepare_work_plan_generation_component", unused.clone())
+            .unwrap();
+        let discarding = json!({"attemptId":unused["attemptId"]});
+        for _ in 0..2 {
+            assert_eq!(
+                fixture
+                    .call("discard_work_plan_generation_component", discarding.clone())
+                    .unwrap(),
+                json!(true)
+            );
+        }
+        let outer_task: ExecutionId = serde_json::from_value(preflight["taskId"].clone()).unwrap();
+        assert_ne!(preflight["taskId"], generation["taskId"]);
+        assert_ne!(preflight["taskId"], scope["parentTask"]);
+        for task in [preflight["taskId"].clone(), generation["taskId"].clone()] {
+            assert_eq!(
+                fixture
+                    .call(
+                        "read_execution_task",
+                        json!({"taskId":task,"after":"0","limit":100})
+                    )
+                    .unwrap(),
+                json!([])
+            );
+        }
         assert_eq!(
             fixture
                 .call("prepare_work_plan_generation_component", preparing.clone())
@@ -283,6 +313,13 @@ fn generation_component_real_ipc_process_factory_preserves_two_original_plans_an
                 .unwrap(),
             json!(outer)
         );
+        let outer_records = fixture
+            .call(
+                "read_execution_task",
+                json!({"taskId":outer_task,"after":"0","limit":100}),
+            )
+            .unwrap();
+        assert_eq!(outer_records[0]["attemptId"], json!(outer));
         // The Host first activates the actual installed process, then enqueues
         // the child. Its absence during that interval is not an AI read error.
         let child_id: ExecutionId =

@@ -6,6 +6,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The AI workbench can choose an installed generation component, explicit profile
+  and approved JavaScript environment for a subset of the original plan. Users
+  review fixed material, permissions and shared budget before separate local
+  execution consent. Waiting and unknown actions check original task records;
+  known-rejection retries keep the original grant and expiry. Recorded children
+  open the existing progress, candidate and recovery view. Changed authority
+  prevents stale starts, and confirmed discard or closing a settled review
+  preserves saved records. Native and wider product acceptance remain in development.
+  Repeating an uncertain discard confirms absence without cancelling started work.
+
 - Experimental Desktop generation-component commands prepare a fixed source subset
   and require a separate ordinary component execution grant. A cached runner captures
   its original WorkPlan scope for each real dispatch; actual Host calls enqueue AI

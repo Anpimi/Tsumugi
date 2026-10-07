@@ -949,6 +949,7 @@ export interface WorkPlanGenerationPreflight {
   parentTask: ExecutionId;
   scope: PlanSelectionBasis[];
   scopeId: ExecutionId;
+  taskId: ExecutionId;
 }
 export interface PluginGenerationComponentView {
   binding: CapabilityBinding;

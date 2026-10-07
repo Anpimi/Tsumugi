@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+The workbench adds explicit installed generation component, profile and environment
+choices with separate human consent and original-record recovery. Its internal
+preflight adds the existing outer task identity so the UI can observe waiting
+children through task pages before calling the non-null detail API. Regenerate
+AI-domain consumers. This additive UI/internal IPC change modifies no SDK/process
+contract, persistent format or dependency; it remains in the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch without an additional bump.
+The bilingual Unreleased entries describe the user-facing flow; native and wider
+product acceptance remain separate.
+Discard now idempotently confirms absence of an unused preparation while still
+refusing a started action. This recovery correction adds no schema or grant.
+
 Desktop adds an internal read-only generation-component selection request and
 response, generated from their Rust/Serde definitions. The request fixes the
 complete provider, an explicitly present profile (reference or null) and an

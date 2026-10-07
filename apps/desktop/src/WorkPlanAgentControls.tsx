@@ -7,6 +7,7 @@ import { readCompleteAttempt } from "./executionRead";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { openWorkPlanAgent, type WorkPlanStatusView } from "./workPlanCommands";
+import { WorkPlanGenerationControls } from "./WorkPlanGenerationControls";
 
 type AgentConsumer = Awaited<ReturnType<typeof openWorkPlanAgent>>;
 type ToolCapture = Awaited<ReturnType<AgentConsumer["prepareTool"]>>;
@@ -24,6 +25,7 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
   const { t } = useTranslation(), reads = useSessionReads();
   const [selected, setSelected] = useState<string[]>([]), [toolHandle, setToolHandle] = useState("");
   const [pending, setPending] = useState<Pending | null>(null), [toolRun, setToolRun] = useState<ToolRun | null>(null);
+  const [componentBlocked, setComponentBlocked] = useState(false);
   const entries = status.plan.tools?.entries ?? [];
   const tool = toolRun?.plan.tools?.entries.find(entry => entry.handle === toolRun.prepared.toolHandle);
   const presentation = useMemo(() => { try { return tool ? createToolQuery(tool.binding) : null; } catch { return null; } }, [tool]);
@@ -40,12 +42,12 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
   const output = useSessionQuery({ key: ["agent-tool-output", attemptId, ...resultIds], scopes: ["execution"], enabled: open && !!attemptId && resultIds.length > 0 && !busy,
     read: () => Promise.all(resultIds.map(resultId => executionCommands.output({ ...context, attemptId: attemptId!, resultId }))) });
   const working = !!toolRun && (!detail.data || detail.data.items.some(item => ["queued", "dispatched"].includes(item.status.execution)));
-  useEffect(() => { onBlockedChange(!!pending || working); return () => onBlockedChange(false); }, [!!pending, working, onBlockedChange]);
+  useEffect(() => { onBlockedChange(!!pending || working || componentBlocked); return () => onBlockedChange(false); }, [!!pending, working, componentBlocked, onBlockedChange]);
   const active = status.state === "active" && BigInt(status.expiresAt) > BigInt(Math.floor(Date.now() / 1000));
   const validUnits = selected.length > 0 && selected.every(id => status.plan.scope.some(unit => unit.unitId === id));
   const remaining = status.toolInvocations ? status.toolInvocations.limit - status.toolInvocations.reserved : 0;
   const insufficient = selected.length > remaining;
-  const locked = disabled || busy || !!pending || working || !active;
+  const locked = disabled || busy || !!pending || working || componentBlocked || !active;
   async function start(kind: Pending["kind"], current: () => boolean) {
     if (!validUnits || (kind === "tool" && !entries.some(entry => entry.handle === toolHandle))) return;
     const consumer = await openWorkPlanAgent({ ...context, lease: status.lease }, status.plan.scope, entries);
@@ -103,6 +105,8 @@ export function WorkPlanAgentControls({ context, status, open, disabled, busy, r
     </> : <p>{t("ai.tools.noTools")}</p>}
     <button type="button" className="secondary-button" disabled={locked || !validUnits}
       onClick={() => void run(current => start("generation", current))}>{t("ai.tools.generateSubset")}</button>
+    <WorkPlanGenerationControls context={context} status={status} selected={selected} open={open}
+      disabled={disabled || !!pending || working} busy={busy} run={run} onBlockedChange={setComponentBlocked} onGenerated={onGenerated} />
     {!active ? <p role="status">{t("ai.tools.inactive")}</p> : null}
     {pending ? <div role="status"><p>{t("ai.tools.unknown")}</p><button type="button" className="secondary-button" disabled={busy}
       onClick={() => void run(reconcile)}>{t("ai.reconcile")}</button></div> : null}

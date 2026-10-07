@@ -60,6 +60,7 @@ pub struct WorkPlanGenerationPreflight {
     pub scope_id: ExecutionId,
     pub parent_task: ExecutionId,
     pub attempt_id: ExecutionId,
+    pub task_id: ExecutionId,
     pub input_digest: String,
     pub component: PluginGenerationComponentView,
     pub generation: sdk::GenerationServiceInput,
@@ -103,8 +104,11 @@ impl GenerationSession {
         if self.starts.contains_key(&attempt) {
             return false;
         }
-        let pending = self.pending.remove(&attempt).is_some();
-        self.prepared.remove(&attempt).is_some() || pending
+        self.pending.remove(&attempt);
+        self.prepared.remove(&attempt);
+        // Confirm absence on repeated discard, including a lost first reply or
+        // owner shutdown. A started original action is never discarded here.
+        true
     }
 }
 fn denied() -> CommandError {
@@ -241,6 +245,7 @@ fn build_preflight(
         scope_id: request.scope_id,
         parent_task: scope.parent_task(),
         attempt_id: request.attempt_id,
+        task_id: input.envelope().task_id,
         input_digest: input.digest().into(),
         component,
         generation: request.generation.clone(),

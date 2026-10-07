@@ -83,6 +83,27 @@ fixed generation proposal, model, destination, effects or original parent budget
 The canonical receipt/error payload limit and the complete result-frame allowance
 are separate; frame identity and digest metadata do not consume the payload limit.
 
+The AI workbench exposes installed component generation beside the existing
+captured-material continuation. Users explicitly select the full component,
+profile (including an explicit no-profile choice) and approved JavaScript
+environment, prepare the chosen original entries and review captured material,
+permissions and shared budget before confirming local execution. Preparing supplies
+the outer task identity for observation; it grants no execution. The original
+scope opener and strict generated IPC remain shared with the bounded consumer.
+
+Execution observation first checks each exact task's existing attempt pages.
+An empty page preserves the waiting or uncertain action without calling the
+non-null detail API. A recorded child must match the original task, attempt,
+unit subset and target language before opening the existing AI result view.
+Unknown starts and discards retain their original preparation for read-only
+checking. An explicit retry of a definitively rejected start keeps the same
+grant and expiry. Changed plan authority prevents start; unused preparations
+have a confirmed discard path. Closing a settled component review keeps the
+execution records and never repeats generation or adoption.
+Discard confirms that an unused preparation is absent, including a repeat after
+a lost reply or owner shutdown; it refuses the original started action and
+does not cancel execution, release child authority or erase ledger records.
+
 The original project executor supplies a weak callback and the original installation
 owner. Cached capability runners keep a scope-neutral service factory. Every actual
 Core dispatch captures its original session/runtime generation, fixed input, permit,

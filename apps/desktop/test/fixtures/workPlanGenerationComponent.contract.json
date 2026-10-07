@@ -156,7 +156,8 @@
       "usageUnknown": 0,
       "promptTokens": "1",
       "completionTokens": "1"
-    }
+    },
+    "taskId": "60000000-0000-4000-8000-000000000022"
   },
   "start": {
     "projectId": "60000000-0000-4000-8000-000000000001",

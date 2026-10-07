@@ -27,6 +27,7 @@ export const workPlanGenerationCommands = {
       || request.component.environmentDigest !== installed.environmentDigest) throw new Error("Invalid generation component selection");
     const value = await checkedInvoke("prepare_work_plan_generation_component", request, validators.validateResponseWorkPlanGenerationPreflight);
     if (value.scopeId !== request.scopeId || value.parentTask !== originalScope.parentTask || value.attemptId !== request.attemptId
+      || value.taskId === value.parentTask || value.taskId === request.generation.taskId
       || jsonIdentity(value.component) !== jsonIdentity(installed) || jsonIdentity(value.generation) !== jsonIdentity(request.generation)
       || value.scope.length !== ids.length || new Set(value.scope.map(unit => unit.unitId)).size !== ids.length
       || value.scope.some(unit => !ids.includes(unit.unitId) || jsonIdentity(unit) !== jsonIdentity(basis.get(unit.unitId)))) invalidAcknowledgement();
