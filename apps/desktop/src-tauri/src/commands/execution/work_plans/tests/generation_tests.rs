@@ -22,6 +22,14 @@ mod partial;
     target_os = "macos",
     target_arch = "aarch64"
 ))]
+#[path = "generation_checks.rs"]
+mod checks;
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 struct ComponentAction {
     scope: Value,
     preparing: Value,
@@ -130,6 +138,13 @@ fn generation_package() -> tsumugi_plugin_host::PackageImage {
 fn generation_package_observed(
     observer: Option<&std::path::Path>,
 ) -> tsumugi_plugin_host::PackageImage {
+    generation_package_with_timeout(observer, 10_000)
+}
+
+fn generation_package_with_timeout(
+    observer: Option<&std::path::Path>,
+    timeout_ms: u32,
+) -> tsumugi_plugin_host::PackageImage {
     use tsumugi_plugin_host::{PackageFile, PackageImage};
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../../../test/fixtures/pluginGenerationComponent.contract.json"
@@ -162,7 +177,7 @@ fn generation_package_observed(
             contribution: sdk::ContributionKind::Capability {
                 declaration: sdk::CapabilityDeclaration {
                     limits: sdk::CapabilityLimits {
-                        timeout_ms: 10_000,
+                        timeout_ms,
                         ..capability.declaration.limits
                     },
                     ..capability.declaration

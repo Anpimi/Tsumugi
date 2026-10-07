@@ -1320,13 +1320,14 @@ mod tests {
         request
     }
 
-    impl Fixture {
-        fn create() -> Self {
-            Self::create_with_source(br#"{"first":"Hello"}"#)
-        }
-
-        fn create_with_source(source_bytes: &[u8]) -> Self {
-            let source_bytes = source_bytes.to_vec();
+    struct ProjectFixture {
+        directory: tempfile::TempDir,
+        app: tauri::App<tauri::test::MockRuntime>,
+        webview: MockWebview,
+        context: Value,
+    }
+    impl ProjectFixture {
+        fn create(source_locale: &str) -> Self {
             let directory = tempfile::tempdir().unwrap();
             let app = crate::commands::register_commands(tauri::test::mock_builder())
                 .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -1343,13 +1344,35 @@ mod tests {
                 "create_project",
                 json!({
                     "destination":directory.path().join("project"), "displayName":"Work plan test",
-                    "sourceLocale":"en-US", "targetLocales":["zh-CN"]
+                    "sourceLocale":source_locale, "targetLocales":["zh-CN"]
                 }),
             )
             .unwrap();
             let context = json!({
                 "sessionToken":view["sessionToken"], "projectId":view["metadata"]["projectId"]
             });
+            Self {
+                directory,
+                app,
+                webview,
+                context,
+            }
+        }
+    }
+
+    impl Fixture {
+        fn create() -> Self {
+            Self::create_with_source(br#"{"first":"Hello"}"#)
+        }
+
+        fn create_with_source(source_bytes: &[u8]) -> Self {
+            let source_bytes = source_bytes.to_vec();
+            let ProjectFixture {
+                directory,
+                app,
+                webview,
+                context,
+            } = ProjectFixture::create("en-US");
             let (unit, source_revision, snapshot) = app.state::<AppState>().sessions.with(move |sessions| {
                 let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
                 let source = tsumugi_core::content::SourceBundle::capture(

@@ -7,6 +7,9 @@ use std::{
 };
 use tsumugi_core::{RecoveryPlan, TaskView, execution::*};
 
+#[cfg(all(test, target_os = "macos"))]
+mod test_fixtures;
+
 macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
