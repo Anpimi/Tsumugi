@@ -1322,6 +1322,11 @@ mod tests {
 
     impl Fixture {
         fn create() -> Self {
+            Self::create_with_source(br#"{"first":"Hello"}"#)
+        }
+
+        fn create_with_source(source_bytes: &[u8]) -> Self {
+            let source_bytes = source_bytes.to_vec();
             let directory = tempfile::tempdir().unwrap();
             let app = crate::commands::register_commands(tauri::test::mock_builder())
                 .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -1345,11 +1350,11 @@ mod tests {
             let context = json!({
                 "sessionToken":view["sessionToken"], "projectId":view["metadata"]["projectId"]
             });
-            let (unit, source_revision, snapshot) = app.state::<AppState>().sessions.with(|sessions| {
+            let (unit, source_revision, snapshot) = app.state::<AppState>().sessions.with(move |sessions| {
                 let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
                 let source = tsumugi_core::content::SourceBundle::capture(
                     br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
-                    br#"{"first":"Hello"}"#,
+                    &source_bytes,
                     "en-US",
                 ).unwrap();
                 let input = source.fixed_input(store.metadata().unwrap().project_id()).unwrap();
@@ -1497,6 +1502,26 @@ mod tests {
     /// without blocking its original plan's setup request.
     fn local_provider_sequence_at_request(
         texts: Vec<&'static str>,
+        gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
+        setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
+        gate_timeout: Duration,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_responses_at_request(
+            texts.len(),
+            move |ordinal, _| Some(texts[ordinal]),
+            gate,
+            setup,
+            accept_timeout,
+            gate_timeout,
+        )
+    }
+
+    /// Read the full production POST before an explicit synthetic disconnect.
+    /// Unknown is produced by the actual HTTP runner, not an injected ledger state.
+    fn local_provider_responses_at_request(
+        request_count: usize,
+        mut response_text: impl FnMut(usize, &Value) -> Option<&'static str> + Send + 'static,
         mut gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
         setup: Option<mpsc::Receiver<()>>,
         accept_timeout: Duration,
@@ -1512,7 +1537,7 @@ mod tests {
             ),
             model: "synthetic-work-effects".into(),
             credential_env: String::new(),
-            max_requests: texts.len().try_into().unwrap(),
+            max_requests: request_count.try_into().unwrap(),
             timeout_seconds: 2,
             ..AiConfig::default()
         };
@@ -1523,7 +1548,7 @@ mod tests {
                     .expect("provider setup did not reach the dispatch gate");
             }
             let mut last = Value::Null;
-            for (ordinal, text) in texts.into_iter().enumerate() {
+            for ordinal in 0..request_count {
                 let deadline = Instant::now() + accept_timeout;
                 let mut stream = loop {
                     match listener.accept() {
@@ -1574,6 +1599,10 @@ mod tests {
                     started.send(()).unwrap();
                     release.recv_timeout(gate_timeout).unwrap();
                 }
+                let Some(text) = response_text(ordinal, &item) else {
+                    last = item;
+                    continue;
+                };
                 let output = json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text});
                 let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
                 let _ = write!(
@@ -1641,8 +1670,16 @@ mod tests {
 
     impl Fixture {
         fn start_candidates(&self, config: AiConfig) -> (Value, Value) {
+            self.start_candidates_in_units(config, &[self.unit])
+        }
+
+        fn start_candidates_in_units(
+            &self,
+            config: AiConfig,
+            units: &[ExecutionId],
+        ) -> (Value, Value) {
             let plan = self.call("prepare_work_plan", json!({
-                "config":config,"locale":"zh-CN","unitIds":[self.unit],"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
+                "config":config,"locale":"zh-CN","unitIds":units,"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
             })).unwrap();
             let grant = self.call("authorize_work_plan", json!({
                 "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),

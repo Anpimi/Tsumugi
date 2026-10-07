@@ -9,6 +9,70 @@ use tsumugi_plugin_sdk as sdk;
 #[path = "generation_controls.rs"]
 mod controls;
 
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+#[path = "generation_partial.rs"]
+mod partial;
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+struct ComponentAction {
+    scope: Value,
+    preparing: Value,
+    generation: Value,
+    outer: ExecutionId,
+    preflight: Value,
+    starting: Value,
+}
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+fn start_component_for_units(
+    fixture: &Fixture,
+    component: Value,
+    grant: &Value,
+    units: &[ExecutionId],
+) -> ComponentAction {
+    let scope = fixture
+        .call(
+            "open_work_plan_agent_scope",
+            json!({"lease":grant["lease"]}),
+        )
+        .unwrap();
+    let generation =
+        json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":units});
+    let outer = ExecutionId::new();
+    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+    let prepared = fixture
+        .call("prepare_work_plan_generation_component", preparing.clone())
+        .unwrap();
+    let starting = json!({"scopeId":scope["scopeId"],"attemptId":outer,"inputDigest":prepared["inputDigest"],"grantId":ExecutionId::new(),
+        "expiresAtMs":(SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()+60_000).to_string(),"unsandboxedExecution":true});
+    assert_eq!(
+        fixture
+            .call("start_work_plan_generation_component", starting.clone())
+            .unwrap(),
+        json!(outer)
+    );
+    ComponentAction {
+        scope,
+        preparing,
+        generation,
+        outer,
+        preflight: prepared,
+        starting,
+    }
+}
+
 type ServiceResponses = Arc<std::sync::Mutex<Vec<sdk::ServiceResponse>>>;
 struct ObservedFactory {
     original: Arc<dyn tsumugi_plugin_host::core::ProjectServiceFactory>,

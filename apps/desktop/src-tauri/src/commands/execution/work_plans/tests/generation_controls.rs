@@ -1,40 +1,8 @@
 //! Original controls and installed settings after the actual component closes.
 use super::*;
 
-struct ComponentAction {
-    scope: Value,
-    preparing: Value,
-    generation: Value,
-    outer: ExecutionId,
-}
-
 fn start_component(fixture: &Fixture, component: Value, grant: &Value) -> ComponentAction {
-    let scope = fixture
-        .call(
-            "open_work_plan_agent_scope",
-            json!({"lease":grant["lease"]}),
-        )
-        .unwrap();
-    let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
-    let outer = ExecutionId::new();
-    let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
-    let prepared = fixture
-        .call("prepare_work_plan_generation_component", preparing.clone())
-        .unwrap();
-    let starting = json!({"scopeId":scope["scopeId"],"attemptId":outer,"inputDigest":prepared["inputDigest"],"grantId":ExecutionId::new(),
-        "expiresAtMs":(SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()+60_000).to_string(),"unsandboxedExecution":true});
-    assert_eq!(
-        fixture
-            .call("start_work_plan_generation_component", starting)
-            .unwrap(),
-        json!(outer)
-    );
-    ComponentAction {
-        scope,
-        preparing,
-        generation,
-        outer,
-    }
+    start_component_for_units(fixture, component, grant, &[fixture.unit])
 }
 
 fn wait_outer_closed(fixture: &Fixture, action: &ComponentAction) {
