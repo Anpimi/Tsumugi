@@ -1,6 +1,14 @@
 use super::*;
 use tsumugi_plugin_sdk as sdk;
 
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+#[path = "generation_controls.rs"]
+mod controls;
+
 type ServiceResponses = Arc<std::sync::Mutex<Vec<sdk::ServiceResponse>>>;
 struct ObservedFactory {
     original: Arc<dyn tsumugi_plugin_host::core::ProjectServiceFactory>,

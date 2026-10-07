@@ -1480,9 +1480,27 @@ mod tests {
     // This fixture wait does not alter the model's request timeout or budget.
     fn local_provider_sequence_with_accept_timeout(
         texts: Vec<&'static str>,
-        mut gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
         setup: Option<mpsc::Receiver<()>>,
         accept_timeout: Duration,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_sequence_at_request(
+            texts,
+            gate.map(|channels| (0, channels)),
+            setup,
+            accept_timeout,
+            Duration::from_secs(3),
+        )
+    }
+
+    /// Hold an exact synthetic HTTP request, including a component's child,
+    /// without blocking its original plan's setup request.
+    fn local_provider_sequence_at_request(
+        texts: Vec<&'static str>,
+        mut gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
+        setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
+        gate_timeout: Duration,
     ) -> (AiConfig, JoinHandle<Value>) {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1505,7 +1523,7 @@ mod tests {
                     .expect("provider setup did not reach the dispatch gate");
             }
             let mut last = Value::Null;
-            for text in texts {
+            for (ordinal, text) in texts.into_iter().enumerate() {
                 let deadline = Instant::now() + accept_timeout;
                 let mut stream = loop {
                     match listener.accept() {
@@ -1551,9 +1569,10 @@ mod tests {
                 let item: Value =
                     serde_json::from_str(request["messages"][1]["content"].as_str().unwrap())
                         .unwrap();
-                if let Some((started, release)) = gate.take() {
+                if gate.as_ref().is_some_and(|(index, _)| *index == ordinal) {
+                    let (_, (started, release)) = gate.take().unwrap();
                     started.send(()).unwrap();
-                    release.recv_timeout(Duration::from_secs(3)).unwrap();
+                    release.recv_timeout(gate_timeout).unwrap();
                 }
                 let output = json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text});
                 let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
