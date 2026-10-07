@@ -9,6 +9,7 @@ import type { WorkPlanAgentView, WorkPlanAgentGenerationView, WorkPlanAgentToolV
 import * as validators from "./generated/ai.validators";
 import type { PluginToolView } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
+import { checkerIdentity, contractIdentity } from "./reviewIdentity";
 export type {
   WorkPlanView, WorkPlanReceiptView, WorkPlanStatusView, WorkProtection,
 } from "./generated/ai.responses";
@@ -35,6 +36,7 @@ export const workPlanCommands = {
       || value.options.deliver !== request.options.deliver
       || value.options.stages.length !== stages.size
       || value.options.stages.some(choice => stages.get(choice.stage) !== choice.mode)
+      || value.options.advisoryChecks.length !== request.advisoryChecks.length
       || Boolean(value.preview) !== Boolean(request.config)
       || Boolean(value.preview) !== (typeof value.attemptId === "string")
       || (value.preview && (value.preview.items.length !== value.scope.length
@@ -65,6 +67,19 @@ export const workPlanCommands = {
             || jsonIdentity(tool.runtimeOrigin) !== jsonIdentity(expected.runtimeOrigin);
         })) invalidAcknowledgement();
     }
+    value.options.advisoryChecks.forEach((captured, index) => {
+      const requested = request.advisoryChecks[index];
+      const provider = captured.binding.checker.provider;
+      if (captured.declarationResourceId !== requested.resourceId || provider.packageDigest !== requested.package.packageDigest
+        || provider.plugin.publisher !== requested.package.plugin.publisher || provider.plugin.id !== requested.package.plugin.id
+        || provider.plugin.version !== requested.package.plugin.version
+        || JSON.stringify(captured.rules.map(contractIdentity)) !== JSON.stringify(requested.rules.map(contractIdentity))) invalidAcknowledgement();
+      const checker = value.checkers.find(checker => checkerIdentity(checker.checker)
+        === checkerIdentity({ provider, profile: captured.binding.declaration.profile }));
+      if (checker?.kind === "ready" && (checker.plugin.kind !== "advisory-text"
+        || checker.plugin.plugin.environmentDigest !== requested.environmentDigest
+        || checker.plugin.plugin.resourceId !== requested.resourceId)) invalidAcknowledgement();
+    });
     return value;
   },
   authorize: async (request: WorkPlanAuthorizeRequest) => {

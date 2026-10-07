@@ -22,7 +22,10 @@ fn provider_children_keep_the_exact_parent_dependencies() {
     other_dependency.id = rows[1].source_revision_id.unwrap().to_string();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
     runtime
-        .register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown)
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
         .unwrap();
 
     for parent_dependencies in [

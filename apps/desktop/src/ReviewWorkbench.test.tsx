@@ -10,6 +10,7 @@ import type { ReviewWrite } from "./reviewCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
+import { pluginRuleKeyFixture, textReviewSlotFixture, textReviewViewFixture } from "./testSupport/textReviewFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -32,6 +33,7 @@ beforeEach(async () => {
   invoke.mockReset();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(targets.first)]);
+    if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [] };
     if (command === "prepare_review_checks") return { kind: "plugin", view: { ...reviewWire.responses.prepareCheck.view,
       actionId: args.request.actionId, unitId: args.request.unitId, locale: args.request.locale, basis: args.request.expectedBasis } };
     if (command === "read_review_target") return Object.values(targets).find(target => target.unitId === args.request.unitId);
@@ -187,7 +189,7 @@ it("shows historical check findings and exception reasons", async () => {
     if (command === "read_review_history") return {
       decisions: [], nextOffset: null,
       checks: [reviewCheckFixture(targets.first, fixtureIdentity(622), "completed", {
-        runId: fixtureIdentity(623), validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "plugin:markers", status: "findings", reason: null,
+        runId: fixtureIdentity(623), validatorVersion: "smapi-prebuild-1", createdAt: "2026-09-28", rules: [{ rule: "plugin:markers", key: pluginRuleKeyFixture("markers"), mandatory: true, status: "findings", reason: null,
           findings: [{ issueId: "old-issue", rule: "plugin:markers", code: "marker-mismatch", detail: "Names differ", severity: "error", waivable: false }] }],
       })],
       waivers: [{ waiverId: fixtureIdentity(624), actionId: fixtureIdentity(625), unitId: targets.first.unitId, locale: "zh-CN", basis: "basis-first",
@@ -283,6 +285,88 @@ it("keeps the original checker grant and complete request when a reply is uncert
   await waitFor(() => expect(checks).toBe(2));
   const requests = invoke.mock.calls.filter(([command]) => command === "run_review_checks").map(([, args]) => args.request);
   expect(requests[1]).toEqual(requests[0]);
-  expect(requests[0].execution.unsandboxedExecution).toBe(true);
+  expect(requests[0].executions[0].unsandboxedExecution).toBe(true);
   expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
+});
+
+it("captures explicit text rules and requires each checker consent while replaying all original grants", async () => {
+  const text = textReviewViewFixture();
+  targets.first.currentCheck = reviewCheckFixture(targets.first, fixtureIdentity(901));
+  const original = invoke.getMockImplementation()!;
+  let runs = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_text_reviews") return { settingsRevision: "1", entries: [{
+      package: { plugin: text.binding.checker.provider.plugin, packageDigest: text.binding.checker.provider.packageDigest },
+      resourceId: text.resourceId, environmentDigest: text.environmentDigest, availability: { kind: "ready", view: text },
+    }] };
+    if (command === "prepare_review_checks") {
+      const response = await original(command, args);
+      const choices = args.request.advisoryChecks as { rules: typeof text.rules }[];
+      return { ...response, view: { ...response.view, checkers: [...response.view.checkers,
+        textReviewSlotFixture({ ...text, rules: choices[0].rules })] } };
+    }
+    if (command === "run_review_checks") {
+      if (++runs === 1) throw { code: "outcome-unknown", stage: "execution-adopt", outcome: "unknown" };
+      const check = args.request.check as { actionId: string };
+      return reviewCheckFixture(targets.first, check.actionId);
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Preferred form" }));
+  expect(screen.queryByText("Current checks have not run or are stale.")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  let consents = await screen.findAllByRole("checkbox", { name: i18n.t("review.checkConsent") });
+  expect(consents).toHaveLength(2);
+  await user.click(consents[0]);
+  expect(screen.getByRole("button", { name: "Run current checks" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: "Source note" }));
+  expect(screen.queryByRole("button", { name: "Run current checks" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Current checks have not run or are stale.")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  consents = await screen.findAllByRole("checkbox", { name: i18n.t("review.checkConsent") });
+  for (const consent of consents) { expect(consent).not.toBeChecked(); await user.click(consent); }
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(runs).toBe(2));
+  const requests = invoke.mock.calls.filter(([command]) => command === "run_review_checks").map(([, args]) => args.request);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(requests[0].check.advisoryChecks[0].rules).toHaveLength(2);
+  expect(requests[0].executions).toHaveLength(2);
+  expect(new Set(requests[0].executions.map((execution: { grantId: string }) => execution.grantId)).size).toBe(2);
+  expect(requests[0].executions.map((execution: { attemptId: string }) => execution.attemptId))
+    .toEqual([reviewWire.responses.prepareCheck.view.checkers[0].attemptId, fixtureIdentity(930)]);
+});
+
+it("runs a prepared check without starting competing text metadata discovery", async () => {
+  const original = invoke.getMockImplementation()!;
+  let discoveries = 0;
+  let metadataBusy = false;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_text_reviews" && ++discoveries > 1) {
+      metadataBusy = true;
+      return new Promise(() => {});
+    }
+    if (command === "run_review_checks") {
+      if (metadataBusy) throw { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-store-busy" };
+      const check = reviewCheckFixture(targets.first, (args.request.check as { actionId: string }).actionId);
+      targets.first.currentCheck = check;
+      return check;
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await screen.findByText(/No text suggestion checkers are installed/);
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  await user.click(await screen.findByRole("checkbox", { name: i18n.t("review.checkConsent") }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await waitFor(() => expect(screen.queryByText("Current checks have not run or are stale.")).not.toBeInTheDocument());
+  expect(invoke.mock.calls.filter(([command]) => command === "run_review_checks")).toHaveLength(1);
+  expect(discoveries).toBe(1);
 });

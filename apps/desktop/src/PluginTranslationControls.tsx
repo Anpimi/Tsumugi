@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { PluginPermissions } from "./PluginManager";
 import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
-import { pluginCommands, type PluginTranslationRequest, type PluginTranslationView } from "./pluginCommands";
+import { pluginCommands, readEnabledPluginPackages, type PluginTranslationRequest, type PluginTranslationView } from "./pluginCommands";
 import { translationCommands as commands, type PluginTranslationCaptureRequest, type PluginTranslationPreflight, type PluginTranslationSelection, type PluginStartRequest, type TranslationCheckPrepareRequest, type TranslationCheckFinishRequest, type TranslationCheckReview, type TranslationProjectionPrepareRequest, type TranslationProjectionReview, type TranslationProjectionStartRequest } from "./translationCommands";
 import { executionCommands, executionContext, type AttemptDetail, type CancelRequest } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
@@ -66,8 +66,7 @@ export function PluginTranslationControls({ project, open, targetLocale, disable
   const inventory = useSessionQuery({ key: ["translation-plugin-inventory", refresh], scopes: [], enabled: open && !disabled,
     read: async () => {
       const value = await pluginCommands.inventory();
-      const enabled = value.packages.filter(item => item.state === "sealed" && value.packageDecisions.some(decision => decision.enabled && decision.packageDigest === item.packageDigest && decision.plugin.id === item.plugin.id && decision.plugin.version === item.plugin.version && decision.plugin.publisher === item.plugin.publisher));
-      const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
+      const packages = await readEnabledPluginPackages(value);
       const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.translation-import-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
       return { choices, runtimes: approvedPluginEnvironments(value) };
     } });

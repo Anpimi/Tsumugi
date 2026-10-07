@@ -129,7 +129,7 @@ fn framed_protocol_validates_exact_version_direction_data_and_duplicate_fields()
             nonce: "nonce-a".into()
         }
     );
-    for bytes in [br#"{"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#.as_slice(),br#"{"protocolVersion":1,"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#,br#"{"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"nonce-a","unknown":true}}}"#,br#"{"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":""}}}"#] {
+    for bytes in [br#"{"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#.as_slice(),br#"{"protocolVersion":2,"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"nonce-a"}}}"#,br#"{"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"nonce-a","unknown":true}}}"#,br#"{"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":""}}}"#] {
         assert!(parse_process_frame(bytes).is_err());
     }
     assert!(parse_process_frame(&vec![b'x'; MAX_PROCESS_FRAME_BYTES + 1]).is_err());

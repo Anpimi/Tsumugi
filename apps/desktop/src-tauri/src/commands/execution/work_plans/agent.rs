@@ -214,6 +214,7 @@ pub async fn start_work_plan_agent_generation(
     state: State<'_, AppState>,
     request: WorkPlanAgentStartRequest,
 ) -> Result<ExecutionId, CommandError> {
+    let plugins = state.plugins.clone();
     state
         .sessions
         .run(
@@ -242,11 +243,14 @@ pub async fn start_work_plan_agent_generation(
                     .work_plan(scope.lease().plan_id)
                     .map_err(map_recover)?;
                 let checker = current_checker_consent(host, store, &plan, scope.lease())?;
-                host.runtime
-                    .submit_child(store, &input, scope.parent_task())
-                    .map_err(map_recover)?;
-                host.ai.track(store, &input, checker).map_err(map_recover)?;
-                Ok(input.envelope().attempt_id)
+                let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
+                with_plan_environment_revision(&plugins, &plan, checker_revision, || {
+                    host.runtime
+                        .submit_child(store, &input, scope.parent_task())
+                        .map_err(map_recover)?;
+                    host.ai.track(store, &input, checker).map_err(map_recover)?;
+                    Ok(input.envelope().attempt_id)
+                })
             },
         )
         .await

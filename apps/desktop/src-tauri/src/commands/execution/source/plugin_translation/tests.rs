@@ -313,7 +313,6 @@ fn translation_capture_ipc_binds_current_source_target_and_raw_bytes_without_run
 ))]
 pub(super) mod native {
     use super::*;
-    use std::path::PathBuf;
     use tauri::{
         ipc::{CallbackFn, InvokeBody},
         webview::InvokeRequest,

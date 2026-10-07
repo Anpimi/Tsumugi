@@ -378,6 +378,7 @@ fn capture(
         request.revision_id,
         &text,
         &terms,
+        &stored.plan.options.advisory_checks,
     )?;
     if check.plan().map(|plan| plan.binding())
         != store.work_plan_review_binding(&stored.plan)?.as_ref()
@@ -455,8 +456,7 @@ impl ProjectStore {
     pub fn capture_automatic_selection_execution(
         &self,
         prepared: PreparedAutomaticSelection,
-        attempt: ExecutionId,
-        result: ExecutionId,
+        origins: &[crate::ReviewCheckOrigin],
     ) -> Result<CapturedAutomaticSelection, ExecutionError> {
         let Prepared::Pending(mut capture) = prepared.0 else {
             return Err(error(ErrorCode::InvalidInput, "work-selection-recorded"));
@@ -465,7 +465,7 @@ impl ProjectStore {
             .check
             .take()
             .ok_or_else(|| error(ErrorCode::CorruptLedger, "work-selection-check"))?;
-        let execution = self.capture_review_check_execution(check, attempt, result)?;
+        let execution = self.capture_review_check_execution(check, origins)?;
         Ok(CapturedAutomaticSelection { capture, execution })
     }
 

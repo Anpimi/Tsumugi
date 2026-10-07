@@ -42,12 +42,20 @@ pub(super) fn scoped(context: &Value, fields: Value) -> Value {
         .extend(fields.as_object().unwrap().clone());
     value
 }
-pub(super) fn consent(context: &Value, review: &Value) -> Value {
+pub(super) fn consent(context: &Value, checker: &Value) -> Value {
     scoped(
         context,
-        json!({"attemptId":review["attemptId"],"inputDigest":review["inputDigest"],"grantId":ExecutionId::new(),"unsandboxedExecution":true,
+        json!({"attemptId":checker["attemptId"],"inputDigest":checker["inputDigest"],"grantId":ExecutionId::new(),"unsandboxedExecution":true,
         "expiresAtMs":(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()+600_000).to_string()}),
     )
+}
+pub(super) fn consents(context: &Value, view: &Value) -> Vec<Value> {
+    view["checkers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|checker| consent(context, checker))
+        .collect()
 }
 pub(super) fn completed(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
@@ -95,17 +103,20 @@ fn native_review(
     let target = call(window, "read_review_target", request.clone()).unwrap();
     let intent = scoped(
         context,
-        json!({"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new()}),
+        json!({"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new(),"advisoryChecks":[]}),
     );
     let review = call(window, "prepare_review_checks", intent.clone()).unwrap();
     assert_eq!(review["kind"], "plugin");
-    assert_eq!(review["view"]["plugin"]["environment"], *environment);
+    assert_eq!(
+        review["view"]["checkers"][0]["plugin"]["plugin"]["environment"],
+        *environment
+    );
     let qa = call(
         window,
         "run_review_checks",
         scoped(
             context,
-            json!({"check":intent,"execution":consent(context, &review["view"])}),
+            json!({"check":intent,"executions":consents(context, &review["view"])}),
         ),
     )
     .unwrap();

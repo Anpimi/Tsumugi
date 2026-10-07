@@ -15,6 +15,9 @@ pub struct ReviewCheckPlan {
     checks: sdk::FixedCheckSet,
     terms: resources::TermResolution,
     basis: String,
+    advisory_checks: Vec<AdvisoryReviewCheck>,
+    checkers: Vec<ReviewChecker>,
+    text_inputs: BTreeMap<ReviewCheckerKey, sdk::TextReviewCheckInput>,
 }
 
 fn reference(id: &str) -> sdk::ContractRef {
@@ -56,6 +59,27 @@ impl ReviewCheckPlan {
     }
     pub fn domain_input(&self) -> &sdk::ReviewCheckInput {
         &self.input
+    }
+    pub fn checkers(&self) -> &[ReviewChecker] {
+        &self.checkers
+    }
+    pub fn advisory_checks(&self) -> &[AdvisoryReviewCheck] {
+        &self.advisory_checks
+    }
+    pub(super) fn checker_payload(
+        &self,
+        key: &ReviewCheckerKey,
+    ) -> Result<serde_json::Value, ExecutionError> {
+        if self.checkers.first().is_some_and(|c| &c.key == key) {
+            return serde_json::to_value(&self.input)
+                .map_err(|_| failure(ErrorCode::InvalidInput, "review-check-input"));
+        }
+        serde_json::to_value(
+            self.text_inputs
+                .get(key)
+                .ok_or_else(|| failure(ErrorCode::ResultMismatch, "review-checker"))?,
+        )
+        .map_err(|_| failure(ErrorCode::InvalidInput, "review-check-input"))
     }
     pub fn fixed_checks(&self) -> &sdk::FixedCheckSet {
         &self.checks
@@ -163,6 +187,23 @@ pub(in crate::persistence::review) struct ReviewMaterial {
     units: BTreeMap<String, (String, String)>,
 }
 impl ReviewMaterial {
+    fn current_check_survives_new_source_snapshot(target: &ReviewTarget) -> bool {
+        let Some(check) = &target.current_check else {
+            return false;
+        };
+        // `requirements` binds the complete source and ReviewBasis, including
+        // its adopted snapshot identity. Source adoption allocates a new
+        // snapshot, so an unchanged unit cannot prove these inputs unchanged.
+        // This estimates applicability only; no historical proof is rebound.
+        match &check.evidence {
+            Some(_) => false,
+            #[cfg(any(test, feature = "execution-test-host"))]
+            None => true,
+            #[cfg(not(any(test, feature = "execution-test-host")))]
+            None => false,
+        }
+    }
+
     pub(in crate::persistence::review) fn load(
         connection: &Connection,
         project_id: ExecutionId,
@@ -210,6 +251,7 @@ impl ReviewMaterial {
         &self,
         target: &ReviewTarget,
         terms: &resources::TermResolution,
+        advisory_checks: &[AdvisoryReviewCheck],
     ) -> Result<(sdk::ReviewSelection, sdk::FixedCheckSet, String), ExecutionError> {
         let binding = self
             .binding
@@ -282,7 +324,7 @@ impl ReviewMaterial {
                 )
             })
             .collect();
-        let domain = binding
+        let mut domain = binding
             .declaration
             .rules
             .iter()
@@ -299,13 +341,55 @@ impl ReviewMaterial {
                 )
             })
             .collect::<Vec<_>>();
+        validate_choices(advisory_checks)?;
+        for choice in advisory_checks {
+            let text_digest = digest(&(
+                "advisory-review-material-1",
+                self.project_id,
+                &selection,
+                &target.source_text,
+                &self.source.source_language,
+                &target.locale,
+                &target.basis_evidence,
+                choice,
+            ))?;
+            for rule in &choice.rules {
+                let declared = choice
+                    .binding
+                    .declaration
+                    .rules
+                    .iter()
+                    .find(|r| &r.rule == rule)
+                    .ok_or_else(|| failure(ErrorCode::InvalidInput, "advisory-review-rule"))?;
+                domain.push(sdk::CheckRequirement {
+                    key: sdk::CheckKey {
+                        rule: rule.clone(),
+                        implementation: sdk::CheckImplementation::Plugin {
+                            provider: choice.binding.checker.provider.clone(),
+                        },
+                    },
+                    input_digest: text_digest.clone(),
+                    scope_digest: scope_digest.clone(),
+                    targets: vec![selection.unit_id.clone()],
+                    mandatory: false,
+                    waivable: false,
+                    not_applicable: (declared.requires_translation && missing).then(|| {
+                        sdk::NotApplicableBasis {
+                            code: sdk::MISSING_REVIEW_TRANSLATION.into(),
+                            basis_digest: text_digest.clone(),
+                        }
+                    }),
+                });
+            }
+        }
         let checks =
             sdk::capture_required_checks(reference("tsumugi.policy.balanced"), core, domain)
                 .map_err(contract_error)?;
         let basis = digest(&(
-            "review-check-capture-1",
+            "review-check-capture-2",
             &target.basis,
             binding,
+            advisory_checks,
             checks.set(),
         ))?;
         Ok((selection, checks, basis))
@@ -316,7 +400,7 @@ impl ReviewMaterial {
         terms: &resources::TermResolution,
         evidence: &ReviewCheckEvidence,
     ) -> Result<bool, ExecutionError> {
-        let (_, checks, basis) = self.requirements(target, terms)?;
+        let (_, checks, basis) = self.requirements(target, terms, &evidence.advisory_checks)?;
         Ok(basis == evidence.qa_basis && checks.set() == &evidence.required_checks)
     }
 }
@@ -326,12 +410,16 @@ pub(super) fn capture_in(
     project_id: ExecutionId,
     target: &ReviewTarget,
     terms: &resources::TermResolution,
+    advisory_checks: &[AdvisoryReviewCheck],
 ) -> Result<Option<ReviewCheckPlan>, ExecutionError> {
     let material = ReviewMaterial::load(connection, project_id, target.source_snapshot_id)?;
     let Some(binding) = material.binding.clone() else {
+        if !advisory_checks.is_empty() {
+            return Err(failure(ErrorCode::InvalidInput, "review-checker-required"));
+        }
         return Ok(None);
     };
-    let (selection, checks, basis) = material.requirements(target, terms)?;
+    let (selection, checks, basis) = material.requirements(target, terms, advisory_checks)?;
     let input = sdk::ReviewCheckInput {
         source: material.source,
         target_language: target.locale.clone(),
@@ -341,10 +429,7 @@ pub(super) fn capture_in(
             .requirements
             .iter()
             .filter(|r| {
-                matches!(
-                    r.key.implementation,
-                    sdk::CheckImplementation::Plugin { .. }
-                )
+                matches!(&r.key.implementation, sdk::CheckImplementation::Plugin { provider } if provider == &binding.checker.capability.provider) && r.mandatory
             })
             .cloned()
             .collect(),
@@ -364,6 +449,26 @@ pub(super) fn capture_in(
             .limits
             .max_input_bytes as usize,
     )?;
+    let mut checkers = vec![ReviewChecker::format(&binding)];
+    let mut text_inputs = BTreeMap::new();
+    for choice in advisory_checks {
+        let checker = choice.checker();
+        let text_input = sdk::TextReviewCheckInput {
+            profile: choice.binding.declaration.profile.clone(), source_language: input.source.source_language.clone(), target_language: target.locale.clone(),
+            resources: choice.resource_pins.clone(),
+            selections: vec![sdk::TextReviewSelection { unit_id: input.selections[0].unit_id.clone(), source_revision_id: input.selections[0].source_revision_id.clone(), source_text: target.source_text.clone(), translation_text: target.translation_text.clone() }],
+            requirements: checks.set().requirements.iter().filter(|r| matches!(&r.key.implementation, sdk::CheckImplementation::Plugin { provider } if provider == &checker.key.provider) && !r.mandatory && choice.rules.contains(&r.key.rule)).cloned().collect(),
+        };
+        choice
+            .binding
+            .validate_input(&text_input)
+            .map_err(contract_error)?;
+        if checkers.iter().any(|c| c.key == checker.key) {
+            return Err(failure(ErrorCode::InvalidInput, "review-checker-identity"));
+        }
+        text_inputs.insert(checker.key.clone(), text_input);
+        checkers.push(checker);
+    }
     Ok(Some(ReviewCheckPlan {
         target: target.clone(),
         binding,
@@ -371,10 +476,22 @@ pub(super) fn capture_in(
         checks,
         terms: terms.clone(),
         basis,
+        advisory_checks: advisory_checks.to_vec(),
+        checkers,
+        text_inputs,
     }))
 }
 
 impl ProjectStore {
+    /// QA applicability for a source update that will adopt a new snapshot.
+    /// The supplied current check has already passed the normal current read.
+    pub(in crate::persistence) fn current_check_survives_new_source_snapshot(
+        &self,
+        target: &ReviewTarget,
+    ) -> bool {
+        ReviewMaterial::current_check_survives_new_source_snapshot(target)
+    }
+
     /// Read-only capture of the current policy and adopted domain requirements.
     /// Original proof and local-to-project identity mappings remain mandatory.
     pub fn capture_review_check_plan(
@@ -383,6 +500,7 @@ impl ProjectStore {
         unit_id: ExecutionId,
         locale: &str,
         expected_basis: &str,
+        advisory_checks: &[AdvisoryReviewCheck],
     ) -> Result<ReviewCheckPlan, ExecutionError> {
         if self.is_reconciling() {
             return Err(failure(ErrorCode::OutcomeUnknown, "review-session"));
@@ -400,7 +518,7 @@ impl ProjectStore {
                     }));
             }
             let terms = resources::resolve_terms_in(connection, project_id, unit_id, locale)?;
-            capture_in(connection, project_id, &target, &terms)?
+            capture_in(connection, project_id, &target, &terms, advisory_checks)?
                 .ok_or_else(|| failure(ErrorCode::InvalidInput, "review-checker-required"))
         })
     }

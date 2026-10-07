@@ -93,10 +93,10 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
             std::thread::sleep(Duration::from_millis(20));
         }
     }
-    fn consent(context: &Value, view: &Value) -> Value {
+    fn consent(context: &Value, checker: &Value) -> Value {
         let mut request = context.clone();
-        request["attemptId"] = view["attemptId"].clone();
-        request["inputDigest"] = view["inputDigest"].clone();
+        request["attemptId"] = checker["attemptId"].clone();
+        request["inputDigest"] = checker["inputDigest"].clone();
         request["grantId"] = json!(ExecutionId::new());
         request["unsandboxedExecution"] = json!(true);
         request["expiresAtMs"] = json!(
@@ -108,6 +108,14 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
                 .to_string()
         );
         request
+    }
+    fn consents(context: &Value, view: &Value) -> Vec<Value> {
+        view["checkers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|checker| consent(context, checker))
+            .collect()
     }
     let temporary = tempfile::tempdir().unwrap();
     // All package/runtime inputs are explicit artifacts. The fixture has no
@@ -366,25 +374,25 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     let unit = page["rows"][0]["unitId"].clone();
     let target_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN"});
     let target = call(&window, "read_review_target", target_request.clone()).unwrap();
-    let intent = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new()});
+    let intent = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new(),"advisoryChecks":[]});
     let review = call(&window, "prepare_review_checks", intent.clone()).unwrap();
     assert_eq!(review["kind"], "plugin");
     assert_eq!(
         call(&window, "prepare_review_checks", intent.clone()).unwrap(),
         review
     );
-    let review_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":intent,"execution":consent(&context, &review["view"])});
+    let review_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":intent,"executions":consents(&context, &review["view"])});
     let mut denied = review_start.clone();
-    denied["execution"]["unsandboxedExecution"] = json!(false);
+    denied["executions"][0]["unsandboxedExecution"] = json!(false);
     assert_eq!(
         call(&window, "run_review_checks", denied).unwrap_err()["code"],
         "permission-denied"
     );
     let mut substituted = review_start.clone();
-    substituted["execution"]["inputDigest"] = json!("f".repeat(64));
+    substituted["executions"][0]["inputDigest"] = json!("f".repeat(64));
     assert!(call(&window, "run_review_checks", substituted).is_err());
     let mut expired = review_start.clone();
-    expired["execution"]["expiresAtMs"] = json!("1");
+    expired["executions"][0]["expiresAtMs"] = json!("1");
     assert!(call(&window, "run_review_checks", expired).is_err());
     assert!(
         call(&window, "read_review_target", target_request.clone()).unwrap()["currentCheck"]
@@ -442,7 +450,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         cancellation_intent.clone(),
     )
     .unwrap();
-    let cancellation_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":cancellation_intent,"execution":consent(&context, &next["view"])});
+    let cancellation_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":cancellation_intent,"executions":consents(&context, &next["view"])});
     let (reached, waiting) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     *state.review_compute_probe.lock().unwrap() =
@@ -482,7 +490,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     let mut stop_intent = intent.clone();
     stop_intent["actionId"] = json!(action);
     let next = call(&window, "prepare_review_checks", stop_intent.clone()).unwrap();
-    let stop_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":stop_intent,"execution":consent(&context, &next["view"])});
+    let stop_start = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"check":stop_intent,"executions":consents(&context, &next["view"])});
     let (reached, waiting) = std::sync::mpsc::channel();
     let (release, resume) = std::sync::mpsc::channel();
     *state.review_compute_probe.lock().unwrap() =
@@ -627,19 +635,20 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         credential_env: String::new(),
         ..Default::default()
     };
-    let prepared_plan = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options})).unwrap();
-    assert_eq!(prepared_plan["checker"]["kind"], "ready");
+    let prepared_plan = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options,"advisoryChecks":[]})).unwrap();
+    assert_eq!(prepared_plan["checkers"][0]["kind"], "ready");
+    let checker_key = prepared_plan["checkers"][0]["checker"].clone();
     assert_eq!(
-        prepared_plan["checker"]["plugin"]["checker"],
-        review["view"]["plugin"]["checker"]
+        checker_key,
+        review["view"]["checkers"][0]["checker"]
     );
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let authorization = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":prepared_plan["planId"],"digest":prepared_plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":true,"effects":["save-candidate","run-checks","select-missing"],"expiresAt":(now+600).to_string()});
+    let authorization = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":prepared_plan["planId"],"digest":prepared_plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":[checker_key],"effects":["save-candidate","run-checks","select-missing"],"expiresAt":(now+600).to_string()});
     let mut denied = authorization.clone();
-    denied["checkerExecution"] = json!(false);
+    denied["checkerExecutions"] = json!([]);
     assert_eq!(
         call(&window, "authorize_work_plan", denied).unwrap_err()["code"],
         "permission-denied"
@@ -692,8 +701,9 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     );
 
     options.selection_policy = tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection;
-    let replacement = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options})).unwrap();
-    let replacement_auth = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"digest":replacement["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":true,"effects":["save-candidate","run-checks","replace-captured-selection"],"expiresAt":(now+600).to_string()});
+    let replacement = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options,"advisoryChecks":[]})).unwrap();
+    let replacement_checker_key = replacement["checkers"][0]["checker"].clone();
+    let replacement_auth = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"digest":replacement["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":[replacement_checker_key],"effects":["save-candidate","run-checks","replace-captured-selection"],"expiresAt":(now+600).to_string()});
     let replacement_receipt = call(&window, "authorize_work_plan", replacement_auth).unwrap();
     let replacement_attempt: ExecutionId =
         serde_json::from_value(replacement_receipt["attemptId"].clone()).unwrap();
@@ -725,7 +735,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
         )
         .is_err()
     );
-    let paused = call(&window, "control_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":ExecutionId::new(),"expectedGeneration":replacement_receipt["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecution":false,"expiresAt":null})).unwrap();
+    let paused = call(&window, "control_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":ExecutionId::new(),"expectedGeneration":replacement_receipt["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"expiresAt":null})).unwrap();
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     while state.sessions.with(|sessions| {
@@ -765,23 +775,23 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     };
     let disabled = set_enabled(
         false,
-        serde_json::from_value(replacement["checker"]["plugin"]["settingsRevision"].clone())
+        serde_json::from_value(replacement["checkers"][0]["plugin"]["plugin"]["settingsRevision"].clone())
             .unwrap(),
     );
     let unavailable = call(&window, "read_work_plan_status", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"]})).unwrap();
-    assert_eq!(unavailable["plan"]["checker"]["kind"], "unavailable");
+    assert_eq!(unavailable["plan"]["checkers"][0]["kind"], "unavailable");
     assert_eq!(unavailable["state"], "paused");
     assert_eq!(unavailable["lease"], paused["lease"]);
     let enabled = set_enabled(true, disabled.settings_revision);
     let available = call(&window, "read_work_plan_status", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"]})).unwrap();
-    assert_eq!(available["plan"]["checker"]["kind"], "ready");
+    assert_eq!(available["plan"]["checkers"][0]["kind"], "ready");
     assert_eq!(
-        available["plan"]["checker"]["plugin"]["settingsRevision"],
+        available["plan"]["checkers"][0]["plugin"]["plugin"]["settingsRevision"],
         enabled.settings_revision.get().to_string()
     );
-    let continuation = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],"command":"continue","confirmed":true,"checkerExecution":true,"expiresAt":(now+600).to_string()});
+    let continuation = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"],"actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],"command":"continue","confirmed":true,"checkerExecutions":[replacement["checkers"][0]["checker"]],"expiresAt":(now+600).to_string()});
     let mut denied = continuation.clone();
-    denied["checkerExecution"] = json!(false);
+    denied["checkerExecutions"] = json!([]);
     assert_eq!(
         call(&window, "control_work_plan", denied).unwrap_err()["code"],
         "permission-denied"

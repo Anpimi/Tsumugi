@@ -174,7 +174,7 @@ fn validate_origin(c: &Connection, record: &OriginRecord) -> Result<FixedInput, 
             |row| row.get(0),
         )
         .map_err(sql)?;
-    let grant: (String, String, String, u64, Option<Vec<u8>>) = c.query_row(
+    let grant: (String, String, String, i64, Option<Vec<u8>>) = c.query_row(
         "SELECT attempt_id,input_digest,generation,expires_at_ms,delegation FROM plugin_execution_grants WHERE grant_id=?1",
         [record.grant_id.to_string()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     ).map_err(sql)?;
@@ -182,10 +182,10 @@ fn validate_origin(c: &Connection, record: &OriginRecord) -> Result<FixedInput, 
         || grant.0 != invocation.context.attempt_id
         || grant.1 != outer.digest()
         || grant.2 != record.grant_generation.to_string()
-        || grant.3 != record.grant_expires_at_ms
+        || u64::try_from(grant.3).ok() != Some(record.grant_expires_at_ms)
         || grant.4.is_some()
         || record.deadline_at_ms == 0
-        || record.deadline_at_ms > grant.3
+        || record.deadline_at_ms > record.grant_expires_at_ms
     {
         return Err(corrupt());
     }
@@ -257,14 +257,14 @@ fn load_call(
     if parent.as_deref() != Some(record.parent_task.to_string().as_str()) {
         return Err(corrupt());
     }
-    let association: (String, u64, String, Option<Vec<u8>>, String) = c.query_row(
+    let association: (String, i64, String, Option<Vec<u8>>, String) = c.query_row(
         "SELECT plan_id,generation,kind,delegation,root_task FROM application_executions WHERE attempt_id=?1",
         [&child], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     ).map_err(sql)?;
     if association
         != (
             record.lease.plan_id.to_string(),
-            record.lease.generation.get(),
+            i64::try_from(record.lease.generation.get()).map_err(|_| corrupt())?,
             "model".into(),
             None,
             record.parent_task.to_string(),
@@ -331,6 +331,9 @@ fn receipt(
 impl ProjectStore {
     /// Only a true dispatch can capture this origin. Outcome-query data has no
     /// absolute deadline and cannot create or renew a service authorization.
+    /// The trusted installation owner supplies its original one-way revocation
+    /// signal under the same revision guard as the selected service. It stays
+    /// attached after channel completion; no project-thread tick is required.
     pub fn capture_work_plan_service_origin(
         &self,
         scope: &WorkPlanAgentScope,
@@ -339,6 +342,7 @@ impl ProjectStore {
         service: &sdk::ServiceBinding,
         host_deadline: Instant,
         cancellation: &Cancellation,
+        settings_revocation: &Cancellation,
     ) -> Result<WorkPlanServiceOrigin, ExecutionError> {
         self.check_work_plan_agent_scope(scope)?;
         let permit = dispatch
@@ -396,6 +400,7 @@ impl ProjectStore {
             guard: Arc::new(ServiceOriginGuard {
                 permit: permit.clone(),
                 cancellation: cancellation.clone(),
+                settings_revocation: settings_revocation.clone(),
                 revoked: Cancellation::default(),
                 deadline,
                 digest,

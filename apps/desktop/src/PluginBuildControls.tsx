@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { PluginPermissions } from "./PluginManager";
 import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion, type PluginComponentRuntime, type PluginEnvironmentChoice } from "./pluginEnvironments";
-import { pluginCommands, type PluginBuildRequest, type PluginBuildView } from "./pluginCommands";
+import { pluginCommands, readEnabledPluginPackages, type PluginBuildRequest, type PluginBuildView } from "./pluginCommands";
 import { releaseCommands, type PluginBuildPrepareRequest, type PluginBuildReview, type ArtifactCheckPrepareRequest, type ArtifactCheckReview, type ArtifactCheckFinishRequest, type PluginStartRequest } from "./releaseCommands";
 import { executionCommands, executionContext, type AttemptDetail, type PrepareRequest, type CancelRequest, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, projectCommands, type ProjectView } from "./projectCommands";
@@ -55,9 +55,11 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   const [choiceKey, setChoiceKey] = useState("");
   const [runtimeDigest, setRuntimeDigest] = useState("");
   const [environment, setEnvironment] = useState<PluginBuildView | null>(null);
+  const [environmentLoading, setEnvironmentLoading] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [inventoryReady, setInventoryReady] = useState(false);
+  const [inventoryReadyAt, setInventoryReadyAt] = useState<number | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const inventoryReady = inventoryReadyAt === refresh;
   const [languages, setLanguages] = useState<string[]>([]);
   const [paths, setPaths] = useState<Record<string, string>>({});
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
@@ -108,17 +110,16 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
   useEffect(() => { const error = buildRead.error ?? checkRead.error; if (error) setFailure(commandFailure(error)); }, [buildRead.error, checkRead.error]);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { setInventoryReadyAt(null); setLoading(false); return; }
     let stale = false;
-    setLoading(true); setInventoryReady(false);
+    setLoading(true); setInventoryReadyAt(null);
     void (async () => {
       try {
         const inventory = await pluginCommands.inventory();
-        const enabled = inventory.packages.filter(item => item.state === "sealed" && inventory.packageDecisions.some(decision => decision.enabled && decision.packageDigest === item.packageDigest && decision.plugin.id === item.plugin.id && decision.plugin.version === item.plugin.version && decision.plugin.publisher === item.plugin.publisher));
-        const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
+        const packages = await readEnabledPluginPackages(inventory, () => !stale);
         const next = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.build-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
         const environments = approvedPluginEnvironments(inventory);
-        if (!stale) { setChoices(next); setEnvironments(environments); setInventoryReady(true); setChoiceKey(value => value || next[0]?.key || ""); setRuntimeDigest(value => value || matchingPluginEnvironments(environments, next[0]?.runtimeKinds ?? [])[0]?.environmentDigest || ""); }
+        if (!stale) { setChoices(next); setEnvironments(environments); setInventoryReadyAt(refresh); setChoiceKey(value => value || next[0]?.key || ""); setRuntimeDigest(value => value || matchingPluginEnvironments(environments, next[0]?.runtimeKinds ?? [])[0]?.environmentDigest || ""); }
       } catch (error) { if (!stale) setFailure(commandFailure(error)); }
       finally { if (!stale) setLoading(false); }
     })();
@@ -126,14 +127,16 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   }, [open, project.sessionToken, refresh]);
   useEffect(() => {
     setEnvironment(null);
-    if (!open || !choice || !environmentAvailable || unavailable) return;
+    if (!open || !inventoryReady || loading || !choice || !environmentAvailable || unavailable) { setEnvironmentLoading(false); return; }
     let stale = false;
+    setEnvironmentLoading(true);
     void pluginCommands.build({ package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest }).then(value => {
       if (value.resourceId !== choice.resourceId || value.environmentDigest !== runtimeDigest || [value.builder.provider, value.checker.provider].some(provider => provider.packageDigest !== choice.package.packageDigest || provider.plugin.id !== choice.package.plugin.id || provider.plugin.version !== choice.package.plugin.version || provider.plugin.publisher !== choice.package.plugin.publisher)) throw new Error("Build environment identity changed");
       if (!stale) setEnvironment(value);
-    }).catch(error => { if (!stale) setFailure(commandFailure(error)); });
+    }).catch(error => { if (!stale) setFailure(commandFailure(error)); })
+      .finally(() => { if (!stale) setEnvironmentLoading(false); });
     return () => { stale = true; };
-  }, [open, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, refresh, unavailable]);
+  }, [open, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, inventoryReady, loading, refresh, unavailable]);
 
   function updatePending(value: Intent | null) { pendingRef.current = value; setPending(value); setReceiptChecked(false); }
   async function perform(work: (current: () => boolean) => Promise<void>) {
@@ -225,19 +228,19 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   }
 
   return <>
-    <section aria-label={t("release.prepare")} aria-busy={busy || loading}>
+    <section aria-label={t("release.prepare")} aria-busy={busy || loading || environmentLoading}>
       <h3>{t("release.prepare")}</h3><p>{t("release.scope")}</p>
       {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("releasePlugin.failed")}</p><CommandFailureDetails failure={failure} />{typeof failure === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
-      {busy || loading ? <p role="status">{t("execution.working")}</p> : null}
-      <label className="source-field">{t("releasePlugin.builder")}<select value={choiceKey} disabled={draftLocked || loading} onChange={event => { const key = event.target.value; setChoiceKey(key); const matching = matchingPluginEnvironments(environments, choices.find(item => item.key === key)?.runtimeKinds ?? []); setRuntimeDigest(current => matching.some(item => item.environmentDigest === current) ? current : matching[0]?.environmentDigest ?? ""); setEligibility(null); setBuildConsent(null); }}>
+      {busy || loading || environmentLoading ? <p role="status">{t("execution.working")}</p> : null}
+      <label className="source-field">{t("releasePlugin.builder")}<select value={choiceKey} disabled={draftLocked || loading || environmentLoading} onChange={event => { const key = event.target.value; setChoiceKey(key); const matching = matchingPluginEnvironments(environments, choices.find(item => item.key === key)?.runtimeKinds ?? []); setRuntimeDigest(current => matching.some(item => item.environmentDigest === current) ? current : matching[0]?.environmentDigest ?? ""); setEligibility(null); setBuildConsent(null); }}>
         {!choice ? <option value={choiceKey}>{t("releasePlugin.chooseBuilder")}</option> : null}
         {choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
       </select></label>
-      <label className="source-field">{t("sourcePlugin.runtime")}<select value={runtimeDigest} disabled={draftLocked || loading} onChange={event => { setRuntimeDigest(event.target.value); setEligibility(null); setBuildConsent(null); }}>
+      <label className="source-field">{t("sourcePlugin.runtime")}<select value={runtimeDigest} disabled={draftLocked || loading || environmentLoading} onChange={event => { setRuntimeDigest(event.target.value); setEligibility(null); setBuildConsent(null); }}>
         {!runtimes.some(item => item.environmentDigest === runtimeDigest) ? <option value={runtimeDigest}>{t("sourcePlugin.chooseRuntime")}</option> : null}
         {runtimes.map(item => <option key={item.environmentDigest} value={item.environmentDigest}>{t(item.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(item.environment), system: item.environment.platform.operatingSystem, architecture: item.environment.platform.architecture })}</option>)}
       </select></label>
-      <button className="secondary-button" disabled={locked || !!prepared || !!attempt} onClick={() => { setFailure(null); setEligibility(null); setRefresh(value => value + 1); }}>{t("releasePlugin.refresh")}</button>
+      <button className="secondary-button" disabled={locked || loading || environmentLoading || !!prepared || !!attempt} onClick={() => { setFailure(null); setEligibility(null); setRefresh(value => value + 1); }}>{t("releasePlugin.refresh")}</button>
       {unavailable ? <p role="status">{t("releasePlugin.unavailable")}</p> : null}
       {environment ? <p>{t("releasePlugin.limits", { name: environment.declaration.displayName, count: environment.declaration.outputLimits.maxArtifacts, bytes: String(environment.declaration.outputLimits.maxTotalBytes) })}</p> : null}
       <fieldset><legend>{t("release.languages")}</legend>{project.metadata.targetLocales.map(locale => <label key={locale} className="release-locale"><input type="checkbox" checked={languages.includes(locale)} disabled={draftLocked} onChange={event => { const checked = event.target.checked; setLanguages(previous => checked ? [...previous, locale] : previous.filter(item => item !== locale)); setEligibility(null); }} />{locale}</label>)}</fieldset>

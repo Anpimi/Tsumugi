@@ -2,7 +2,7 @@ import { SessionReadProvider, SessionReadStatus } from "./SessionReadProvider";
 import { CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
 import { sourceCommands } from "./sourceCommands";
-import { PluginManager } from "./PluginManager";
+import { PluginManager, type PluginManagerHandle } from "./PluginManager";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
@@ -15,7 +15,7 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@radix-ui/react-dialog";
-import { join as joinPath } from "@tauri-apps/api/path";
+import { join as joinPath, sep as pathSeparator } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import {
@@ -207,10 +207,10 @@ function isPresetLocale(value: string): boolean {
 }
 
 function previewDestination(parentDirectory: string, directoryName: string): string {
-  const parent = parentDirectory.trim().replace(/[\\/]+$/, "");
+  const parent = parentDirectory.trim();
   const child = directoryName.trim();
   if (!parent || !child) return "";
-  return `${parent}\\${child}`;
+  return `${parent.replace(/[\\/]+$/, "")}${pathSeparator()}${child}`;
 }
 
 function isSafeChildDirectoryName(value: string): boolean {
@@ -356,6 +356,7 @@ function App() {
   const sourceWorkbench = useRef<SourceHandle>(null);
   const resourceWorkbench = useRef<ResourceHandle>(null);
   const reviewWorkbench = useRef<ReviewHandle>(null);
+  const pluginManager = useRef<PluginManagerHandle>(null);
   const aiWorkbench = useRef<AiHandle>(null);
   const arenaWorkbench = useRef<AiHandle>(null);
   const translationWorkbench = useRef<TranslationHandle>(null);
@@ -1183,7 +1184,7 @@ function App() {
             <span>{project?.metadata.displayName ?? t("nav.workspace")}</span>
           </div>
            <div className="topbar-actions">
-            <PluginManager disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
+            <PluginManager ref={pluginManager} disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
             <label className="language-control">
               <span>{t("language")}</span>
               <select
@@ -1576,7 +1577,7 @@ function App() {
               </section>
             )}
           </div>
-          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} onQueryText={text => resourceWorkbench.current?.addQueryText(text) ?? false} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SessionReadProvider> : null}
+          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} onQueryText={text => resourceWorkbench.current?.addQueryText(text) ?? false} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench onOpenExtensions={() => pluginManager.current?.open()} key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench onOpenExtensions={() => pluginManager.current?.open()} key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SessionReadProvider> : null}
         </div>
 
         <DialogRoot

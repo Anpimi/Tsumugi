@@ -10,7 +10,7 @@ use std::{
     },
 };
 use tauri::State;
-use tsumugi_core::execution::UnsignedDecimal;
+use tsumugi_core::execution::{Cancellation, UnsignedDecimal};
 use tsumugi_plugin_host::{
     HostError, InstallError, InstalledObjectState, PackageStore, catalog::PackageOrigin,
 };
@@ -33,6 +33,10 @@ pub(in crate::commands) use environment::test_support::Fixture as InstalledPlugi
 pub use packages::{
     PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
     PluginPackageDetailsView, PluginPackageRequest,
+};
+pub use reviews::{
+    PluginTextReviewAvailability, PluginTextReviewListEntry, PluginTextReviewListView,
+    PluginTextReviewRequest, PluginTextReviewSelection, PluginTextReviewView,
 };
 pub use runtimes::{
     PluginNativeHostApprovalRequest, PluginNativeHostOfferView, PluginRuntimeInstallRequest,
@@ -197,6 +201,11 @@ struct PluginManager {
     defaults: Option<defaults::Bundle>,
 }
 
+struct EnvironmentEpoch {
+    revision: UnsignedDecimal,
+    cancellation: Cancellation,
+}
+
 /// The mutex serializes application operations; the Store retains its existing
 /// OS lock across reads. Contention rejects with Busy rather than parking an IO
 /// worker. AppState drop revokes in-flight read guards; accepted IO remains owned
@@ -204,12 +213,17 @@ struct PluginManager {
 pub(super) struct ApplicationPlugins {
     manager: Mutex<PluginManager>,
     open: AtomicBool,
+    // Publication contains one ephemeral settings epoch, never Store data or
+    // execution grants. Lock order is manager -> publication. Close only takes
+    // publication, so it can withdraw authority without waiting for Store IO.
+    environment_epoch: Mutex<Option<EnvironmentEpoch>>,
 }
 impl Default for ApplicationPlugins {
     fn default() -> Self {
         Self {
             manager: Mutex::default(),
             open: AtomicBool::new(true),
+            environment_epoch: Mutex::default(),
         }
     }
 }
@@ -236,6 +250,87 @@ impl ApplicationPlugins {
 
     pub(super) fn close(&self) {
         self.open.store(false, Ordering::Release);
+        // A poisoned publication still owns the original token. Withdraw it
+        // rather than leaving in-flight work authorized during shutdown.
+        let epoch = self
+            .environment_epoch
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(epoch) = epoch.as_ref() {
+            epoch.cancellation.request();
+        }
+    }
+
+    fn revoke_environment_authority(&self) -> Result<(), CommandError> {
+        match self.environment_epoch.lock() {
+            Ok(epoch) => {
+                if let Some(epoch) = epoch.as_ref() {
+                    epoch.cancellation.request();
+                }
+                Ok(())
+            }
+            Err(error) => {
+                let epoch = error.into_inner();
+                if let Some(epoch) = epoch.as_ref() {
+                    epoch.cancellation.request();
+                }
+                drop(epoch);
+                Err(map_store_error(InstallError::CorruptStore))
+            }
+        }
+    }
+
+    // The caller holds the existing manager and has just read actual settings.
+    // No IO or caller operation runs while publication is locked.
+    fn capture_environment_authority(
+        &self,
+        expected: UnsignedDecimal,
+        actual: UnsignedDecimal,
+    ) -> Result<Cancellation, CommandError> {
+        let mut epoch = match self.environment_epoch.lock() {
+            Ok(epoch) => epoch,
+            Err(error) => {
+                let epoch = error.into_inner();
+                if let Some(epoch) = epoch.as_ref() {
+                    epoch.cancellation.request();
+                }
+                drop(epoch);
+                return Err(map_store_error(InstallError::CorruptStore));
+            }
+        };
+        if !self.open.load(Ordering::Acquire) {
+            if let Some(epoch) = epoch.as_ref() {
+                epoch.cancellation.request();
+            }
+            drop(epoch);
+            return Err(map_store_error(InstallError::AuthorityRevoked));
+        }
+        if let Some(epoch) = epoch.as_ref().filter(|epoch| epoch.revision != actual) {
+            epoch.cancellation.request();
+        }
+        if expected != actual {
+            drop(epoch);
+            let mut error = CommandError::simple(
+                CommandErrorCode::DependencyConflict,
+                CommandStage::ExecutionRecover,
+            );
+            error.reason = Some("plugin-settings-changed".into());
+            return Err(error);
+        }
+        if epoch
+            .as_ref()
+            .is_none_or(|epoch| epoch.cancellation.is_requested())
+        {
+            *epoch = Some(EnvironmentEpoch {
+                revision: actual,
+                cancellation: Cancellation::default(),
+            });
+        }
+        Ok(epoch
+            .as_ref()
+            .expect("current settings epoch")
+            .cancellation
+            .clone())
     }
 
     fn provision(&self, manager: &mut PluginManager) -> Result<(), CommandError> {

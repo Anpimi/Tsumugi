@@ -114,6 +114,10 @@ struct PendingRuntime {
     original: Option<String>,
 }
 impl PendingMutation {
+    pub(super) fn settings_outcome_unknown(&self) -> bool {
+        self.unknown && !self.settings_confirmed
+    }
+
     fn action(&self) -> String {
         match &self.request {
             MutationRequest::Install(request) => request.action_id.to_string(),
@@ -584,6 +588,10 @@ impl ApplicationPlugins {
         if !pending.complete {
             let result = (|| {
                 if !pending.settings_confirmed {
+                    // Withdraw the original settings epoch before the Store can
+                    // promote bytes. A failed or unknown write never revives it.
+                    self.revoke_environment_authority()
+                        .map_err(|_| InstallError::CorruptStore)?;
                     store.update_settings(
                         pending.revision(),
                         &pending.action(),

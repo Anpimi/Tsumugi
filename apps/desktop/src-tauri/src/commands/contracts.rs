@@ -43,6 +43,7 @@ struct PluginRequests {
     translation: plugins::PluginTranslationRequest,
     build: plugins::PluginBuildRequest,
     tool: plugins::PluginToolRequest,
+    text_review: plugins::PluginTextReviewRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -57,6 +58,8 @@ struct PluginResponses {
     translation: plugins::PluginTranslationView,
     build: plugins::PluginBuildView,
     tool: plugins::PluginToolView,
+    text_review: plugins::PluginTextReviewView,
+    text_reviews: plugins::PluginTextReviewListView,
     error: CommandError,
 }
 #[derive(JsonSchema)]

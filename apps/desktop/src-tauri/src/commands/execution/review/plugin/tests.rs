@@ -19,7 +19,7 @@ fn review_preflight_wire_preserves_checker_consent_and_original_action() {
         fixture["responses"]["prepareCheck"]
     );
     let mut forged = fixture["requests"]["check"].clone();
-    forged["execution"]["renewGrant"] = serde_json::json!(true);
+    forged["executions"][0]["renewGrant"] = serde_json::json!(true);
     assert!(serde_json::from_value::<ReviewCheckStartRequest>(forged).is_err());
 }
 
@@ -34,17 +34,20 @@ fn review_native_environment_wire_is_strict_and_preserves_the_profile_owned_dige
     ))
     .unwrap();
     let mut value = fixture["responses"]["prepareCheck"].clone();
-    value["view"]["plugin"]["environment"] = native;
-    value["view"]["plugin"]["environmentDigest"] =
+    value["view"]["checkers"][0]["plugin"]["plugin"]["environment"] = native;
+    value["view"]["checkers"][0]["plugin"]["plugin"]["environmentDigest"] =
         serde_json::json!("ba38dd6b1f63b641359cf711154563ce9d1616d4790f250e1718bb5c3f570ddd");
     let received: ReviewCheckPreparation = serde_json::from_value(value.clone()).unwrap();
     let ReviewCheckPreparation::Plugin { view } = &received else {
         panic!("plugin preparation");
     };
-    view.plugin.environment.validate().unwrap();
+    let ReviewCheckerView::Format { plugin } = &view.checkers[0].plugin else {
+        panic!("format checker");
+    };
+    plugin.environment.validate().unwrap();
     assert_eq!(
-        view.plugin.environment.digest().unwrap(),
-        view.plugin.environment_digest
+        plugin.environment.digest().unwrap(),
+        plugin.environment_digest
     );
     assert_eq!(serde_json::to_value(received).unwrap(), value);
     for (key, extra) in [
@@ -52,7 +55,10 @@ fn review_native_environment_wire_is_strict_and_preserves_the_profile_owned_dige
         ("authorization", serde_json::json!(true)),
     ] {
         let mut bad = value.clone();
-        bad["view"]["plugin"]["environment"][key] = extra;
+        bad["view"]["checkers"][0]["plugin"]["plugin"]["environment"][key] = extra;
         assert!(serde_json::from_value::<ReviewCheckPreparation>(bad).is_err());
     }
 }
+
+#[cfg(target_os = "macos")]
+mod joint;

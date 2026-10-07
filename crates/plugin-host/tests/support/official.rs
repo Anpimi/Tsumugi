@@ -21,12 +21,21 @@ pub fn installed(temporary: &std::path::Path, expected_plugin_id: &str) -> Packa
     );
     let expected = std::env::var("TSUMUGI_TEST_PLUGIN_DIGEST")
         .expect("independently approved official package digest required");
+    installed_from(temporary, &source, &expected, expected_plugin_id)
+}
+
+pub fn installed_from(
+    temporary: &std::path::Path,
+    source: &std::path::Path,
+    expected: &str,
+    expected_plugin_id: &str,
+) -> PackageImage {
     let image = PackageImage::capture_directory(&source, &expected, || true).unwrap();
     let plugin = image.manifest().manifest().plugin.clone();
     assert_eq!(plugin.id, expected_plugin_id);
     let approval = PackageApproval {
         plugin: plugin.clone(),
-        package_digest: expected,
+        package_digest: expected.into(),
         origin: PackageOrigin {
             source_id: "explicit-official-test".into(),
             publisher_id: "reviewed-public-source".into(),

@@ -67,16 +67,13 @@ pub fn source_input(store: &ProjectStore) -> FixedInput {
     source_input_with_count(store, 2)
 }
 fn source_input_with_count(store: &ProjectStore, count: usize) -> FixedInput {
+    assert!((1..=2000).contains(&count));
     source_input_with_texts(store, &vec!["same"; count])
 }
 #[allow(dead_code)]
 pub fn source_input_with_texts(store: &ProjectStore, texts: &[&str]) -> FixedInput {
     assert!((1..=2000).contains(&texts.len()));
-    assert!(
-        texts
-            .iter()
-            .all(|text| !text.is_empty() && !text.contains('\n'))
-    );
+    assert!(texts.iter().all(|text| !text.contains('\n')));
     let raw = texts.join("\n");
     let binding = declaration();
     let bundle = SourceBundle::capture_declared(
@@ -107,7 +104,6 @@ pub fn source_input_with_texts(store: &ProjectStore, texts: &[&str]) -> FixedInp
 fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
     assert_eq!(source.artifacts[1].utf8, "opaque companion");
     let lines: Vec<_> = source.artifacts[0].utf8.split('\n').collect();
-    assert!(lines.iter().all(|line| !line.is_empty()));
     let count = lines.len();
     let mut order = Vec::with_capacity(count);
     let mut start = 0u32;
@@ -120,6 +116,7 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
             };
             order.push(format!("occurrence-{key}"));
             let end = start + lines[index].len() as u32;
+            let range_start = start;
             let unit = sdk::ContentUnit {
                 id: format!("unit-{key}"),
                 source_revision_id: format!("source-{key}"),
@@ -130,7 +127,7 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
                         artifact_id: source.artifacts[0].id.clone(),
                         range: sdk::TextRange {
                             encoding: sdk::TextEncoding::Utf8Byte,
-                            start,
+                            start: range_start,
                             end,
                         },
                     },
@@ -488,15 +485,28 @@ pub fn review_check(
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let target = store.review_target(project, unit, locale).unwrap();
     let prepared = store
-        .prepare_review_check(project, unit, locale, &target.basis, ExecutionId::new())
+        .prepare_review_check(
+            project,
+            unit,
+            locale,
+            &target.basis,
+            ExecutionId::new(),
+            &[],
+        )
         .unwrap();
-    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let inputs = prepared.execution_inputs();
+    assert_eq!(inputs.len(), 1, "format-only fixture has one checker input");
+    let input = inputs[0].clone();
     let (grant, result) = execute(runtime, store, &input);
+    let checker = prepared.plan().unwrap().checkers()[0].key.clone();
     let captured = store
         .capture_review_check_execution(
             prepared,
-            input.envelope().attempt_id,
-            result.envelope().result_id,
+            &[tsumugi_core::ReviewCheckOrigin {
+                checker,
+                attempt_id: input.envelope().attempt_id,
+                result_id: result.envelope().result_id,
+            }],
         )
         .unwrap();
     let computed = captured.compute(&Cancellation::default()).unwrap();

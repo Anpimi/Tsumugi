@@ -92,6 +92,7 @@ pub enum NativeWorkerError {
     OutputLimit,
     ComponentFailed,
     ThreadUnavailable,
+    UnsupportedServices,
 }
 impl fmt::Display for NativeWorkerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -334,6 +335,12 @@ fn serve<R: Read + Send + 'static, W: Write>(
             {
                 Event::Frame(frame) => match frame.body {
                     ProcessBody::Activate(value) if phase == Phase::Waiting => {
+                        // This basic component facade cannot issue service calls.
+                        // Refuse before activation rather than echoing readiness
+                        // for a service dependency the author cannot consume.
+                        if !value.services.is_empty() {
+                            return Err(NativeWorkerError::UnsupportedServices);
+                        }
                         jobs.try_send(Job::Activate(NativeComponentContext {
                             contribution_id: value.provider.contribution_id.clone(),
                             contract: value.capability.contract.clone(),

@@ -1,7 +1,7 @@
 //! Fixed application packages use the real setup, Host and Core boundaries.
 //! Only the window transport and directory picker are synthetic.
 use super::{
-    native::{call, completed, consent, scoped},
+    native::{call, completed, consents, scoped},
     *,
 };
 use std::{
@@ -227,17 +227,20 @@ fn journey(material: Materials) {
         let target = call(&window, "read_review_target", target_request.clone()).unwrap();
         let intent = scoped(
             &context,
-            json!({"unitId":row["unitId"],"locale":locale,"expectedBasis":target["basis"],"actionId":ExecutionId::new()}),
+            json!({"unitId":row["unitId"],"locale":locale,"expectedBasis":target["basis"],"actionId":ExecutionId::new(),"advisoryChecks":[]}),
         );
         let review = call(&window, "prepare_review_checks", intent.clone()).unwrap();
         assert_eq!(review["kind"], "plugin");
-        assert_eq!(review["view"]["plugin"]["environmentDigest"], environment);
+        assert_eq!(
+            review["view"]["checkers"][0]["plugin"]["plugin"]["environmentDigest"],
+            environment
+        );
         let result = call(
             &window,
             "run_review_checks",
             scoped(
                 &context,
-                json!({"check":intent,"execution":consent(&context,&review["view"])}),
+                json!({"check":intent,"executions":consents(&context,&review["view"])}),
             ),
         )
         .unwrap();

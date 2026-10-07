@@ -160,7 +160,7 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
     let handles = [ExecutionId::new(), ExecutionId::new()];
     let tools = json!({"maxInvocations":2,"entries":handles.iter().map(|handle| json!({"handle":handle,"tool":selector,"target":target,"selections":selections})).collect::<Vec<_>>()});
     let (config, dispatch, provider) = local_provider_after_setup("保留根候选");
-    let preparation = json!({"config":config,"locale":"zh-CN","unitIds":[fixture.unit],"options":PlanOptions::default(),"toolSelection":tools});
+    let preparation = json!({"config":config,"locale":"zh-CN","unitIds":[fixture.unit],"options":PlanOptions::default(),"toolSelection":tools,"advisoryChecks":[]});
     let before = fixture.bytes();
     let count = fixture.attempt_count();
     let mut forged = preparation.clone();
@@ -182,7 +182,7 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
         .as_secs()
         + 3600;
     let authorization = json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,
-        "checkerExecution":false,"toolExecution":true,"effects":["save-candidate","query-tools"],"expiresAt":root_expiry.to_string()});
+        "checkerExecutions":checker_keys(&plan),"toolExecution":true,"effects":["save-candidate","query-tools"],"expiresAt":root_expiry.to_string()});
     let mut rejected = authorization.clone();
     rejected["toolExecution"] = json!(false);
     assert!(fixture.call("authorize_work_plan", rejected).is_err());
@@ -373,7 +373,7 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
     );
     assert_eq!(fixture.attempt_count(), count);
 
-    let paused = fixture.call("control_work_plan", json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecution":false,"toolExecution":false,"expiresAt":null})).unwrap();
+    let paused = fixture.call("control_work_plan", json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
     assert!(
         fixture
             .call("prepare_work_plan_agent_tool", prepare.clone())
@@ -384,7 +384,7 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
             .call("start_work_plan_agent_tool", start.clone())
             .is_err()
     );
-    let mut continued = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],"command":"continue","confirmed":true,"checkerExecution":false,"toolExecution":false,"expiresAt":expiry()});
+    let mut continued = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],"command":"continue","confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()});
     assert!(
         fixture
             .call("control_work_plan", continued.clone())

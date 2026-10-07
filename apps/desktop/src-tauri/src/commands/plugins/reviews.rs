@@ -1,8 +1,75 @@
-//! Reopen the exact checker captured by the adopted source. This uses the
-//! installed catalog/runtime owner and does not grant permission to execute.
+//! Inspect advisory declarations or reopen the exact source format checker.
+//! The installed catalog/runtime owner grants no permission through these reads.
 use super::environment::{DeclaredEnvironment, invalid};
 use super::*;
 use tsumugi_core::content::SourceReviewBinding;
+
+pub(in crate::commands) mod text;
+pub(in crate::commands) use text::TextReviewEnvironment;
+
+/// Exact Resource/environment choice, without an execution grant.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginTextReviewRequest {
+    pub package: PluginPackageRequest,
+    pub resource_id: String,
+    pub environment_digest: String,
+}
+
+/// An explicit action-local subset. Installation never selects these rules.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginTextReviewSelection {
+    pub package: PluginPackageRequest,
+    pub resource_id: String,
+    pub environment_digest: String,
+    pub rules: Vec<sdk::ContractRef>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginTextReviewView {
+    pub settings_revision: UnsignedDecimal,
+    pub resource_id: String,
+    pub binding: sdk::TextReviewBinding,
+    pub resource_pins: Vec<sdk::TextReviewResourcePin>,
+    pub rules: Vec<sdk::ContractRef>,
+    pub package_origin: PluginOriginView,
+    pub environment: sdk::ExecutionEnvironmentDescriptor,
+    pub environment_digest: String,
+    pub runtime_origin: PluginOriginView,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum PluginTextReviewAvailability {
+    Ready { view: PluginTextReviewView },
+    Unavailable { error: CommandError },
+}
+
+/// A missing environment is an observed unavailable Resource, never a synthetic
+/// digest or a selectable request. An existing selection keeps its exact digest.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginTextReviewListEntry {
+    pub package: PluginPackageRequest,
+    pub resource_id: String,
+    pub environment_digest: Option<String>,
+    pub availability: PluginTextReviewAvailability,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginTextReviewListView {
+    pub settings_revision: UnsignedDecimal,
+    pub entries: Vec<PluginTextReviewListEntry>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

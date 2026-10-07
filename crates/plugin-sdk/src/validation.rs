@@ -323,18 +323,21 @@ impl CapabilityDeclaration {
                 ));
             }
         }
-        if self.limits.max_input_bytes == 0
-            || self.limits.max_output_bytes == 0
-            || self.limits.concurrency == 0
-            || self.limits.timeout_ms == 0
-        {
-            return Err(ContractError::at(
-                ContractErrorCode::InvalidDeclaration,
-                "contributions.limits",
-            ));
-        }
-        Ok(())
+        limits(&self.limits, "contributions.limits")
     }
+}
+pub(crate) fn limits(value: &CapabilityLimits, field: &str) -> Result<(), ContractError> {
+    if value.max_input_bytes == 0
+        || value.max_output_bytes == 0
+        || value.concurrency == 0
+        || value.timeout_ms == 0
+    {
+        return Err(ContractError::at(
+            ContractErrorCode::InvalidDeclaration,
+            field,
+        ));
+    }
+    Ok(())
 }
 impl ValidatedManifest {
     pub fn manifest(&self) -> &PluginManifest {

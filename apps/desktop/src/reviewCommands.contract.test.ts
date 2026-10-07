@@ -17,14 +17,16 @@ beforeEach(() => invoke.mockReset());
 
 it("receives the native profile and rejects mixed runtime fields or claimed authorization", () => {
   const value = structuredClone(fixture.responses.prepareCheck);
-  const native = { ...value, view: { ...value.view, plugin: { ...value.view.plugin,
+  const slot = value.view.checkers[0];
+  const native = { ...value, view: { ...value.view, checkers: [{ ...slot, plugin: { ...slot.plugin, plugin: { ...slot.plugin.plugin,
     environment: nativeEnvironment, environmentDigest: "ba38dd6b1f63b641359cf711154563ce9d1616d4790f250e1718bb5c3f570ddd",
-  } } };
+  } } }] } };
   expect(validators.validateResponsePrepareCheck(native)).toBe(true);
   for (const fields of [{ toolVersion: "26.10.0" }, { authorization: true }, { profile: "caller-native-path" }]) {
-    const bad = { ...native, view: { ...native.view, plugin: { ...native.view.plugin,
+    const nativeSlot = native.view.checkers[0];
+    const bad = { ...native, view: { ...native.view, checkers: [{ ...nativeSlot, plugin: { ...nativeSlot.plugin, plugin: { ...nativeSlot.plugin.plugin,
       environment: { ...nativeEnvironment, ...fields },
-    } } };
+    } } }] } };
     expect(validators.validateResponsePrepareCheck(bad)).toBe(false);
   }
 });
@@ -131,6 +133,16 @@ it("keeps Serde None semantics and preserves explicit backend rejections", async
 
 it("strictly receives the saved policy union and nested actual result projection", () => {
   expect(validators.validateResponseCheck(fixture.responses.check)).toBe(true);
+  for (const field of ["sourceBinding", "advisoryChecks", "origins", "diagnostics"] as const) {
+    const evidence = Object.fromEntries(Object.entries(fixture.responses.check.evidence).filter(([key]) => key !== field));
+    expect(validators.validateResponseCheck({ ...fixture.responses.check, evidence }), field).toBe(false);
+  }
+  for (const field of ["key", "mandatory"] as const) {
+    const rules = fixture.responses.check.rules.map(rule => Object.fromEntries(Object.entries(rule).filter(([key]) => key !== field)));
+    expect(validators.validateResponseCheck({ ...fixture.responses.check, rules }), field).toBe(false);
+  }
+  expect(validators.validateResponseCheck({ ...fixture.responses.check, evidence: { ...fixture.responses.check.evidence,
+    attemptId: fixture.responses.check.evidence.origins[0].attemptId } })).toBe(false);
   const extra = structuredClone(fixture.responses.check) as unknown as { evidence: { results: Array<{ key: { implementation: Record<string, unknown> } }> } };
   extra.evidence.results[0].key.implementation.permission = "granted";
   expect(validators.validateResponseCheck(extra)).toBe(false);

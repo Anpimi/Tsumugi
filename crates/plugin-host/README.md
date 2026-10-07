@@ -17,6 +17,41 @@ plugin entrypoint exports a component; it is not launched as a protocol peer.
 The local installation store can retain and reopen the approved runtime trees.
 Trusted runtime acquisition and desktop distribution remain separate work.
 
+## Project-service broker
+
+`ProcessSession::launch_with_services` accepts a trusted `ProjectServiceBroker`.
+It validates the broker's explicit selected bindings against actual component
+dependencies, capability permissions/effects and project scope before staging or
+spawning. Ordinary `launch` supplies no services and still refuses missing
+required dependencies. Service availability never grants execution permission.
+
+With `core-adapter`, a cached `RunnerProxy` can accept a trusted
+`ProjectServiceFactory`. It captures a separate broker for each real
+`DispatchRequest`, matching Core permit and cancellation handle. Capture shares
+the bounded startup allowance and original Core dispatch deadline, and
+continuously checks authority; failure never
+launches a child without the requested services. The factory cannot retain a
+particular invocation's work-plan scope as the cached proxy's authority.
+The actual dispatch deadline remains required through launch, invocation and
+result delivery, including while Core is waiting for its next runtime tick.
+Historical outcome queries cannot reconstruct a fresh deadline for execution.
+
+For each call, the Host supplies a `ServiceCaller` derived from the actual channel
+and original invocation, then checks the exact handle, context, contract, payload
+and current guards. `ServiceCaller::deadline()` exposes the fixed absolute outer
+invocation deadline to the trusted broker without sending a clock or authority
+object to the component. Service callbacks share that deadline and are cancelled
+when authority is revoked. They must return promptly
+for long-running work; the application owns durable enqueue/reconciliation and
+must retain child authority until termination independently of channel cleanup.
+Wrong-direction, duplicate, stale or mismatched traffic terminates the owned
+process. Service output remains opaque and unadopted. This public transport does
+not add an AI runner, credential store, project mutation boundary or Core grant.
+
+The SDK-owned process protocol is now 2. Rebuild and capture the current Host and
+regenerate consumers; earlier process-1 runtime descriptors are refused. Other
+protocol, project and installation format identities remain separately owned.
+
 ## Captured package and actual channel
 
 The trusted installer supplies immutable manifest/file bytes and an independently

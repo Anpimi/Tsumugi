@@ -51,7 +51,7 @@ fn descriptor_digest_matches_the_independent_profile_vector() {
     // field order, rather than from this implementation's returned bytes.
     assert_eq!(
         original.digest().unwrap(),
-        "4967a15b4bc2a884cc968a4dc3a6b398c8163bb1f83b2e7848385c5d9e4f6b25"
+        "0c1b4d9cb0087fe0c3d2bf05e5b8d64b7d3b775f4c37a6ff071174b25ea51ed7"
     );
     let mut fields: Vec<_> = serde_json::to_value(&original)
         .unwrap()
@@ -85,7 +85,7 @@ fn node_execution_environment_keeps_its_exact_profile_bytes_and_digest() {
     );
     assert_eq!(
         wrapped.digest().unwrap(),
-        "4967a15b4bc2a884cc968a4dc3a6b398c8163bb1f83b2e7848385c5d9e4f6b25"
+        "0c1b4d9cb0087fe0c3d2bf05e5b8d64b7d3b775f4c37a6ff071174b25ea51ed7"
     );
     assert_eq!(
         serde_json::from_slice::<ExecutionEnvironmentDescriptor>(

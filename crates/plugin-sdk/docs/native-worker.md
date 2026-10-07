@@ -98,3 +98,10 @@ native entry point and checks original Unicode, serial results, heartbeat,
 identity refusal, authority revocation and direct-child cleanup. These synthetic
 transport tests do not prove a domain extraction/check/build workflow or Core
 adoption.
+
+This basic native component facade currently handles captured-input computation
+without service calls. It rejects a nonempty process-2 service table before
+activating author code, rather than claiming service readiness. Native authors
+who implement service calls directly must use the public process-2 contracts and
+observe the same exact context, schema, cancellation and lifetime rules. The
+JavaScript facade's service API does not imply a native facade implementation.

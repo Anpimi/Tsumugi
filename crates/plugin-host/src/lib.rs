@@ -10,6 +10,7 @@ mod filesystem;
 mod native_runtime;
 mod package;
 mod runtime;
+mod service;
 mod session;
 mod staging;
 mod tree;
@@ -22,6 +23,7 @@ pub use package::installation::{
 };
 pub use package::{PackageFile, PackageImage, PackageInspection};
 pub use runtime::{CapturedRuntime, RuntimeInspection, RuntimeInspectionRequest};
+pub use service::*;
 pub use session::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

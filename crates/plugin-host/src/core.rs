@@ -2,7 +2,7 @@
 //! channel. Plugins receive SDK data only; they receive no project store,
 //! transaction, or authorization renewal handle.
 
-use std::path::PathBuf;
+use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
 
 use tsumugi_core::execution::{
     Cancellation, DispatchRequest, ErrorCode, ExecutionError, FixedResult, PluginExecutionBinding,
@@ -12,8 +12,25 @@ use tsumugi_plugin_sdk as sdk;
 
 use crate::{
     CapturedNativeRuntime, CapturedRuntime, HostError, HostLimits, LaunchOptions, PackageImage,
-    ProcessSession, ReceivedResult, RuntimeLauncher, ScopeBinding,
+    ProcessSession, ProjectServiceBroker, ReceivedResult, RuntimeLauncher, ScopeBinding,
 };
+
+pub type ProjectServiceSelectionFuture =
+    Pin<Box<dyn Future<Output = Result<Arc<dyn ProjectServiceBroker>, ExecutionError>> + Send>>;
+
+/// Trusted per-dispatch service selection. A cached RunnerProxy must not hold
+/// a particular work plan's grant or scope. This factory captures those values
+/// separately for every actual request, permit and cancellation handle.
+/// Construction and polling must be bounded and nonblocking. Selection may
+/// queue a short project-owner operation, but cannot perform model work.
+pub trait ProjectServiceFactory: Send + Sync {
+    fn capture(
+        &self,
+        request: DispatchRequest,
+        permit: PluginPermit,
+        cancellation: Cancellation,
+    ) -> ProjectServiceSelectionFuture;
+}
 
 #[derive(Clone, Debug)]
 pub enum RunnerRuntime {
@@ -64,6 +81,7 @@ pub struct RunnerProxy {
     environment: sdk::ExecutionEnvironmentDescriptor,
     staging_parent: PathBuf,
     limits: HostLimits,
+    service_factory: Option<Arc<dyn ProjectServiceFactory>>,
 }
 
 impl RunnerProxy {
@@ -127,7 +145,49 @@ impl RunnerProxy {
             environment,
             staging_parent,
             limits,
+            service_factory: None,
         })
+    }
+
+    /// Attach a host-owned selection factory, never a fixed invocation grant.
+    /// A failed capture rejects execution; it does not launch without services.
+    pub fn with_service_factory(mut self, factory: Arc<dyn ProjectServiceFactory>) -> Self {
+        self.service_factory = Some(factory);
+        self
+    }
+
+    async fn capture_services(
+        &self,
+        request: &DispatchRequest,
+        permit: &PluginPermit,
+        cancellation: &Cancellation,
+    ) -> Result<Option<Arc<dyn ProjectServiceBroker>>, ExecutionError> {
+        let Some(factory) = &self.service_factory else {
+            return Ok(None);
+        };
+        require_live(request, permit, cancellation)?;
+        let mut selection = factory.capture(request.clone(), permit.clone(), cancellation.clone());
+        let handshake_deadline = tokio::time::Instant::now()
+            + Duration::from_millis(self.limits.handshake_timeout_ms.into());
+        let deadline = request
+            .deadline()
+            .map(tokio::time::Instant::from_std)
+            .map_or(handshake_deadline, |original| {
+                original.min(handshake_deadline)
+            });
+        loop {
+            require_live(request, permit, cancellation)?;
+            tokio::select! {
+                value = &mut selection => {
+                    require_live(request, permit, cancellation)?;
+                    return value.map(Some);
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(ExecutionError::new(ErrorCode::OutcomeUnknown, "plugin-service-selection-timeout"));
+                }
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
     }
 
     /// Capture this selection for a Core input. A capability with declared
@@ -178,6 +238,7 @@ impl RunnerProxy {
         cancellation: &Cancellation,
     ) -> Result<FixedResult, ExecutionError> {
         require_live(request, permit, cancellation)?;
+        let services = self.capture_services(request, permit, cancellation).await?;
         let project_id = request.input.envelope().project_id.to_string();
         let options = LaunchOptions {
             scope: ScopeBinding {
@@ -192,16 +253,35 @@ impl RunnerProxy {
         let live_request = request.clone();
         let live_permit = permit.clone();
         let live_cancellation = cancellation.clone();
-        let mut session = ProcessSession::launch(
-            &self.image,
-            &self.capability.provider.contribution_id,
-            &self.staging_parent,
-            &self.runtime.launcher(),
-            options,
-            move || is_live(&live_request, &live_permit, &live_cancellation),
-        )
-        .await
-        .map_err(|error| current_error(error, request, permit, cancellation))?;
+        let authority = move || is_live(&live_request, &live_permit, &live_cancellation);
+        let launcher = self.runtime.launcher();
+        let launched = match services {
+            Some(broker) => {
+                ProcessSession::launch_with_services(
+                    &self.image,
+                    &self.capability.provider.contribution_id,
+                    &self.staging_parent,
+                    &launcher,
+                    options,
+                    broker,
+                    authority,
+                )
+                .await
+            }
+            None => {
+                ProcessSession::launch(
+                    &self.image,
+                    &self.capability.provider.contribution_id,
+                    &self.staging_parent,
+                    &launcher,
+                    options,
+                    authority,
+                )
+                .await
+            }
+        };
+        let mut session =
+            launched.map_err(|error| current_error(error, request, permit, cancellation))?;
 
         // Every path after a successful launch closes the owned session, even
         // if request construction, invocation, or evidence validation fails.
@@ -334,7 +414,12 @@ impl Runner for RunnerProxy {
 }
 
 fn is_live(request: &DispatchRequest, permit: &PluginPermit, cancellation: &Cancellation) -> bool {
-    !cancellation.is_requested() && permit.matches(&request.input) && permit.is_authorized()
+    !cancellation.is_requested()
+        && request
+            .deadline()
+            .is_some_and(|deadline| std::time::Instant::now() < deadline)
+        && permit.matches(&request.input)
+        && permit.is_authorized()
 }
 
 fn require_live(
@@ -346,6 +431,15 @@ fn require_live(
         return Err(ExecutionError::new(
             ErrorCode::Cancelled,
             "plugin-cancelled",
+        ));
+    }
+    if !request
+        .deadline()
+        .is_some_and(|deadline| std::time::Instant::now() < deadline)
+    {
+        return Err(ExecutionError::new(
+            ErrorCode::OutcomeUnknown,
+            "plugin-timeout",
         ));
     }
     if !permit.matches(&request.input) || !permit.is_authorized() {

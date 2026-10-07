@@ -235,10 +235,12 @@ fn enabling_rechecks_actual_artifact_bytes_but_disabling_needs_no_valid_bytes() 
     fs::write(&worker, b"tampered").unwrap();
     fs::set_permissions(worker, fs::Permissions::from_mode(0o400)).unwrap();
     assert!(fixture.owner.lookup(&Fixture::provider(&enabled)).is_err());
-    assert!(fixture
-        .owner
-        .enable_package(Fixture::enable(&enabled, true))
-        .is_err());
+    assert!(
+        fixture
+            .owner
+            .enable_package(Fixture::enable(&enabled, true))
+            .is_err()
+    );
     let disabled = fixture
         .owner
         .enable_package(Fixture::enable(&enabled, false))
@@ -411,9 +413,9 @@ fn accepted_install_finishes_and_can_reconcile_after_reply_is_dropped() {
 #[test]
 fn registered_package_ipc_installs_enables_and_looks_up_real_store_bytes() {
     use tauri::{
+        Manager,
         ipc::{CallbackFn, InvokeBody},
         webview::InvokeRequest,
-        Manager,
     };
     let fixture = Fixture::new();
     let app = crate::commands::register_commands(tauri::test::mock_builder())
@@ -460,11 +462,10 @@ fn registered_package_ipc_installs_enables_and_looks_up_real_store_bytes() {
     assert!(!installed.package_decisions[0].enabled);
     let provider = Fixture::provider(&installed);
     let lookup = serde_json::json!({"provider":provider});
-    assert!(tauri::test::get_ipc_response(
-        &window,
-        invoke("lookup_plugin_capability", lookup.clone())
-    )
-    .is_err());
+    assert!(
+        tauri::test::get_ipc_response(&window, invoke("lookup_plugin_capability", lookup.clone()))
+            .is_err()
+    );
     let enable = Fixture::enable(&installed, true);
     let enabled = tauri::test::get_ipc_response(
         &window,
@@ -484,14 +485,16 @@ fn registered_package_ipc_installs_enables_and_looks_up_real_store_bytes() {
         plugin: provider.plugin,
         package_digest: provider.package_digest,
     };
-    assert!(tauri::test::get_ipc_response(
-        &window,
-        invoke(
-            "read_plugin_package",
-            serde_json::to_value(package).unwrap()
+    assert!(
+        tauri::test::get_ipc_response(
+            &window,
+            invoke(
+                "read_plugin_package",
+                serde_json::to_value(package).unwrap()
+            )
         )
-    )
-    .is_ok());
+        .is_ok()
+    );
     let mut untrusted = serde_json::to_value(request).unwrap();
     untrusted["origin"] = serde_json::json!("forged");
     assert!(
@@ -499,4 +502,148 @@ fn registered_package_ipc_installs_enables_and_looks_up_real_store_bytes() {
             .is_err()
     );
     assert_eq!(owner.inventory().unwrap().settings_revision.get(), 2);
+}
+
+#[test]
+fn settings_epoch_is_revoked_before_a_failed_store_update_and_never_restored() {
+    let fixture = Fixture::new();
+    let (_, installed) = fixture.install();
+    let original = fixture
+        .owner
+        .with_environment_authority(installed.settings_revision, Ok)
+        .unwrap();
+    let settings_bytes = fs::read(fixture.root().join("settings.json")).unwrap();
+    let request = Fixture::enable(&installed, false);
+    // Retain a captured settings intent, as on the ordinary same-action retry.
+    // Corrupting only this synthetic Store makes its next actual update fail
+    // before promotion. The old token must already have been withdrawn.
+    {
+        let mut manager = fixture.owner.manager.lock().unwrap();
+        let settings = manager.store.as_ref().unwrap().settings(|| true).unwrap();
+        manager.pending = Some(PendingMutation {
+            request: MutationRequest::Enable(request.clone()),
+            desired: PluginSettingsUpdate {
+                packages: settings.packages().to_vec(),
+                runtimes: settings.runtimes().to_vec(),
+            },
+            packages: vec![],
+            runtime: None,
+            settings_confirmed: false,
+            complete: false,
+            unknown: false,
+        });
+    }
+    fixture.rewrite_settings(b"synthetic invalid settings");
+    let error = fixture.owner.enable_package(request.clone()).unwrap_err();
+    assert_eq!(error.reason.as_deref(), Some("plugin-settings-corrupt"));
+    assert_ne!(error.code, CommandErrorCode::OutcomeUnknown);
+    assert!(
+        original.is_requested(),
+        "the Store failed before writing any settings"
+    );
+    assert_eq!(
+        fs::read(fixture.root().join("settings.json")).unwrap(),
+        b"synthetic invalid settings"
+    );
+    fixture.rewrite_settings(&settings_bytes);
+    let fresh = fixture
+        .owner
+        .with_environment_authority(installed.settings_revision, Ok)
+        .unwrap();
+    assert!(
+        !fresh.is_requested(),
+        "fresh capture reads the unchanged actual revision"
+    );
+    assert!(original.is_requested());
+    let result = fixture.owner.enable_package(request).unwrap();
+    assert!(fresh.is_requested());
+    assert_eq!(
+        result.settings_revision.get(),
+        installed.settings_revision.get() + 1
+    );
+    assert!(
+        fixture
+            .owner
+            .with_environment_authority(installed.settings_revision, Ok)
+            .is_err()
+    );
+    let current = fixture
+        .owner
+        .with_environment_authority(result.settings_revision, Ok)
+        .unwrap();
+    assert!(!current.is_requested());
+    assert!(original.is_requested());
+}
+
+#[test]
+fn settings_unknown_blocks_fresh_epoch_but_unrelated_package_unknown_does_not() {
+    let fixture = Fixture::new();
+    let revision = fixture.owner.environment_settings_revision().unwrap();
+    let original = fixture
+        .owner
+        .with_environment_authority(revision, Ok)
+        .unwrap();
+    let (request, installed) = fixture.install();
+    assert!(original.is_requested());
+    let confirmed = fixture
+        .owner
+        .with_environment_authority(installed.settings_revision, Ok)
+        .unwrap();
+    // Model a lost settings durability acknowledgement. The exact retry below
+    // uses the real Store's original-action confirmation without rewriting it.
+    {
+        let mut manager = fixture.owner.manager.lock().unwrap();
+        let pending = manager.pending.as_mut().unwrap();
+        pending.complete = false;
+        pending.settings_confirmed = false;
+        pending.unknown = true;
+    }
+    let mut entered = false;
+    let error = fixture
+        .owner
+        .with_environment_authority(installed.settings_revision, |_| {
+            entered = true;
+            Ok(())
+        })
+        .unwrap_err();
+    assert_eq!(error.code, CommandErrorCode::OutcomeUnknown);
+    assert_eq!(error.reason.as_deref(), Some("plugin-result-unconfirmed"));
+    assert!(!entered);
+    assert!(confirmed.is_requested());
+    assert_eq!(
+        fixture.owner.install_package(request.clone()).unwrap(),
+        installed
+    );
+    let fresh = fixture
+        .owner
+        .with_environment_authority(installed.settings_revision, Ok)
+        .unwrap();
+    assert!(!fresh.is_requested());
+    assert!(confirmed.is_requested());
+    let before = fs::read(fixture.root().join("settings.json")).unwrap();
+    {
+        let mut manager = fixture.owner.manager.lock().unwrap();
+        let pending = manager.pending.as_mut().unwrap();
+        assert!(pending.settings_confirmed);
+        pending.complete = false;
+        pending.unknown = true;
+    }
+    let independent = fixture
+        .owner
+        .with_environment_authority(installed.settings_revision, Ok)
+        .unwrap();
+    assert!(!independent.is_requested());
+    assert!(
+        !fresh.is_requested(),
+        "confirmed settings retain their one live epoch"
+    );
+    assert_eq!(
+        fs::read(fixture.root().join("settings.json")).unwrap(),
+        before
+    );
+    assert_eq!(fixture.owner.install_package(request).unwrap(), installed);
+    assert!(
+        !fresh.is_requested(),
+        "reconciliation of an unrelated object does not renew settings"
+    );
 }

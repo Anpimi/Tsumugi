@@ -1,7 +1,7 @@
 //! Authorized selection orchestration owns values and action identities, not a store.
 use super::*;
 use tsumugi_core::{
-    ComputedAutomaticSelection, PreparedAutomaticSelection,
+    ComputedAutomaticSelection, PreparedAutomaticSelection, ReviewCheckOrigin, ReviewCheckerKey,
     application::{AutomaticSelectionReceipt, AutomaticSelectionRequest, SelectionPolicy},
 };
 
@@ -37,17 +37,22 @@ struct Item {
     view: EffectView,
     checker: Option<CheckerAttempt>,
 }
-struct CheckerAttempt {
-    prepared: PreparedAutomaticSelection,
+struct CheckerChannel {
+    key: ReviewCheckerKey,
     input: FixedInput,
     grant_id: ExecutionId,
-    expires_at_ms: u64,
-    cancellation: Cancellation,
     cancel_action: ExecutionId,
     cancellation_sent: bool,
     submitted: bool,
+}
+struct CheckerAttempt {
+    prepared: PreparedAutomaticSelection,
+    channels: Vec<CheckerChannel>,
+    expires_at_ms: u64,
+    cancellation: Cancellation,
     pending: bool,
 }
+
 struct Attempt {
     input: FixedInput,
     items: BTreeMap<ExecutionId, Item>,
@@ -80,16 +85,49 @@ fn phase_for(receipt: &AutomaticSelectionReceipt) -> EffectPhase {
     }
 }
 fn failure(item: &mut Item, error: ExecutionError) {
-    item.view.phase = if error.code == ErrorCode::Cancelled {
+    command_failure(item, map_adopt(error));
+}
+fn command_failure(item: &mut Item, error: CommandError) {
+    item.view.phase = if error.code == CommandErrorCode::Cancelled {
         EffectPhase::Cancelled
     } else {
         EffectPhase::Failed
     };
     item.view.retryable = matches!(
         error.code,
-        ErrorCode::Busy | ErrorCode::StorageFailed | ErrorCode::OutcomeUnknown
+        CommandErrorCode::Busy | CommandErrorCode::StorageFailed | CommandErrorCode::OutcomeUnknown
     );
-    item.view.error = Some(map_adopt(error));
+    item.view.error = Some(error);
+}
+fn cancel_channels(
+    checker: &mut CheckerAttempt,
+    store: &mut ProjectStore,
+    runtime: &mut ExecutionRuntime,
+) -> Result<(), ExecutionError> {
+    for channel in checker
+        .channels
+        .iter_mut()
+        .filter(|channel| channel.submitted && !channel.cancellation_sent)
+    {
+        // Submission can fail after its durable enqueue. Revoke the existing
+        // grant even when no attempt frame was written; never invent a result.
+        runtime.revoke_plugin(store, channel.grant_id)?;
+        match store.execution_input(channel.input.envelope().attempt_id) {
+            Ok(_) => {
+                runtime.cancel(
+                    store,
+                    channel.input.envelope().task_id,
+                    channel.cancel_action,
+                )?;
+            }
+            Err(error)
+                if error.code == ErrorCode::InvalidInput && error.stage == "execution-storage" => {}
+            Err(error) => return Err(error),
+        }
+        channel.cancellation_sent = true;
+    }
+    checker.pending = false;
+    Ok(())
 }
 pub(in crate::commands::execution) fn commit_candidate(
     store: &mut ProjectStore,
@@ -131,10 +169,11 @@ impl Automation {
         };
         store.check_work_plan_input(input)?;
         let plan = store.work_plan(lease.plan_id)?;
-        if let Some(binding) = store.work_plan_review_binding(&plan)? {
+        let bindings = store.work_plan_review_checkers(&plan)?;
+        if !bindings.is_empty() {
             if consent
                 .as_ref()
-                .is_none_or(|consent| consent.lease != lease || consent.binding != binding)
+                .is_none_or(|consent| consent.lease != lease || consent.bindings != bindings)
             {
                 return Err(ExecutionError::new(
                     ErrorCode::Unauthorized,
@@ -237,6 +276,100 @@ impl Automation {
         item.view.retryable = false;
         Ok(())
     }
+    /// Check application authority before the ordinary runtime can dispatch
+    /// queued checker inputs. Historical receipts do not recreate that authority.
+    pub(super) fn prepare_runtime_tick(
+        &mut self,
+        store: &mut ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<Option<work_plans::CheckerConsent>, CommandError> {
+        let mut dispatch_consent = None;
+        for (id, attempt) in &mut self.attempts {
+            let controlled = store
+                .check_work_plan_input(&attempt.input)
+                .map_err(map_adopt);
+            let needs_authority = attempt.items.values().any(|item| {
+                item.view.receipt.is_none()
+                    && (matches!(
+                        item.view.phase,
+                        EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
+                    ) || item
+                        .checker
+                        .as_ref()
+                        .is_some_and(|checker| !checker.cancellation.is_requested()))
+            });
+            let authority = if controlled.is_ok() && needs_authority {
+                match &attempt.consent {
+                    Some(consent) => consent.with_current_environment(|| Ok(())),
+                    None => Ok(()),
+                }
+            } else {
+                controlled
+            };
+            if let Err(error) = authority {
+                if matches!(
+                    error.code,
+                    CommandErrorCode::Busy
+                        | CommandErrorCode::StorageFailed
+                        | CommandErrorCode::OutcomeUnknown
+                ) {
+                    return Err(error);
+                }
+                for job in self.jobs.iter().filter(|job| job.attempt == *id) {
+                    job.cancellation.request();
+                }
+                for (item_id, item) in &mut attempt.items {
+                    if item.view.receipt.is_some() {
+                        continue;
+                    }
+                    // An uncertain selection commit can already have a durable
+                    // receipt. Reconcile it before withdrawing future authority.
+                    if let Some(lease) = attempt.input.envelope().automation {
+                        if let Some(revision) =
+                            store.saved_ai_candidate(*id, *item_id).map_err(map_adopt)?
+                        {
+                            if let Some(receipt) = store
+                                .automatic_selection_for_candidate(lease, revision)
+                                .map_err(map_adopt)?
+                            {
+                                item.revision = Some(revision);
+                                item.view.action_id = Some(receipt.request.action_id);
+                                item.view.phase = phase_for(&receipt);
+                                item.view.receipt = Some(receipt);
+                                item.view.error = None;
+                                item.view.retryable = false;
+                                continue;
+                            }
+                        }
+                    }
+                    if let Some(checker) = &item.checker {
+                        checker.cancellation.request();
+                    }
+                    command_failure(item, error.clone());
+                    item.view.retryable = false;
+                }
+            }
+            for item in attempt.items.values_mut() {
+                if let Some(checker) = &mut item.checker {
+                    if checker.cancellation.is_requested() {
+                        cancel_channels(checker, store, runtime).map_err(map_adopt)?;
+                        if item.view.phase != EffectPhase::Failed && item.view.receipt.is_none() {
+                            item.view.phase = EffectPhase::Cancelled;
+                            item.view.retryable = false;
+                        }
+                    } else if item.view.receipt.is_none()
+                        && checker
+                            .channels
+                            .iter()
+                            .any(|channel| channel.submitted && !channel.cancellation_sent)
+                    {
+                        dispatch_consent = attempt.consent.clone();
+                    }
+                }
+            }
+        }
+        Ok(dispatch_consent)
+    }
     pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
         self.retired.retain(|thread| !thread.is_finished());
         // Control is checked before accepting results or dispatching another checker.
@@ -275,67 +408,111 @@ impl Automation {
             };
             let job = self.jobs.remove(index);
             self.retired.push(job.thread);
-            let Some(item) = self
-                .attempts
-                .get_mut(&job.attempt)
-                .and_then(|attempt| attempt.items.get_mut(&job.item))
-            else {
+            let Some(attempt) = self.attempts.get_mut(&job.attempt) else {
+                continue;
+            };
+            let consent = attempt.consent.clone();
+            let Some(item) = attempt.items.get_mut(&job.item) else {
                 continue;
             };
             if job.cancellation.is_requested() {
                 continue;
             }
-            let result = result.and_then(|computed| match computed {
-                Computed::Candidate(prepared) => {
-                    commit_candidate(store, prepared, job.attempt, job.item).map(|revision| {
-                        item.revision = Some(revision);
-                        item.view.phase = EffectPhase::Waiting;
+            let commit = || {
+                result
+                    .and_then(|computed| match computed {
+                        Computed::Candidate(prepared) => {
+                            commit_candidate(store, prepared, job.attempt, job.item).map(
+                                |revision| {
+                                    item.revision = Some(revision);
+                                    item.view.phase = EffectPhase::Waiting;
+                                },
+                            )
+                        }
+                        Computed::Selection(computed) => store
+                            .commit_automatic_selection(computed, &job.cancellation)
+                            .map(|receipt| {
+                                item.view.phase = phase_for(&receipt);
+                                item.view.receipt = Some(receipt);
+                            }),
                     })
-                }
-                Computed::Selection(computed) => store
-                    .commit_automatic_selection(computed, &job.cancellation)
-                    .map(|receipt| {
-                        item.view.phase = phase_for(&receipt);
-                        item.view.receipt = Some(receipt);
-                    }),
-            });
+                    .map_err(map_adopt)
+            };
+            let result = match consent {
+                Some(consent) => consent.with_current_environment(commit),
+                None => commit(),
+            };
             if let Err(error) = result {
-                failure(item, error);
+                command_failure(item, error);
             }
         }
         // The ordinary runtime owns native execution and its cancellation. Only
         // owned evidence leaves the project thread for Core/domain computation.
         for (attempt_id, attempt) in &mut self.attempts {
             for (item_id, item) in &mut attempt.items {
-                let Some(checker) = item.checker.as_mut().filter(|checker| checker.pending) else {
+                let Some(checker) = item.checker.as_mut() else {
                     continue;
                 };
-                if checker.cancellation.is_requested()
-                    && checker.submitted
-                    && !checker.cancellation_sent
-                {
-                    match runtime.cancel(
-                        store,
-                        checker.input.envelope().task_id,
-                        checker.cancel_action,
-                    ) {
-                        Ok(_) => checker.cancellation_sent = true,
-                        Err(error) => {
-                            failure(item, error);
-                            continue;
-                        }
+                if checker.cancellation.is_requested() {
+                    let cancelled = cancel_channels(checker, store, runtime);
+                    if let Err(error) = cancelled {
+                        failure(item, error);
+                        continue;
                     }
+                    checker.pending = false;
+                    if item.view.phase != EffectPhase::Failed {
+                        item.view.phase = EffectPhase::Cancelled;
+                    }
+                    item.view.retryable = false;
+                    continue;
                 }
-                let status = match runtime.attempt(store, checker.input.envelope().attempt_id) {
-                    Ok(status) => status,
+                if !checker.pending {
+                    continue;
+                }
+                let observed: Result<Option<Vec<ReviewCheckOrigin>>, ExecutionError> = (|| {
+                    let mut origins = Vec::with_capacity(checker.channels.len());
+                    for channel in &checker.channels {
+                        let status = runtime.attempt(store, channel.input.envelope().attempt_id)?;
+                        let detail = status.items.first().ok_or_else(|| {
+                            ExecutionError::new(ErrorCode::CorruptLedger, "work-check-item")
+                        })?;
+                        if matches!(
+                            detail.execution,
+                            ExecutionState::Queued | ExecutionState::Dispatched
+                        ) {
+                            return Ok(None);
+                        }
+                        let result = store
+                            .execution_current_result(
+                                channel.input.envelope().attempt_id,
+                                detail.item_id,
+                            )?
+                            .ok_or_else(|| {
+                                ExecutionError::new(
+                                    ErrorCode::OutcomeUnknown,
+                                    "work-check-execution",
+                                )
+                            })?;
+                        origins.push(ReviewCheckOrigin {
+                            checker: channel.key.clone(),
+                            attempt_id: channel.input.envelope().attempt_id,
+                            result_id: result,
+                        });
+                    }
+                    Ok(Some(origins))
+                })(
+                );
+                let origins = match observed {
+                    Ok(None) => continue,
+                    Ok(Some(origins)) => origins,
                     Err(error)
                         if matches!(
                             error.code,
                             ErrorCode::Busy | ErrorCode::StorageFailed | ErrorCode::OutcomeUnknown
                         ) =>
                     {
-                        // An uncertain read cannot prove the accepted checker stopped.
-                        item.view.error = Some(map_read(error));
+                        checker.pending = false;
+                        failure(item, error);
                         continue;
                     }
                     Err(error) => {
@@ -344,64 +521,23 @@ impl Automation {
                         continue;
                     }
                 };
-                let Some(detail) = status.items.first() else {
-                    checker.pending = false;
-                    failure(
-                        item,
-                        ExecutionError::new(ErrorCode::CorruptLedger, "work-check-item"),
-                    );
-                    continue;
-                };
-                if matches!(
-                    detail.execution,
-                    ExecutionState::Queued | ExecutionState::Dispatched
-                ) {
-                    continue;
-                }
-                if self.jobs.len() >= MAX_COMPUTATIONS
-                    && detail.execution == ExecutionState::Succeeded
-                    && !checker.cancellation.is_requested()
-                {
+                if self.jobs.len() >= MAX_COMPUTATIONS {
                     continue;
                 }
                 checker.pending = false;
-                if checker.cancellation.is_requested() {
-                    item.view.phase = EffectPhase::Cancelled;
-                    item.view.retryable = false;
-                    continue;
-                }
-                if detail.execution != ExecutionState::Succeeded {
-                    failure(
-                        item,
-                        ExecutionError::new(
-                            if detail.execution == ExecutionState::Unknown {
-                                ErrorCode::OutcomeUnknown
-                            } else {
-                                ErrorCode::OutputInvalid
-                            },
-                            "work-check-execution",
-                        ),
-                    );
-                    continue;
-                }
-                let captured = store
-                    .execution_current_result(checker.input.envelope().attempt_id, detail.item_id)
-                    .and_then(|result| {
-                        result.ok_or_else(|| {
-                            ExecutionError::new(ErrorCode::CorruptLedger, "work-check-result")
-                        })
-                    })
-                    .and_then(|result| {
-                        store.capture_automatic_selection_execution(
-                            checker.prepared.clone(),
-                            checker.input.envelope().attempt_id,
-                            result,
-                        )
-                    });
+                let capture = || {
+                    store
+                        .capture_automatic_selection_execution(checker.prepared.clone(), &origins)
+                        .map_err(map_adopt)
+                };
+                let captured = match &attempt.consent {
+                    Some(consent) => consent.with_current_environment(capture),
+                    None => capture(),
+                };
                 let captured = match captured {
                     Ok(captured) => captured,
                     Err(error) => {
-                        failure(item, error);
+                        command_failure(item, error);
                         continue;
                     }
                 };
@@ -494,7 +630,8 @@ impl Automation {
                     }
                     continue;
                 }
-                let launch = (|| {
+                let consent = attempt.consent.clone();
+                let mut launch = || {
                     let input = &attempt.input;
                     let result = store
                         .execution_current_result(*attempt_id, *item_id)?
@@ -503,8 +640,11 @@ impl Automation {
                         })?;
                     item.revision = store.saved_ai_candidate(*attempt_id, *item_id)?;
                     if let Some(revision) = item.revision {
-                        if store.work_plan(input.envelope().automation.unwrap().plan_id)?
-                            .options.selection_policy == SelectionPolicy::CandidatesOnly
+                        if store
+                            .work_plan(input.envelope().automation.unwrap().plan_id)?
+                            .options
+                            .selection_policy
+                            == SelectionPolicy::CandidatesOnly
                         {
                             // Saving is an independently authorized effect. A
                             // candidate-only plan never requests checks or selection.
@@ -540,7 +680,7 @@ impl Automation {
                                 .as_ref()
                                 .filter(|consent| {
                                     consent.lease == request.lease
-                                        && &consent.binding == plan.binding()
+                                        && consent.bindings == plan.checkers()
                                 })
                                 .ok_or_else(|| {
                                     ExecutionError::new(
@@ -572,19 +712,27 @@ impl Automation {
                                         "work-plan-control",
                                     ));
                                 }
-                                let domain = prepared
-                                    .review_check()
+                                let check = prepared.review_check().unwrap();
+                                let channels = check
+                                    .plan()
                                     .unwrap()
-                                    .domain_execution_input(ExecutionId::new())?;
+                                    .checkers()
+                                    .iter()
+                                    .zip(check.execution_inputs())
+                                    .map(|(binding, input)| CheckerChannel {
+                                        key: binding.key.clone(),
+                                        input: input.clone(),
+                                        grant_id: ExecutionId::new(),
+                                        cancel_action: ExecutionId::new(),
+                                        cancellation_sent: false,
+                                        submitted: false,
+                                    })
+                                    .collect();
                                 item.checker = Some(CheckerAttempt {
                                     prepared,
-                                    input: domain,
-                                    grant_id: ExecutionId::new(),
+                                    channels,
                                     expires_at_ms,
                                     cancellation: Cancellation::default(),
-                                    cancel_action: ExecutionId::new(),
-                                    cancellation_sent: false,
-                                    submitted: false,
                                     pending: false,
                                 });
                             }
@@ -595,20 +743,23 @@ impl Automation {
                                     "work-check-cancelled",
                                 ));
                             }
-                            // The fixed plan consents to this derived input; grant,
-                            // input and deadline remain original on every retry.
-                            runtime.authorize_plugin(
-                                store,
-                                checker.grant_id,
-                                &checker.input,
-                                checker.expires_at_ms,
-                                PluginConsent {
-                                    unsandboxed_execution: true,
-                                },
-                            )?;
-                            checker.submitted = true;
+                            for channel in &mut checker.channels {
+                                // Each exact channel retains its independent grant and deadline.
+                                if !channel.submitted {
+                                    runtime.authorize_plugin(
+                                        store,
+                                        channel.grant_id,
+                                        &channel.input,
+                                        checker.expires_at_ms,
+                                        PluginConsent {
+                                            unsandboxed_execution: true,
+                                        },
+                                    )?;
+                                    channel.submitted = true;
+                                }
+                                runtime.submit(store, &channel.input)?;
+                            }
                             checker.pending = true;
-                            runtime.submit(store, &checker.input)?;
                             return Ok(None);
                         }
                         let cancellation = Cancellation::default();
@@ -671,7 +822,13 @@ impl Automation {
                             thread,
                         }))
                     }
-                })();
+                };
+                let launch = match consent {
+                    Some(consent) => {
+                        consent.with_current_environment(|| launch().map_err(map_adopt))
+                    }
+                    None => launch().map_err(map_adopt),
+                };
                 match launch {
                     Ok(Some(job)) => {
                         self.jobs.push(job);
@@ -682,7 +839,7 @@ impl Automation {
                             occupied += 1;
                         }
                     }
-                    Err(error) => failure(item, error),
+                    Err(error) => command_failure(item, error),
                 }
             }
         }

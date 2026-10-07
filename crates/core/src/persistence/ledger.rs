@@ -2684,9 +2684,40 @@ fn require_unsuperseded_result(
     Ok(())
 }
 
-/// A live, unsuperseded result from the ordinary plugin channel. Reading this
-/// evidence does not validate a domain contract or adopt business state.
-pub(super) fn capture_current_plugin_result_in(
+/// Review alone may preserve a real terminal error as advisory evidence. The
+/// generic adoption guard remains succeeded-only for every other operation.
+fn require_current_review_result(
+    connection: &Connection,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<(), ExecutionError> {
+    if input.envelope().operation != crate::execution::REVIEW_CHECK_OPERATION
+        || input.envelope().items.len() != 1
+        || !matches!(
+            result.envelope().outcome,
+            ExecutionState::Succeeded | ExecutionState::Failed | ExecutionState::Unknown
+        )
+        || result.envelope().plugin.is_none()
+    {
+        return Err(error(ErrorCode::ResultMismatch, "review-terminal-result"));
+    }
+    let (current, execution): (Option<String>, String) = connection.query_row(
+        "SELECT current_result_id,execution FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+        params![input.envelope().attempt_id.to_string(), result.envelope().item_id.to_string()],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    ).map_err(sql_error)?;
+    if current.as_deref() != Some(result.envelope().result_id.to_string().as_str())
+        || execution != encode_enum(result.envelope().outcome)?
+    {
+        return Err(error(
+            ErrorCode::ResultMismatch,
+            "review-terminal-current-result",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn capture_current_review_result_in(
     connection: &Connection,
     authority: &crate::execution::plugin_authority::PluginAuthority,
     attempt: ExecutionId,
@@ -2694,25 +2725,13 @@ pub(super) fn capture_current_plugin_result_in(
 ) -> Result<ResultValidationCapture, ExecutionError> {
     let input = load_input_cached(connection, attempt)?;
     let result = load_result(connection, &input, result)?;
-    let permit = super::plugin_execution::check_input_in(connection, &input, authority)?
-        .ok_or_else(|| error(ErrorCode::Unauthorized, "plugin-result-grant"))?;
-    require_current_result(connection, &input, &result)?;
-    require_unsuperseded_result(connection, &input, &result)?;
-    if result
-        .envelope()
-        .plugin
-        .as_ref()
-        .map(|e| e.authorization_id)
-        != Some(permit.grant_id())
-    {
-        return Err(error(ErrorCode::Unauthorized, "plugin-result-grant"));
-    }
+    recheck_current_review_result_in(connection, authority, &input, &result)?;
     Ok(ResultValidationCapture { input, result })
 }
 
-/// Rechecks owned immutable frames without repeating worker/domain receiving.
-/// The actual grant and current result are still checked at the write boundary.
-pub(super) fn recheck_current_plugin_result_in(
+/// Exact stored frames and the original live grant are required even when the
+/// actual worker returned Failed/Unknown. A caller envelope supplies no proof.
+pub(super) fn recheck_current_review_result_in(
     connection: &Connection,
     authority: &crate::execution::plugin_authority::PluginAuthority,
     input: &FixedInput,
@@ -2721,8 +2740,8 @@ pub(super) fn recheck_current_plugin_result_in(
     check_stored_input(connection, input)?;
     check_stored_result(connection, result)?;
     let permit = super::plugin_execution::check_input_in(connection, input, authority)?
-        .ok_or_else(|| error(ErrorCode::Unauthorized, "plugin-result-grant"))?;
-    require_current_result(connection, input, result)?;
+        .ok_or_else(|| error(ErrorCode::Unauthorized, "review-result-grant"))?;
+    require_current_review_result(connection, input, result)?;
     require_unsuperseded_result(connection, input, result)?;
     if result
         .envelope()
@@ -2731,7 +2750,7 @@ pub(super) fn recheck_current_plugin_result_in(
         .map(|e| e.authorization_id)
         != Some(permit.grant_id())
     {
-        return Err(error(ErrorCode::Unauthorized, "plugin-result-grant"));
+        return Err(error(ErrorCode::Unauthorized, "review-result-grant"));
     }
     Ok(())
 }

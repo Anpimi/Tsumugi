@@ -196,3 +196,28 @@ impl Drop for Fixture {
         removable(self.directory.path());
     }
 }
+
+impl ApplicationPlugins {
+    /// Withdraw a captured Node approval through the actual settings owner.
+    /// Native approval IPC deliberately cannot edit a captured Node identity.
+    pub(in crate::commands) fn replace_test_runtime_approvals(
+        &self,
+        runtimes: Vec<RuntimeApproval>,
+    ) {
+        let mut manager = self.try_manager().unwrap();
+        self.provision(&mut manager).unwrap();
+        let store = manager.store.as_mut().unwrap();
+        let current = store.settings(|| true).unwrap();
+        store
+            .update_settings(
+                current.revision(),
+                &ExecutionId::new().to_string(),
+                &PluginSettingsUpdate {
+                    packages: current.packages().to_vec(),
+                    runtimes,
+                },
+                || true,
+            )
+            .unwrap();
+    }
+}

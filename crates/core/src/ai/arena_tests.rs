@@ -93,7 +93,11 @@ fn cfg(url: &str) -> ArenaConfig {
 }
 fn runtime(store: &ProjectStore) -> ExecutionRuntime {
     let mut r = ExecutionRuntime::new(store).unwrap();
-    r.register_with_policy(Arc::new(ArenaRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    r.register_with_policy(
+        Arc::new(ArenaRunner::default()),
+        RecoveryPolicy::ExternalUnknown,
+    )
+    .unwrap();
     r
 }
 fn adopt(store: &mut ProjectStore, input: &FixedInput, item: ExecutionId) -> ExecutionId {
@@ -1000,9 +1004,13 @@ fn arena_both_domains_preserve_current_history_and_build_only_explicitly_reviewe
             .unwrap();
         let mut source_rt = ExecutionRuntime::new(&store).unwrap();
         if vtt {
-            source_rt.register_read_only(Arc::new(WebvttSourceRunner)).unwrap();
+            source_rt
+                .register_read_only(Arc::new(WebvttSourceRunner))
+                .unwrap();
         } else {
-            source_rt.register_read_only(Arc::new(SourceRunner)).unwrap();
+            source_rt
+                .register_read_only(Arc::new(SourceRunner))
+                .unwrap();
         }
         source_rt.submit(&mut store, &source).unwrap();
         drain(&mut source_rt, &mut store, source.envelope().attempt_id);
@@ -1049,7 +1057,11 @@ fn arena_both_domains_preserve_current_history_and_build_only_explicitly_reviewe
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut rt = ExecutionRuntime::new(&store).unwrap();
-        rt.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+        rt.register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
         rt.submit(&mut store, &ai).unwrap();
         drain(&mut rt, &mut store, ai.envelope().attempt_id);
         let ai_result = store

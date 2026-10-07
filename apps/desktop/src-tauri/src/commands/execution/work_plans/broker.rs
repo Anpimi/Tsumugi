@@ -233,13 +233,9 @@ pub(super) fn capture_selection(
     Ok(Some(tools))
 }
 
-pub(super) fn with_tools_revision<T>(
-    plugins: &ApplicationPlugins,
-    plan: &WorkPlan,
-    operation: impl FnOnce() -> Result<T, CommandError>,
-) -> Result<T, CommandError> {
+pub(super) fn tools_revision(plan: &WorkPlan) -> Result<Option<UnsignedDecimal>, CommandError> {
     let Some(tools) = &plan.tools else {
-        return operation();
+        return Ok(None);
     };
     tools.validate().map_err(map_recover)?;
     let revision = tools.entries[0].settings_revision;
@@ -250,7 +246,18 @@ pub(super) fn with_tools_revision<T>(
     {
         return Err(stale());
     }
-    plugins.with_environment_revision(revision, operation)
+    Ok(Some(revision))
+}
+
+pub(super) fn with_tools_revision<T>(
+    plugins: &ApplicationPlugins,
+    plan: &WorkPlan,
+    operation: impl FnOnce() -> Result<T, CommandError>,
+) -> Result<T, CommandError> {
+    match tools_revision(plan)? {
+        Some(revision) => plugins.with_environment_revision(revision, operation),
+        None => operation(),
+    }
 }
 
 pub(super) fn require_consent(
@@ -327,6 +334,7 @@ pub(super) fn restore_consent(
     plan: &WorkPlan,
     receipt: &WorkPlanReceipt,
     request: &impl Serialize,
+    plugins: &ApplicationPlugins,
 ) -> Result<(), CommandError> {
     let Some(intent) = host.work_plans.tool_intents.get(&receipt.action_id) else {
         return Ok(());
@@ -342,8 +350,23 @@ pub(super) fn restore_consent(
     {
         return Ok(());
     }
-    save_consent(host, store, plan, receipt)
-        .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))
+    let checker = match current_checker_consent(host, store, plan, receipt.lease) {
+        Ok(checker) => checker,
+        // A historical acknowledgement never recreates missing checker consent.
+        Err(error) if error.reason.as_deref() == Some("plugin-consent-required") => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
+    let restore = with_plan_environment_revision(plugins, plan, checker_revision, || {
+        save_consent(host, store, plan, receipt)
+            .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))
+    });
+    match restore {
+        // Preserve the historical acknowledgement while withdrawing authority
+        // whose captured settings have changed. No grant is recreated.
+        Err(error) if error.code == CommandErrorCode::DependencyConflict => Ok(()),
+        result => result,
+    }
 }
 
 fn current_consent(

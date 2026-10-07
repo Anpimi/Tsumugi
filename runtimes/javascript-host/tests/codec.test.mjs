@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { decodeFrame, encodeFrame, FrameDecoder } from '../dist/codec.js';
 import { PROCESS_PROFILE } from '../dist/generated/protocol.js';
-const frame = { protocolVersion: 1, body: { kind: 'ping', data: { nonce: 'roundtrip' } } };
+const frame = { protocolVersion: 2, body: { kind: 'ping', data: { nonce: 'roundtrip' } } };
 
 test('fragmented and coalesced frames preserve boundaries', () => {
   const bytes = encodeFrame(frame);
@@ -15,15 +15,15 @@ test('fragmented and coalesced frames preserve boundaries', () => {
 });
 test('strict wire parser rejects duplicate decoded keys, malformed JSON and invalid Unicode', () => {
   for (const source of [
-    '{"protocolVersion":1,"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"x"}}}',
-    '{"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"x","no\\u006ece":"y"}}}',
-    '{"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"x",}}}',
-    '{"protocolVersion":1,/* comment */"body":{"kind":"ping","data":{"nonce":"x"}}}',
+    '{"protocolVersion":2,"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"x"}}}',
+    '{"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"x","no\\u006ece":"y"}}}',
+    '{"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"x",}}}',
+    '{"protocolVersion":2,/* comment */"body":{"kind":"ping","data":{"nonce":"x"}}}',
     '\ufeff' + JSON.stringify(frame), JSON.stringify(frame) + 'true',
-    '{"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"\\ud800"}}}',
-    JSON.stringify(frame).replace(':1,', ':1.0,'),
-    JSON.stringify(frame).replace(':1,', ':1e0,'),
-    JSON.stringify(frame).replace(':1,', ':9007199254740993,'),
+    '{"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"\\ud800"}}}',
+    JSON.stringify(frame).replace(':2,', ':2.0,'),
+    JSON.stringify(frame).replace(':2,', ':2e0,'),
+    JSON.stringify(frame).replace(':2,', ':9007199254740993,'),
     JSON.stringify({ ...frame, unexpected: true }), JSON.stringify({ ...frame, protocolVersion: 99 }),
   ]) assert.throws(() => decodeFrame(Buffer.from(source)));
   assert.throws(() => decodeFrame(Buffer.from([0xff])));

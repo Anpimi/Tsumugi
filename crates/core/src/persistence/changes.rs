@@ -37,7 +37,10 @@ impl ChangeScope {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ChangeSnapshot {
-    #[cfg_attr(feature = "wire-schema", schemars(with = "crate::execution::ExecutionId"))]
+    #[cfg_attr(
+        feature = "wire-schema",
+        schemars(with = "crate::execution::ExecutionId")
+    )]
     pub epoch: String,
     pub sequence: Revision,
     pub progress_sequence: Revision,

@@ -65,6 +65,11 @@ origin. Reopening preserves historical associations but cannot reconstruct live
 authority or renew deadlines. This Core adapter requires the matching Process-2
 SDK and Host; production Desktop service selection remains separate integration.
 
+Core origin capture requires the installation owner's original one-way
+revocation signal. Every child authority check reads it directly, including
+before the real HTTP send after a reservation. Channel completion does not
+detach this signal or make settings changes wait for a project runtime tick.
+
 `authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit
 confirmation, the exact plan digest, the exact supported effect set and an expiry
 within the next 24 hours. It rechecks the plan inside the existing write
@@ -106,6 +111,9 @@ bytes from the plan, preserving model, destination, sharing, payload, dependenci
 output limits and effects. Preparation is read-only. Starting requires the exact
 prepared digest, uses the original runtime and Provider service, and retains the
 same candidate/check/selection service and independent checker consent.
+Starting a child rechecks the complete checker identities and the original
+installed-settings revision under the same guard used by plan authorization.
+Changed settings reject the start before the child is enqueued.
 All HTTP requests charge the original ancestors. Pause, stop, takeover, expiry
 or closing the project invalidates the scope; explicit Continue needs a new
 scope and retains the original cumulative budget. An old scope cannot cross

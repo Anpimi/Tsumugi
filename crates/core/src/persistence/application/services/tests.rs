@@ -107,6 +107,7 @@ struct Fixture {
     origin: WorkPlanServiceOrigin,
     dispatch: DispatchRequest,
     cancellation: Cancellation,
+    settings_revocation: Cancellation,
     call: WorkPlanServiceCall,
 }
 impl Fixture {
@@ -158,7 +159,7 @@ impl Fixture {
         let scope = store.work_plan_agent_scope(grant.lease).unwrap();
         let plugin = binding();
         let mut envelope = InputEnvelope::new(
-            root.envelope().project_id,
+            store.metadata().unwrap().project_id(),
             "fixture",
             &plugin.capability.declaration.contract.id,
             &plugin.capability_version(),
@@ -235,6 +236,7 @@ impl Fixture {
             },
         };
         let cancellation = Cancellation::default();
+        let settings_revocation = Cancellation::default();
         let origin = store
             .capture_work_plan_service_origin(
                 &scope,
@@ -243,6 +245,7 @@ impl Fixture {
                 &service,
                 dispatch.deadline().unwrap(),
                 &cancellation,
+                &settings_revocation,
             )
             .unwrap();
         let generation = AgentGenerationRequest {
@@ -266,6 +269,7 @@ impl Fixture {
             origin,
             dispatch,
             cancellation,
+            settings_revocation,
             call,
         }
     }
@@ -545,7 +549,8 @@ fn service_origin_rejects_forged_context_and_reconstructed_dispatch_deadlines() 
                 &invocation,
                 &fixture.origin.record.service,
                 fixture.origin.deadline(),
-                &fixture.cancellation
+                &fixture.cancellation,
+                &fixture.settings_revocation,
             )
             .is_err()
     );
@@ -566,7 +571,8 @@ fn service_origin_rejects_forged_context_and_reconstructed_dispatch_deadlines() 
                 &fixture.origin.record.invocation,
                 &fixture.origin.record.service,
                 fixture.origin.deadline(),
-                &fixture.cancellation
+                &fixture.cancellation,
+                &fixture.settings_revocation,
             )
             .unwrap_err()
             .code,
@@ -581,9 +587,19 @@ fn service_origin_rejects_forged_context_and_reconstructed_dispatch_deadlines() 
             &fixture.origin.record.service,
             Instant::now() + std::time::Duration::from_secs(3600),
             &fixture.cancellation,
+            &fixture.settings_revocation,
         )
         .unwrap();
-    assert_eq!(extended.deadline(), fixture.dispatch.deadline().unwrap());
+    assert_eq!(
+        extended.deadline(),
+        fixture.dispatch.deadline().unwrap().min(
+            fixture
+                .dispatch
+                .plugin_permit()
+                .unwrap()
+                .original_deadline()
+        )
+    );
     let mut expired = fixture.dispatch.clone();
     let deadline = expired.original_deadline.as_mut().unwrap();
     deadline.instant = Instant::now() - std::time::Duration::from_millis(1);
@@ -597,7 +613,8 @@ fn service_origin_rejects_forged_context_and_reconstructed_dispatch_deadlines() 
                 &fixture.origin.record.invocation,
                 &fixture.origin.record.service,
                 Instant::now() + std::time::Duration::from_secs(3600),
-                &fixture.cancellation
+                &fixture.cancellation,
+                &fixture.settings_revocation,
             )
             .unwrap_err()
             .code,
@@ -616,7 +633,8 @@ fn service_origin_rejects_forged_context_and_reconstructed_dispatch_deadlines() 
                 &fixture.origin.record.invocation,
                 &fixture.origin.record.service,
                 fixture.origin.deadline(),
-                &fixture.cancellation
+                &fixture.cancellation,
+                &fixture.settings_revocation,
             )
             .unwrap_err()
             .code,
@@ -645,7 +663,8 @@ fn service_origin_rejects_forged_context_and_reconstructed_dispatch_deadlines() 
                 &fixture.origin.record.invocation,
                 &wrong_service,
                 fixture.origin.deadline(),
-                &fixture.cancellation
+                &fixture.cancellation,
+                &fixture.settings_revocation,
             )
             .unwrap_err()
             .code,
@@ -733,7 +752,8 @@ fn service_child_retains_original_cancellation_until_terminal_and_cannot_restore
                 &fixture.origin.record.invocation,
                 &fixture.origin.record.service,
                 fixture.origin.deadline(),
-                &Cancellation::default()
+                &Cancellation::default(),
+                &Cancellation::default(),
             )
             .is_err()
     );
@@ -746,6 +766,15 @@ fn service_child_retains_original_cancellation_until_terminal_and_cannot_restore
 
 #[test]
 fn service_revocation_after_reservation_prevents_the_actual_http_send() {
+    revoke_after_reservation(false);
+}
+
+#[test]
+fn installed_settings_revocation_after_channel_completion_prevents_actual_http_send() {
+    revoke_after_reservation(true);
+}
+
+fn revoke_after_reservation(settings_changed: bool) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!(
@@ -754,6 +783,9 @@ fn service_revocation_after_reservation_prevents_the_actual_http_send() {
     );
     let mut fixture = Fixture::with_endpoint(endpoint);
     let (prepared, receipt) = fixture.submit();
+    if settings_changed {
+        fixture.complete_outer();
+    }
     let mut dispatch = fixture
         .store
         .dispatch_execution_item(
@@ -788,7 +820,13 @@ fn service_revocation_after_reservation_prevents_the_actual_http_send() {
             .store
             .reserve_provider_request(&dispatch, id, limit)
             .unwrap();
-        fixture.origin.revocation().request();
+        if settings_changed {
+            fixture.settings_revocation.request();
+            assert!(!fixture.cancellation.is_requested());
+            assert!(!fixture.origin.revocation().is_requested());
+        } else {
+            fixture.origin.revocation().request();
+        }
         reply.send(Ok(())).unwrap();
         assert_eq!(
             worker.join().unwrap().unwrap_err().code,
@@ -805,6 +843,13 @@ fn service_revocation_after_reservation_prevents_the_actual_http_send() {
         .unwrap()
         .unwrap();
     assert_eq!((budget.dispatched, budget.unresolved), (1, 1));
+    assert_eq!(
+        fixture
+            .store
+            .work_plan_service_receipt(&receipt.identity, &fixture.call)
+            .unwrap(),
+        Some(receipt)
+    );
 }
 
 #[test]
@@ -826,6 +871,7 @@ fn in_flight_http_wait_is_bounded_by_the_original_service_deadline() {
             &fixture.origin.record.service,
             deadline,
             &fixture.cancellation,
+            &fixture.settings_revocation,
         )
         .unwrap();
     let (prepared, receipt) = fixture.submit();

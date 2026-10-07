@@ -152,6 +152,7 @@ pub(crate) struct PluginEpoch {
 pub(crate) struct ServiceOriginGuard {
     pub(crate) permit: PluginPermit,
     pub(crate) cancellation: Cancellation,
+    pub(crate) settings_revocation: Cancellation,
     pub(crate) revoked: Cancellation,
     pub(crate) deadline: Instant,
     pub(crate) digest: String,
@@ -162,6 +163,7 @@ impl ServiceOriginGuard {
             self.revoked.request();
         }
         !self.cancellation.is_requested()
+            && !self.settings_revocation.is_requested()
             && !self.revoked.is_requested()
             && self.permit.is_authorized()
     }

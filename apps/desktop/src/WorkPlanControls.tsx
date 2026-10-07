@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { PluginPermissions } from "./PluginManager";
+import { ReviewCheckerDetails, checkerIdentity } from "./ReviewCheckers";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { useTranslation } from "react-i18next";
 import { enUS } from "./i18n/en-US";
+import { PluginPermissions } from "./PluginManager";
 import { aiCommands } from "./aiCommands";
 import { executionCommands, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -15,7 +16,7 @@ type Pending = { kind: "authorize"; request: WorkPlanAuthorizeRequest }
   | { kind: "start"; request: WorkPlanStartRequest; attemptId: string };
 
 export function WorkPlanControls({ context, prepared, status, busy, disabled, consent, refresh,
-  run, onPlan, onStarted, onBlockedChange, onOpenTranslation }: {
+  run, onPlan, onStarted, onBlockedChange, onOpenTranslation, onOpenExtensions }: {
   context: SessionRequest;
   prepared: WorkPlanView | null;
   status: WorkPlanStatusView | null;
@@ -28,11 +29,12 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   onStarted: (id: string, planId: string) => void;
   onBlockedChange: (blocked: boolean) => void;
   onOpenTranslation: (target: EditorTarget, locale: string) => void;
+  onOpenExtensions?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const [minutes, setMinutes] = useState(60);
   const [renewConsent, setRenewConsent] = useState(false);
-  const [checkerConsent, setCheckerConsent] = useState<string | null>(null);
+  const [checkerConsent, setCheckerConsent] = useState<string[]>([]);
   const [toolConsent, setToolConsent] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [ready, setReady] = useState<WorkPlanReceiptView | null>(null);
@@ -42,8 +44,11 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   const validMinutes = Number.isInteger(minutes) && minutes >= 1 && minutes <= 1440;
   const plan = status?.plan ?? prepared;
   const checkerRequired = Boolean(plan?.preview && plan.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted"));
-  const checkerKey = plan?.checker?.kind === "ready" ? JSON.stringify([context.sessionToken, context.projectId, plan.planId, plan.digest, status?.lease.generation ?? "prepared", plan.checker.plugin]) : null;
-  const checkerConfirmed = !checkerRequired || (checkerKey !== null && checkerConsent === checkerKey);
+  const checkerConsentKey = (checker: WorkPlanView["checkers"][number]) => JSON.stringify([context.sessionToken, context.projectId,
+    plan?.planId, plan?.digest, status?.lease.generation ?? "prepared", checker]);
+  const checkerConfirmed = !checkerRequired || Boolean(plan && plan.checkers.length > 0
+    && plan.checkers.every(checker => checker.kind === "ready" && checkerConsent.includes(checkerConsentKey(checker))));
+  const confirmedCheckers = () => checkerRequired && checkerConfirmed ? plan?.checkers.map(checker => checker.checker) ?? [] : [];
   const toolsRequired = Boolean(plan?.tools?.entries.length);
   const toolKey = toolsRequired && plan ? JSON.stringify([context.sessionToken, context.projectId, plan.planId, plan.digest, status?.lease.generation ?? "prepared", plan.tools]) : null;
   const toolsConfirmed = !toolsRequired || (toolKey !== null && toolConsent === toolKey);
@@ -103,7 +108,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     if (!current()) return;
     await mutate({ kind: "control", request: { ...context, planId: status.lease.planId, actionId,
       expectedGeneration: status.lease.generation, command, confirmed: command === "continue" && renewConsent,
-      checkerExecution: command === "continue" && checkerRequired && checkerConfirmed,
+      checkerExecutions: command === "continue" ? confirmedCheckers() : [],
       toolExecution: command === "continue" && toolsRequired && toolsConfirmed,
       expiresAt } }, current, command === "continue");
   }
@@ -154,19 +159,21 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
             onChange={event => setToolConsent(event.target.checked ? toolKey : null)} />{t("ai.tools.consent")}
         </label> : null}
       </section> : null}
-      {checkerRequired && plan.checker?.kind === "ready" ? <section aria-label={t("sourcePlugin.executionReview")}>
-        <p>{t("review.qaRun")} · {plan.checker.plugin.checker.provider.plugin.id} {plan.checker.plugin.checker.provider.plugin.version}</p>
-        <p>{t(plan.checker.plugin.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", {
-          version: plan.checker.plugin.environment.profile === "node-system-libraries-v1" ? plan.checker.plugin.environment.toolVersion : plan.checker.plugin.environment.hostVersion,
-          system: plan.checker.plugin.environment.platform.operatingSystem, architecture: plan.checker.plugin.environment.platform.architecture })}</p>
-        <PluginPermissions permissions={plan.checker.plugin.checker.declaration.permissions} />
-        <p>{t("sourcePlugin.unsandboxed")}</p>
-        {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
-          <input type="checkbox" checked={checkerKey !== null && checkerConsent === checkerKey} disabled={blocked || Boolean(ready)}
-            onChange={event => setCheckerConsent(event.target.checked ? checkerKey : null)} />{t("ai.plan.checkerConsent")}
-        </label> : null}
-      </section> : checkerRequired ? <div role="alert"><p>{t("ai.plan.checkerUnavailable")}</p>
-        {plan.checker?.kind === "unavailable" ? <CommandFailureDetails failure={commandFailure(plan.checker.error)} /> : null}</div> : null}
+      {checkerRequired ? <>
+        {plan.checkers.length === 0 ? <p role="alert">{t("ai.plan.checkerUnavailable")}</p> : null}
+        {onOpenExtensions && (plan.checkers.length === 0 || plan.checkers.some(checker => checker.kind === "unavailable")) ? <button type="button"
+          className="text-button" disabled={blocked} onClick={onOpenExtensions}>{t("review.openExtensions")}</button> : null}
+        {plan.checkers.map(checker => checker.kind === "ready" ? <fieldset key={checkerIdentity(checker.checker)}>
+          <legend>{t("review.checkerConsentScope", { plugin: `${checker.checker.provider.plugin.publisher}/${checker.checker.provider.plugin.id} ${checker.checker.provider.plugin.version}`, profile: checker.checker.profile.id })}</legend>
+          <ReviewCheckerDetails view={checker.plugin} />
+          {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
+            <input type="checkbox" checked={checkerConsent.includes(checkerConsentKey(checker))} disabled={blocked || Boolean(ready)}
+              onChange={event => { const key = checkerConsentKey(checker); setCheckerConsent(previous => event.target.checked ? [...previous.filter(value => value !== key), key] : previous.filter(value => value !== key)); }} />{t("ai.plan.checkerConsent")}
+          </label> : null}
+        </fieldset> : <div key={checkerIdentity(checker.checker)} role="alert"><p>{t("ai.plan.checkerUnavailable")}</p>
+          <p>{checker.checker.provider.plugin.publisher}/{checker.checker.provider.plugin.id} {checker.checker.provider.plugin.version}</p>
+          <CommandFailureDetails failure={commandFailure(checker.error)} /></div>)}
+      </> : null}
     </> : null}
     {prepared?.preview && !status && !ready && !pending ? <>
       {duration}
@@ -175,7 +182,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         const actionId = await executionCommands.identity(context);
         if (!current()) return;
         await mutate({ kind: "authorize", request: { ...context, planId: prepared.planId, digest: prepared.digest,
-          actionId, confirmed: consent, checkerExecution: checkerRequired && checkerConfirmed, toolExecution: toolsRequired && toolsConfirmed, effects: [...(prepared.options.selectionPolicy === "candidates-only" ? ["save-candidate"] as const : ["save-candidate", "run-checks", prepared.options.selectionPolicy === "missing-only" ? "select-missing" : "replace-captured-selection"] as const), ...(toolsRequired ? ["query-tools"] as const : [])] satisfies AutomationEffect[], expiresAt } }, current, true);
+          actionId, confirmed: consent, checkerExecutions: confirmedCheckers(), toolExecution: toolsRequired && toolsConfirmed, effects: [...(prepared.options.selectionPolicy === "candidates-only" ? ["save-candidate"] as const : ["save-candidate", "run-checks", prepared.options.selectionPolicy === "missing-only" ? "select-missing" : "replace-captured-selection"] as const), ...(toolsRequired ? ["query-tools"] as const : [])] satisfies AutomationEffect[], expiresAt } }, current, true);
       })}>{t("ai.generate")}</button>
     </> : null}
     {status ? <>

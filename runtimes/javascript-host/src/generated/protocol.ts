@@ -2,6 +2,8 @@
 export const PROCESS_PROFILE = {
   "maxFrameBytes": 25231360,
   "maxInvocationPayloadBytes": 4194304,
-  "protocolVersion": 1,
+  "maxServiceBindings": 16,
+  "maxServiceCalls": 128,
+  "protocolVersion": 2,
   "sdkVersion": "0.1.0-alpha.1"
 } as const;

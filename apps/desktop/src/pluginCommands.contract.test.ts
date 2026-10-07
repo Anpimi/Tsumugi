@@ -7,9 +7,32 @@ import runtime from "../test/fixtures/pluginRuntime.contract.json";
 import source from "../test/fixtures/pluginSource.contract.json";
 import translation from "../test/fixtures/pluginTranslation.contract.json";
 import build from "../test/fixtures/pluginBuild.contract.json";
+import { textReviewViewFixture } from "./testSupport/textReviewFixture";
+import { validateRequestTextReview, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+
+it("reads text declarations without a grant and preserves an unavailable Resource observation", async () => {
+  const view = textReviewViewFixture();
+  const request = { package: { plugin: view.binding.checker.provider.plugin, packageDigest: view.binding.checker.provider.packageDigest },
+    resourceId: view.resourceId, environmentDigest: view.environmentDigest };
+  expect(validateRequestTextReview(request)).toBe(true);
+  expect(validateRequestTextReview({ ...request, permissionGranted: true })).toBe(false);
+  expect(validateResponseTextReview(view)).toBe(true);
+  const missing = { settingsRevision: "1", entries: [{ package: request.package, resourceId: request.resourceId, environmentDigest: null,
+    availability: { kind: "unavailable", error: { code: "dependency-conflict", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-runtime-missing" } } }] };
+  expect(validateResponseTextReviews(missing)).toBe(true);
+  invoke.mockResolvedValueOnce(missing);
+  expect(await pluginCommands.textReviews()).toEqual(missing);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_text_reviews", { request: undefined });
+  invoke.mockResolvedValueOnce(view);
+  expect(await pluginCommands.textReview(request)).toEqual(view);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_text_review", { request });
+  invoke.mockResolvedValueOnce({ ...view, resourceId: "another-profile" });
+  await expect(pluginCommands.textReview(request)).rejects.toThrow("acknowledgement");
+  expect(validateResponseTextReview({ ...view, resourcePins: undefined })).toBe(false);
+});
 
 it("keeps the shared source recipe, exact providers and installed environment in one read snapshot", () => {
   expect(validateRequestSource(source.request)).toBe(true);
@@ -166,7 +189,7 @@ it("reads a declared translation pair and preserves metadata without accepting f
 
 it("reads strict Native decisions without treating them as installed Node environments", async () => {
   const environment = { protocolVersion: 1, platform: runtime.environment.platform,
-    sdkVersion: "0.1.0-alpha.1", processProtocol: 1, profile: "native-application-host-v1",
+    sdkVersion: "0.1.0-alpha.1", processProtocol: 2, profile: "native-application-host-v1",
     hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) } };
   const decision = { environment, environmentDigest: "b".repeat(64), origin: runtime.origin };
   const view = { ...fixture.empty, runtimeDecisions: [decision] };
@@ -185,7 +208,7 @@ it("reads strict Native decisions without treating them as installed Node enviro
 
 it("keeps current Native offers separate from installed Node files and refuses polluted offers", () => {
   const environment = { protocolVersion: 1, platform: runtime.environment.platform,
-    sdkVersion: "0.1.0-alpha.1", processProtocol: 1, profile: "native-application-host-v1",
+    sdkVersion: "0.1.0-alpha.1", processProtocol: 2, profile: "native-application-host-v1",
     hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) } };
   const offer = { availability: "available", environment, environmentDigest: "b".repeat(64), origin: runtime.origin };
   expect(validateResponseInventory({ ...fixture.empty, nativeHostOffer: offer })).toBe(true);

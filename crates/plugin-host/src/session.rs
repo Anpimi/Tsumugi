@@ -147,6 +147,10 @@ pub struct ProcessSession {
     invocations: u32,
     dispatches: BTreeSet<String>,
     result_ids: BTreeSet<String>,
+    service_broker: Option<Arc<dyn ProjectServiceBroker>>,
+    service_calls: BTreeSet<String>,
+    service_output_bytes: usize,
+    services_released: bool,
     termination: Option<CloseReceipt>,
     stop_ms: u32,
     cleanup_ms: u32,
@@ -158,6 +162,46 @@ impl ProcessSession {
         staging_parent: &Path,
         launcher: &RuntimeLauncher,
         options: LaunchOptions,
+        authorized: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> HostResult<Self> {
+        Self::launch_inner(
+            image,
+            contribution_id,
+            staging_parent,
+            launcher,
+            options,
+            None,
+            authorized,
+        )
+        .await
+    }
+    pub async fn launch_with_services(
+        image: &PackageImage,
+        contribution_id: &str,
+        staging_parent: &Path,
+        launcher: &RuntimeLauncher,
+        options: LaunchOptions,
+        broker: Arc<dyn ProjectServiceBroker>,
+        authorized: impl Fn() -> bool + Send + Sync + 'static,
+    ) -> HostResult<Self> {
+        Self::launch_inner(
+            image,
+            contribution_id,
+            staging_parent,
+            launcher,
+            options,
+            Some(broker),
+            authorized,
+        )
+        .await
+    }
+    async fn launch_inner(
+        image: &PackageImage,
+        contribution_id: &str,
+        staging_parent: &Path,
+        launcher: &RuntimeLauncher,
+        options: LaunchOptions,
+        broker: Option<Arc<dyn ProjectServiceBroker>>,
         authorized: impl Fn() -> bool + Send + Sync + 'static,
     ) -> HostResult<Self> {
         options.limits.validate()?;
@@ -198,9 +242,12 @@ impl ProcessSession {
             if component.scope != ComponentScope::Project {
                 return Err(HostError::UnsupportedRuntime);
             }
-            if component.dependencies.iter().any(|d| d.required) {
-                return Err(HostError::DependencyUnavailable);
-            }
+            let services = crate::service::select_service_bindings(
+                component,
+                declaration,
+                &options.scope,
+                broker.as_deref(),
+            )?;
             let runtime = match (component.runtime, launcher) {
                 (RuntimeKind::NativeWorker, RuntimeLauncher::Native) => None,
                 (RuntimeKind::NativeWorker, RuntimeLauncher::NativeCore { runtime }) => {
@@ -220,11 +267,20 @@ impl ProcessSession {
             };
             let authorized = Arc::new(authorized);
             let stage_guard = authorized.clone();
+            let stage_broker = broker.clone();
+            let stage_services = services.clone();
             let captured = image.clone();
             let parent = staging_parent.to_owned();
             let stage_runtime = runtime.clone();
             let directory = tokio::task::spawn_blocking(move || {
-                captured.stage(&parent, stage_runtime.as_ref(), || stage_guard())
+                captured.stage(&parent, stage_runtime.as_ref(), || {
+                    stage_guard()
+                        && stage_broker.as_ref().is_none_or(|broker| {
+                            stage_services
+                                .iter()
+                                .all(|binding| broker.is_current(binding))
+                        })
+                })
             })
             .await
             .map_err(|_| HostError::StageFailed)??;
@@ -269,6 +325,12 @@ impl ProcessSession {
             if !authorized() {
                 return Err(HostError::AuthorityRevoked);
             }
+            if broker
+                .as_ref()
+                .is_some_and(|broker| services.iter().any(|binding| !broker.is_current(binding)))
+            {
+                return Err(HostError::AuthorityRevoked);
+            }
             directory.verify_binding()?;
             if let RuntimeLauncher::NativeCore { runtime } = launcher {
                 runtime.require_current()?;
@@ -298,6 +360,7 @@ impl ProcessSession {
                     activation_generation: 1,
                 },
                 capability: declaration.clone(),
+                services,
             };
             let stop_ms = component
                 .exit
@@ -319,6 +382,10 @@ impl ProcessSession {
                 invocations: 0,
                 dispatches: BTreeSet::new(),
                 result_ids: BTreeSet::new(),
+                service_broker: broker,
+                service_calls: BTreeSet::new(),
+                service_output_bytes: 0,
+                services_released: false,
                 termination: None,
                 stop_ms,
                 cleanup_ms,
@@ -334,7 +401,19 @@ impl ProcessSession {
                     )
                     .await?;
                 match ready.body {
-                    ProcessBody::Ready(a) if a == session.activation => Ok(()),
+                    ProcessBody::Ready(a) if a == session.activation => {
+                        if session.service_broker.as_ref().is_some_and(|broker| {
+                            session
+                                .activation
+                                .services
+                                .iter()
+                                .any(|binding| !broker.is_current(binding))
+                        }) {
+                            Err(HostError::AuthorityRevoked)
+                        } else {
+                            Ok(())
+                        }
+                    }
                     _ => Err(HostError::HandshakeMismatch),
                 }
             }
@@ -359,6 +438,7 @@ impl ProcessSession {
     }
     pub fn is_accepting(&self) -> bool {
         self.accepting
+            && self.services_current()
             && !self.pipes.overflow.load(Ordering::Acquire)
             && self.pipes.receiver.is_empty()
     }
@@ -366,6 +446,14 @@ impl ProcessSession {
     /// cancellation/error. No receipt asserts rollback of external effects.
     pub fn termination_receipt(&self) -> Option<&CloseReceipt> {
         self.termination.as_ref()
+    }
+    fn services_current(&self) -> bool {
+        self.service_broker.as_ref().is_none_or(|broker| {
+            self.activation
+                .services
+                .iter()
+                .all(|binding| broker.is_current(binding))
+        })
     }
     fn send(&self, body: ProcessBody) -> HostResult<()> {
         let bytes = ProcessFrame::new(body)
@@ -387,11 +475,22 @@ impl ProcessSession {
         authorized: impl Fn() -> bool,
     ) -> HostResult<ProcessFrame> {
         let deadline = Instant::now() + Duration::from_millis(timeout_ms.into());
+        self.receive_until(deadline, frame_limit, cancelled, authorized)
+            .await
+            .map(|(frame, _)| frame)
+    }
+    async fn receive_until(
+        &mut self,
+        deadline: Instant,
+        frame_limit: usize,
+        cancelled: impl Fn() -> bool,
+        authorized: impl Fn() -> bool,
+    ) -> HostResult<(ProcessFrame, usize)> {
         loop {
             if cancelled() {
                 return Err(HostError::Cancelled);
             }
-            if !authorized() {
+            if !authorized() || !self.services_current() {
                 return Err(HostError::AuthorityRevoked);
             }
             if self.pipes.overflow.load(Ordering::Acquire) {
@@ -403,13 +502,15 @@ impl ProcessSession {
             tokio::select! {
                 event=self.pipes.receiver.recv() => {
                     if cancelled() { return Err(HostError::Cancelled); }
-                    if !authorized() { return Err(HostError::AuthorityRevoked); }
+                    if !authorized() || !self.services_current() { return Err(HostError::AuthorityRevoked); }
                     if self.pipes.overflow.load(Ordering::Acquire) { return Err(HostError::OutputLimit); }
+                    if Instant::now() >= deadline { return Err(HostError::Timeout); }
                     return match event {
                         // Preserve the original encoded size: parsing and then
                         // re-encoding would discard whitespace/escape overhead.
                         Some(Event::Frame(bytes)) if bytes.len() > frame_limit=>Err(HostError::OutputLimit),
-                        Some(Event::Frame(bytes))=>parse_process_frame(&bytes).map_err(|_| HostError::InvalidFrame),
+                        Some(Event::Frame(bytes))=>parse_process_frame(&bytes)
+                            .map(|frame| (frame, bytes.len())).map_err(|_| HostError::InvalidFrame),
                         Some(Event::Fault(error))=>Err(error),
                         None=>Err(HostError::ChannelFailed),
                     };
@@ -444,6 +545,107 @@ impl ProcessSession {
         }
         Ok(())
     }
+    async fn service_call(
+        &mut self,
+        service_request: ServiceRequest,
+        invocation: &InvocationRequest,
+        deadline: Instant,
+        cancelled: &impl Fn() -> bool,
+        authorized: &impl Fn() -> bool,
+    ) -> HostResult<()> {
+        let binding = self
+            .activation
+            .services
+            .iter()
+            .find(|binding| binding.handle_id == service_request.handle_id)
+            .cloned()
+            .ok_or(HostError::RequestMismatch)?;
+        service_request
+            .validate_against(&binding, &invocation.context)
+            .map_err(|_| HostError::RequestMismatch)?;
+        if self.service_calls.len() >= MAX_SERVICE_CALLS as usize {
+            return Err(HostError::OutputLimit);
+        }
+        if !self.service_calls.insert(service_request.call_id.clone()) {
+            return Err(HostError::RequestMismatch);
+        }
+        let broker = self
+            .service_broker
+            .clone()
+            .ok_or(HostError::RequestMismatch)?;
+        let caller = ServiceCaller::capture(self.channel(), invocation, deadline.into_std());
+        let captured_services = self.activation.services.clone();
+        let service_deadline =
+            deadline.min(Instant::now() + Duration::from_millis(binding.limits.timeout_ms.into()));
+        let check_live = || {
+            if cancelled() {
+                Err(HostError::Cancelled)
+            } else if !authorized()
+                || captured_services
+                    .iter()
+                    .any(|binding| !broker.is_current(binding))
+            {
+                Err(HostError::AuthorityRevoked)
+            } else if Instant::now() >= service_deadline {
+                Err(HostError::Timeout)
+            } else {
+                Ok(())
+            }
+        };
+        check_live()?;
+        // Construct only after current caller/binding checks. Dropping this
+        // bounded future on cancellation does not claim external rollback.
+        let mut call = broker.call(caller, binding.clone(), service_request.clone());
+        let response = loop {
+            check_live()?;
+            if self.pipes.overflow.load(Ordering::Acquire) {
+                return Err(HostError::OutputLimit);
+            }
+            tokio::select! {
+                response = &mut call => break response?,
+                event = self.pipes.receiver.recv() => {
+                    return Err(match event {
+                        Some(Event::Fault(error)) => error,
+                        Some(Event::Frame(_)) => HostError::UnexpectedFrame,
+                        None => HostError::ChannelFailed,
+                    });
+                }
+                _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+            }
+        };
+        check_live()?;
+        if self.pipes.overflow.load(Ordering::Acquire) {
+            return Err(HostError::OutputLimit);
+        }
+        if self.pipes.receiver.try_recv().is_ok() {
+            return Err(HostError::UnexpectedFrame);
+        }
+        response
+            .validate_against(&service_request, &binding)
+            .map_err(|_| HostError::ResultMismatch)?;
+        // Correlation is derived from the verified actual call, even after the
+        // broker's response has passed exact SDK matching.
+        let response = ServiceResponse {
+            call_id: service_request.call_id,
+            handle_id: binding.handle_id.clone(),
+            context: invocation.context.clone(),
+            outcome: response.outcome,
+        };
+        let body = ProcessBody::ServiceResponse(response);
+        let encoded_size = ProcessFrame::new(body.clone())
+            .encode()
+            .map_err(|_| HostError::InvalidContract)?
+            .len();
+        self.service_output_bytes = self
+            .service_output_bytes
+            .checked_add(encoded_size)
+            .ok_or(HostError::OutputLimit)?;
+        if self.service_output_bytes > self.options.limits.max_session_output_bytes {
+            return Err(HostError::OutputLimit);
+        }
+        check_live()?;
+        self.send(body)
+    }
     /// Cancellation/authority callbacks come from the current trusted owner.
     /// A revoked or uncertain invocation consumes this process channel, since
     /// arbitrary native code cannot promise rollback or prevent a late write.
@@ -461,7 +663,7 @@ impl ProcessSession {
             self.terminate().await;
             return Err(HostError::Cancelled);
         }
-        if !authorized() {
+        if !authorized() || !self.services_current() {
             self.terminate().await;
             return Err(HostError::AuthorityRevoked);
         }
@@ -478,26 +680,48 @@ impl ProcessSession {
         }
         self.invocations += 1;
         self.dispatches.insert(request.context.dispatch_id.clone());
-        if let Err(error) = self.send(ProcessBody::Invoke(request.clone())) {
-            self.terminate().await;
-            return Err(error);
-        }
-        let received = self
-            .receive(
+        let deadline = Instant::now()
+            + Duration::from_millis(
                 self.activation
                     .capability
                     .limits
                     .timeout_ms
-                    .min(self.options.limits.invocation_timeout_ms),
-                request.max_result_bytes as usize,
-                &cancelled,
-                &authorized,
-            )
-            .await;
-        let outcome = (|| {
-            let frame = received?;
-            let ProcessBody::Result(result) = frame.body else {
-                return Err(HostError::UnexpectedFrame);
+                    .min(self.options.limits.invocation_timeout_ms)
+                    .into(),
+            );
+        if let Err(error) = self.send(ProcessBody::Invoke(request.clone())) {
+            self.terminate().await;
+            return Err(error);
+        }
+        let outcome = async {
+            let result = loop {
+                let (frame, encoded_size) = self
+                    .receive_until(
+                        deadline,
+                        self.options.limits.max_frame_bytes,
+                        &cancelled,
+                        &authorized,
+                    )
+                    .await?;
+                match frame.body {
+                    ProcessBody::ServiceRequest(service_request) => {
+                        self.service_call(
+                            service_request,
+                            request,
+                            deadline,
+                            &cancelled,
+                            &authorized,
+                        )
+                        .await?;
+                    }
+                    ProcessBody::Result(result) => {
+                        if encoded_size > request.max_result_bytes as usize {
+                            return Err(HostError::OutputLimit);
+                        }
+                        break result;
+                    }
+                    _ => return Err(HostError::UnexpectedFrame),
+                }
             };
             check_result_payload(&result, self.activation.capability.limits.max_output_bytes)?;
             let bytes = serde_json::to_vec(&ExchangeDocument {
@@ -513,14 +737,18 @@ impl ProcessSession {
             if cancelled() {
                 return Err(HostError::Cancelled);
             }
-            if !authorized() {
+            if !authorized() || !self.services_current() {
                 return Err(HostError::AuthorityRevoked);
+            }
+            if Instant::now() >= deadline {
+                return Err(HostError::Timeout);
             }
             Ok(ReceivedResult {
                 result,
                 channel: self.channel(),
             })
-        })();
+        }
+        .await;
         if let Err(error) = outcome {
             if matches!(error, HostError::Cancelled | HostError::AuthorityRevoked) {
                 let _ = self.send(ProcessBody::Cancel {
@@ -564,6 +792,7 @@ impl ProcessSession {
     pub async fn close(&mut self) -> CloseReceipt {
         self.accepting = false;
         if self.directory.is_none() {
+            self.release_services();
             return self.termination.clone().unwrap_or(CloseReceipt {
                 cooperative_acknowledgement: false,
                 direct_child_reaped: false,
@@ -602,6 +831,7 @@ impl ProcessSession {
         let reaped = matches!(status, Ok(Ok(_)));
         let exit_code = status.ok().and_then(Result::ok).and_then(|s| s.code());
         self.abort_pipes();
+        self.release_services();
         if reaped {
             self.directory.take();
         }
@@ -621,8 +851,17 @@ impl ProcessSession {
             task.abort();
         }
     }
+    fn release_services(&mut self) {
+        if !self.services_released {
+            self.services_released = true;
+            if let Some(broker) = &self.service_broker {
+                broker.release_channel(&self.channel());
+            }
+        }
+    }
     async fn terminate(&mut self) {
         self.accepting = false;
+        self.release_services();
         self.kill_group();
         let status = timeout(
             Duration::from_millis(self.cleanup_ms.into()),
@@ -645,6 +884,7 @@ impl ProcessSession {
 impl Drop for ProcessSession {
     fn drop(&mut self) {
         self.accepting = false;
+        self.release_services();
         self.kill_group();
         self.abort_pipes();
         release_or_keep(&mut self.child, &mut self.directory);

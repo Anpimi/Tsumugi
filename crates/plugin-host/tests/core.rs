@@ -1389,3 +1389,303 @@ fn same_package_runs_two_fixed_node_environments_with_independent_grants() {
     assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
     make_removable_installation_fixture(&install_root);
 }
+
+struct DispatchServiceFactory {
+    selected: Arc<std::sync::Mutex<Vec<(ExecutionId, ExecutionId, ExecutionId)>>>,
+    calls: Arc<std::sync::Mutex<Vec<(ExecutionId, String)>>>,
+    released: Arc<std::sync::atomic::AtomicUsize>,
+    pending: bool,
+}
+impl tsumugi_plugin_host::core::ProjectServiceFactory for DispatchServiceFactory {
+    fn capture(
+        &self,
+        request: DispatchRequest,
+        permit: PluginPermit,
+        cancellation: Cancellation,
+    ) -> tsumugi_plugin_host::core::ProjectServiceSelectionFuture {
+        assert!(permit.matches(&request.input) && permit.is_authorized());
+        self.selected.lock().unwrap().push((
+            request.input.envelope().attempt_id,
+            request.dispatch_token,
+            permit.grant_id(),
+        ));
+        if self.pending {
+            return Box::pin(std::future::pending());
+        }
+        let project = request.input.envelope().project_id.to_string();
+        let binding = sdk::ServiceBinding {
+            handle_id: request.input.envelope().attempt_id.to_string(),
+            provider_id: "example.dispatch-service".into(),
+            contract: contract("example.service"),
+            input_schema: contract("example.service-input"),
+            output_schema: contract("example.service-output"),
+            error_schema: contract("example.service-error"),
+            effect: sdk::EffectKind::ReadOnly,
+            project_id: project.clone(),
+            scope_id: project,
+            activation_generation: 1,
+            configuration_digest: request.input.digest().into(),
+            limits: sdk::CapabilityLimits {
+                max_input_bytes: 1024,
+                max_output_bytes: 1024,
+                concurrency: 1,
+                timeout_ms: 500,
+            },
+        };
+        let broker: Arc<dyn ProjectServiceBroker> = Arc::new(DispatchServiceBroker {
+            bindings: vec![binding],
+            request,
+            permit,
+            cancellation,
+            calls: self.calls.clone(),
+            released: self.released.clone(),
+        });
+        Box::pin(async move { Ok(broker) })
+    }
+}
+struct DispatchServiceBroker {
+    bindings: Vec<sdk::ServiceBinding>,
+    request: DispatchRequest,
+    permit: PluginPermit,
+    cancellation: Cancellation,
+    calls: Arc<std::sync::Mutex<Vec<(ExecutionId, String)>>>,
+    released: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ProjectServiceBroker for DispatchServiceBroker {
+    fn bindings(&self) -> &[sdk::ServiceBinding] {
+        &self.bindings
+    }
+    fn is_current(&self, binding: &sdk::ServiceBinding) -> bool {
+        self.bindings.contains(binding)
+            && self.permit.matches(&self.request.input)
+            && self.permit.is_authorized()
+            && !self.cancellation.is_requested()
+    }
+    fn call<'a>(
+        &'a self,
+        caller: ServiceCaller,
+        binding: sdk::ServiceBinding,
+        request: sdk::ServiceRequest,
+    ) -> ProjectServiceFuture<'a> {
+        assert!(self.is_current(&binding));
+        assert_eq!(
+            caller.context().attempt_id,
+            self.request.input.envelope().attempt_id.to_string()
+        );
+        assert_eq!(
+            caller.context().dispatch_id,
+            self.request.dispatch_token.to_string()
+        );
+        let expected = self
+            .request
+            .input
+            .plugin_request(
+                self.request.item_id,
+                self.request.dispatch_token,
+                &caller.channel().provider,
+            )
+            .unwrap();
+        assert_eq!(caller.context().input_digest, expected.context.input_digest);
+        request
+            .validate_against(&binding, caller.context())
+            .unwrap();
+        self.calls.lock().unwrap().push((
+            self.permit.grant_id(),
+            caller.channel().provider.instance_id.clone(),
+        ));
+        Box::pin(async move {
+            Ok(sdk::ServiceResponse {
+                call_id: request.call_id,
+                handle_id: request.handle_id,
+                context: request.context,
+                outcome: sdk::InvocationOutcome::Succeeded {
+                    output: sdk::EncodedPayload::capture(
+                        binding.output_schema,
+                        self.permit.grant_id().to_string(),
+                    )
+                    .unwrap(),
+                },
+            })
+        })
+    }
+    fn release_channel(&self, _channel: &ChannelReceipt) {
+        self.released
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+fn service_proxy(
+    parent: &Path,
+    factory: Arc<DispatchServiceFactory>,
+    timeout_ms: u32,
+) -> Arc<RunnerProxy> {
+    let (bytes, mut files) = package("normal", None);
+    let mut manifest: sdk::PluginManifest = serde_json::from_slice(&bytes).unwrap();
+    let permission = sdk::PermissionRequest::ProjectService {
+        contract: contract("example.service"),
+    };
+    manifest.permissions.push(permission.clone());
+    manifest.components[0]
+        .dependencies
+        .push(sdk::CapabilityDependency {
+            contract: contract("example.service"),
+            required: true,
+            selection: sdk::ProviderSelection::Single,
+        });
+    if let sdk::ContributionKind::Capability { declaration } =
+        &mut manifest.contributions[0].contribution
+    {
+        declaration.permissions.push(permission);
+    }
+    files.get_mut("component.mjs").unwrap().bytes =
+        include_bytes!("support/core-service-component.mjs").to_vec();
+    let bytes = serde_json::to_vec(&manifest).unwrap();
+    let digest = PackageImage::digest(&bytes, &files).unwrap();
+    Arc::new(
+        RunnerProxy::new(
+            PackageImage::capture(bytes, files, &digest).unwrap(),
+            "proposal.call",
+            runtime_fixture::approved_runtime(),
+            parent,
+            HostLimits {
+                handshake_timeout_ms: timeout_ms,
+                invocation_timeout_ms: 2000,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .with_service_factory(factory),
+    )
+}
+
+#[test]
+fn cached_proxy_captures_services_for_each_actual_dispatch_and_grant() {
+    let temp = tempfile::tempdir().unwrap();
+    let factory = Arc::new(DispatchServiceFactory {
+        selected: Arc::default(),
+        calls: Arc::default(),
+        released: Arc::default(),
+        pending: false,
+    });
+    let proxy = service_proxy(temp.path(), factory.clone(), 3000);
+    let mut store = store(temp.path());
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy.clone()).unwrap();
+    let mut expected = vec![];
+    for _ in 0..2 {
+        let input = input(&mut store, &proxy);
+        let grant = authorize(&runtime, &mut store, &input);
+        expected.push((input.envelope().attempt_id, grant));
+        runtime.submit(&mut store, &input).unwrap();
+        finish(&mut runtime, &mut store, &input);
+        let attempt = store
+            .execution_attempt(input.envelope().attempt_id, false)
+            .unwrap();
+        assert_eq!(attempt.items[0].execution, ExecutionState::Succeeded);
+        let output = store
+            .execution_result(
+                input.envelope().attempt_id,
+                store
+                    .execution_current_result(input.envelope().attempt_id, attempt.items[0].item_id)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+        let sdk::InvocationOutcome::Succeeded { output } =
+            &output.envelope().plugin.as_ref().unwrap().result.outcome
+        else {
+            panic!("successful service output")
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&output.utf8).unwrap();
+        assert_eq!(parsed["grant"], grant.to_string());
+    }
+    let selected = factory.selected.lock().unwrap();
+    assert_eq!(selected.len(), 2);
+    assert_eq!((selected[0].0, selected[0].2), expected[0]);
+    assert_eq!((selected[1].0, selected[1].2), expected[1]);
+    assert_ne!(selected[0].1, selected[1].1);
+    let calls = factory.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, expected[0].1);
+    assert_eq!(calls[1].0, expected[1].1);
+    assert_ne!(calls[0].1, calls[1].1);
+    assert_eq!(
+        factory.released.load(std::sync::atomic::Ordering::Acquire),
+        2
+    );
+}
+
+#[test]
+fn unfinished_service_selection_is_bounded_and_never_launches_a_child() {
+    let temp = tempfile::tempdir().unwrap();
+    let staging = temp.path().join("staging");
+    std::fs::create_dir(&staging).unwrap();
+    let factory = Arc::new(DispatchServiceFactory {
+        selected: Arc::default(),
+        calls: Arc::default(),
+        released: Arc::default(),
+        pending: true,
+    });
+    let proxy = service_proxy(&staging, factory.clone(), 40);
+    let mut store = store(temp.path());
+    let input = input(&mut store, &proxy);
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy).unwrap();
+    authorize(&runtime, &mut store, &input);
+    runtime.submit(&mut store, &input).unwrap();
+    finish(&mut runtime, &mut store, &input);
+    let attempt = store
+        .execution_attempt(input.envelope().attempt_id, false)
+        .unwrap();
+    assert_eq!(attempt.items[0].execution, ExecutionState::Unknown);
+    assert_eq!(factory.selected.lock().unwrap().len(), 1);
+    assert!(factory.calls.lock().unwrap().is_empty());
+    assert_eq!(
+        factory.released.load(std::sync::atomic::Ordering::Acquire),
+        0
+    );
+    assert_eq!(std::fs::read_dir(staging).unwrap().count(), 0);
+}
+
+#[test]
+fn service_selection_keeps_the_original_dispatch_deadline_without_another_core_tick() {
+    let temp = tempfile::tempdir().unwrap();
+    let staging = temp.path().join("staging");
+    std::fs::create_dir(&staging).unwrap();
+    let factory = Arc::new(DispatchServiceFactory {
+        selected: Arc::default(),
+        calls: Arc::default(),
+        released: Arc::default(),
+        pending: true,
+    });
+    let proxy = service_proxy(&staging, factory.clone(), 3000);
+    let mut store = store(temp.path());
+    let mut envelope = input(&mut store, &proxy).envelope().clone();
+    envelope.limits.timeout_ms = 150;
+    let input = FixedInput::capture(envelope).unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy.clone()).unwrap();
+    authorize(&runtime, &mut store, &input);
+    runtime.submit(&mut store, &input).unwrap();
+    let dispatch = store
+        .dispatch_execution_item(
+            input.envelope().attempt_id,
+            input.envelope().items[0].item_id,
+        )
+        .unwrap();
+    let original_deadline = dispatch.deadline().unwrap();
+    let (results, _receiver) = result_channel();
+    let start = Instant::now();
+    let error = proxy
+        .run(dispatch, Cancellation::default(), results)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::OutcomeUnknown);
+    assert!(Instant::now() >= original_deadline);
+    assert!(start.elapsed() < Duration::from_secs(1));
+    assert_eq!(factory.selected.lock().unwrap().len(), 1);
+    assert!(factory.calls.lock().unwrap().is_empty());
+    assert_eq!(
+        factory.released.load(std::sync::atomic::Ordering::Acquire),
+        0
+    );
+    assert_eq!(std::fs::read_dir(staging).unwrap().count(), 0);
+}

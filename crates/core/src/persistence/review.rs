@@ -15,14 +15,16 @@ mod checks;
 pub(super) use checks::candidate_checks_clean;
 #[cfg(any(test, feature = "execution-test-host"))]
 pub(super) use checks::record_check_in;
+pub(crate) use checks::validate_choices;
 pub(super) use checks::validator_version;
+pub use checks::{
+    AdvisoryReviewCheck, CapturedReviewCheckExecution, ComputedReviewEvidence, PreparedReviewCheck,
+    ReviewCheckEvidence, ReviewCheckOrigin, ReviewCheckOriginEvidence, ReviewCheckPlan,
+    ReviewChecker, ReviewCheckerKey, ReviewCheckerKind, ReviewInvocationOutcome,
+};
 pub(super) use checks::{
     CURRENT_CHECK_VERSION, PreparedReviewAdoption, prepare_candidate_in,
     validate_candidate_evidence,
-};
-pub use checks::{
-    CapturedReviewCheckExecution, ComputedReviewEvidence, PreparedReviewCheck, ReviewCheckEvidence,
-    ReviewCheckPlan,
 };
 pub(super) const POLICY_VERSION: &str = "balanced-1";
 const MAX_SCOPE: usize = 10_000;
@@ -41,6 +43,8 @@ pub use views::{
 fn check_outcome(rules: &[CheckRuleResult]) -> ReviewCheckOutcome {
     if rules.iter().any(|rule| rule.status == "cancelled") {
         ReviewCheckOutcome::Cancelled
+    } else if rules.iter().any(|rule| rule.status == "unknown") {
+        ReviewCheckOutcome::Unknown
     } else if rules
         .iter()
         .any(|rule| matches!(rule.status.as_str(), "failed" | "missing" | "unavailable"))
@@ -115,6 +119,7 @@ pub enum ReviewCheckOutcome {
     Completed,
     Failed,
     Cancelled,
+    Unknown,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -180,6 +185,8 @@ pub struct CheckFinding {
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct CheckRuleResult {
     pub rule: String,
+    pub key: tsumugi_plugin_sdk::CheckKey,
+    pub mandatory: bool,
     pub status: String,
     pub reason: Option<String>,
     pub findings: Vec<CheckFinding>,
@@ -665,6 +672,20 @@ pub(super) fn target_in(
 }
 
 impl ProjectStore {
+    /// Original receipt evidence, without rediscovery or renewed execution grants.
+    pub fn review_check_action(
+        &self,
+        project_id: ExecutionId,
+        action_id: ExecutionId,
+    ) -> Result<Option<CheckRun>, ExecutionError> {
+        let connection = self
+            .connection()
+            .map_err(|_| failure(ErrorCode::StorageFailed, "review-session"))?;
+        queries::read_snapshot(connection, |c| {
+            check_by_action(c, project_id, action_id).map(|run| run.map(|(run, _)| run))
+        })
+    }
+
     /// One bounded traversal reused by work pagination and source impact summaries.
     pub(super) fn review_work_set(
         &self,
@@ -1065,7 +1086,7 @@ impl ProjectStore {
         cancellation: &Cancellation,
     ) -> Result<CheckRun, ExecutionError> {
         let prepared =
-            self.prepare_review_check(project_id, unit_id, locale, expected_basis, action_id)?;
+            self.prepare_review_check(project_id, unit_id, locale, expected_basis, action_id, &[])?;
         let computed = prepared.compute(cancellation);
         self.commit_review_check(computed, cancellation)
     }
@@ -1429,7 +1450,8 @@ pub(super) fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec
     match &target.current_check {
         None => blockers.push("qa-missing-or-stale".to_owned()),
         Some(check) => {
-            let complete = checks::coverage_complete(check);
+            let complete =
+                checks::validate_projection(check).is_ok() && checks::coverage_complete(check);
             if !complete {
                 blockers.push("qa-incomplete-coverage".to_owned());
             }
@@ -1438,7 +1460,7 @@ pub(super) fn assess(target: &ReviewTarget, impacted: bool) -> (Vec<String>, Vec
                 .iter()
                 .map(|item| item.issue_id.as_str())
                 .collect();
-            for rule in &check.rules {
+            for rule in check.rules.iter().filter(|rule| rule.mandatory) {
                 if rule.status != "passed"
                     && rule.status != "findings"
                     && rule.status != "not-applicable"
@@ -2438,7 +2460,14 @@ pub(super) mod tests {
             )
             .unwrap();
         let delayed_check = store
-            .prepare_review_check(project, units[0], "zh-CN", &newer.basis, ExecutionId::new())
+            .prepare_review_check(
+                project,
+                units[0],
+                "zh-CN",
+                &newer.basis,
+                ExecutionId::new(),
+                &[],
+            )
             .unwrap()
             .compute(&Cancellation::default());
         store
@@ -4215,7 +4244,14 @@ pub(super) mod tests {
             })
         );
         let check_failure = store
-            .prepare_review_check(project, units[0], "zh-CN", &old.basis, ExecutionId::new())
+            .prepare_review_check(
+                project,
+                units[0],
+                "zh-CN",
+                &old.basis,
+                ExecutionId::new(),
+                &[],
+            )
             .err()
             .unwrap();
         assert_eq!(check_failure.conflict, failure.conflict);

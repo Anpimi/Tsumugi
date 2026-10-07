@@ -13,10 +13,10 @@ pub struct ReviewCheckEvidence {
     pub qa_basis: String,
     pub required_checks: sdk::RequiredCheckSet,
     pub results: Vec<sdk::CheckResult>,
-    pub attempt_id: ExecutionId,
-    pub input_digest: String,
-    pub result_id: ExecutionId,
-    pub result_digest: String,
+    pub source_binding: crate::content::SourceReviewBinding,
+    pub advisory_checks: Vec<AdvisoryReviewCheck>,
+    pub origins: Vec<ReviewCheckOriginEvidence>,
+    pub diagnostics: Vec<sdk::TextReviewDiagnostic>,
 }
 
 fn corrupt() -> ExecutionError {
@@ -52,6 +52,7 @@ fn fixed(set: &sdk::RequiredCheckSet) -> Result<sdk::FixedCheckSet, ExecutionErr
         .filter(|r| matches!(r.key.implementation, sdk::CheckImplementation::Core { .. }))
         .collect();
     if core.len() != 2 || core.iter().any(|r| {
+        !r.mandatory ||
         r.key.rule.schema_version != 1 || r.key.rule.behavior_version != 1
         || !matches!(&r.key.implementation, sdk::CheckImplementation::Core { validator }
             if validator.id == "tsumugi.core-review" && validator.schema_version == 1 && validator.behavior_version == 1)
@@ -106,7 +107,22 @@ fn project_rules(
             Some(sdk::CheckOutcome::Unavailable) => {
                 ("unavailable", Some("Check unavailable"), &[][..])
             }
-            None => ("missing", Some("Required check result missing"), &[][..]),
+            None => {
+                let origin = evidence.origins.iter().find(|o| matches!(&requirement.key.implementation, sdk::CheckImplementation::Plugin { provider } if provider == &o.checker.provider) && (o.checker == ReviewChecker::format(&evidence.source_binding).key || evidence.advisory_checks.iter().any(|c| c.checker().key == o.checker && c.rules.contains(&requirement.key.rule))));
+                match origin.map(|o| o.outcome) {
+                    Some(ReviewInvocationOutcome::Failed) => (
+                        "failed",
+                        Some("Invocation failed; no check result"),
+                        &[][..],
+                    ),
+                    Some(ReviewInvocationOutcome::Unknown) => (
+                        "unknown",
+                        Some("Invocation outcome unknown; no check result"),
+                        &[][..],
+                    ),
+                    _ => ("missing", Some("Check result missing"), &[][..]),
+                }
+            }
         };
         if matches!(
             requirement.key.implementation,
@@ -136,12 +152,17 @@ fn project_rules(
             {
                 return Err(corrupt());
             }
-            rules.push(rule.clone());
+            let mut projected = rule.clone();
+            projected.key = requirement.key.clone();
+            projected.mandatory = requirement.mandatory;
+            rules.push(projected);
         } else {
             // Domain names never impersonate Core fallback or waiver policies.
             let rule = format!("plugin:{}", requirement.key.rule.id);
             rules.push(CheckRuleResult {
                 rule: rule.clone(),
+                key: requirement.key.clone(),
+                mandatory: requirement.mandatory,
                 status: status.into(),
                 reason: reason.map(str::to_owned),
                 findings: findings
@@ -183,9 +204,15 @@ pub(in crate::persistence) fn candidate_checks_clean(
     fixed(&evidence.required_checks)
         .and_then(|fixed| fixed.evaluate(&evidence.results).map_err(|_| corrupt()))
         .is_ok_and(|coverage| coverage.complete)
-        && rules.iter().all(|rule| {
-            matches!(rule.status.as_str(), "passed" | "not-applicable") && rule.findings.is_empty()
-        })
+        && rules.len() == evidence.required_checks.requirements.len()
+        && rules
+            .iter()
+            .zip(&evidence.required_checks.requirements)
+            .filter(|(_, requirement)| requirement.mandatory)
+            .all(|(rule, _)| {
+                matches!(rule.status.as_str(), "passed" | "not-applicable")
+                    && rule.findings.is_empty()
+            })
 }
 
 pub(in crate::persistence::review) fn validate_projection(
@@ -200,8 +227,86 @@ pub(in crate::persistence::review) fn validate_projection(
         .filter(|r| matches!(r.rule.as_str(), "required-translation" | "terminology"))
         .cloned()
         .collect();
+    validate_choices(&evidence.advisory_checks).map_err(|_| corrupt())?;
+    evidence
+        .source_binding
+        .checker
+        .validate()
+        .map_err(|_| corrupt())?;
+    sdk::ReviewBinding {
+        declaration: evidence.source_binding.declaration.clone(),
+        checker: evidence.source_binding.checker.capability.clone(),
+    }
+    .validate()
+    .map_err(|_| corrupt())?;
+    let format = ReviewChecker::format(&evidence.source_binding);
+    let expected_keys: BTreeSet<_> = std::iter::once(format.key.clone())
+        .chain(evidence.advisory_checks.iter().map(|c| c.checker().key))
+        .collect();
+    if expected_keys.len() != evidence.advisory_checks.len() + 1
+        || evidence.origins.len() != expected_keys.len()
+        || evidence
+            .origins
+            .iter()
+            .map(|o| o.checker.clone())
+            .collect::<BTreeSet<_>>()
+            != expected_keys
+        || evidence
+            .origins
+            .iter()
+            .map(|o| (o.attempt_id, o.result_id))
+            .collect::<BTreeSet<_>>()
+            .len()
+            != evidence.origins.len()
+    {
+        return Err(corrupt());
+    }
+    let format_requirements: Vec<_> = evidence.required_checks.requirements.iter().filter(|r| matches!(&r.key.implementation, sdk::CheckImplementation::Plugin { provider } if provider == &format.key.provider) && evidence.source_binding.declaration.rules.iter().any(|d| d.rule == r.key.rule)).collect();
+    if format_requirements.len() != evidence.source_binding.declaration.rules.len()
+        || format_requirements.iter().any(|r| {
+            !r.mandatory
+                || r.waivable
+                || !evidence
+                    .source_binding
+                    .declaration
+                    .rules
+                    .iter()
+                    .any(|d| d.rule == r.key.rule)
+        })
+    {
+        return Err(corrupt());
+    }
+    for choice in &evidence.advisory_checks {
+        let selected: Vec<_> = evidence.required_checks.requirements.iter().filter(|r| matches!(&r.key.implementation, sdk::CheckImplementation::Plugin { provider } if provider == &choice.binding.checker.provider) && choice.rules.contains(&r.key.rule)).collect();
+        if selected.len() != choice.rules.len()
+            || selected.iter().any(|r| r.mandatory || r.waivable)
+        {
+            return Err(corrupt());
+        }
+    }
+    let allowed: BTreeSet<_> = format_requirements
+        .iter()
+        .map(|r| r.key.clone())
+        .chain(evidence.advisory_checks.iter().flat_map(|c| {
+            c.rules.iter().map(|rule| sdk::CheckKey {
+                rule: rule.clone(),
+                implementation: sdk::CheckImplementation::Plugin {
+                    provider: c.binding.checker.provider.clone(),
+                },
+            })
+        }))
+        .collect();
+    if evidence.required_checks.requirements.iter().any(|r| {
+        matches!(
+            r.key.implementation,
+            sdk::CheckImplementation::Plugin { .. }
+        ) && !allowed.contains(&r.key)
+    }) {
+        return Err(corrupt());
+    }
     if run.validator_version != CHECK_VERSION
-        || evidence.qa_basis.len() != 64
+        || sdk::validate_package_digest(&evidence.qa_basis).is_err()
+        || run.outcome != check_outcome(&run.rules)
         || project_rules(evidence, &core)? != run.rules
     {
         return Err(corrupt());
@@ -219,17 +324,21 @@ pub(in crate::persistence::review) fn validate_saved(
     let Some(evidence) = &run.evidence else {
         return Ok(());
     };
-    // Historical evidence retains its original authority; reading it never
-    // requires a still-live grant or restores permission to execute again.
-    let input = super::super::super::ledger::load_input(connection, evidence.attempt_id)?;
-    let result = super::super::super::ledger::load_result(connection, &input, evidence.result_id)?;
-    validate_saved_frames(project, run, request_digest, &input, &result)
+    // Historical reads restore every original frame without live permission.
+    for origin in &evidence.origins {
+        let input = super::super::super::ledger::load_input(connection, origin.attempt_id)?;
+        let result =
+            super::super::super::ledger::load_result(connection, &input, origin.result_id)?;
+        validate_saved_frames(project, run, request_digest, origin, &input, &result)?;
+    }
+    Ok(())
 }
 
 pub(in crate::persistence::review) fn validate_saved_frames(
     project: ExecutionId,
     run: &CheckRun,
     request_digest: &str,
+    saved: &ReviewCheckOriginEvidence,
     input: &FixedInput,
     result: &FixedResult,
 ) -> Result<(), ExecutionError> {
@@ -237,47 +346,125 @@ pub(in crate::persistence::review) fn validate_saved_frames(
     let evidence = run.evidence.as_ref().ok_or_else(corrupt)?;
     let envelope = input.envelope();
     let item = envelope.items.first().ok_or_else(corrupt)?;
-    let origin = result.envelope().plugin.as_ref().ok_or_else(corrupt)?;
-    if input.digest() != evidence.input_digest
-        || result.digest() != evidence.result_digest
+    if envelope.attempt_id != saved.attempt_id
+        || result.envelope().result_id != saved.result_id
+        || input.digest() != saved.input_digest
+        || result.digest() != saved.result_digest
         || envelope.project_id != project
-        || envelope.task_id != run.action_id
         || envelope.operation != crate::execution::REVIEW_CHECK_OPERATION
         || envelope.items.len() != 1
+        || envelope.units.len() != 1
+        || item.scope.kind != "review-check"
         || item.scope.id != run.unit_id.to_string()
         || item.scope.locale.as_deref() != Some(run.locale.as_str())
+        || envelope.settings["unitId"] != run.unit_id.to_string()
+        || envelope.settings["version"] != 2
+        || envelope.settings["actionId"] != run.action_id.to_string()
         || envelope.settings["requestDigest"] != request_digest
         || envelope.settings["reviewBasis"] != run.basis
         || envelope.settings["qaBasis"] != evidence.qa_basis
         || envelope.settings["requiredChecks"]
             != serde_json::to_value(&evidence.required_checks).map_err(|_| corrupt())?
+        || envelope.settings["sourceBinding"]
+            != serde_json::to_value(&evidence.source_binding).map_err(|_| corrupt())?
+        || envelope.settings["advisoryChecks"]
+            != serde_json::to_value(&evidence.advisory_checks).map_err(|_| corrupt())?
+        || envelope.settings["checkerKey"]
+            != serde_json::to_value(&saved.checker).map_err(|_| corrupt())?
     {
         return Err(corrupt());
     }
-    let sdk::InvocationOutcome::Succeeded { output } = &origin.result.outcome else {
-        return Err(corrupt());
-    };
-    if output.schema != sdk::check_results_contract() {
+    let expected_request = choices::request_digest(
+        project,
+        run.unit_id,
+        &run.locale,
+        &run.basis,
+        run.action_id,
+        &evidence.advisory_checks,
+    )?;
+    if expected_request != request_digest {
         return Err(corrupt());
     }
-    let original = sdk::parse_check_results(output.utf8.as_bytes()).map_err(|_| corrupt())?;
-    let saved: Vec<_> = evidence
+    let keys: BTreeSet<sdk::CheckKey>;
+    if saved.checker == ReviewChecker::format(&evidence.source_binding).key {
+        if envelope.plugin.as_ref() != Some(&evidence.source_binding.checker) {
+            return Err(corrupt());
+        }
+        let captured: sdk::ReviewCheckInput =
+            serde_json::from_value(item.payload.clone()).map_err(|_| corrupt())?;
+        sdk::ReviewBinding {
+            declaration: evidence.source_binding.declaration.clone(),
+            checker: evidence.source_binding.checker.capability.clone(),
+        }
+        .validate_input(&captured)
+        .map_err(|_| corrupt())?;
+        keys = captured
+            .requirements
+            .iter()
+            .map(|r| r.key.clone())
+            .collect();
+        if captured
+            .requirements
+            .iter()
+            .any(|r| !evidence.required_checks.requirements.contains(r))
+        {
+            return Err(corrupt());
+        }
+    } else {
+        let choice = evidence
+            .advisory_checks
+            .iter()
+            .find(|c| c.checker().key == saved.checker)
+            .ok_or_else(corrupt)?;
+        if envelope.plugin.as_ref() != Some(&choice.checker().binding) {
+            return Err(corrupt());
+        }
+        let captured: sdk::TextReviewCheckInput =
+            serde_json::from_value(item.payload.clone()).map_err(|_| corrupt())?;
+        choice
+            .binding
+            .validate_input(&captured)
+            .map_err(|_| corrupt())?;
+        keys = captured
+            .requirements
+            .iter()
+            .map(|r| r.key.clone())
+            .collect();
+        if captured.resources != choice.resource_pins
+            || captured
+                .requirements
+                .iter()
+                .map(|r| &r.key.rule)
+                .collect::<BTreeSet<_>>()
+                != choice.rules.iter().collect()
+            || captured
+                .requirements
+                .iter()
+                .any(|r| !evidence.required_checks.requirements.contains(r))
+        {
+            return Err(corrupt());
+        }
+    }
+    let (outcome, results, diagnostics) = execution::receive_checker(
+        &evidence.source_binding,
+        &evidence.advisory_checks,
+        &saved.checker,
+        input,
+        result,
+    )?;
+    let projected: Vec<_> = evidence
         .results
         .iter()
-        .filter(|r| {
-            matches!(
-                r.key.implementation,
-                sdk::CheckImplementation::Plugin { .. }
-            )
-        })
+        .filter(|r| keys.contains(&r.key))
         .cloned()
         .collect();
-    if original != saved
-        || saved.iter().any(|r| {
-            !matches!(&r.key.implementation, sdk::CheckImplementation::Plugin { provider }
-            if *provider == origin.channel.selection())
-        })
-    {
+    let rich: Vec<_> = evidence
+        .diagnostics
+        .iter()
+        .filter(|d| keys.contains(&d.key))
+        .cloned()
+        .collect();
+    if outcome != saved.outcome || results != projected || diagnostics != rich {
         return Err(corrupt());
     }
     Ok(())
@@ -301,10 +488,21 @@ impl PreparedReviewAdoption {
             qa_basis: computed.plan.basis().into(),
             required_checks: computed.plan.fixed_checks().set().clone(),
             results: computed.results.clone(),
-            attempt_id: computed.input.envelope().attempt_id,
-            input_digest: computed.input.digest().into(),
-            result_id: computed.result.envelope().result_id,
-            result_digest: computed.result.digest().into(),
+            source_binding: computed.plan.binding().clone(),
+            advisory_checks: computed.plan.advisory_checks().to_vec(),
+            origins: computed
+                .origins
+                .iter()
+                .map(|o| ReviewCheckOriginEvidence {
+                    checker: o.key.clone(),
+                    attempt_id: o.input.envelope().attempt_id,
+                    input_digest: o.input.digest().into(),
+                    result_id: o.result.envelope().result_id,
+                    result_digest: o.result.digest().into(),
+                    outcome: o.outcome,
+                })
+                .collect(),
+            diagnostics: computed.diagnostics.clone(),
         };
         let rules = project_rules(&evidence, &computed.core_rules)?;
         let evidence_json = String::from_utf8(codec::encode(
@@ -342,12 +540,15 @@ impl PreparedReviewAdoption {
         if cancellation.is_requested() {
             return Err(failure(ErrorCode::Cancelled, "review-check-adoption"));
         }
-        super::super::super::ledger::recheck_current_plugin_result_in(
-            connection,
-            authority,
-            &self.computed.input,
-            &self.computed.result,
-        )
+        for origin in &self.computed.origins {
+            super::super::super::ledger::recheck_current_review_result_in(
+                connection,
+                authority,
+                &origin.input,
+                &origin.result,
+            )?;
+        }
+        Ok(())
     }
     pub(in crate::persistence) fn save_in(
         &self,
@@ -378,8 +579,14 @@ impl PreparedReviewAdoption {
             target.unit_id,
             &target.locale,
         )?;
-        let current = capture::capture_in(connection, computed.project_id, &target, &terms)?
-            .ok_or_else(corrupt)?;
+        let current = capture::capture_in(
+            connection,
+            computed.project_id,
+            &target,
+            &terms,
+            computed.plan.advisory_checks(),
+        )?
+        .ok_or_else(corrupt)?;
         if current.basis() != computed.plan.basis() {
             return Err(failure(ErrorCode::DependencyConflict, "review-qa-current"));
         }
@@ -425,7 +632,14 @@ pub(in crate::persistence) fn validate_candidate_evidence(
     evidence: &ReviewCheckEvidence,
 ) -> Result<(), ExecutionError> {
     let basis = basis_digest(basis_evidence)?;
-    let request = digest(&(project, unit, locale, basis.as_str(), action))?;
+    let request = choices::request_digest(
+        project,
+        unit,
+        locale,
+        &basis,
+        action,
+        &evidence.advisory_checks,
+    )?;
     let run = CheckRun {
         run_id: action,
         action_id: action,

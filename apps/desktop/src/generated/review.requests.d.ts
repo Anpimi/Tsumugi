@@ -27,17 +27,48 @@ export interface ReviewCancelCheckRequest {
 }
 export interface ReviewCheckStartRequest {
   check: ReviewCheckRequest;
-  execution: PluginStartRequest;
+  executions: PluginStartRequest[];
   projectId: ExecutionId;
   sessionToken: string;
 }
 export interface ReviewCheckRequest {
   actionId: ExecutionId;
+  advisoryChecks: PluginTextReviewSelection[];
   expectedBasis: string;
   locale: string;
   projectId: ExecutionId;
   sessionToken: string;
   unitId: ExecutionId;
+}
+/**
+ * An explicit action-local subset. Installation never selects these rules.
+ */
+export interface PluginTextReviewSelection {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+  rules: ContractRef[];
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
 }
 export interface PluginStartRequest {
   attemptId: ExecutionId;

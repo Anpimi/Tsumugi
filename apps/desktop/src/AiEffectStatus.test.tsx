@@ -2,6 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AiEffectStatus } from "./AiEffectStatus";
+import { pluginRuleKeyFixture } from "./testSupport/textReviewFixture";
 import fixture from "../test/fixtures/aiCommands.contract.json";
 import type { EffectView } from "./generated/ai.responses";
 import { i18n } from "./i18n";
@@ -54,7 +55,7 @@ it("offers only an explicit allowed retry and prevents it under revoked authorit
 it("presents opaque plugin rules and findings without classifying them as terminology", async () => {
   const effect = recorded(); effect.phase = "blocked"; effect.receipt!.blocked = "checks";
   effect.receipt!.selection = null; effect.receipt!.checkRunId = null;
-  effect.receipt!.rules.push({ rule: "plugin:third-domain", status: "findings", reason: null,
+  effect.receipt!.rules.push({ rule: "plugin:third-domain", key: pluginRuleKeyFixture("third-domain"), mandatory: true, status: "findings", reason: null,
     findings: [{ issueId: "domain-issue", rule: "plugin:third-domain", code: "third-format-invalid",
       detail: "third-format-invalid", severity: "error", waivable: false }] });
   const { rerender } = render(<AiEffectStatus effect={effect} disabled={false} onRetry={vi.fn()} />);

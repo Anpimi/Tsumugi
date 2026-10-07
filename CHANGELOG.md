@@ -14,6 +14,18 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   earlier development projects are refused unchanged. Matching Process-2
   SDK/Host and production Desktop integration are required.
 
+- Installed-settings changes withdraw the original service revocation signal
+  before writing, including failed or uncertain writes. Closing the installation
+  owner revokes it without waiting for Store operations. Fresh captures reread
+  actual settings; they cannot revive previous grants or deadlines. Core retains
+  the signal after component completion and checks it before child HTTP sends.
+
+- Work plans retain reference tools and the complete required/advisory checker
+  set together. Their independent consents share one installed-settings guard;
+  historical acknowledgements do not restore missing consent. Agent generation
+  starts reject changed settings before child enqueue, and candidate-only plans
+  continue saving explicitly authorized candidates.
+
 - Work plans can capture read-only reference tools with exact installed package,
   runtime and query options, and one shared invocation limit. Independent local
   execution consent lasts at most ten minutes; recovering the same action cannot
@@ -21,7 +33,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   original worker and ledger, show escaped unapplied references, and generate
   further candidates through the original model service. Pause, source changes,
   expiry and reopen preserve history without restoring authority. Current
-  development projects use schema 29 and WorkPlan format 2; earlier development
+  development projects use schema 31 and WorkPlan format 2; earlier development
   formats are refused unchanged without migration. Full autonomous orchestration
   and native product acceptance remain in development.
 
@@ -32,6 +44,25 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   remain separate. Complete autonomous tool integration is still in development.
   Candidate-only plans now honor explicitly authorized candidate saving and
   report completion without running checks, selecting a translation or approval.
+
+- Experimental Core Host adapters now select project-service brokers separately
+  for every actual dispatch and grant, including when a capability proxy is
+  cached. Unfinished selection is bounded; selection failure does not launch a
+  component with omitted services. Selection, invocation and result delivery
+  retain the original Core dispatch deadline independently of later runtime ticks.
+
+- Experimental SDK and Host add bounded project-service calls for JavaScript
+  components. Exact selected providers, scopes, schemas, effects and original
+  invocation contexts remain fixed; cancellation, revocation and the original
+  deadline cover service callbacks. Missing required services are refused before
+  process launch. Process protocol advances to 2; consumers must regenerate
+  contracts and rebuild/capture the Host. Earlier process-1 runtimes are refused
+  without fallback or development-data migration, including captured runtime
+  descriptions retained in earlier development project/settings/receipt records.
+  Use a fresh development profile and project. AI execution and durable child
+  authority remain separate application integration. The basic native component
+  helper refuses service tables it cannot consume.
+
 
 - Provider child tasks cannot add, remove or change their parent's captured
   input dependencies. Exact dependency identities and expected revisions remain
@@ -72,6 +103,15 @@ Development target: **0.2.0-alpha.1**.
 This initial backfill summarizes development commits `e76ef39` through `7febd7e` (2026-09-17 through 2026-10-02), which used `0.1.0` as their development version. No historical release tags exist, so these changes form one unreleased batch without invented release versions or dates.
 
 ### Added
+
+- Experimental joint QA captures mandatory source-format rules and explicitly
+  selected advisory text rules in one fixed check set. Independent checker
+  inputs and permissions retain original ledger provenance. Current QA and
+  checked selection distinguish required coverage from advisory findings and
+  invocation failures; history preserves typed rules and text diagnostics.
+  Desktop previews and WorkPlans require consent for each selected checker.
+  The current project format is schema 31; earlier development directories are
+  refused unchanged without migration. Knowledge Resources remain unadopted.
 
 - Experimental SDK advisory text checks now declare explicit rule subsets and
   exact resource pins independently of file formats, with typed Unicode finding
@@ -200,6 +240,26 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
 ### Fixed
+
+- Manual checks rejected before dispatch no longer keep a project active or
+  repeatedly read extension settings. Retrying preserves the original consent;
+  partially submitted or uncertain authorized checks retain recovery and cancellation.
+
+- Source-update estimates now reflect the QA needed after adopting a new source
+  snapshot. Unchanged translations and applicable manual decisions remain;
+  checks bound to the complete previous input remain historical until rerun.
+
+- Review and WorkPlan text-checker choices remain stable while an action locks
+  and unlocks its controls. Preparing a check no longer starts an unrelated
+  metadata read that can compete with the original execution start.
+
+- New-project destination previews use the native path separator, including
+  macOS root directories, to match the actual project location.
+
+- Installed source, translation, build and reference choices read enabled package
+  metadata sequentially, avoiding Store contention when several extensions are
+  enabled. Source and build refreshes wait for their current metadata and
+  environment reads, including when returning to the workbench.
 
 - Translation import refreshes the editor entry list after individual or batch adoption and confirmed recovery, preserving its query, page and any draft. Cancelling an unsaved-draft leave confirmation returns focus to the editor. Declared translation fields use the existing form layout, and installed source-environment reads keep their loading feedback visible until completion.
 

@@ -22,6 +22,14 @@ export type ProcessBody =
       kind: "result";
     }
   | {
+      data: ServiceRequest;
+      kind: "service-request";
+    }
+  | {
+      data: ServiceResponse;
+      kind: "service-response";
+    }
+  | {
       data: {
         dispatchId: string;
       };
@@ -115,7 +123,7 @@ export type InvocationOutcome =
  */
 export interface ProcessFrame {
   body: ProcessBody;
-  protocolVersion: 1;
+  protocolVersion: 2;
 }
 /**
  * A captured declaration for one capability on one actual component channel.
@@ -127,6 +135,10 @@ export interface ProcessFrame {
 export interface ProcessActivation {
   capability: CapabilityDeclaration;
   provider: ProviderBinding;
+  /**
+   * Host-selected project services, resolved before component activation.
+   */
+  services: ServiceBinding[];
 }
 /**
  * This interface was referenced by `ProcessFrame`'s JSON-Schema
@@ -193,6 +205,27 @@ export interface PluginIdentity {
   version: string;
 }
 /**
+ * A Host-selected service descriptor, not a grant or a project/store handle.
+ * The Host authenticates its provider, scope, configuration and live generation.
+ *
+ * This interface was referenced by `ProcessFrame`'s JSON-Schema
+ * via the `definition` "ServiceBinding".
+ */
+export interface ServiceBinding {
+  activationGeneration: number;
+  configurationDigest: string;
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  handleId: string;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  projectId: string;
+  providerId: string;
+  scopeId: string;
+}
+/**
  * This interface was referenced by `ProcessFrame`'s JSON-Schema
  * via the `definition` "InvocationRequest".
  */
@@ -245,4 +278,30 @@ export interface InvocationResult {
   profile?: ContractRef | null;
   provider: ProviderBinding;
   resultId: string;
+}
+/**
+ * The context is the original outer invocation. Its inputDigest describes that
+ * invocation, while input.sha256 independently authenticates the service bytes.
+ *
+ * This interface was referenced by `ProcessFrame`'s JSON-Schema
+ * via the `definition` "ServiceRequest".
+ */
+export interface ServiceRequest {
+  callId: string;
+  context: InvocationContext;
+  handleId: string;
+  input: EncodedPayload;
+}
+/**
+ * A response preserves failed/unknown outcomes. Matching it does not authorize
+ * a mutation, validate its domain payload or prove that a child task finished.
+ *
+ * This interface was referenced by `ProcessFrame`'s JSON-Schema
+ * via the `definition` "ServiceResponse".
+ */
+export interface ServiceResponse {
+  callId: string;
+  context: InvocationContext;
+  handleId: string;
+  outcome: InvocationOutcome;
 }

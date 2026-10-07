@@ -193,6 +193,7 @@ fn prepare_runtime(
             locale,
             &target.basis,
             ExecutionId::new(),
+            &[],
         )
         .unwrap();
     support::review_runtime(store, &prepared)
@@ -460,18 +461,26 @@ fn a_corrupt_late_qa_frame_refuses_the_whole_batch_without_writes() {
         support::review_check(&mut store, &mut runtime, row.unit_id.unwrap(), "zh-CN");
     }
     let db = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
+    // The batch reader visits origins in (attemptId, resultId) order; tamper
+    // with its final real frame so all preceding frames are visited first.
     let last: String = db
         .query_row(
-            "SELECT MAX(json_extract(evidence_json,'$.attemptId')) FROM review_checks",
+            "SELECT json_extract(origin.value,'$.attemptId') FROM review_checks
+             CROSS JOIN json_each(review_checks.evidence_json,'$.origins') AS origin
+             ORDER BY json_extract(origin.value,'$.attemptId') DESC,
+                      json_extract(origin.value,'$.resultId') DESC
+             LIMIT 1",
             [],
             |row| row.get(0),
         )
         .unwrap();
-    db.execute(
-        "UPDATE execution_attempts SET digest=?1 WHERE attempt_id=?2",
-        [&"0".repeat(64), &last],
-    )
-    .unwrap();
+    let updated = db
+        .execute(
+            "UPDATE execution_attempts SET digest=?1 WHERE attempt_id=?2",
+            [&"0".repeat(64), &last],
+        )
+        .unwrap();
+    assert_eq!(updated, 1, "corrupt exactly one existing QA frame");
     drop(db);
     let before = std::fs::read(directory.path().join("project/project.sqlite3")).unwrap();
     let project = project(&store);

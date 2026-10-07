@@ -52,14 +52,16 @@ pub use resources::{
     SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
     TmSuggestion,
 };
+pub(crate) use review::validate_choices;
 pub use review::{
-    CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun, ComputedReviewEvidence,
-    Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite,
-    PreparedReviewCheck, ReviewBasis, ReviewCheckEvidence, ReviewCheckOutcome, ReviewCheckPlan,
-    ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor,
-    ReviewPage, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,
-    ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite,
-    WorkItem, WorkPage,
+    AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun,
+    ComputedReviewEvidence, Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision,
+    FallbackWrite, PreparedReviewCheck, ReviewBasis, ReviewCheckEvidence, ReviewCheckOrigin,
+    ReviewCheckOriginEvidence, ReviewCheckOutcome, ReviewCheckPlan, ReviewChecker,
+    ReviewCheckerKey, ReviewCheckerKind, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
+    ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewScopeCapture,
+    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,

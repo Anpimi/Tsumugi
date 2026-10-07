@@ -1,4 +1,4 @@
-import { pluginCommands, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
+import { pluginCommands, readEnabledPluginPackages, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
 import { approvedPluginEnvironments } from "./pluginEnvironments";
 
 /** Compare captured presentation identities without depending on JSON key order. */
@@ -24,9 +24,7 @@ export function matchesTool(view: PluginToolView, request: PluginToolRequest): b
 /** Both manual queries and work plans use the installed package/read owner. */
 export async function readPluginToolChoices() {
   const value = await pluginCommands.inventory();
-  const enabled = value.packages.filter(item => item.state === "sealed" && value.packageDecisions.some(decision => decision.enabled
-    && decision.packageDigest === item.packageDigest && jsonIdentity(decision.plugin) === jsonIdentity(item.plugin)));
-  const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
+  const packages = await readEnabledPluginPackages(value);
   const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource"
     && contribution.contribution.schema.id === "tsumugi.capability-tool-declaration" && contribution.contribution.schema.schemaVersion === 1
     && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`,

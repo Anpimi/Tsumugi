@@ -1,4 +1,4 @@
-import type { ContractRef, EncodedPayload, InvocationContext, ProviderBinding } from './process.js';
+import type { ContractRef, EncodedPayload, InvocationContext, ProviderBinding, ServiceBinding, ServiceResponse } from './process.js';
 
 /** A proposal payload. The Host supplies the exact schema and digest; Core
  * remains responsible for semantic validation, authority and adoption. */
@@ -13,6 +13,13 @@ export interface InvocationMetadata {
   readonly provider: Readonly<ProviderBinding>;
   readonly profile: Readonly<ContractRef> | null;
   readonly signal: AbortSignal;
+  readonly services: InvocationServices;
+}
+/** Calls are serialized and bound to this invocation's original context. A
+ * response may acknowledge enqueueing; its outcome is not a child completion. */
+export interface InvocationServices {
+  readonly bindings: readonly Readonly<ServiceBinding>[];
+  call(handleId: string, utf8: string, callId?: string): Promise<Readonly<ServiceResponse>>;
 }
 export type CapabilityHandler = (
   input: Readonly<EncodedPayload>,
@@ -24,6 +31,8 @@ export type CapabilityHandler = (
 export interface ComponentAPI {
   readonly contribution: Readonly<{ id: string; contract: Readonly<ContractRef> }>;
   readonly signal: AbortSignal;
+  /** Resolved before activation. Descriptors expose no authority or caller API. */
+  readonly services: readonly Readonly<ServiceBinding>[];
   register(handler: CapabilityHandler): void;
   onDispose(cleanup: () => void | Promise<void>): void;
 }

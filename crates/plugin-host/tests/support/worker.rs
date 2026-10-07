@@ -51,7 +51,7 @@ fn main() {
     }
     if mode == "wrong-protocol" {
         let mut frame = ProcessFrame::new(ProcessBody::Ready(activation));
-        frame.protocol_version = 2;
+        frame.protocol_version = PROCESS_PROTOCOL + 1;
         raw(&serde_json::to_vec(&frame).unwrap());
         hang();
     }
@@ -88,7 +88,7 @@ fn main() {
                     return;
                 }
                 if mode == "duplicate-fields" {
-                    raw(br#"{"protocolVersion":1,"protocolVersion":1,"body":{"kind":"pong","data":{"nonce":"nonce"}}}"#);
+                    raw(br#"{"protocolVersion":2,"protocolVersion":2,"body":{"kind":"pong","data":{"nonce":"nonce"}}}"#);
                     hang();
                 }
                 if mode == "stderr-flood" {

@@ -11,6 +11,24 @@ SDK `0.1.0-alpha.1` remain the same undistributed batch; synchronized Unreleased
 entries require no additional SemVer bump or historical migration. Production
 Desktop integration and full product acceptance remain in development.
 
+Core service-origin capture also requires the installation owner's original
+one-way revocation signal. This changes the experimental Rust adapter API;
+the signal is session-local and is not a stored credential or additional
+persistent format. WorkPlan Desktop IPC combines reference-tool selection,
+the full checker set and independent consents. Regenerate strict consumers;
+historical acknowledgements do not renew missing consent. These changes stay
+in the same undistributed batch and require no additional version bump.
+The existing installation owner publishes one session-local settings signal and
+withdraws it before settings promotion or closure. A failed or uncertain write
+cannot restore the old signal; fresh capture rereads actual settings without
+renewing Core grants. This adds no persistent settings field, dependency or
+wire shape, and is covered by the same Unreleased entries and version boundary.
+
+The combined current development profile is project schema 31, internal WorkPlan
+format 2, process protocol 2, installed settings 2 and receipt format 1. The
+individual assessments below retain the format boundaries at which each change
+was introduced; they do not create alternate current profiles.
+
 Bounded work-plan tools add fixed installed SDK bindings, independent local
 execution consent, source-derived Agent queries and one cumulative invocation
 limit to the original Core/Host/Desktop execution chain. Current project schema
@@ -35,6 +53,84 @@ are introduced. Internal IPC consumers must regenerate their contracts.
 Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
 batch, with synchronized Unreleased entries and no extra bump or historical
 migration. Full plugin-tool and autonomous Agent acceptance remains separate.
+
+The optional Core Host adapter now captures a service broker separately for
+each actual dispatch, permit and cancellation handle. This changes the
+experimental Rust adapter API; service selection and process execution retain
+the original Core dispatch deadline. Historical query requests cannot establish
+a new execution deadline. These changes do not change wire contracts, persistent
+formats or dependencies. It remains in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; both Unreleased changelogs describe
+the behavior, with no additional version bump or historical migration.
+
+The experimental project-service transport advances the independently owned
+process protocol to 2. Activation now requires a service table and the channel
+supports exact service requests/responses. Generate current SDK bindings and
+rebuild/capture the current Host and native workers. Protocol-1 frames and
+runtime descriptions are refused, including descriptions retained in development
+project inputs, settings approvals and runtime receipts; use a fresh development
+profile and project for process-2 validation. Earlier artifacts remain unchanged,
+and no historical fallback or migration is supplied. The existing upper-level
+validation can classify such retained descriptions as invalid project/settings/
+receipt data rather than expose the SDK's UnsupportedProtocol error directly.
+
+Manifest/content-exchange protocols, project schema 30, settings format 2,
+receipt format 1 and dependencies are unchanged: their stored fields and layout
+have not changed, and processProtocol remains a separate strict identity within
+the complete environment digest. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch. Both Unreleased changelogs
+record the incompatible process boundary; no additional SemVer bump or release
+is performed. JavaScript service transport does not complete the application's
+AI service adapter, durable child authorization or full release acceptance.
+
+
+Manual checker lifecycle now distinguishes explicit metadata rejection from
+attempted authorization and real execution channels. Inert rejected checks do
+not poll settings or block project closure; original consent, partial submission,
+uncertain authorization and cancellation remain authoritative. This internal
+repair changes no schema, IPC, SDK/process contract or dependency. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch and bilingual
+Unreleased entries require no extra version bump or historical migration.
+
+Source-update estimates now use the existing QA applicability owner for a new
+adopted snapshot. Complete-input checks remain historical while translations and
+applicable manual decisions retain their existing semantics. This fixes the
+preview without changing QA digests, stored proofs, schemas, IPC, SDK/process
+contracts or dependencies. The same undistributed alpha batch and bilingual
+Unreleased entries require no extra version bump or historical migration.
+
+Text-checker discovery follows its active scope and explicit refresh, without
+restarting when an action locks or unlocks interaction. This corrects Review and
+WorkPlan preparation without changing IPC, SDK/process contracts, schemas,
+settings, dependencies or execution authority. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch and bilingual Unreleased
+entries require no additional bump or historical migration.
+
+Installed package choice discovery now orders metadata reads to respect the
+existing exclusive Store lock. Source/build refresh and workbench re-entry use
+the completed current scan before reading an execution environment. This fixes
+desktop discovery without changing IPC, SDK/process contracts, schemas, stored
+settings, dependencies or execution authority. It remains the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; both Unreleased
+changelogs record the fix, with no additional version bump or migration.
+
+New-project path previews now use the native separator already supplied by
+Tauri. Actual project creation still uses its existing native join operation;
+no stored locator, schema, IPC or dependency changes are required. This fix
+shares the same undistributed version batch and bilingual Unreleased entries.
+
+Experimental joint Review QA now captures mandatory source-format checks and
+explicit action-local advisory text rules in one fixed union. Each checker has
+its own original execution input, task, grant and result provenance. Current QA
+and checked selection use mandatory coverage while retaining advisory findings,
+diagnostics and invocation failures. Desktop consumers must regenerate the
+internal multi-checker IPC contracts; the previous single-checker shape is not
+a compatibility path. The current-only project format advances to schema 30;
+earlier development directories are refused unchanged, without migration.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch, with synchronized Unreleased entries and no additional SemVer bump.
+SDK/process wire contracts, installed settings/Store layouts and dependency versions
+are unchanged. This does not publish a release or adopt knowledge Resources.
 
 The experimental SDK's advisory text-review declaration, input and report use
 new schema/behavior 1/1 identities and reuse the original CheckResult and finite

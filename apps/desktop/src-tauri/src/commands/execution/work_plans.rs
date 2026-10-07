@@ -1,15 +1,14 @@
 //! Work-plan commands share the ordinary project session and runtime.
 pub(crate) mod agent;
 pub(crate) mod broker;
+use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
     dispatch::BlockingExecutor,
-    plugins::{
-        ApplicationPlugins,
-        reviews::{PluginReviewView, ReviewEnvironment},
-    },
+    plugins::{ApplicationPlugins, reviews::PluginTextReviewSelection},
 };
 use tsumugi_core::content::SourceReviewBinding;
+use tsumugi_core::{AdvisoryReviewCheck, ReviewChecker, ReviewCheckerKey};
 use tsumugi_core::{
     ai::{self, AiConfig, AiPreview},
     application::{
@@ -24,7 +23,7 @@ use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 #[derive(Default)]
 pub(super) struct WorkPlanSession {
     prepared: Option<WorkPlan>,
-    environments: BTreeMap<ExecutionId, (String, ReviewEnvironment)>,
+    environments: BTreeMap<ExecutionId, (String, Vec<CheckerEnvironment>)>,
     checker_consents: BTreeMap<ExecutionId, CheckerConsent>,
     agent_scopes: BTreeMap<ExecutionId, WorkPlanAgentScope>,
     tool_consents: BTreeMap<ExecutionId, (AutomationLease, Arc<WorkPlanToolConsent>)>,
@@ -46,8 +45,19 @@ impl WorkPlanSession {
 #[derive(Clone)]
 pub(super) struct CheckerConsent {
     pub lease: AutomationLease,
-    pub binding: SourceReviewBinding,
+    pub bindings: Vec<ReviewChecker>,
     pub expires_at_ms: u64,
+    pub settings_revision: UnsignedDecimal,
+    pub plugins: Arc<ApplicationPlugins>,
+}
+impl CheckerConsent {
+    pub(super) fn with_current_environment<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, CommandError>,
+    ) -> Result<T, CommandError> {
+        self.plugins
+            .with_environment_revision(self.settings_revision, operation)
+    }
 }
 
 fn current_checker_consent(
@@ -62,126 +72,177 @@ fn current_checker_consent(
         .get(&plan.plan_id)
         .filter(|consent| consent.lease == lease)
         .cloned();
-    if let Some(binding) = store.work_plan_review_binding(plan).map_err(map_recover)? {
-        if checker
-            .as_ref()
-            .is_none_or(|consent| consent.binding != binding)
-        {
-            return Err(map_recover(ExecutionError::new(
-                ErrorCode::Unauthorized,
-                "plugin-consent-required",
-            )));
-        }
+    let bindings = store.work_plan_review_checkers(plan).map_err(map_recover)?;
+    if checker
+        .as_ref()
+        .map_or(!bindings.is_empty(), |consent| consent.bindings != bindings)
+    {
+        return Err(map_recover(ExecutionError::new(
+            ErrorCode::Unauthorized,
+            "plugin-consent-required",
+        )));
     }
     Ok(checker)
+}
+
+/// The two approvals share one settings owner. Compare both captured revisions
+/// before taking its guard once; nesting its guards would lock the same manager.
+fn with_plan_environment_revision<T>(
+    plugins: &ApplicationPlugins,
+    plan: &WorkPlan,
+    checker_revision: Option<UnsignedDecimal>,
+    operation: impl FnOnce() -> Result<T, CommandError>,
+) -> Result<T, CommandError> {
+    let Some(checker_revision) = checker_revision else {
+        return broker::with_tools_revision(plugins, plan, operation);
+    };
+    if broker::tools_revision(plan)?.is_some_and(|revision| revision != checker_revision) {
+        return Err(super::review::checkers::stale());
+    }
+    plugins.with_environment_revision(checker_revision, operation)
+}
+
+fn checker_environment_revision(
+    environments: &[CheckerEnvironment],
+) -> Result<Option<UnsignedDecimal>, CommandError> {
+    let revision = environments
+        .first()
+        .map(CheckerEnvironment::settings_revision);
+    if environments
+        .iter()
+        .any(|environment| Some(environment.settings_revision()) != revision)
+    {
+        return Err(super::review::checkers::stale());
+    }
+    Ok(revision)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub enum WorkPlanCheckerView {
-    Ready { plugin: PluginReviewView },
-    Unavailable { error: CommandError },
+    Ready {
+        checker: ReviewCheckerKey,
+        plugin: ReviewCheckerView,
+    },
+    Unavailable {
+        checker: ReviewCheckerKey,
+        error: CommandError,
+    },
 }
 
-async fn load_checker(
+async fn load_checkers(
     io: BlockingExecutor,
     plugins: Arc<ApplicationPlugins>,
-    binding: Option<SourceReviewBinding>,
-    cached: Option<ReviewEnvironment>,
-) -> Result<(Option<ReviewEnvironment>, Option<WorkPlanCheckerView>), CommandError> {
-    let Some(binding) = binding else {
-        return Ok((None, None));
-    };
+    source: Option<SourceReviewBinding>,
+    checkers: Vec<ReviewChecker>,
+    advisory: Vec<AdvisoryReviewCheck>,
+    cached: Option<Vec<CheckerEnvironment>>,
+) -> Result<(Vec<CheckerEnvironment>, Vec<WorkPlanCheckerView>), CommandError> {
     io.run(CommandStage::ExecutionRead, move || {
-        if let Some(environment) = cached {
-            if plugins.environment_settings_revision().ok() == Some(environment.settings_revision) {
-                let plugin = environment.view()?;
-                return Ok((
-                    Some(environment),
-                    Some(WorkPlanCheckerView::Ready { plugin }),
-                ));
+        let mut environments = Vec::new();
+        let mut views = Vec::new();
+        for checker in checkers {
+            let loaded = (|| {
+                if let Some(environment) = cached.as_ref().and_then(|cache| {
+                    cache
+                        .iter()
+                        .find(|environment| environment.key().ok().as_ref() == Some(&checker.key))
+                }) {
+                    if plugins.environment_settings_revision()? == environment.settings_revision() {
+                        return Ok(environment.clone());
+                    }
+                }
+                let source = source.as_ref().ok_or_else(super::review::checkers::stale)?;
+                CheckerEnvironment::capture(&plugins, &checker, source, &advisory)
+            })();
+            match loaded.and_then(|environment| environment.view().map(|view| (environment, view)))
+            {
+                Ok((environment, plugin)) => {
+                    environments.push(environment);
+                    views.push(WorkPlanCheckerView::Ready {
+                        checker: checker.key,
+                        plugin,
+                    });
+                }
+                Err(error) => views.push(WorkPlanCheckerView::Unavailable {
+                    checker: checker.key,
+                    error,
+                }),
             }
         }
-        Ok(
-            match plugins
-                .capture_review(&binding)
-                .and_then(|environment| environment.view().map(|view| (environment, view)))
-            {
-                Ok((environment, plugin)) => (
-                    Some(environment),
-                    Some(WorkPlanCheckerView::Ready { plugin }),
-                ),
-                Err(error) => (None, Some(WorkPlanCheckerView::Unavailable { error })),
-            },
-        )
+        Ok((environments, views))
     })
     .await
 }
 
-fn consent_environment(
+fn consent_environments(
     host: &ExecutionHost,
     store: &ProjectStore,
     plan: &WorkPlan,
-    confirmed: bool,
-) -> Result<Option<(ReviewEnvironment, SourceReviewBinding)>, CommandError> {
-    let Some(binding) = store.work_plan_review_binding(plan).map_err(map_recover)? else {
-        return Ok(None);
-    };
-    if !confirmed {
+    confirmed: &[ReviewCheckerKey],
+) -> Result<Vec<(CheckerEnvironment, ReviewChecker)>, CommandError> {
+    let bindings = store.work_plan_review_checkers(plan).map_err(map_recover)?;
+    let keys: Vec<_> = bindings.iter().map(|checker| checker.key.clone()).collect();
+    if confirmed != keys {
         return Err(map_recover(ExecutionError::new(
             ErrorCode::Unauthorized,
             "plugin-consent-required",
         )));
     }
-    let environment = host
+    if bindings.is_empty() {
+        return Ok(Vec::new());
+    }
+    let environments = host
         .work_plans
         .environments
         .get(&plan.plan_id)
         .filter(|(digest, _)| digest == &plan.digest)
-        .ok_or_else(|| {
-            map_recover(ExecutionError::new(
-                ErrorCode::DependencyConflict,
-                "work-plan-checker-preview",
-            ))
-        })?;
-    if environment.1.binding.checker != binding.checker.capability
-        || environment.1.runtime.environment() != binding.checker.environment
-    {
-        return Err(map_recover(ExecutionError::new(
-            ErrorCode::DependencyConflict,
-            "work-plan-checker-preview",
-        )));
-    }
-    Ok(Some((environment.1.clone(), binding)))
+        .ok_or_else(super::review::checkers::stale)?;
+    bindings
+        .into_iter()
+        .map(|checker| {
+            let environment = environments
+                .1
+                .iter()
+                .find(|environment| environment.key().ok().as_ref() == Some(&checker.key))
+                .ok_or_else(super::review::checkers::stale)?;
+            if environment.binding()? != checker.binding {
+                return Err(super::review::checkers::stale());
+            }
+            Ok((environment.clone(), checker))
+        })
+        .collect()
 }
 
-async fn checker_runner(
+async fn checker_runners(
     io: BlockingExecutor,
     plugins: Arc<ApplicationPlugins>,
-    environment: Option<(ReviewEnvironment, SourceReviewBinding)>,
-) -> Result<Option<(Arc<RunnerProxy>, SourceReviewBinding)>, CommandError> {
-    let Some((environment, binding)) = environment else {
-        return Ok(None);
-    };
+    environments: Vec<(CheckerEnvironment, ReviewChecker)>,
+) -> Result<
+    (
+        Option<UnsignedDecimal>,
+        Vec<(Arc<RunnerProxy>, ReviewChecker)>,
+    ),
+    CommandError,
+> {
     io.run(CommandStage::ExecutionRecover, move || {
-        let current = plugins.capture_review(&binding)?;
-        if current.settings_revision != environment.settings_revision {
-            return Err(map_recover(ExecutionError::new(
-                ErrorCode::DependencyConflict,
-                "work-plan-checker-preview",
-            )));
-        }
-        let environment = current;
-        RunnerProxy::new(
-            environment.package.image().clone(),
-            &environment.binding.declaration.checker,
-            environment.runtime,
-            environment.staging_parent,
-            HostLimits::default(),
-        )
-        .map(|runner| Some((Arc::new(runner), binding)))
-        .map_err(map_recover)
+        let mut revision = None;
+        let runners = environments
+            .into_iter()
+            .map(|(environment, checker)| {
+                let current = environment.reopen(&plugins)?;
+                if current.binding()? != checker.binding {
+                    return Err(super::review::checkers::stale());
+                }
+                if revision.is_some_and(|revision| revision != current.settings_revision()) {
+                    return Err(super::review::checkers::stale());
+                }
+                revision = Some(current.settings_revision());
+                Ok((current.runner()?, checker))
+            })
+            .collect::<Result<Vec<_>, CommandError>>()?;
+        Ok((revision, runners))
     })
     .await
 }
@@ -193,6 +254,7 @@ request!(
         locale: String,
         unit_ids: Vec<ExecutionId>,
         options: PlanOptions,
+        advisory_checks: Vec<PluginTextReviewSelection>,
         tool_selection: Option<broker::WorkPlanToolSelection>
     }
 );
@@ -203,7 +265,7 @@ request!(
         digest: String,
         action_id: ExecutionId,
         confirmed: bool,
-        checker_execution: bool,
+        checker_executions: Vec<ReviewCheckerKey>,
         tool_execution: bool,
         effects: Vec<AutomationEffect>,
         expires_at: UnsignedDecimal
@@ -225,7 +287,7 @@ request!(
         expected_generation: Revision,
         command: WorkPlanCommand,
         confirmed: bool,
-        checker_execution: bool,
+        checker_executions: Vec<ReviewCheckerKey>,
         tool_execution: bool,
         expires_at: Option<UnsignedDecimal>
     }
@@ -274,7 +336,7 @@ pub struct WorkPlanView {
     pub scope: Vec<PlanSelectionBasis>,
     pub preview: Option<AiPreviewView>,
     pub attempt_id: Option<ExecutionId>,
-    pub checker: Option<WorkPlanCheckerView>,
+    pub checkers: Vec<WorkPlanCheckerView>,
     pub tools: Option<WorkPlanTools>,
 }
 
@@ -310,7 +372,7 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
             scope: plan.selection_basis.clone(),
             preview,
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),
-            checker: None,
+            checkers: Vec::new(),
             tools: plan.tools.clone(),
         })
     }
@@ -369,8 +431,20 @@ pub async fn prepare_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanPrepareRequest,
 ) -> Result<WorkPlanView, CommandError> {
+    if !request.options.advisory_checks.is_empty() {
+        return Err(super::review::checkers::stale());
+    }
+    let plugins = state.plugins.clone();
+    let selections = request.advisory_checks.clone();
+    let advisory = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            capture_advisory(&plugins, &selections)
+        })
+        .await?;
     let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
-    let initial = request.clone();
+    let mut initial = request.clone();
+    initial.options.advisory_checks = advisory;
     let captured = lease.submit(
         "prepare_work_plan.capture",
         CommandStage::ExecutionRead,
@@ -391,14 +465,15 @@ pub async fn prepare_work_plan(
                     initial.options,
                 )
                 .map_err(map_read)?;
-            let binding = store.work_plan_review_binding(&plan).map_err(map_read)?;
-            Ok((plan, binding, host.runtime.generation()))
+            let source = store.work_plan_review_binding(&plan).map_err(map_read)?;
+            let checkers = store.work_plan_review_checkers(&plan).map_err(map_read)?;
+            Ok((plan, source, checkers, host.runtime.generation()))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, binding, generation) = captured.await?;
+        let (plan, source, checkers, generation) = captured.await?;
         let selected = request.tool_selection.clone();
         let current_plugins = plugins.clone();
         let tools = io
@@ -407,7 +482,16 @@ pub async fn prepare_work_plan(
                 broker::capture_selection(&current_plugins, selected.as_ref())
             })
             .await?;
-        let (environment, checker) = load_checker(io, plugins.clone(), binding, None).await?;
+        let (environments, views) = load_checkers(
+            io,
+            plugins.clone(),
+            source,
+            checkers,
+            plan.options.advisory_checks.clone(),
+            None,
+        )
+        .await?;
+        let checker_revision = checker_environment_revision(&environments)?;
         lease
             .run(
                 "prepare_work_plan.finish",
@@ -434,23 +518,23 @@ pub async fn prepare_work_plan(
                                 request.config.clone(),
                                 &request.locale,
                                 &request.unit_ids,
-                                request.options.clone(),
+                                plan.options.clone(),
                                 tools,
                             )
                             .map_err(map_read)?
                     } else {
                         plan
                     };
-                    broker::with_tools_revision(&plugins, &plan, || {
+                    with_plan_environment_revision(&plugins, &plan, checker_revision, || {
                         let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
-                        view.checker = checker;
-                        if let Some(environment) = environment {
+                        view.checkers = views;
+                        if !environments.is_empty() {
                             if host.work_plans.environments.len() >= 8 {
                                 host.work_plans.environments.clear();
                             }
                             host.work_plans
                                 .environments
-                                .insert(plan.plan_id, (plan.digest.clone(), environment));
+                                .insert(plan.plan_id, (plan.digest.clone(), environments));
                         } else {
                             host.work_plans.environments.remove(&plan.plan_id);
                         }
@@ -471,6 +555,7 @@ pub async fn authorize_work_plan(
     request: WorkPlanAuthorizeRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionRecover)?;
+    let captured_plugins = state.plugins.clone();
     let initial = request.clone();
     let captured = lease.submit(
         "authorize_work_plan.capture",
@@ -509,7 +594,7 @@ pub async fn authorize_work_plan(
                         },
                     )
                     .map_err(map_recover)?;
-                broker::restore_consent(host, store, &plan, &receipt, &initial)?;
+                broker::restore_consent(host, store, &plan, &receipt, &initial, &captured_plugins)?;
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
             }
             let prepared = host
@@ -529,7 +614,7 @@ pub async fn authorize_work_plan(
                 )?;
                 Ok(Ok((
                     plan.clone(),
-                    consent_environment(host, store, &plan, initial.checker_execution)?,
+                    consent_environments(host, store, &plan, &initial.checker_executions)?,
                     host.runtime.generation(),
                 )))
             } else {
@@ -570,7 +655,8 @@ pub async fn authorize_work_plan(
             Ok(value) => value,
             Err(receipt) => return Ok(receipt),
         };
-        let runner = checker_runner(io, plugins.clone(), environment).await?;
+        let (settings_revision, runners) =
+            checker_runners(io, plugins.clone(), environment).await?;
         lease
             .run(
                 "authorize_work_plan.finish",
@@ -590,15 +676,14 @@ pub async fn authorize_work_plan(
                             "work-plan-session",
                         )));
                     }
-                    store.verify_work_plan(&plan).map_err(map_recover)?;
-                    broker::with_tools_revision(&plugins, &plan, || {
-                        let binding = if let Some((runner, binding)) = runner {
-                            host.register_plugin(runner, binding.checker.clone())
+                    let finish = || {
+                        store.verify_work_plan(&plan).map_err(map_recover)?;
+                        let mut bindings = Vec::new();
+                        for (runner, checker) in runners {
+                            host.register_plugin(runner, checker.binding.clone())
                                 .map_err(map_recover)?;
-                            Some(binding)
-                        } else {
-                            None
-                        };
+                            bindings.push(checker);
+                        }
                         let receipt = store
                             .authorize_work_plan(
                                 &plan,
@@ -613,7 +698,7 @@ pub async fn authorize_work_plan(
                             .map_err(map_recover)?;
                         broker::save_consent(host, store, &plan, &receipt)
                             .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?;
-                        if let Some(binding) = binding {
+                        if !bindings.is_empty() {
                             let status = store.work_plan_status(plan.plan_id).map_err(|_| {
                                 CommandError::unknown(CommandStage::ExecutionRecover)
                             })?;
@@ -625,14 +710,18 @@ pub async fn authorize_work_plan(
                                     plan.plan_id,
                                     CheckerConsent {
                                         lease: receipt.lease,
-                                        binding,
+                                        bindings,
                                         expires_at_ms: status.expires_at.saturating_mul(1000),
+                                        settings_revision: settings_revision
+                                            .expect("checker snapshot"),
+                                        plugins: plugins.clone(),
                                     },
                                 );
                             }
                         }
                         Ok(receipt.into())
-                    })
+                    };
+                    with_plan_environment_revision(&plugins, &plan, settings_revision, finish)
                 },
             )
             .await
@@ -646,6 +735,7 @@ pub async fn start_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanStartRequest,
 ) -> Result<ExecutionId, CommandError> {
+    let plugins = state.plugins.clone();
     state
         .sessions
         .run(
@@ -720,15 +810,19 @@ pub async fn start_work_plan(
                 }
                 let plan = store.work_plan(request.plan_id).map_err(map_recover)?;
                 let checker = current_checker_consent(host, store, &plan, receipt.lease)?;
-                if let Some(parent) = receipt.parent_task {
-                    host.runtime
-                        .submit_child(store, &input, parent)
-                        .map_err(map_recover)?;
-                } else {
-                    host.runtime.submit(store, &input).map_err(map_recover)?;
-                }
-                host.ai.track(store, &input, checker).map_err(map_recover)?;
-                Ok(input.envelope().attempt_id)
+                let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
+                let start = || {
+                    if let Some(parent) = receipt.parent_task {
+                        host.runtime
+                            .submit_child(store, &input, parent)
+                            .map_err(map_recover)?;
+                    } else {
+                        host.runtime.submit(store, &input).map_err(map_recover)?;
+                    }
+                    host.ai.track(store, &input, checker).map_err(map_recover)?;
+                    Ok(input.envelope().attempt_id)
+                };
+                with_plan_environment_revision(&plugins, &plan, checker_revision, start)
             },
         )
         .await
@@ -740,6 +834,7 @@ pub async fn control_work_plan(
     request: WorkPlanControlRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionCancel)?;
+    let captured_plugins = state.plugins.clone();
     let initial = request.clone();
     let captured = lease.submit(
         "control_work_plan.capture",
@@ -773,11 +868,11 @@ pub async fn control_work_plan(
                     .work_plan(receipt.lease.plan_id)
                     .map_err(map_recover)?;
                 let (host, store) = active.execution_parts()?;
-                broker::restore_consent(host, store, &plan, &receipt, &initial)?;
+                broker::restore_consent(host, store, &plan, &receipt, &initial, &captured_plugins)?;
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
             }
             if initial.command != WorkPlanCommand::Continue {
-                return Ok(Ok((None, None, None)));
+                return Ok(Ok((None, Vec::new(), None)));
             }
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
@@ -795,10 +890,11 @@ pub async fn control_work_plan(
                     .get();
                 broker::capture_human_intent(host, &plan, initial.action_id, expiry, &initial)?;
             }
-            let environment = consent_environment(host, store, &plan, initial.checker_execution)?;
+            let environments =
+                consent_environments(host, store, &plan, &initial.checker_executions)?;
             Ok(Ok((
                 Some(plan),
-                environment,
+                environments,
                 Some(host.runtime.generation()),
             )))
         },
@@ -810,7 +906,8 @@ pub async fn control_work_plan(
             Ok(environment) => environment,
             Err(receipt) => return Ok(receipt),
         };
-        let runner = checker_runner(io, plugins.clone(), environment).await?;
+        let (settings_revision, runners) =
+            checker_runners(io, plugins.clone(), environment).await?;
         lease
             .run(
                 "control_work_plan.finish",
@@ -833,15 +930,14 @@ pub async fn control_work_plan(
                                 )));
                             }
                         }
-                        let binding = if let Some((runner, binding)) = runner {
+                        let mut bindings = Vec::new();
+                        for (runner, checker) in runners {
                             let (host, _) = active.execution_parts()?;
                             host.allow_mutation()?;
-                            host.register_plugin(runner, binding.checker.clone())
+                            host.register_plugin(runner, checker.binding.clone())
                                 .map_err(map_recover)?;
-                            Some(binding)
-                        } else {
-                            None
-                        };
+                            bindings.push(checker);
+                        }
                         let receipt = active
                             .store
                             .control_work_plan(&ControlWorkPlan {
@@ -861,7 +957,7 @@ pub async fn control_work_plan(
                         } else if let Some(host) = active.execution.as_mut() {
                             host.work_plans.tool_consents.remove(&request.plan_id);
                         }
-                        if let Some(binding) = binding {
+                        if !bindings.is_empty() {
                             let (host, store) = active.execution_parts()?;
                             let status = store.work_plan_status(request.plan_id).map_err(|_| {
                                 CommandError::unknown(CommandStage::ExecutionCancel)
@@ -873,18 +969,25 @@ pub async fn control_work_plan(
                                     request.plan_id,
                                     CheckerConsent {
                                         lease: receipt.lease,
-                                        binding,
+                                        bindings,
                                         expires_at_ms: status.expires_at.saturating_mul(1000),
+                                        settings_revision: settings_revision
+                                            .expect("checker snapshot"),
+                                        plugins: plugins.clone(),
                                     },
                                 );
                             }
                         }
                         Ok(receipt.into())
                     };
-                    if let Some(plan) = &plan {
-                        broker::with_tools_revision(&plugins, plan, finish)
-                    } else {
-                        finish()
+                    match &plan {
+                        Some(plan) => with_plan_environment_revision(
+                            &plugins,
+                            plan,
+                            settings_revision,
+                            finish,
+                        ),
+                        None => finish(),
                     }
                 },
             )
@@ -922,14 +1025,26 @@ pub async fn read_work_plan_status(
                 .and_then(|host| host.work_plans.environments.get(&plan.plan_id))
                 .filter(|(digest, _)| digest == &plan.digest)
                 .map(|(_, environment)| environment.clone());
-            Ok((plan, binding, cached))
+            let checkers = active
+                .store
+                .work_plan_review_checkers(&plan)
+                .map_err(map_read)?;
+            Ok((plan, binding, checkers, cached))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, binding, cached) = captured.await?;
-        let (environment, checker) = load_checker(io, plugins, binding, cached).await?;
+        let (plan, binding, checkers, cached) = captured.await?;
+        let (environments, views) = load_checkers(
+            io,
+            plugins,
+            binding,
+            checkers,
+            plan.options.advisory_checks.clone(),
+            cached,
+        )
+        .await?;
         lease
             .run(
                 "read_work_plan_status.finish",
@@ -952,14 +1067,14 @@ pub async fn read_work_plan_status(
                             limit: tools.max_invocations,
                         });
                     }
-                    view.plan.checker = checker;
-                    if let Some(environment) = environment {
+                    view.plan.checkers = views;
+                    if !environments.is_empty() {
                         if host.work_plans.environments.len() >= 8 {
                             host.work_plans.environments.clear();
                         }
                         host.work_plans
                             .environments
-                            .insert(plan.plan_id, (plan.digest.clone(), environment));
+                            .insert(plan.plan_id, (plan.digest.clone(), environments));
                     } else {
                         host.work_plans.environments.remove(&plan.plan_id);
                     }
@@ -1065,6 +1180,7 @@ pub async fn set_work_protection(
 #[cfg(test)]
 mod tests {
     mod broker_tests;
+    mod settings;
     use super::*;
     use serde_json::{Value, json};
     use std::{net::TcpListener, time::SystemTime};
@@ -1074,6 +1190,15 @@ mod tests {
         webview::InvokeRequest,
     };
     use tsumugi_core::application::{StageChoice, StageMode, WorkStage};
+
+    fn checker_keys(plan: &Value) -> Vec<Value> {
+        plan["checkers"]
+            .as_array()
+            .expect("actual checker preview required")
+            .iter()
+            .map(|checker| checker["checker"].clone())
+            .collect()
+    }
 
     #[test]
     fn shared_work_plan_fixture_round_trips_through_serde() {
@@ -1444,7 +1569,7 @@ mod tests {
                 .find(|stage| stage.stage == WorkStage::Checks)
                 .unwrap()
                 .mode = StageMode::Assisted;
-            let plan = self.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN","unitIds":[self.unit],"options":options})).unwrap();
+            let plan = self.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN","unitIds":[self.unit],"options":options,"advisoryChecks":[],"toolSelection":null})).unwrap();
             let effects = match policy {
                 tsumugi_core::application::SelectionPolicy::MissingOnly => {
                     json!(["save-candidate", "run-checks", "select-missing"])
@@ -1454,7 +1579,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             };
-            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecution":false,"toolExecution":false,"effects":effects,"expiresAt":expiry()})).unwrap();
+            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":effects,"expiresAt":expiry()})).unwrap();
             assert_eq!(self.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap(), plan["attemptId"]);
             plan
         }
@@ -1481,11 +1606,11 @@ mod tests {
     impl Fixture {
         fn start_candidates(&self, config: AiConfig) -> (Value, Value) {
             let plan = self.call("prepare_work_plan", json!({
-                "config":config,"locale":"zh-CN","unitIds":[self.unit],"options":PlanOptions::default()
+                "config":config,"locale":"zh-CN","unitIds":[self.unit],"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
             })).unwrap();
             let grant = self.call("authorize_work_plan", json!({
                 "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
-                "confirmed":true,"checkerExecution":false,"toolExecution":false,"effects":["save-candidate"],"expiresAt":expiry()
+                "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":["save-candidate"],"expiresAt":expiry()
             })).unwrap();
             assert!(
                 self.call(
@@ -1727,7 +1852,7 @@ mod tests {
         let count = fixture.attempt_count();
         let paused = fixture.call("control_work_plan", json!({
             "planId":plan["planId"],"actionId":ExecutionId::new(),
-            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecution":false,"toolExecution":false
+            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false
         })).unwrap();
         assert!(
             fixture
@@ -1745,7 +1870,7 @@ mod tests {
                 json!({
                     "planId":plan["planId"],"actionId":ExecutionId::new(),
                     "expectedGeneration":paused["lease"]["generation"],"command":"continue",
-                    "confirmed":true,"checkerExecution":false,"toolExecution":false,"expiresAt":expiry()
+                    "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()
                 }),
             )
             .unwrap();
@@ -1951,7 +2076,7 @@ mod tests {
         assert_eq!(status["state"], "paused");
         let continue_request = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),
             "expectedGeneration":status["lease"]["generation"],"command":"continue",
-            "confirmed":true,"checkerExecution":false,"toolExecution":false,"expiresAt":expiry()});
+            "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()});
         let resumed = fixture
             .call("control_work_plan", continue_request.clone())
             .unwrap();
@@ -2039,7 +2164,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":"3","command":"pause",
-            "confirmed":false,"checkerExecution":false,"toolExecution":false,"expiresAt":null}),
+            "confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null}),
             )
             .unwrap();
         let third = fixture
@@ -2047,7 +2172,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],
-            "command":"continue","confirmed":true,"checkerExecution":false,"toolExecution":false,"expiresAt":expiry()}),
+            "command":"continue","confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()}),
             )
             .unwrap();
         fixture
@@ -2199,7 +2324,7 @@ mod tests {
             tsumugi_core::application::SelectionPolicy::MissingOnly,
         );
         waiting.recv_timeout(Duration::from_secs(3)).unwrap();
-        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecution":false,"toolExecution":false,"expiresAt":null})).unwrap();
+        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
         release.send(()).unwrap();
         provider.join().unwrap();
         let view = fixture.wait_effect(&plan);
@@ -2452,7 +2577,7 @@ mod tests {
         let fixture = Fixture::create();
         let before = fixture.bytes();
         let prepared = fixture.call("prepare_work_plan", json!({
-            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options()
+            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(), "advisoryChecks":[],"toolSelection":null
         })).unwrap();
         assert_eq!(prepared["locale"], "zh-CN");
         assert_eq!(prepared["scope"][0]["unitId"], json!(fixture.unit));
@@ -2469,20 +2594,20 @@ mod tests {
         assert!(prepared.get("input").is_none());
         assert_eq!(fixture.bytes(), before);
         assert!(fixture.call("prepare_work_plan", json!({
-            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default()
+            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default(), "advisoryChecks":[],"toolSelection":null
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true,"checkerExecution":false,"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry(),
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry(),
             "semanticAnswer":"yes"
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true,"checkerExecution":false,"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         })).is_err());
         assert!(fixture.call("prepare_work_plan", json!({
             "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(),
-            "input":{}
+            "advisoryChecks":[],"toolSelection":null, "input":{}
         })).is_err());
         assert!(
             fixture
@@ -2545,14 +2670,14 @@ mod tests {
         let count = fixture.attempt_count();
         let before = fixture.bytes();
         let prepared = fixture.call("prepare_work_plan", json!({
-            "config":config, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default()
+            "config":config, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default(), "advisoryChecks":[],"toolSelection":null
         })).unwrap();
         assert!(prepared["preview"].is_object());
         assert!(prepared["preview"]["items"][0]["resourceBaseline"].is_string());
         assert_eq!(fixture.bytes(), before);
         let grant = json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true,"checkerExecution":false,"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         });
         let mut unconfirmed = grant.clone();
         unconfirmed["confirmed"] = json!(false);
@@ -2607,7 +2732,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":receipt["lease"]["generation"], "command":"pause",
-                    "confirmed":false,"checkerExecution":false,"toolExecution":false, "expiresAt":null
+                    "confirmed":false, "checkerExecutions":[],"toolExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();
@@ -2616,7 +2741,7 @@ mod tests {
         let resume = json!({
             "planId":prepared["planId"], "actionId":ExecutionId::new(),
             "expectedGeneration":paused["lease"]["generation"], "command":"continue",
-            "confirmed":true,"checkerExecution":false,"toolExecution":false, "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "expiresAt":expiry()
         });
         let resumed = fixture.call("control_work_plan", resume.clone()).unwrap();
         assert_eq!(resumed["state"], "active");
@@ -2644,7 +2769,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":resumed["lease"]["generation"], "command":"take-over",
-                    "confirmed":false,"checkerExecution":false,"toolExecution":false, "expiresAt":null
+                    "confirmed":false, "checkerExecutions":[],"toolExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();

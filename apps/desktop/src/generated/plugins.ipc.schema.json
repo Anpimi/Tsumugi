@@ -226,6 +226,27 @@
         ],
         "type": "object"
       },
+      "PluginTextReviewRequest": {
+        "additionalProperties": false,
+        "description": "Exact Resource/environment choice, without an execution grant.",
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
       "PluginToolRequest": {
         "additionalProperties": false,
         "properties": {
@@ -330,6 +351,9 @@
       "source": {
         "$ref": "#/definitions/PluginSourceRequest"
       },
+      "textReview": {
+        "$ref": "#/definitions/PluginTextReviewRequest"
+      },
       "tool": {
         "$ref": "#/definitions/PluginToolRequest"
       },
@@ -350,7 +374,8 @@
       "source",
       "translation",
       "build",
-      "tool"
+      "tool",
+      "textReview"
     ],
     "title": "Requests",
     "type": "object",
@@ -1921,6 +1946,22 @@
         ],
         "type": "object"
       },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
       "PluginPackageView": {
         "additionalProperties": false,
         "properties": {
@@ -2073,6 +2114,141 @@
           "extractor",
           "checker",
           "review",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewAvailability": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "ready",
+                "type": "string"
+              },
+              "view": {
+                "$ref": "#/definitions/PluginTextReviewView"
+              }
+            },
+            "required": [
+              "kind",
+              "view"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "$ref": "#/definitions/CommandError"
+              },
+              "kind": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "error"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PluginTextReviewListEntry": {
+        "additionalProperties": false,
+        "description": "A missing environment is an observed unavailable Resource, never a synthetic\ndigest or a selectable request. An existing selection keeps its exact digest.",
+        "properties": {
+          "availability": {
+            "$ref": "#/definitions/PluginTextReviewAvailability"
+          },
+          "environmentDigest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest",
+          "availability"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewListView": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/PluginTextReviewListEntry"
+            },
+            "type": "array"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/TextReviewBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "resourcePins": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourcePin"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "resourcePins",
+          "rules",
           "packageOrigin",
           "environment",
           "environmentDigest",
@@ -2483,6 +2659,133 @@
         ],
         "type": "object"
       },
+      "TextReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/TextReviewDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "TextReviewDeclaration": {
+        "additionalProperties": false,
+        "description": "One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/TextReviewDisposition"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/TextReviewRuleDeclaration"
+            },
+            "type": "array"
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "disposition",
+          "supportingResources",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "TextReviewDisposition": {
+        "description": "Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.",
+        "enum": [
+          "advisory"
+        ],
+        "type": "string"
+      },
+      "TextReviewResourceBinding": {
+        "additionalProperties": false,
+        "description": "A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourcePin": {
+        "additionalProperties": false,
+        "description": "Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "TextReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation",
+          "title",
+          "description"
+        ],
+        "type": "object"
+      },
       "ToolQueryColumn": {
         "additionalProperties": false,
         "properties": {
@@ -2777,6 +3080,12 @@
       "source": {
         "$ref": "#/definitions/PluginSourceView"
       },
+      "textReview": {
+        "$ref": "#/definitions/PluginTextReviewView"
+      },
+      "textReviews": {
+        "$ref": "#/definitions/PluginTextReviewListView"
+      },
       "tool": {
         "$ref": "#/definitions/PluginToolView"
       },
@@ -2794,6 +3103,8 @@
       "translation",
       "build",
       "tool",
+      "textReview",
+      "textReviews",
       "error"
     ],
     "title": "Responses",

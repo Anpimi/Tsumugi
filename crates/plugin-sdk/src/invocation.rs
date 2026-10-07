@@ -69,7 +69,7 @@ pub struct InvocationContext {
     pub configuration_digest: String,
 }
 impl InvocationContext {
-    fn validate(&self) -> Result<(), ContractError> {
+    pub(crate) fn validate(&self) -> Result<(), ContractError> {
         for id in [
             &self.project_id,
             &self.operation_id,
