@@ -1,0 +1,75 @@
+//! Resolve a public read-only tool against the existing installed package and
+//! runtime authorities. Discovery neither starts a worker nor grants execution.
+use super::environment::{DeclaredEnvironment, invalid};
+use super::*;
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginToolRequest {
+    pub package: PluginPackageRequest,
+    pub resource_id: String,
+    pub environment_digest: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct PluginToolView {
+    pub settings_revision: UnsignedDecimal,
+    pub resource_id: String,
+    pub binding: sdk::CapabilityToolBinding,
+    pub package_origin: PluginOriginView,
+    pub environment: sdk::ExecutionEnvironmentDescriptor,
+    pub environment_digest: String,
+    pub runtime_origin: PluginOriginView,
+}
+
+pub(in crate::commands) type ToolEnvironment = DeclaredEnvironment<sdk::CapabilityToolBinding>;
+
+impl ToolEnvironment {
+    pub(in crate::commands) fn view(&self) -> Result<PluginToolView, CommandError> {
+        let environment = self.runtime.environment();
+        Ok(PluginToolView {
+            settings_revision: self.settings_revision,
+            resource_id: self.resource_id.clone().ok_or_else(invalid)?,
+            binding: self.binding.clone(),
+            package_origin: self.package.origin().into(),
+            environment_digest: environment.digest().map_err(|_| invalid())?,
+            environment,
+            runtime_origin: (&self.runtime_origin).into(),
+        })
+    }
+}
+
+impl ApplicationPlugins {
+    pub(in crate::commands) fn capture_tool(
+        &self,
+        request: &PluginToolRequest,
+    ) -> Result<ToolEnvironment, CommandError> {
+        self.capture_declared_environment(
+            &request.package,
+            &request.resource_id,
+            &request.environment_digest,
+            |image, resource| {
+                let binding = image.capability_tool(resource)?;
+                let providers = [binding.capability.clone()];
+                Ok((binding, providers))
+            },
+        )
+    }
+}
+
+#[tauri::command]
+pub async fn read_plugin_tool(
+    state: State<'_, AppState>,
+    request: PluginToolRequest,
+) -> Result<PluginToolView, CommandError> {
+    let plugins = state.plugins.clone();
+    state
+        .io
+        .run(CommandStage::Read, move || {
+            plugins.capture_tool(&request)?.view()
+        })
+        .await
+}

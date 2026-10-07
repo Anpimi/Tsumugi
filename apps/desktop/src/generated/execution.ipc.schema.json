@@ -134,6 +134,148 @@
         ],
         "type": "object"
       },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
+      "PluginStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
+        ],
+        "type": "object"
+      },
+      "PluginToolDiscardRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "PluginToolPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "payloads": {
+            "items": true,
+            "type": "array"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/PluginToolRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "tool",
+          "attemptId",
+          "payloads"
+        ],
+        "type": "object"
+      },
+      "PluginToolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
       "PrepareRequest": {
         "additionalProperties": false,
         "properties": {
@@ -265,6 +407,10 @@
           "limit"
         ],
         "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
       }
     },
     "properties": {
@@ -294,6 +440,15 @@
       },
       "task": {
         "$ref": "#/definitions/TaskRequest"
+      },
+      "toolDiscard": {
+        "$ref": "#/definitions/PluginToolDiscardRequest"
+      },
+      "toolPrepare": {
+        "$ref": "#/definitions/PluginToolPrepareRequest"
+      },
+      "toolStart": {
+        "$ref": "#/definitions/PluginStartRequest"
       }
     },
     "required": [
@@ -305,7 +460,10 @@
       "cancel",
       "recovery",
       "prepare",
-      "adopt"
+      "adopt",
+      "toolPrepare",
+      "toolStart",
+      "toolDiscard"
     ],
     "title": "Requests",
     "type": "object",
@@ -458,6 +616,176 @@
         "required": [
           "attemptId",
           "sequence"
+        ],
+        "type": "object"
+      },
+      "CapabilityBinding": {
+        "additionalProperties": false,
+        "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/definitions/CapabilityDeclaration"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "CapabilityDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "contract": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "effect": {
+            "$ref": "#/definitions/EffectKind"
+          },
+          "errorSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "limits": {
+            "$ref": "#/definitions/CapabilityLimits"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "permissions": {
+            "items": {
+              "$ref": "#/definitions/PermissionRequest"
+            },
+            "type": "array"
+          },
+          "profiles": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "contract",
+          "inputSchema",
+          "outputSchema",
+          "errorSchema",
+          "profiles",
+          "effect",
+          "permissions",
+          "limits"
+        ],
+        "type": "object"
+      },
+      "CapabilityLimits": {
+        "additionalProperties": false,
+        "description": "Requested upper bounds. The host must also enforce its own current limits.",
+        "properties": {
+          "concurrency": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxInputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxOutputBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "timeoutMs": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInputBytes",
+          "maxOutputBytes",
+          "concurrency",
+          "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolBinding": {
+        "additionalProperties": false,
+        "description": "A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/CapabilityToolDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/ToolResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "capability",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolDeclaration": {
+        "additionalProperties": false,
+        "description": "A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.",
+        "properties": {
+          "capabilityId": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skill": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "title",
+          "description",
+          "capabilityId",
+          "profile",
+          "supportingResources",
+          "skill"
         ],
         "type": "object"
       },
@@ -1035,6 +1363,15 @@
         ],
         "type": "object"
       },
+      "EffectKind": {
+        "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+        "enum": [
+          "read-only",
+          "proposal",
+          "external"
+        ],
+        "type": "string"
+      },
       "EncodedPayload": {
         "additionalProperties": false,
         "description": "Exact UTF-8 schema payload. The SDK verifies its byte digest but does not\nsubstitute a generic parser for that schema's actual semantic validator.",
@@ -1055,6 +1392,17 @@
           "sha256"
         ],
         "type": "object"
+      },
+      "ExecutionEnvironmentDescriptor": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/RuntimeEnvironmentDescriptor"
+          },
+          {
+            "$ref": "#/definitions/NativeHostEnvironmentDescriptor"
+          }
+        ],
+        "description": "Fixed execution choices for the two actual runtime profiles. Each variant\nhas a strict, distinct profile value and its own data/hash owner. Captured\nNode serialization and digests remain exactly those of its existing type."
       },
       "ExecutionId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -1279,6 +1627,176 @@
         ],
         "type": "object"
       },
+      "NativeHostEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
+        "properties": {
+          "executable": {
+            "$ref": "#/definitions/NativeHostExecutableIdentity"
+          },
+          "hostVersion": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/NativeHostProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "hostVersion",
+          "executable"
+        ],
+        "type": "object"
+      },
+      "NativeHostExecutableIdentity": {
+        "description": "Identity of the actual application Host executable. This neither identifies\na publisher nor captures operating-system libraries or dynamically loaded\nimages. It must come from the trusted Host's OS observation, not a worker.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "darwin-code-directory-hash-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "linux-executable-sha256-v1",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "NativeHostProfile": {
+        "enum": [
+          "native-application-host-v1"
+        ],
+        "type": "string"
+      },
+      "PermissionRequest": {
+        "description": "These are requested permissions, never an authorization token.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "captured-input",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "staged-output",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "contract": {
+                "$ref": "#/definitions/ContractRef"
+              },
+              "kind": {
+                "const": "project-service",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "contract"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "destination": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "network",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "destination"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "process",
+                "type": "string"
+              },
+              "program": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "program"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "PluginIdentity": {
         "additionalProperties": false,
         "description": "Claimed package identity; a host must authenticate the actual package source.",
@@ -1300,6 +1818,22 @@
         ],
         "type": "object"
       },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
       "PluginResultEvidence": {
         "additionalProperties": false,
         "description": "The complete received SDK result retains exact payload bytes and identity.\n`channel` is supplied independently by the trusted Host, not read from output.",
@@ -1318,6 +1852,83 @@
           "authorizationId",
           "channel",
           "result"
+        ],
+        "type": "object"
+      },
+      "PluginToolItem": {
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "payload": true
+        },
+        "required": [
+          "itemId",
+          "payload"
+        ],
+        "type": "object"
+      },
+      "PluginToolPreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/definitions/PluginToolItem"
+            },
+            "type": "array"
+          },
+          "tool": {
+            "$ref": "#/definitions/PluginToolView"
+          }
+        },
+        "required": [
+          "attemptId",
+          "inputDigest",
+          "tool",
+          "items"
+        ],
+        "type": "object"
+      },
+      "PluginToolView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityToolBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
         ],
         "type": "object"
       },
@@ -1417,6 +2028,31 @@
           "packageDigest",
           "instanceId",
           "activationGeneration"
+        ],
+        "type": "object"
+      },
+      "ProviderSelectionBinding": {
+        "additionalProperties": false,
+        "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+        "properties": {
+          "componentId": {
+            "type": "string"
+          },
+          "contributionId": {
+            "type": "string"
+          },
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "componentId",
+          "contributionId",
+          "packageDigest"
         ],
         "type": "object"
       },
@@ -1618,6 +2254,107 @@
         "pattern": "^(0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-6][0-9]{0}|9223372036854775807)$",
         "type": "string"
       },
+      "RuntimeArchitecture": {
+        "enum": [
+          "aarch64",
+          "x86_64"
+        ],
+        "type": "string"
+      },
+      "RuntimeArtifactBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "type": "string"
+          },
+          "treeDigest": {
+            "description": "Digest of every actual file and its executable flag, including metadata,\ndependencies and licenses; this is not the entrypoint's file digest.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "treeDigest",
+          "entrypoint"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentDescriptor": {
+        "additionalProperties": false,
+        "description": "Exact tool and Host choices for a fixed invocation. Paths are logical within\ntheir respective artifacts, never machine paths. The trusted installer owns\napproval of these bytes and the tool version, independently of worker output.\nA digest is derived from the whole validated value, not separately supplied.",
+        "properties": {
+          "host": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "platform": {
+            "$ref": "#/definitions/RuntimePlatform"
+          },
+          "processProtocol": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "profile": {
+            "$ref": "#/definitions/RuntimeEnvironmentProfile"
+          },
+          "protocolVersion": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sdkVersion": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/RuntimeArtifactBinding"
+          },
+          "toolVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "platform",
+          "sdkVersion",
+          "processProtocol",
+          "profile",
+          "toolVersion",
+          "tool",
+          "host"
+        ],
+        "type": "object"
+      },
+      "RuntimeEnvironmentProfile": {
+        "description": "The installer must independently verify that the approved tool distribution\ndepends only on the supported platform's system libraries. The profile does\nnot describe arbitrary Homebrew/npm installations, a sandbox or a captured\nOS image. Runtime capture must refuse unsupported profiles and platforms.",
+        "enum": [
+          "node-system-libraries-v1"
+        ],
+        "type": "string"
+      },
+      "RuntimeOperatingSystem": {
+        "enum": [
+          "macos",
+          "linux"
+        ],
+        "type": "string"
+      },
+      "RuntimePlatform": {
+        "additionalProperties": false,
+        "properties": {
+          "architecture": {
+            "$ref": "#/definitions/RuntimeArchitecture"
+          },
+          "operatingSystem": {
+            "$ref": "#/definitions/RuntimeOperatingSystem"
+          }
+        },
+        "required": [
+          "operatingSystem",
+          "architecture"
+        ],
+        "type": "object"
+      },
       "RuntimeStatus": {
         "additionalProperties": false,
         "properties": {
@@ -1703,6 +2440,26 @@
         ],
         "type": "object"
       },
+      "ToolResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "UnsignedDecimal": {
+        "pattern": "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$",
+        "type": "string"
+      },
       "ValidationState": {
         "enum": [
           "absent",
@@ -1759,6 +2516,12 @@
           "$ref": "#/definitions/TaskView"
         },
         "type": "array"
+      },
+      "toolDiscarded": {
+        "type": "boolean"
+      },
+      "toolPreflight": {
+        "$ref": "#/definitions/PluginToolPreflight"
       }
     },
     "required": [
@@ -1772,7 +2535,9 @@
       "recovery",
       "action",
       "adoption",
-      "receipt"
+      "receipt",
+      "toolPreflight",
+      "toolDiscarded"
     ],
     "title": "Responses",
     "type": "object",

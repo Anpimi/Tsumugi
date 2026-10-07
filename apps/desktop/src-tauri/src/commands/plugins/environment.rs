@@ -21,6 +21,32 @@ pub(super) fn invalid() -> CommandError {
 }
 
 impl ApplicationPlugins {
+    /// Serialize the final settings check with application-owned settings
+    /// mutations while admitting the bounded execution authorization/enqueue.
+    pub(in crate::commands) fn with_environment_revision<T>(
+        &self,
+        expected: UnsignedDecimal,
+        operation: impl FnOnce() -> Result<T, CommandError>,
+    ) -> Result<T, CommandError> {
+        let mut manager = self.try_manager()?;
+        self.provision(&mut manager)?;
+        let settings = manager
+            .store
+            .as_ref()
+            .expect("store provisioned")
+            .settings(|| self.open.load(Ordering::Acquire))
+            .map_err(map_store_error)?;
+        if settings.revision() != expected.get() {
+            let mut error = CommandError::simple(
+                CommandErrorCode::DependencyConflict,
+                CommandStage::ExecutionRecover,
+            );
+            error.reason = Some("plugin-settings-changed".into());
+            return Err(error);
+        }
+        operation()
+    }
+
     pub(in crate::commands) fn environment_settings_revision(
         &self,
     ) -> Result<UnsignedDecimal, CommandError> {

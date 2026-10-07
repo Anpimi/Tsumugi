@@ -127,6 +127,64 @@ export type CommandStage =
   | "execution-recover"
   | "execution-adopt"
   | "execution-quiesce";
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
+export type UnsignedDecimal = string;
 
 export interface Responses {
   action: AdoptionAction;
@@ -140,6 +198,8 @@ export interface Responses {
   recovery: RecoveryView;
   status: RuntimeStatus;
   tasks: TaskView[];
+  toolDiscarded: boolean;
+  toolPreflight: PluginToolPreflight;
 }
 export interface AdoptionAction {
   actionId: ExecutionId;
@@ -335,4 +395,135 @@ export interface TaskView {
   projectId: ExecutionId;
   sequence: Revision;
   taskId: ExecutionId;
+}
+export interface PluginToolPreflight {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  items: PluginToolItem[];
+  tool: PluginToolView;
+}
+export interface PluginToolItem {
+  itemId: ExecutionId;
+  payload: unknown;
+}
+export interface PluginToolView {
+  binding: CapabilityToolBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * A fixed selection, not an execution grant or a trusted model instruction.
+ * Deserialized claims must be rebound against the actual captured package.
+ */
+export interface CapabilityToolBinding {
+  capability: CapabilityBinding;
+  declaration: CapabilityToolDeclaration;
+  resources: ToolResourceBinding[];
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * A package-local adapter to one declared, read-only capability. Input/output
+ * contracts, limits and permissions are taken from that capability, rather
+ * than repeated in a model-specific descriptor. A profile is an exact choice.
+ */
+export interface CapabilityToolDeclaration {
+  capabilityId: string;
+  description: string;
+  name: string;
+  profile: ContractRef | null;
+  skill: string | null;
+  supportingResources: string[];
+  title: string;
+}
+export interface ToolResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
 }

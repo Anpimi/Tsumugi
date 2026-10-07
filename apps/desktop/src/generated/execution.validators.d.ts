@@ -10,6 +10,9 @@ export declare function validateRequestPrepare(value: unknown): value is Request
 export declare function validateRequestRecovery(value: unknown): value is Requests["recovery"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateRequestTask(value: unknown): value is Requests["task"];
+export declare function validateRequestToolDiscard(value: unknown): value is Requests["toolDiscard"];
+export declare function validateRequestToolPrepare(value: unknown): value is Requests["toolPrepare"];
+export declare function validateRequestToolStart(value: unknown): value is Requests["toolStart"];
 export declare function validateResponseAction(value: unknown): value is Responses["action"];
 export declare function validateResponseAdoption(value: unknown): value is Responses["adoption"];
 export declare function validateResponseAttempt(value: unknown): value is Responses["attempt"];
@@ -21,3 +24,5 @@ export declare function validateResponseReceipt(value: unknown): value is Respon
 export declare function validateResponseRecovery(value: unknown): value is Responses["recovery"];
 export declare function validateResponseStatus(value: unknown): value is Responses["status"];
 export declare function validateResponseTasks(value: unknown): value is Responses["tasks"];
+export declare function validateResponseToolDiscarded(value: unknown): value is Responses["toolDiscarded"];
+export declare function validateResponseToolPreflight(value: unknown): value is Responses["toolPreflight"];

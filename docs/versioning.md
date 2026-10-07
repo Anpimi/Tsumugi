@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+Desktop read-only tool discovery and fixed single/batch query preparation now
+extend the generated internal plugin/execution IPC contracts. Consumers must
+regenerate their DTOs and validators; no historical wire fallback is supplied.
+Execution uses the original Core ledger, per-attempt consent and RunnerProxy,
+with current installed-settings and runtime checks. Query output grants no
+project adoption or Agent authority. Project schema 28, installed settings
+format 2, SDK/process contracts, dependencies and version sources are unchanged.
+This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch, with synchronized Unreleased changelogs and no extra
+version bump or historical migration. Product query interfaces and Agent
+integration have separate acceptance requirements.
+
 The experimental SDK's additive read-only tool selector uses its own
 `tsumugi.capability-tool-declaration` schema/behavior 1/1. Generated public
 JavaScript contracts and Host metadata binding extend existing owners without

@@ -24,6 +24,7 @@ pub(super) mod packages;
 pub(super) mod reviews;
 pub(super) mod runtimes;
 pub(super) mod sources;
+pub(super) mod tools;
 pub(super) mod translations;
 pub use builds::{PluginBuildRequest, PluginBuildView};
 pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
@@ -38,6 +39,7 @@ pub use runtimes::{
     PluginRuntimeLookupRequest, PluginRuntimeOfferView,
 };
 pub use sources::{PluginSourceRequest, PluginSourceView};
+pub use tools::{PluginToolRequest, PluginToolView};
 pub use translations::{PluginTranslationRequest, PluginTranslationView};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

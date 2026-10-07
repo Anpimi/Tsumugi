@@ -18,11 +18,13 @@ macro_rules! handlers {
         super::plugins::packages::lookup_plugin_capability,
         super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
         super::plugins::translations::read_plugin_translation,
+        super::plugins::tools::read_plugin_tool,
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
         super::plugins::runtimes::set_plugin_native_host_approval,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
         cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
+        tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         source::plugin::select_plugin_source,source::plugin::preflight_plugin_source,source::plugin::start_plugin_source,
         source::plugin::prepare_source_check,source::plugin::start_source_check,source::plugin::finish_source_check,
         source::cancel_source_capture,source::read_source_preview,source::read_source_content,source::read_source_comparison,
@@ -166,6 +168,7 @@ pub(super) struct ExecutionHost {
     review: review::ReviewSession,
     arena: arena::ArenaSession,
     work_plans: work_plans::WorkPlanSession,
+    tools: tools::ToolSession,
     plugin_registrations: Vec<PluginExecutionBinding>,
 }
 struct QueryJob {
@@ -191,6 +194,7 @@ impl ExecutionHost {
             review: review::ReviewSession::default(),
             arena: arena::ArenaSession::default(),
             work_plans: work_plans::WorkPlanSession::default(),
+            tools: tools::ToolSession::default(),
             plugin_registrations: Vec::new(),
         };
         #[cfg(any(test, feature = "execution-test-host"))]
@@ -271,6 +275,7 @@ impl ExecutionHost {
             || self.release.is_active()
             || self.ai.active()
             || self.review.active()
+            || self.tools.active()
             || !self.queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
@@ -358,6 +363,7 @@ impl ExecutionHost {
         self.poll_queries(store)?;
         self.quiescing = true;
         self.source.stop();
+        self.tools.stop();
         self.review.stop();
         self.ai.stop();
         self.work_plans.stop();
@@ -515,6 +521,7 @@ pub(super) mod review;
 #[cfg(test)]
 pub(super) use review::ComputeProbe;
 pub(super) mod source;
+pub(super) mod tools;
 pub(super) mod work_plans;
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

@@ -224,6 +224,7 @@ export interface Responses {
   package: PluginPackageDetailsView;
   runtime: RuntimeEnvironmentDescriptor;
   source: PluginSourceView;
+  tool: PluginToolView;
   translation: PluginTranslationView;
 }
 /**
@@ -552,6 +553,42 @@ export interface ReviewDeclaration {
 export interface ReviewRuleDeclaration {
   requiresTranslation: boolean;
   rule: ContractRef;
+}
+export interface PluginToolView {
+  binding: CapabilityToolBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * A fixed selection, not an execution grant or a trusted model instruction.
+ * Deserialized claims must be rebound against the actual captured package.
+ */
+export interface CapabilityToolBinding {
+  capability: CapabilityBinding;
+  declaration: CapabilityToolDeclaration;
+  resources: ToolResourceBinding[];
+}
+/**
+ * A package-local adapter to one declared, read-only capability. Input/output
+ * contracts, limits and permissions are taken from that capability, rather
+ * than repeated in a model-specific descriptor. A profile is an exact choice.
+ */
+export interface CapabilityToolDeclaration {
+  capabilityId: string;
+  description: string;
+  name: string;
+  profile: ContractRef | null;
+  skill: string | null;
+  supportingResources: string[];
+  title: string;
+}
+export interface ToolResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
 }
 export interface PluginTranslationView {
   checker: CapabilityBinding;

@@ -42,6 +42,7 @@ struct PluginRequests {
     source: plugins::PluginSourceRequest,
     translation: plugins::PluginTranslationRequest,
     build: plugins::PluginBuildRequest,
+    tool: plugins::PluginToolRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -55,6 +56,7 @@ struct PluginResponses {
     source: plugins::PluginSourceView,
     translation: plugins::PluginTranslationView,
     build: plugins::PluginBuildView,
+    tool: plugins::PluginToolView,
     error: CommandError,
 }
 #[derive(JsonSchema)]
@@ -70,6 +72,9 @@ struct ExecutionRequests {
     recovery: execution::RecoveryRequest,
     prepare: execution::PrepareRequest,
     adopt: execution::AdoptRequest,
+    tool_prepare: execution::tools::PluginToolPrepareRequest,
+    tool_start: execution::PluginStartRequest,
+    tool_discard: execution::tools::PluginToolDiscardRequest,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
@@ -86,6 +91,8 @@ struct ExecutionResponses {
     action: tsumugi_core::execution::AdoptionAction,
     adoption: tsumugi_core::execution::AdoptionReceipt,
     receipt: Option<tsumugi_core::execution::AdoptionReceipt>,
+    tool_preflight: execution::tools::PluginToolPreflight,
+    tool_discarded: bool,
 }
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]

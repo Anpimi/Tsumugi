@@ -226,6 +226,26 @@
         ],
         "type": "object"
       },
+      "PluginToolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
       "PluginTranslationRequest": {
         "additionalProperties": false,
         "properties": {
@@ -310,6 +330,9 @@
       "source": {
         "$ref": "#/definitions/PluginSourceRequest"
       },
+      "tool": {
+        "$ref": "#/definitions/PluginToolRequest"
+      },
       "translation": {
         "$ref": "#/definitions/PluginTranslationRequest"
       }
@@ -326,7 +349,8 @@
       "runtimeLookup",
       "source",
       "translation",
-      "build"
+      "build",
+      "tool"
     ],
     "title": "Requests",
     "type": "object",
@@ -504,6 +528,80 @@
           "maxOutputBytes",
           "concurrency",
           "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolBinding": {
+        "additionalProperties": false,
+        "description": "A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/CapabilityToolDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/ToolResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "capability",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolDeclaration": {
+        "additionalProperties": false,
+        "description": "A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.",
+        "properties": {
+          "capabilityId": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "skill": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "title",
+          "description",
+          "capabilityId",
+          "profile",
+          "supportingResources",
+          "skill"
         ],
         "type": "object"
       },
@@ -1971,6 +2069,42 @@
         ],
         "type": "object"
       },
+      "PluginToolView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityToolBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
       "PluginTranslationView": {
         "additionalProperties": false,
         "properties": {
@@ -2338,6 +2472,22 @@
         ],
         "type": "object"
       },
+      "ToolResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
       "TranslationImportDeclaration": {
         "additionalProperties": false,
         "properties": {
@@ -2438,6 +2588,9 @@
       "source": {
         "$ref": "#/definitions/PluginSourceView"
       },
+      "tool": {
+        "$ref": "#/definitions/PluginToolView"
+      },
       "translation": {
         "$ref": "#/definitions/PluginTranslationView"
       }
@@ -2451,6 +2604,7 @@
       "source",
       "translation",
       "build",
+      "tool",
       "error"
     ],
     "title": "Responses",

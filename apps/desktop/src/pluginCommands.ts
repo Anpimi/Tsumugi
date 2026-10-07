@@ -1,8 +1,8 @@
 import { checkedInvoke } from "./ipc";
-import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation } from "./generated/plugins.validators";
-import type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest } from "./generated/plugins.requests";
-export type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest } from "./generated/plugins.requests";
-export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView, PluginBuildView, PluginTranslationView } from "./generated/plugins.responses";
+import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool } from "./generated/plugins.validators";
+import type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
+export type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
+export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView, PluginBuildView, PluginTranslationView, PluginToolView } from "./generated/plugins.responses";
 
 export const pluginCommands = {
   inventory: () => checkedInvoke("read_plugin_inventory", {}, validateResponseInventory),
@@ -18,4 +18,5 @@ export const pluginCommands = {
   build: (request: PluginBuildRequest) => checkedInvoke("read_plugin_build", request, validateResponseBuild),
   translation: (request: PluginTranslationRequest) => checkedInvoke("read_plugin_translation", request, validateResponseTranslation),
   source: (request: PluginSourceRequest) => checkedInvoke("read_plugin_source", request, validateResponseSource),
+  tool: (request: PluginToolRequest) => checkedInvoke("read_plugin_tool", request, validateResponseTool),
 };

@@ -4,6 +4,7 @@ export type ExecutionId = string;
 export type Revision = string;
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+export type UnsignedDecimal = string;
 
 export interface Requests {
   adopt: AdoptRequest;
@@ -15,6 +16,9 @@ export interface Requests {
   recovery: RecoveryRequest;
   session: SessionRequest;
   task: TaskRequest;
+  toolDiscard: PluginToolDiscardRequest;
+  toolPrepare: PluginToolPrepareRequest;
+  toolStart: PluginStartRequest;
 }
 export interface AdoptRequest {
   actionId: ExecutionId;
@@ -72,4 +76,42 @@ export interface TaskRequest {
   projectId: ExecutionId;
   sessionToken: string;
   taskId: ExecutionId;
+}
+export interface PluginToolDiscardRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface PluginToolPrepareRequest {
+  attemptId: ExecutionId;
+  payloads: unknown[];
+  projectId: ExecutionId;
+  sessionToken: string;
+  tool: PluginToolRequest;
+}
+export interface PluginToolRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+export interface PluginStartRequest {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  sessionToken: string;
+  unsandboxedExecution: boolean;
 }
