@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+The experimental Host's public captured Resource and Skill readers extend the
+existing immutable package owner without changing SDK/process contracts, project
+schema, installed Store layout or dependency versions. This is an additive Host
+API in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
+batch, with no extra version bump or historical migration. Independent knowledge
+examples own their initial version and do not advance the application version.
+
 ## Version source and release boundary
 
 `[workspace.package].version` in [Cargo.toml](../Cargo.toml) is the application's single version source. `tsumugi-core` and `tsumugi-desktop` inherit it. Tauri's configuration omits `version` so it reads the desktop Cargo package version; the frontend package is marked `private` and has no independent release version. Regenerate the workspace package entries in `Cargo.lock` with Cargo when changing the application version, using `cargo update --workspace --offline` with the existing dependency cache.

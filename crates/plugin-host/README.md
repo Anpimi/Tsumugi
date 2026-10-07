@@ -68,6 +68,15 @@ copying the Host's package digest algorithm.
 
 ## Fixed runtime environment
 
+`PackageImage::resource_bytes` reads one explicitly selected Resource from the
+immutable captured package after an exact schema and behavior match.
+`skill_bytes` reads one declared Skill from the same image. Both reject a wrong
+contribution kind or executable content and retain the original captured bytes;
+neither starts a runtime, reads source paths or grants project mutation, tool or
+execution permission. Resource interpretation belongs to its public contract's
+consumer. Skill guidance remains untrusted content. Domain-independent knowledge
+packages can use these APIs without adding a Core format branch.
+
 `CapturedRuntime::capture_directories` captures two prebuilt, link-free trees on a
 blocking IO worker. Independent installer approval supplies the SDK's strict
 `RuntimeEnvironmentDescriptor`, exact platform/architecture, tool version,

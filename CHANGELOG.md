@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental Host consumers can read explicitly selected opaque Resources and
+  Skills from immutable captured packages, with exact resource schema/behavior
+  matching and executable-content rejection. Reading guidance grants no tools,
+  execution permission or project adoption.
+
 - Experimental environment decisions now retain complete Node and Native application Host descriptions in one revisioned local snapshot. Native decisions do not install runtime trees or grant execution permission. Current development settings use format 2; earlier settings are refused unchanged without migration. The extension inventory distinguishes recorded Native approval from missing Node installations. The Extensions panel observes the actual current application Host and saves or revokes its exact approval through the existing revisioned settings action. Stale application approvals remain removable. Source, build and translation choices resolve the exact approved current Native Host or sealed approved Node environment, match executable component runtime families and retain separate per-attempt consent.
 
 Development target: **0.2.0-alpha.1**.

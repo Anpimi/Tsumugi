@@ -153,7 +153,15 @@ impl PackageImage {
         .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
         .map_err(|_| HostError::InvalidContract)
     }
-    fn resource_bytes(&self, contribution_id: &str, expected: &ContractRef) -> HostResult<&[u8]> {
+    /// Read one declared resource from the captured package, with an exact
+    /// schema and behavior match. Bytes remain opaque: the caller owns domain
+    /// validation. This does not open source paths, activate code or grant
+    /// project mutation or execution authority.
+    pub fn resource_bytes(
+        &self,
+        contribution_id: &str,
+        expected: &ContractRef,
+    ) -> HostResult<&[u8]> {
         let contribution = self
             .manifest
             .manifest()
@@ -167,6 +175,25 @@ impl PackageImage {
         if schema != expected {
             return Err(HostError::InvalidContract);
         }
+        let file = self.files.get(path).ok_or(HostError::MissingArtifact)?;
+        if file.executable {
+            return Err(HostError::InvalidContract);
+        }
+        Ok(&file.bytes)
+    }
+    /// Read one declared Skill from the same immutable package. Guidance is
+    /// untrusted content and supplies no tool, network or execution permission.
+    pub fn skill_bytes(&self, contribution_id: &str) -> HostResult<&[u8]> {
+        let contribution = self
+            .manifest
+            .manifest()
+            .contributions
+            .iter()
+            .find(|entry| entry.id == contribution_id)
+            .ok_or(HostError::InvalidContract)?;
+        let ContributionKind::Skill { path } = &contribution.contribution else {
+            return Err(HostError::InvalidContract);
+        };
         let file = self.files.get(path).ok_or(HostError::MissingArtifact)?;
         if file.executable {
             return Err(HostError::InvalidContract);
