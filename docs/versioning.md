@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Resource workbench reference queries consume the existing bounded SDK helper,
+installed environment choices and original tool prepare/start/discard ledger
+commands. They add manual single/batch controls, draft and consent protection,
+reference results and task cancellation without new IPC shapes, SDK/process
+profiles, project schema 28, installed settings 2, Store formats or dependencies.
+This remains the same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch; bilingual Unreleased entries require no extra bump or
+historical migration. Component/browser evidence and native/Agent acceptance
+must be reported separately.
+
 The experimental read-only tool declaration now has an optional bounded text
 query presentation. Its input/output references must exactly match the original
 capability; generated JavaScript and internal Desktop DTOs include the new

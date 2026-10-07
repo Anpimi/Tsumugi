@@ -14,8 +14,9 @@ import {
   type TermRevision, type TmSuggestion,
 } from "./resourceCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
+import { PluginToolQueries, type ToolQueryHandle, type ToolQueryState } from "./PluginToolQueries";
 
-type Tab = "terms" | "updates" | "context" | "impact";
+type Tab = "terms" | "updates" | "context" | "impact" | "queries";
 type TermDraft = Pick<SaveTerm, "source" | "aliases" | "target" | "protected" | "scopeUnitId" | "reason">;
 const blankTerm = (): TermDraft => ({ source: "", aliases: [], target: "", protected: false, scopeUnitId: null, reason: "" });
 const termDraftFor = (term: TermDraft | null): TermDraft => term
@@ -36,6 +37,8 @@ export function ResourceWorkbench({
   const session = executionContext(project);
   const [open, setOpen] = useWorkbenchView("resources");
   const [tab, setTab] = useState<Tab>("terms");
+  const queryRef = useRef<ToolQueryHandle>(null);
+  const [queryState, setQueryState] = useState<ToolQueryState>({ busy: false, pending: false, hasDraft: false });
   const [locale, setLocale] = useState(project.metadata.targetLocales[0] ?? "");
   const [sourcePage, setSourcePage] = useState<ContentPage | null>(null);
   const [sourceMissing, setSourceMissing] = useState(false);
@@ -118,10 +121,11 @@ export function ResourceWorkbench({
     return () => { cancelled = true; };
   }, [open, project.sessionToken]);
   useImperativeHandle(ref, () => ({
-    allowLeave() {
+    async allowLeave() {
       if (running.current || pendingTerm || pendingContext || pendingDecision) {
         setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false);
       }
+      if (queryRef.current && !await queryRef.current.allowLeave()) return false;
       if (!termDirty && !contextDirty) return Promise.resolve(true);
       setOpen(true); setLeavePrompt(true);
       return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
@@ -145,10 +149,11 @@ export function ResourceWorkbench({
     catch (error) { if (current()) setFailure(stageOf(error)); }
     finally { running.current = false; if (alive.current) setBusy(false); }
   }
-  function requestClose() {
+  async function requestClose() {
     if (running.current || pendingTerm || pendingContext || pendingDecision) {
       setFailure("outcome-unknown"); return;
     }
+    if (queryRef.current && !await queryRef.current.allowLeave()) return;
     if (termDirty || contextDirty) { setLeavePrompt(true); return; }
     generation.current++; setOpen(false);
   }
@@ -296,17 +301,18 @@ export function ResourceWorkbench({
   }
   const sourceRows = sourcePage?.rows ?? [];
   return <>
-    <WorkbenchPanel open={open} title={t("resource.title")} description={t("resource.description")} className="source-dialog" onBack={requestClose} backDisabled={disabled || busy}>
+    <WorkbenchPanel open={open} title={t("resource.title")} description={t("resource.description")} className="source-dialog" onBack={requestClose} backDisabled={disabled || busy || queryState.busy || queryState.pending}>
         <div className="execution-content" aria-busy={busy}>
           {failure ? <div role="alert"><p>{t("resource.error", { reason: t(`resource.errors.${failure}`, { defaultValue: failure }) })}</p><CommandFailureDetails failure={failureValue} /></div> : null}
           {message ? <p role="status">{message}</p> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
-          <label>{t("resource.targetLocale")}<select value={locale} disabled={busy} onChange={event => switchLocale(event.target.value)}>{project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
+          {tab !== "queries" ? <><label>{t("resource.targetLocale")}<select value={locale} disabled={busy} onChange={event => switchLocale(event.target.value)}>{project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
           {!locale ? <p>{t("resource.noLocale")}</p> : null}
-          {sourceMissing ? <p>{t("resource.noSource")}</p> : null}
+          {sourceMissing ? <p>{t("resource.noSource")}</p> : null}</> : null}
           <div className="execution-actions" role="tablist" aria-label={t("resource.title")}>
-            {(["terms", "updates", "context", "impact"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => { setTab(value); if (value === "impact") void run(current => loadImpact(0, current)); }}>{t(`resource.tabs.${value}`)}</button>)}
+            {(["terms", "updates", "context", "impact", "queries"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => { setTab(value); if (value === "impact") void run(current => loadImpact(0, current)); }}>{t(`resource.tabs.${value}`)}</button>)}
           </div>
+          <PluginToolQueries ref={queryRef} project={project} disabled={disabled} open={open && tab === "queries"} onState={setQueryState} onAttention={() => { setOpen(true); setTab("queries"); }} />
           {tab === "terms" && locale ? <section>
             <div className="execution-section-heading"><h3>{t("resource.currentTerms")}</h3><button className="secondary-button" disabled={busy || termDirty} onClick={() => selectTerm(null)}>{t("resource.newTerm")}</button></div>
             {terms.length ? <ul>{terms.filter(term => !term.removed).map(term => <li key={term.termId}><button className="text-button" disabled={busy} onClick={() => selectTerm(term)}>{term.source} → {term.target}</button> <small>{term.scopeUnitId ? t("resource.unitScope") : t("resource.projectScope")} · {term.originKind === "manual" ? t("resource.manual") : t("resource.external")}</small></li>)}</ul> : <p>{t("resource.noTerms")}</p>}

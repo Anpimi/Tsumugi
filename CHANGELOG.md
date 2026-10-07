@@ -17,8 +17,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   explicit target/category choices and reference-result columns. The public
   JavaScript helper preserves the captured input template for single and batch
   consumers and distinguishes empty matches from malformed results. Read-only
-  results remain unadopted; product query interfaces and Agent integration are
-  still in development.
+  results remain unadopted. Resource workbench reference queries now offer
+  explicit package/target/meaning choices, separate text entries for batches,
+  input protection during capture, execution consent and original-action
+  reconciliation. Results use the original ledger and show escaped references,
+  empty matches or result errors, with draft/leave/cancellation protection.
+  Agent integration and native acceptance remain in development.
 
 - Experimental Host consumers can read explicitly selected opaque Resources and
   Skills from immutable captured packages, with exact resource schema/behavior

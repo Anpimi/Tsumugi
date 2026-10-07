@@ -1,6 +1,28 @@
 import type { UiMessages } from "./types";
 
 export const zhCN = {
+toolQuery: {
+  title: "参考查询",
+  help: "在已安装参考包中查询明确选定的含义。每段文本分别查询，结果仅作为参考。",
+  provider: "参考包", chooseProvider: "选择参考包", refresh: "刷新参考包",
+  noPresentation: "此工具没有可用的文本查询声明，请选择其他参考包。",
+  unavailable: "请在扩展中启用参考包并批准其运行环境。包不可用时，输入文本仍保留在这里。",
+  inputs: "查询文本", text: "查询文本 {{position}}", remove: "移除查询 {{position}}", add: "添加另一条查询",
+  textRequired: "请为每条查询输入文本，可以移除空白条目。",
+  selectionRequired: "请在包的选项数量限制内，选择支持的目标及预期含义。",
+  tooLarge: "输入超出包的限制。请缩短文本或减小批量范围，现有输入已保留。",
+  inputChanged: "捕获后又修改了查询。请重新审阅当前输入，再授予新的执行同意。",
+  environmentChanged: "捕获后扩展环境发生变化。请刷新选项并重新捕获输入，再执行查询。",
+  prepare: "审阅查询", review: "已捕获查询与执行同意", captured: "已捕获 {{count}} 条查询，尚未运行组件。",
+  executionCaptured: "已捕获 {{count}} 条查询。执行状态见下方。",
+  consent: "我允许此准确组件在本次执行中，以我的操作系统用户权限查询这些已捕获文本，有效期最长 10 分钟。",
+  start: "运行参考查询", discardReview: "丢弃已捕获审阅", retryOriginal: "核对原操作", results: "查询结果",
+  references: "这些结果是参考建议。查询不会更改项目术语、译文或审批。",
+  invalidResult: "无法将已保存结果显示为参考条目。请在任务中查看执行记录，这不代表结果为空。",
+  cancel: "请求取消", leaveTitle: "丢弃查询输入并离开？",
+  leaveHelp: "此操作移除本地查询草稿及已捕获审阅，已保存执行记录仍保留在任务中。",
+  failed: "无法确认此查询操作。输入与已保存结果均已保留。开始新查询前，请核对原操作或刷新执行记录。",
+},
 translationPlugin: {
   environmentChanged: "捕获后扩展设置已变化，固定输入仍保留。继续前请选择新输入，并重新审阅执行同意。",
   emptyFile: "已检查文件中没有译文条目，已有译文保持不变。",
@@ -608,7 +630,7 @@ ai: {
       targetLocale: "目标语言",
       noLocale: "请先为项目添加目标语言。",
       noSource: "请先导入源内容，再管理资源。",
-      tabs: { terms: "术语", updates: "资源更新", context: "上下文与记忆", impact: "受影响工作" },
+      tabs: { terms: "术语", updates: "资源更新", context: "上下文与记忆", impact: "受影响工作", queries: "参考查询" },
       currentTerms: "已采纳的项目术语",
       newTerm: "新建术语",
       editTerm: "编辑术语",

@@ -11,7 +11,21 @@ explicit target and category choices, and reference-result columns. The public
 SDK's `createToolQuery` helper constructs original single or batch payloads and
 distinguishes empty matches from malformed output. The Desktop view captures
 this metadata with the original binding; it grants no execution or adoption.
-Product query controls and Agent orchestration remain separate integration work.
+In the Resource workbench, **Reference queries** provides this shared
+presentation without package-specific fields. Choose an installed reference
+package and approved runtime, its explicit target and meanings, then enter one
+or more separate texts. Multiple providers require an explicit choice. Review
+captures the exact batch before a separate per-attempt execution consent.
+New input remains editable during capture and requires a fresh review; unknown
+acknowledgements retain the original request, grant and expiry for checking.
+
+The controls read complete results through the original session query owner,
+associate output with captured item identities and show escaped reference
+columns or an explicit empty result. A malformed result is an error, rather
+than an empty match. Hidden tabs retain drafts, leaving explicitly discards the
+local draft/preflight, and cancellation targets the original execution task.
+No term/translation adoption is offered. Agent scope/budget orchestration and
+native acceptance remain separate work.
 
 `read_plugin_tool` accepts an exact package identity/digest, tool Resource ID
 and independently approved environment digest. It reopens the installed object,
@@ -60,9 +74,9 @@ execution commands, and cancel running tasks through their original task ID.
 Results retain the actual worker channel, authorization ID and original SDK
 output/error bytes. Query results stay unadopted and create no project Resource,
 terminology or translation mutation. Historical output remains readable after
-a provider is disabled. Tool guidance remains untrusted material; product query
-interfaces and Agent orchestration have separate interaction, scope, budget and
-human-control requirements.
+a provider is disabled. Tool guidance remains untrusted material. Agent
+orchestration must separately satisfy scope, budget and human-control
+requirements; the manual query consent does not supply Agent authority.
 
 Rust/Serde owns these internal IPC shapes. Regenerate frontend types, schemas
 and validators with `pnpm generate:contracts`; use the centralized
