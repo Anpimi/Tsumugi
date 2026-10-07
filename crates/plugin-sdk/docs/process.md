@@ -1,6 +1,6 @@
 # Experimental local process protocol
 
-Process protocol **1** is separate from manifest protocol, content exchange,
+Process protocol **2** is separate from manifest protocol, content exchange,
 capability schema/behavior identities and package SemVer. Its sole type/schema
 source is the Rust SDK. The [process Host](../../plugin-host/README.md) implements
 actual pipe/state handling; parsing a frame does not start a worker or grant
@@ -21,14 +21,15 @@ stream, not a result channel. Partial headers/bodies, invalid JSON, unknown or
 duplicate typed fields and unsupported protocols are errors.
 
 The JSON envelope contains `protocolVersion` and a typed `body` with `kind` and
-`data`. The host sends `activate`, `invoke`, `cancel`, `close` or `ping`; the worker
-sends `ready`, `result`, `cancelled`, `closed` or `pong`. The SDK checks structural
+`data`. The host sends `activate`, `invoke`, `service-response`, `cancel`, `close` or
+`ping`; the worker sends `ready`, `result`, `service-request`, `cancelled`,
+`closed` or `pong`. The SDK checks structural
 and semantic data; the Host also checks message direction, active state and exact
 request/nonce/instance correlation. A syntactically valid result in the wrong
 state is not an accepted invocation.
 
 `activate`/`ready` carry the exact captured `ProcessActivation`: provider binding
-plus capability declaration. The claimed binding includes package digest,
+plus capability declaration and the mandatory `services` array. The claimed binding includes package digest,
 plugin/component/contribution identity, fresh instance and activation generation.
 The actual Host must compare it to the artifact it captured and the process it
 launched. A peer that echoes these values has not authenticated a publisher,
@@ -54,6 +55,42 @@ package-path rules, identities, payload digest verification and live Host state
 remain semantic checks. A JSON parser in another language may discard duplicate
 members; a schema alone cannot detect that loss. The receiving Rust SDK parses
 the original bytes and rejects duplicate typed fields.
+
+## Project services
+
+A trusted Host can select at most sixteen exact service bindings before starting
+one project-scoped component. Every binding fixes its handle, provider, contract,
+input/output/error schemas, project/scope, activation generation, configuration
+digest, effect and limits. Required dependencies must have the selected provider
+set ready; optional dependencies may have no provider. Single selection refuses
+ambiguity, while independent collection retains each explicitly supplied provider.
+The capability must request the exact `ProjectService` contract. These values
+are captured descriptions, not execution grants or project/credential handles.
+
+During an active invocation, `service-request` carries a fresh call ID, selected
+handle, the original invocation context and a separately hashed opaque input.
+The context's input digest continues to identify the outer invocation; it must
+not be replaced by the service-input digest. `service-response` echoes the exact
+call, handle and context and returns a typed success/failure/unknown payload using
+the binding's schema. The Rust Host constructs the caller from its actual child
+channel and original request, enforces scope, effect, byte/call limits, and checks
+current authority before and after dispatch. The trusted caller also exposes the
+original absolute invocation deadline so an enqueued operation can retain that
+bound after the callback returns. The deadline covers service calls; progress
+never renews it. Duplicate, unsolicited or
+stale calls and responses revoke the channel. Cancellation cannot prove rollback.
+
+The transport is serial, with one pending service call and at most 128 calls per
+channel. A broker should return an enqueue receipt promptly for long work rather
+than hold a worker until that work completes. Its owner must retain any original
+execution/grant association until the child task is terminal, including after
+channel cleanup. This transport supplies no AI, budget, adoption or authorization
+implementation. Those remain the application's existing execution owners.
+
+Process 1 frames and captured runtime descriptions are not accepted by the
+current process-2 receiver. Regenerate bindings and build/capture the current
+Host; no historical wire fallback or development-data migration is supplied.
+Manifest and content-exchange protocol identities remain independent.
 
 ## JavaScript component profile
 

@@ -18,6 +18,7 @@ mod native_worker;
 mod process;
 mod resolution;
 mod review;
+mod service;
 mod source_extraction;
 mod source_import;
 mod text;
@@ -37,6 +38,7 @@ pub use native_worker::*;
 pub use process::*;
 pub use resolution::{DeclaredProvider, ProviderKey, resolve_declarations};
 pub use review::*;
+pub use service::*;
 pub use source_extraction::*;
 pub use source_import::*;
 pub use text::*;
@@ -83,7 +85,7 @@ pub const MAX_CONTENT_ITEMS: usize = 2000;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 
 /// Length-prefixed local process messages, independent of content protocols.
-pub const PROCESS_PROTOCOL: u32 = 1;
+pub const PROCESS_PROTOCOL: u32 = 2;
 
 /// Validate a logical package file path before a host materializes captured bytes.
 /// This does not open a path or prove filesystem containment.
@@ -121,6 +123,8 @@ pub fn process_profile() -> serde_json::Value {
         "protocolVersion": PROCESS_PROTOCOL,
         "maxFrameBytes": MAX_PROCESS_FRAME_BYTES,
         "maxInvocationPayloadBytes": MAX_INVOCATION_PAYLOAD_BYTES,
+        "maxServiceBindings": MAX_SERVICE_BINDINGS,
+        "maxServiceCalls": MAX_SERVICE_CALLS,
         "sdkVersion": SDK_VERSION
     })
 }

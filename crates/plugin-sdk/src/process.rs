@@ -9,6 +9,15 @@ use serde::{Deserialize, Serialize};
 pub struct ProcessActivation {
     pub provider: ProviderBinding,
     pub capability: CapabilityDeclaration,
+    /// Host-selected project services, resolved before component activation.
+    pub services: Vec<ServiceBinding>,
+}
+impl ProcessActivation {
+    pub fn validate(&self) -> Result<(), ContractError> {
+        self.provider.validate()?;
+        self.capability.validate(&self.capability.permissions)?;
+        validate_service_bindings(&self.services)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +34,8 @@ pub enum ProcessBody {
     Ready(ProcessActivation),
     Invoke(InvocationRequest),
     Result(InvocationResult),
+    ServiceRequest(ServiceRequest),
+    ServiceResponse(ServiceResponse),
     Cancel { dispatch_id: String },
     Cancelled { dispatch_id: String },
     Close { provider: ProviderBinding },
@@ -62,12 +73,11 @@ impl ProcessFrame {
             ));
         }
         match &self.body {
-            ProcessBody::Activate(a) | ProcessBody::Ready(a) => {
-                a.provider.validate()?;
-                a.capability.validate(&a.capability.permissions)
-            }
+            ProcessBody::Activate(a) | ProcessBody::Ready(a) => a.validate(),
             ProcessBody::Invoke(request) => request.validate(),
             ProcessBody::Result(result) => result.validate(),
+            ProcessBody::ServiceRequest(request) => request.validate(),
+            ProcessBody::ServiceResponse(response) => response.validate(),
             ProcessBody::Cancel { dispatch_id } | ProcessBody::Cancelled { dispatch_id } => {
                 opaque_id(dispatch_id, "process.dispatchId")
             }

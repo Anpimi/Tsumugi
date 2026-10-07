@@ -6,6 +6,19 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental SDK and Host add bounded project-service calls for JavaScript
+  components. Exact selected providers, scopes, schemas, effects and original
+  invocation contexts remain fixed; cancellation, revocation and the original
+  deadline cover service callbacks. Missing required services are refused before
+  process launch. Process protocol advances to 2; consumers must regenerate
+  contracts and rebuild/capture the Host. Earlier process-1 runtimes are refused
+  without fallback or development-data migration, including captured runtime
+  descriptions retained in earlier development project/settings/receipt records.
+  Use a fresh development profile and project. AI execution and durable child
+  authority remain separate application integration. The basic native component
+  helper refuses service tables it cannot consume.
+
+
 - Provider child tasks cannot add, remove or change their parent's captured
   input dependencies. Exact dependency identities and expected revisions remain
   fixed while children share the original ancestor budgets.

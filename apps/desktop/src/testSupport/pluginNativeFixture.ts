@@ -3,7 +3,7 @@ import { validateResponseInventory, validateResponsePackage } from "../generated
 
 export const nativeEnvironment = {
   protocolVersion: 1, platform: { operatingSystem: "macos", architecture: "aarch64" },
-  sdkVersion: "0.1.0-alpha.1", processProtocol: 1, profile: "native-application-host-v1",
+  sdkVersion: "0.1.0-alpha.1", processProtocol: 2, profile: "native-application-host-v1",
   hostVersion: "0.2.0-alpha.1", executable: { kind: "darwin-code-directory-hash-v1", value: "a".repeat(40) },
 } as const;
 export const nativeDigest = "b".repeat(64);

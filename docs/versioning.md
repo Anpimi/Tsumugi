@@ -1,5 +1,26 @@
 # Application versioning and changelog maintenance
 
+The experimental project-service transport advances the independently owned
+process protocol to 2. Activation now requires a service table and the channel
+supports exact service requests/responses. Generate current SDK bindings and
+rebuild/capture the current Host and native workers. Protocol-1 frames and
+runtime descriptions are refused, including descriptions retained in development
+project inputs, settings approvals and runtime receipts; use a fresh development
+profile and project for process-2 validation. Earlier artifacts remain unchanged,
+and no historical fallback or migration is supplied. The existing upper-level
+validation can classify such retained descriptions as invalid project/settings/
+receipt data rather than expose the SDK's UnsupportedProtocol error directly.
+
+Manifest/content-exchange protocols, project schema 30, settings format 2,
+receipt format 1 and dependencies are unchanged: their stored fields and layout
+have not changed, and processProtocol remains a separate strict identity within
+the complete environment digest. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch. Both Unreleased changelogs
+record the incompatible process boundary; no additional SemVer bump or release
+is performed. JavaScript service transport does not complete the application's
+AI service adapter, durable child authorization or full release acceptance.
+
+
 Manual checker lifecycle now distinguishes explicit metadata rejection from
 attempted authorization and real execution channels. Inert rejected checks do
 not poll settings or block project closure; original consent, partial submission,

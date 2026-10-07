@@ -4,10 +4,11 @@ This private workspace is the Node side of the [Rust process Host](../../crates/
 It uses pinned `cordis@4.0.0-rc.10` for component registration and owned cleanup.
 Plugins see only the [SDK component facade](../../crates/plugin-sdk/javascript/component.d.ts),
 not a Cordis Context, Loader, service registry, credential or project database.
-It implements one project-scoped, serial capability per process. Required service
-dependencies and other scopes are refused by the Rust parent until their broker
-exists. Desktop builds can opt into the fixed runtime bundle described below;
-production provider/Core execution integration remains under development.
+It implements one project-scoped, serial capability per process. A trusted Rust
+parent may supply exact project-service bindings through its explicit broker.
+Missing required dependencies and unsupported scopes are refused before launch.
+Desktop builds can opt into the fixed runtime bundle described below; application
+AI service integration remains separate from this transport.
 
 A captured `.mjs` entrypoint exports a component:
 
@@ -38,6 +39,21 @@ Payload fields cannot replace this identity, and result reception still checks
 the actual channel independently. Build and capture the current Host when using
 SDK components that require this metadata; earlier development runtime trees
 do not provide the added facade field.
+
+`api.services` exposes immutable selected service descriptions before activation.
+Invocation metadata supplies `services.bindings` and
+`services.call(handleId, utf8, callId?)`. It fixes the input schema, digest and
+original context; callers receive the correlated `ServiceResponse`, whose opaque
+payload still needs the service contract's semantic interpretation. A supplied
+call ID is an identity, not permission to replay an effect. Only one service call
+may be pending, and calls outside the live invocation or after cancellation are
+refused. Close/cancel reject pending promises; a handler cannot finish with an
+unawaited service call. The Rust parent owns permissions, current selection,
+actual channel identity and the original deadline. Services expose no credentials,
+Cordis Context or project database.
+
+Process protocol 2 requires the current generated bindings and captured Host.
+Earlier protocol-1 runtime trees are refused; no fallback is provided.
 
 Close stops new handlers, aborts active work and waits for activation, handlers and
 owned asynchronous cleanup. A cleanup failure cannot produce `closed`. Late output

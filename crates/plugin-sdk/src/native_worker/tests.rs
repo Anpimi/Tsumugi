@@ -164,6 +164,7 @@ fn request() -> InvocationRequest {
 }
 fn activation(request: &InvocationRequest) -> ProcessActivation {
     ProcessActivation {
+        services: vec![],
         provider: request.provider.clone(),
         capability: CapabilityDeclaration {
             contract: request.capability.clone(),
@@ -355,6 +356,35 @@ fn cancellation_interrupts_running_handler_and_suppresses_late_result() {
     finish(h, &a);
 }
 #[test]
+fn unsupported_service_facade_refuses_before_author_activation() {
+    let mut h = harness(Behavior::Echo);
+    let request = request();
+    let mut activation = activation(&request);
+    activation.services.push(ServiceBinding {
+        handle_id: "service-a".into(),
+        provider_id: "example.native-service".into(),
+        contract: request.capability.clone(),
+        input_schema: request.input.schema.clone(),
+        output_schema: request.output_schema.clone(),
+        error_schema: request.error_schema.clone(),
+        effect: EffectKind::ReadOnly,
+        project_id: request.context.project_id.clone(),
+        scope_id: request.context.scope_id.clone(),
+        activation_generation: 1,
+        configuration_digest: request.context.configuration_digest.clone(),
+        limits: CapabilityLimits {
+            max_input_bytes: 1024,
+            max_output_bytes: 1024,
+            concurrency: 1,
+            timeout_ms: 1000,
+        },
+    });
+    send(&mut h.peer, ProcessBody::Activate(activation));
+    assert!(h.observed.recv_timeout(Duration::from_secs(1)).is_err());
+    assert!(matches!(refused(h), NativeWorkerError::UnsupportedServices));
+}
+
+#[test]
 fn close_during_activation_cancels_scope_and_waits_for_cleanup_without_ready() {
     let mut h = harness(Behavior::WaitActivation);
     let a = activation(&request());
@@ -458,7 +488,7 @@ fn conflicting_control_and_worker_direction_are_refused_and_cancel_owned_work() 
 #[test]
 fn malformed_and_incomplete_wire_is_refused_before_component_activation() {
     let duplicate =
-        br#"{"protocolVersion":1,"protocolVersion":1,"body":{"kind":"ping","data":{"nonce":"a"}}}"#;
+        br#"{"protocolVersion":2,"protocolVersion":2,"body":{"kind":"ping","data":{"nonce":"a"}}}"#;
     let mut malformed = (duplicate.len() as u32).to_be_bytes().to_vec();
     malformed.extend_from_slice(duplicate);
     for bytes in [

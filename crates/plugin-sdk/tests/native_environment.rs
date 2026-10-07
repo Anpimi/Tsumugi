@@ -23,7 +23,7 @@ fn native_digest_matches_an_independently_calculated_vector() {
     let original = native();
     assert_eq!(
         original.digest().unwrap(),
-        "ba38dd6b1f63b641359cf711154563ce9d1616d4790f250e1718bb5c3f570ddd"
+        "290f36ac6e522b393ce442c64092a8b08d4e4cca3dbc59fde7b1564a712448f7"
     );
     let execution = ExecutionEnvironmentDescriptor::from(original.clone());
     let bytes = serde_json::to_vec(&original).unwrap();

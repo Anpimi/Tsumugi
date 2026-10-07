@@ -3,8 +3,9 @@ const mode = await readFile(new URL('./behavior.txt', import.meta.url), 'utf8');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 export default {
   async activate(api) {
-    if (Object.keys(api).sort().join(',') !== 'contribution,onDispose,register,signal'
-      || !Object.isFrozen(api) || !Object.isFrozen(api.contribution.contract)) throw new Error('Facade leak');
+    if (Object.keys(api).sort().join(',') !== 'contribution,onDispose,register,services,signal'
+      || !Object.isFrozen(api) || !Object.isFrozen(api.contribution.contract)
+      || !Object.isFrozen(api.services) || api.services.length !== 0) throw new Error('Facade leak');
     let cleaned = false;
     api.onDispose(async () => {
       if (mode === 'cleanup-hang') await new Promise(() => {});

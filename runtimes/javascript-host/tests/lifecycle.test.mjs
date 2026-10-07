@@ -13,6 +13,7 @@ import { PROCESS_PROFILE } from '../dist/generated/protocol.js';
 const fixture = JSON.parse(await readFile(new URL('../../../crates/plugin-sdk/tests/fixtures/invocation.request.json', import.meta.url), 'utf8')).body.data;
 const activation = {
   provider: fixture.provider,
+  services: [],
   capability: { contract: fixture.capability, inputSchema: fixture.input.schema, outputSchema: fixture.outputSchema,
     errorSchema: fixture.errorSchema, profiles: [fixture.profile], effect: 'read-only', permissions: [{ kind: 'captured-input' }],
     limits: { concurrency: 1, maxInputBytes: 1048576, maxOutputBytes: 65536, timeoutMs: 1000 } },
@@ -39,8 +40,8 @@ async function harness(t, source) {
   };
   return {
     frames,
-    send: body => child.stdin.write(encodeFrame({ protocolVersion: 1, body })),
-    sendBatch: bodies => child.stdin.write(Buffer.concat(bodies.map(body => encodeFrame({ protocolVersion: 1, body })))),
+    send: body => child.stdin.write(encodeFrame({ protocolVersion: 2, body })),
+    sendBatch: bodies => child.stdin.write(Buffer.concat(bodies.map(body => encodeFrame({ protocolVersion: 2, body })))),
     waitFor,
     marker: async name => { try { return await readFile(join(root, name), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return ''; throw e; } },
     ended,
@@ -158,16 +159,16 @@ test('a completed result permits the next call before transport flush acknowledg
     const end = Date.now() + 2000;
     while (!predicate()) { assert.ok(!failed && Date.now() < end); await new Promise(resolve => setTimeout(resolve, 5)); }
   };
-  session.receive({ protocolVersion: 1, body: { kind: 'activate', data: activation } });
+  session.receive({ protocolVersion: 2, body: { kind: 'activate', data: activation } });
   await until(() => sent.length === 1);
-  session.receive({ protocolVersion: 1, body: { kind: 'invoke', data: fixture } });
+  session.receive({ protocolVersion: 2, body: { kind: 'invoke', data: fixture } });
   await until(() => sent.length === 2);
   const next = structuredClone(fixture); next.context.dispatchId = 'dispatch-next';
-  session.receive({ protocolVersion: 1, body: { kind: 'invoke', data: next } });
+  session.receive({ protocolVersion: 2, body: { kind: 'invoke', data: next } });
   await until(() => sent.length === 3);
   assert.equal(sent[2].data.context.dispatchId, 'dispatch-next');
   for (const resolve of flushes) resolve();
-  session.receive({ protocolVersion: 1, body: { kind: 'close', data: { provider: activation.provider } } });
+  session.receive({ protocolVersion: 2, body: { kind: 'close', data: { provider: activation.provider } } });
   await until(() => finished);
   assert.equal(failed, false);
 });
@@ -189,7 +190,7 @@ test('complete result budgets can exceed raw declaration limits without rejectin
     const payload = result.data.outcome[kind === 'succeeded' ? 'output' : 'error'];
     assert.equal(payload.utf8, 'éé');
     assert.equal(Buffer.byteLength(payload.utf8), captured.capability.limits.maxOutputBytes);
-    const framed = encodeFrame({ protocolVersion: 1, body: result });
+    const framed = encodeFrame({ protocolVersion: 2, body: result });
     assert.ok(framed.length - 4 > captured.capability.limits.maxOutputBytes);
     assert.ok(framed.length - 4 <= request.maxResultBytes);
     h.send({ kind: 'close', data: { provider: captured.provider } });
@@ -220,7 +221,7 @@ test('result frame budget includes opaque payload escaping and metadata', { time
     profile: request.profile, resultId: '11111111-1111-4111-8111-111111111111',
     outcome: { kind: 'succeeded', output: { schema: request.outputSchema, utf8,
       sha256: createHash('sha256').update(utf8, 'utf8').digest('hex') } } };
-  request.maxResultBytes = encodeFrame({ protocolVersion: 1, body: { kind: 'result', data: result } }).length - 5;
+  request.maxResultBytes = encodeFrame({ protocolVersion: 2, body: { kind: 'result', data: result } }).length - 5;
   assert.ok(Buffer.byteLength(utf8) < captured.capability.limits.maxOutputBytes);
   assert.ok(Buffer.byteLength(utf8) < request.maxResultBytes);
   h.send({ kind: 'activate', data: captured });

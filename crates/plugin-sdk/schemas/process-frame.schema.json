@@ -9,7 +9,7 @@
     },
     "protocolVersion": {
       "type": "integer",
-      "const": 1
+      "const": 2
     }
   },
   "additionalProperties": false,
@@ -453,12 +453,20 @@
         },
         "provider": {
           "$ref": "#/$defs/ProviderBinding"
+        },
+        "services": {
+          "description": "Host-selected project services, resolved before component activation.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ServiceBinding"
+          }
         }
       },
       "additionalProperties": false,
       "required": [
         "provider",
-        "capability"
+        "capability",
+        "services"
       ]
     },
     "ProcessBody": {
@@ -523,6 +531,40 @@
             "kind": {
               "type": "string",
               "const": "result"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ServiceRequest"
+            },
+            "kind": {
+              "type": "string",
+              "const": "service-request"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "data": {
+              "$ref": "#/$defs/ServiceResponse"
+            },
+            "kind": {
+              "type": "string",
+              "const": "service-response"
             }
           },
           "additionalProperties": false,
@@ -722,6 +764,115 @@
         "packageDigest",
         "instanceId",
         "activationGeneration"
+      ]
+    },
+    "ServiceBinding": {
+      "description": "A Host-selected service descriptor, not a grant or a project/store handle.\nThe Host authenticates its provider, scope, configuration and live generation.",
+      "type": "object",
+      "properties": {
+        "activationGeneration": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "configurationDigest": {
+          "type": "string"
+        },
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "effect": {
+          "$ref": "#/$defs/EffectKind"
+        },
+        "errorSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "handleId": {
+          "type": "string"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "limits": {
+          "$ref": "#/$defs/CapabilityLimits"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "scopeId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "handleId",
+        "providerId",
+        "contract",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema",
+        "effect",
+        "projectId",
+        "scopeId",
+        "activationGeneration",
+        "configurationDigest",
+        "limits"
+      ]
+    },
+    "ServiceRequest": {
+      "description": "The context is the original outer invocation. Its inputDigest describes that\ninvocation, while input.sha256 independently authenticates the service bytes.",
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/InvocationContext"
+        },
+        "handleId": {
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/EncodedPayload"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "callId",
+        "handleId",
+        "context",
+        "input"
+      ]
+    },
+    "ServiceResponse": {
+      "description": "A response preserves failed/unknown outcomes. Matching it does not authorize\na mutation, validate its domain payload or prove that a child task finished.",
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string"
+        },
+        "context": {
+          "$ref": "#/$defs/InvocationContext"
+        },
+        "handleId": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/$defs/InvocationOutcome"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "callId",
+        "handleId",
+        "context",
+        "outcome"
       ]
     }
   }
