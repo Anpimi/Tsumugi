@@ -1563,6 +1563,8 @@ impl ProjectStore {
         Ok(DispatchRequest {
             provider: None,
             plugin_permit,
+            service_origin: None,
+            original_deadline: None,
             input,
             item_id: item,
             dispatch_token: parse_id(
@@ -1642,7 +1644,7 @@ impl ProjectStore {
         policy: RecoveryPolicy,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
-        self.enqueue_execution_with_authority(input, policy, parent, None)
+        self.enqueue_execution_with_authority(input, policy, parent, None, None)
     }
 
     pub(crate) fn enqueue_work_plan_tool(
@@ -1659,6 +1661,21 @@ impl ProjectStore {
             policy,
             None,
             Some((prepared, consent, grant_id, generation)),
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_work_plan_service_generation(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanServiceGeneration,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            Some(prepared.parent_task()),
+            None,
+            Some(prepared),
         )
     }
 
@@ -1673,6 +1690,7 @@ impl ProjectStore {
             ExecutionId,
             ExecutionId,
         )>,
+        service: Option<&crate::application::PreparedWorkPlanServiceGeneration>,
     ) -> Result<(), ExecutionError> {
         let project = self
             .metadata()
@@ -1687,6 +1705,15 @@ impl ProjectStore {
         let tx = self.execution_write()?;
         let verified_build =
             super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        if let Some(prepared) = service {
+            if tool.is_some()
+                || prepared.input().bytes() != input.bytes()
+                || parent != Some(prepared.parent_task())
+            {
+                return Err(error(ErrorCode::Unauthorized, "service-child-enqueue"));
+            }
+            super::application::check_prepared_service(&tx, prepared, &authority)?;
+        }
         if input.envelope().plugin.is_some() && parent.is_some() {
             return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
         }
@@ -1707,6 +1734,7 @@ impl ProjectStore {
             super::application::check_enqueue(&tx, input, parent)?;
             None
         };
+        super::application::check_service_input(&tx, input, &authority)?;
         check_translation_projection(&tx, input, Some(&authority))?;
         let existing: Option<String> = tx
             .query_row(
@@ -1835,9 +1863,16 @@ impl ProjectStore {
         } else {
             super::application::record_input(&tx, input)?;
         }
+        if let Some(prepared) = service {
+            super::application::record_service_call(&tx, prepared)?;
+        }
         #[cfg(test)]
         crash_hook("before-enqueue-commit");
         commit(tx)?;
+        if let Some(prepared) = service {
+            super::application::activate_service_origin(&authority, prepared)
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "service-origin-activation"))?;
+        }
         #[cfg(test)]
         crash_hook("after-enqueue");
         #[cfg(any(test, feature = "execution-test-host"))]
@@ -1968,6 +2003,8 @@ impl ProjectStore {
         attempt: ExecutionId,
         item: ExecutionId,
     ) -> Result<DispatchRequest, ExecutionError> {
+        let started = std::time::Instant::now();
+        let started_at_ms = crate::execution::plugin_authority::plugin_now_ms()?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
@@ -1995,8 +2032,10 @@ impl ProjectStore {
             }
             Err(failure) => return Err(failure),
         };
-        if let Err(error) = super::application::check_input(&tx, &input) {
-            if error.code == ErrorCode::Cancelled {
+        if let Err(error) = super::application::check_input(&tx, &input)
+            .and_then(|_| super::application::check_service_input(&tx, &input, &authority))
+        {
+            if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
                 tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
             }
@@ -2040,9 +2079,20 @@ impl ProjectStore {
         commit(tx)?;
         #[cfg(test)]
         crash_hook("after-dispatch-intent");
+        let timeout = std::time::Duration::from_millis(input.envelope().limits.timeout_ms.into());
+        let original_deadline = crate::execution::DispatchDeadline {
+            instant: started
+                .checked_add(timeout)
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
+            expires_at_ms: started_at_ms
+                .checked_add(input.envelope().limits.timeout_ms.into())
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
+        };
         Ok(DispatchRequest {
             provider: None,
             plugin_permit,
+            service_origin: authority.service_origin(attempt)?,
+            original_deadline: Some(original_deadline),
             input,
             item_id: item,
             dispatch_token: token,
@@ -2721,6 +2771,7 @@ fn capture_adoption_in(
         complete_translation_projection(connection, &input)?;
     }
     super::application::check_input(connection, &input)?;
+    super::application::check_service_input(connection, &input, authority)?;
     check_translation_projection(connection, &input, Some(authority))?;
     if input.envelope().plugin.is_some()
         && input.envelope().operation == crate::content::BUILD_OPERATION

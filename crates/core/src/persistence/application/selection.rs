@@ -317,6 +317,7 @@ fn capture(
     let attempt = ExecutionId::parse(&attempt)?;
     let input = ledger::load_input(c, attempt)?;
     control::check_input(c, &input)?;
+    super::services::check_input(c, &input, &store.plugin_authority)?;
     let captured: i64 = c
         .query_row(
             "SELECT cancellation_revision FROM execution_attempts WHERE attempt_id=?1",

@@ -277,6 +277,7 @@ impl AiRunner {
         config: &AiConfig,
         item: &AiItem,
     ) -> Result<AiOutput, ExecutionError> {
+        request.check_service_dispatch()?;
         let profile = provider::ProviderProfile::compatible(config)?;
         let client = self.service.client(config)?;
         let budget = request
@@ -310,6 +311,18 @@ impl AiRunner {
             if let Some(key) = &key {
                 call = call.bearer_auth(key);
             }
+            if let Some(origin) = &request.service_origin {
+                let remaining = origin
+                    .deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .filter(|value| !value.is_zero())
+                    .ok_or_else(|| error(ErrorCode::Unauthorized, "service-origin-expired"))?;
+                // Narrow this request's IO wait, not the captured model settings.
+                call = call.timeout(remaining.min(std::time::Duration::from_secs(
+                    config.timeout_seconds.into(),
+                )));
+            }
+            request.check_service_dispatch()?;
             let response = call
                 .send()
                 .map_err(|_| error(ErrorCode::OutcomeUnknown, "ai-network-unknown"))?;

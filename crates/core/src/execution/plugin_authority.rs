@@ -1,6 +1,6 @@
 //! Session-local revocation handles for grants owned by the project ledger.
 //! A handle cannot create, renew, or restore a durable authorization.
-use super::{ErrorCode, ExecutionError, ExecutionId, FixedInput};
+use super::{Cancellation, ErrorCode, ExecutionError, ExecutionId, FixedInput};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -80,6 +80,15 @@ pub struct PluginPermit {
     grant: Arc<GrantState>,
 }
 impl PluginPermit {
+    pub(crate) fn original_deadline(&self) -> Instant {
+        self.grant.deadline
+    }
+    pub(crate) fn expires_at_ms(&self) -> u64 {
+        self.grant.expires_at_ms
+    }
+    pub(crate) fn generation(&self) -> ExecutionId {
+        self.grant.generation
+    }
     pub fn is_authorized(&self) -> bool {
         self.epoch.upgrade().is_some_and(|epoch| {
             epoch.generation == self.grant.generation
@@ -134,6 +143,28 @@ pub(crate) struct PluginEpoch {
     generation: ExecutionId,
     revoked: AtomicBool,
     grants: Mutex<BTreeMap<ExecutionId, Arc<GrantState>>>,
+    service_origins: Mutex<BTreeMap<ExecutionId, Arc<ServiceOriginGuard>>>,
+}
+
+/// The original grant and absolute dispatch deadline outlive the process channel.
+/// Reopening a store cannot recreate this handle from a durable receipt.
+#[derive(Debug)]
+pub(crate) struct ServiceOriginGuard {
+    pub(crate) permit: PluginPermit,
+    pub(crate) cancellation: Cancellation,
+    pub(crate) revoked: Cancellation,
+    pub(crate) deadline: Instant,
+    pub(crate) digest: String,
+}
+impl ServiceOriginGuard {
+    pub(crate) fn live(&self) -> bool {
+        if Instant::now() >= self.deadline {
+            self.revoked.request();
+        }
+        !self.cancellation.is_requested()
+            && !self.revoked.is_requested()
+            && self.permit.is_authorized()
+    }
 }
 impl PluginEpoch {
     pub(crate) fn generation(&self) -> ExecutionId {
@@ -193,6 +224,7 @@ impl PluginAuthority {
             generation,
             revoked: AtomicBool::new(false),
             grants: Mutex::new(BTreeMap::new()),
+            service_origins: Mutex::new(BTreeMap::new()),
         });
         *current = Some(epoch.clone());
         Ok(epoch)
@@ -226,6 +258,7 @@ impl PluginAuthority {
             generation,
             revoked: AtomicBool::new(false),
             grants: Mutex::new(BTreeMap::new()),
+            service_origins: Mutex::new(BTreeMap::new()),
         });
         *current = Some(epoch.clone());
         Ok(epoch)
@@ -347,6 +380,83 @@ impl PluginAuthority {
             return Err(denied());
         }
         Ok(permit)
+    }
+
+    pub(crate) fn register_service_origin(
+        &self,
+        child: ExecutionId,
+        guard: Arc<ServiceOriginGuard>,
+    ) -> Result<(), ExecutionError> {
+        let epoch = self.require_generation(guard.permit.generation())?;
+        if !guard.live() {
+            return Err(denied());
+        }
+        let mut origins = epoch.service_origins.lock().map_err(|_| denied())?;
+        if let Some(existing) = origins.get(&child) {
+            return if Arc::ptr_eq(existing, &guard) {
+                Ok(())
+            } else {
+                Err(denied())
+            };
+        }
+        origins.retain(|_, origin| origin.live());
+        if origins.len() >= MAX_LIVE_GRANTS {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "service-origins",
+            ));
+        }
+        origins.insert(child, guard);
+        Ok(())
+    }
+
+    pub(crate) fn check_service_origin(
+        &self,
+        child: ExecutionId,
+        digest: &str,
+    ) -> Result<(), ExecutionError> {
+        let epoch = self.current_epoch()?;
+        let guard = epoch
+            .service_origins
+            .lock()
+            .map_err(|_| denied())?
+            .get(&child)
+            .cloned()
+            .ok_or_else(denied)?;
+        if guard.digest != digest || !guard.live() {
+            return Err(denied());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn service_origin(
+        &self,
+        child: ExecutionId,
+    ) -> Result<Option<Arc<ServiceOriginGuard>>, ExecutionError> {
+        let current = self.current_lock()?;
+        let Some(epoch) = current.as_ref() else {
+            return Ok(None);
+        };
+        let origin = epoch
+            .service_origins
+            .lock()
+            .map_err(|_| denied())?
+            .get(&child)
+            .cloned();
+        if origin.as_ref().is_some_and(|origin| !origin.live()) {
+            return Err(denied());
+        }
+        Ok(origin)
+    }
+
+    pub(crate) fn release_service_origin(&self, child: ExecutionId) -> Result<(), ExecutionError> {
+        let epoch = self.current_epoch()?;
+        epoch
+            .service_origins
+            .lock()
+            .map_err(|_| denied())?
+            .remove(&child);
+        Ok(())
     }
 
     pub(crate) fn revoke_grant(

@@ -40,10 +40,30 @@ validation, not execution or mutation authorization.
 
 The current schema stores plan authority, control generations, action receipts,
 execution associations, checked selection receipts and unit protection beside
-the existing execution ledger. This development build opens current schema 29
+the existing execution ledger. This development build opens current schema 31
 only. Unsupported development projects are preserved and refused; recreate
 projects and reimport source files. Current work plans use internal format 2;
 earlier development plan formats are not migrated.
+
+The experimental Core project-service adapter can capture an actual component
+invocation, its selected SDK service descriptor, ordinary plugin permit and
+original absolute deadline against an existing WorkPlan Agent scope. Its child
+generation proposal contains only child identities and the original source
+subset. The same enqueue transaction saves the origin association and original
+ancestor budget; every dispatch, HTTP reservation, HTTP send, candidate adoption
+and selection rechecks that authority. HTTP waiting is narrowed to the original
+remaining deadline without changing captured model settings. The component's
+outer input has no automation lease and cannot use the read-only tool delegation
+path to acquire generation permission.
+
+A short service receipt does not mean model completion or candidate adoption.
+Channel closure and outer completion do not release a child's original grant.
+The trusted application retains installed-settings revocation until the child's
+execution and authorized effects are terminal. Repeating a call identity only
+reads its original receipt; generic retry cannot replace its attempt to lose the
+origin. Reopening preserves historical associations but cannot reconstruct live
+authority or renew deadlines. This Core adapter requires the matching Process-2
+SDK and Host; production Desktop service selection remains separate integration.
 
 `authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit
 confirmation, the exact plan digest, the exact supported effect set and an expiry

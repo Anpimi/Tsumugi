@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+Core work-plan project-service children add durable associations to the original
+execution ledger, retaining actual service descriptors, original caller grants,
+absolute deadlines and ancestor budgets. Current project format is schema 31;
+earlier development formats are refused unchanged. The format preserves the six
+application execution columns for model/tool delegation. This Core API requires
+the matching Process-2 SDK and Host. Internal WorkPlan format 2, installed
+settings 2 and dependencies remain unchanged. Application `0.2.0-alpha.1` and
+SDK `0.1.0-alpha.1` remain the same undistributed batch; synchronized Unreleased
+entries require no additional SemVer bump or historical migration. Production
+Desktop integration and full product acceptance remain in development.
+
 Bounded work-plan tools add fixed installed SDK bindings, independent local
 execution consent, source-derived Agent queries and one cumulative invocation
 limit to the original Core/Host/Desktop execution chain. Current project schema

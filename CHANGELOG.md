@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental Core project-service generation retains actual component and
+  service provenance with the original WorkPlan scope, grant, deadline and
+  ancestor budget. Durable call receipts reconcile without resubmitting or
+  renewing authority. HTTP dispatch and candidate adoption recheck the original
+  caller; IO waits share its remaining deadline. Current project schema is 31;
+  earlier development projects are refused unchanged. Matching Process-2
+  SDK/Host and production Desktop integration are required.
+
 - Work plans can capture read-only reference tools with exact installed package,
   runtime and query options, and one shared invocation limit. Independent local
   execution consent lasts at most ten minutes; recovering the same action cannot

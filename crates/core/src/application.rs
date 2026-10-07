@@ -785,3 +785,7 @@ impl WorkPlan {
         FixedInput::capture(self.execution_input()?.clone())
     }
 }
+pub use crate::persistence::{
+    PreparedWorkPlanServiceGeneration, WorkPlanServiceCall, WorkPlanServiceCallIdentity,
+    WorkPlanServiceOrigin, WorkPlanServiceReceipt,
+};

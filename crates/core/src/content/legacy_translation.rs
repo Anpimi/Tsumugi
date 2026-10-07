@@ -476,6 +476,8 @@ mod tests {
                 DispatchRequest {
                     provider: None,
                     plugin_permit: None,
+                    service_origin: None,
+                    original_deadline: None,
                     input: input.clone(),
                     item_id: item.item_id,
                     dispatch_token: token,

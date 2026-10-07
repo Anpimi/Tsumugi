@@ -369,6 +369,8 @@ fn controlled_runner_can_return_late_without_adopting_or_accessing_storage() {
     let request = DispatchRequest {
         provider: None,
         plugin_permit: None,
+        service_origin: None,
+        original_deadline: None,
         item_id: fixed.envelope().items[0].item_id,
         input: fixed.clone(),
         dispatch_token: ExecutionId::new(),

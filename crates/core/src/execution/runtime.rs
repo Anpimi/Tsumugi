@@ -333,11 +333,48 @@ impl ExecutionRuntime {
     ) -> Result<(), ExecutionError> {
         self.submit_with_parent(store, input, Some(parent))
     }
+    /// A component proposal uses the same queue and ancestor budget, with its
+    /// original caller recorded atomically alongside the child attempt.
+    pub fn submit_work_plan_service_child(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedWorkPlanServiceGeneration,
+    ) -> Result<crate::application::WorkPlanServiceReceipt, ExecutionError> {
+        let identity = prepared.identity()?;
+        if let Some(receipt) = store.work_plan_service_receipt(&identity, &prepared.call)? {
+            if receipt.input_digest != prepared.input().digest() {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "service-child-identity",
+                ));
+            }
+            // A historical ACK is data only, even after stop, expiry or reopen.
+            return Ok(receipt);
+        }
+        self.submit_with_origin(
+            store,
+            prepared.input(),
+            Some(prepared.parent_task()),
+            Some(prepared),
+        )?;
+        store
+            .work_plan_service_receipt(&identity, &prepared.call)?
+            .ok_or_else(|| ExecutionError::new(ErrorCode::OutcomeUnknown, "service-child-receipt"))
+    }
     fn submit_with_parent(
         &mut self,
         store: &mut ProjectStore,
         input: &FixedInput,
         parent: Option<ExecutionId>,
+    ) -> Result<(), ExecutionError> {
+        self.submit_with_origin(store, input, parent, None)
+    }
+    fn submit_with_origin(
+        &mut self,
+        store: &mut ProjectStore,
+        input: &FixedInput,
+        parent: Option<ExecutionId>,
+        service: Option<&crate::application::PreparedWorkPlanServiceGeneration>,
     ) -> Result<(), ExecutionError> {
         if !self.accepting {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
@@ -369,7 +406,11 @@ impl ExecutionRuntime {
             ));
         }
         let policy = self.policies[&input_key(input)?];
-        store.enqueue_execution_with_policy(input, policy, parent)
+        if let Some(prepared) = service {
+            store.enqueue_work_plan_service_generation(prepared, policy)
+        } else {
+            store.enqueue_execution_with_policy(input, policy, parent)
+        }
     }
     pub fn is_active(&self, attempt: ExecutionId) -> bool {
         self.workers

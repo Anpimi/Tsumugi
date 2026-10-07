@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 const TABLES: &[(&str, &str)] = &[
+    super::services::TABLE,
     (
         "application_plans",
         "CREATE TABLE application_plans (plan_id TEXT PRIMARY KEY NOT NULL, plan BLOB NOT NULL CHECK(length(plan) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest)=64), generation INTEGER NOT NULL CHECK(generation>0), state TEXT NOT NULL CHECK(state IN ('active','paused','stopped','taken-over')), effects BLOB NOT NULL CHECK(length(effects) BETWEEN 1 AND 1024), expires_at INTEGER NOT NULL CHECK(expires_at>0), cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision>=0))",
@@ -579,58 +580,19 @@ impl ProjectStore {
         super::super::review::read_snapshot(c, |_| {
             self.check_work_plan_agent_scope(scope)?;
             let stored = load(c, scope.lease.plan_id)?;
-            let original = stored.plan.fixed_input()?;
-            if request.unit_ids.len() > 100 {
-                return Err(err(ErrorCode::LimitExceeded, "work-plan-agent-items"));
-            }
-            let selected = request
-                .unit_ids
-                .iter()
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>();
-            if selected.is_empty()
-                || selected.len() != request.unit_ids.len()
-                || selected.len() > original.envelope().items.len()
-                || request.task_id == scope.parent_task
-                || request.attempt_id == original.envelope().attempt_id
-                || selected
-                    .iter()
-                    .any(|id| !stored.plan.selection_basis.iter().any(|b| b.unit_id == *id))
-            {
-                return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
-            }
+            let input = derive_agent_generation(&stored.plan, scope, request)?;
             self.verify_work_plan(&stored.plan)?;
-            let mut envelope = original.envelope().clone();
-            envelope.task_id = request.task_id;
-            envelope.attempt_id = request.attempt_id;
-            envelope.automation = Some(scope.lease);
-            let scopes = selected
-                .iter()
-                .map(ToString::to_string)
-                .collect::<std::collections::BTreeSet<_>>();
-            envelope
-                .items
-                .retain(|item| scopes.contains(&item.scope.id));
-            let item_ids = envelope
-                .items
-                .iter()
-                .map(|item| item.item_id)
-                .collect::<std::collections::BTreeSet<_>>();
-            envelope
-                .units
-                .retain(|unit| unit.item_ids.iter().all(|id| item_ids.contains(id)));
-            let input = FixedInput::capture(envelope)?;
             check_enqueue(c, &input, Some(scope.parent_task))?;
             Ok(input)
         })
     }
 
     pub fn check_work_plan_input(&self, input: &FixedInput) -> Result<(), ExecutionError> {
-        check_input(
-            self.connection()
-                .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?,
-            input,
-        )
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        check_input(c, input)?;
+        super::services::check_input(c, input, &self.plugin_authority)
     }
     pub fn work_plan(&self, plan_id: ExecutionId) -> Result<WorkPlan, ExecutionError> {
         let c = self
@@ -1191,6 +1153,7 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
         ));
     }
     super::selection::validate(c)?;
+    super::services::validate(c)?;
     Ok(())
 }
 
@@ -1213,4 +1176,52 @@ fn revoke_tools_in(
     }
     c.execute("UPDATE plugin_execution_grants SET revoked=1 WHERE attempt_id IN (SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND kind='tool' AND generation<?2)", params![plan.to_string(), generation.get() as i64]).map_err(sql)?;
     Ok(())
+}
+
+pub(super) fn derive_agent_generation(
+    plan: &WorkPlan,
+    scope: &WorkPlanAgentScope,
+    request: &AgentGenerationRequest,
+) -> Result<FixedInput, ExecutionError> {
+    let original = plan.fixed_input()?;
+    if request.unit_ids.len() > 100 {
+        return Err(err(ErrorCode::LimitExceeded, "work-plan-agent-items"));
+    }
+    let selected = request
+        .unit_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if selected.is_empty()
+        || selected.len() != request.unit_ids.len()
+        || selected.len() > original.envelope().items.len()
+        || request.task_id == scope.parent_task
+        || request.attempt_id == original.envelope().attempt_id
+        || selected
+            .iter()
+            .any(|id| !plan.selection_basis.iter().any(|b| b.unit_id == *id))
+    {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
+    }
+    let mut envelope = original.envelope().clone();
+    envelope.task_id = request.task_id;
+    envelope.attempt_id = request.attempt_id;
+    envelope.automation = Some(scope.lease);
+    let scopes = selected
+        .iter()
+        .map(ToString::to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+    envelope
+        .items
+        .retain(|item| scopes.contains(&item.scope.id));
+    let item_ids = envelope
+        .items
+        .iter()
+        .map(|item| item.item_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    envelope
+        .units
+        .retain(|unit| unit.item_ids.iter().all(|id| item_ids.contains(id)));
+    let input = FixedInput::capture(envelope)?;
+    Ok(input)
 }
