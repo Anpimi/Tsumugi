@@ -3,6 +3,56 @@ use serde_json::json;
 use std::sync::{Mutex, mpsc};
 
 #[test]
+fn sha256_matches_independent_byte_oracles_at_padding_chunk_and_input_boundaries() {
+    // Expected digests come from Python hashlib, independently of the Rust backend.
+    for (length, expected) in [
+        (
+            0,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            55,
+            "44cb7046a6225ff9ff5ed5bae3e3274c68d6d77b53bd512be64b0ff623047b54",
+        ),
+        (
+            56,
+            "87535826792c4242e9b8ec88665347cc48167f7ac41162e45e9bc75e364c6057",
+        ),
+        (
+            63,
+            "ec158dffda7701d514de0d84ad9f189f1c1c68e524f0e9e302d13e78481a3edb",
+        ),
+        (
+            64,
+            "bb7d30cc3725cb327f99f56256cf4fe8e7d69155cbad113369e58ffe5dcddc85",
+        ),
+        (
+            65,
+            "0f30b745a6589a725d1959d54dd231353ff286cdb5e8f41c803aa7bfae0ab676",
+        ),
+        (
+            16383,
+            "7677ce287e79475bc0e73620af40be34081fddfbcfebbdc7b3e9478dbd85dc68",
+        ),
+        (
+            16384,
+            "8cf82beb1781b38131e0e4137c7e9d2d4c115876ddc6ae4097600d943d9b694f",
+        ),
+        (
+            16385,
+            "2776c6598a4b9204099e78d2ab7fd8135f62c33bc5bab4f4ea172721e09e37f2",
+        ),
+        (
+            1048576,
+            "bd8a5183fdafb052402b7f52480145004a781b927f0d376e4fbd922da44f6926",
+        ),
+    ] {
+        let bytes: Vec<u8> = (0..length).map(|index| (index * 17 + 31) as u8).collect();
+        assert_eq!(codec::digest(&bytes), expected, "input bytes: {length}");
+    }
+}
+
+#[test]
 fn decimal_wire_values_are_canonical_and_keep_their_distinct_bounds() {
     for number in [0, 9007199254740993, u64::MAX] {
         let value = UnsignedDecimal::from(number);

@@ -608,3 +608,13 @@ The existing rusqlite 0.40.2 dependency enables its SQLite function interface;
 there is no new library or dependency version. Application 0.2.0-alpha.1 and SDK
 0.1.0-alpha.1 remain the same undistributed batch, so no additional version bump
 is required. Both Unreleased changelogs record the storage boundary.
+
+macOS Apple silicon Core builds now enable the existing sha2 0.10.9 hardware
+backend with a target-specific dependency feature. The Cargo lockfile adds
+upstream sha2-asm 0.6.4, reusing the existing C compiler build dependency. Linked
+SDK/Host consumers share that feature; standalone SDK-only consumers retain
+their own build configuration. Exact SHA-256 byte identities, project schema 28,
+SDK/process/Store/IPC profiles and application/SDK version sources are unchanged.
+This stays in the same undistributed application 0.2.0-alpha.1 / SDK
+0.1.0-alpha.1 batch and needs no extra bump or historical migration. Both
+Unreleased changelogs describe the platform improvement.

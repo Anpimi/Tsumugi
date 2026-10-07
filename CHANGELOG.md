@@ -14,6 +14,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- macOS Apple silicon builds now enable the upstream SHA-256 hardware backend
+  for Core and its linked SDK/Host consumers. Complete input and result digest
+  checks keep the same algorithm and exact byte identities.
+
 - Exact execution inputs now share immutable byte chunks in the original SQLite
   ledger. QA retains complete source material and independent per-item evidence;
   reads reconstruct and validate original bytes in their existing snapshot.
