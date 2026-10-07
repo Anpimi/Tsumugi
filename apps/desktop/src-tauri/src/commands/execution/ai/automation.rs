@@ -2,7 +2,10 @@
 use super::*;
 use tsumugi_core::{
     ComputedAutomaticSelection, PreparedAutomaticSelection, ReviewCheckOrigin, ReviewCheckerKey,
-    application::{AutomaticSelectionReceipt, AutomaticSelectionRequest, SelectionPolicy},
+    application::{
+        AutomaticSelectionReceipt, AutomaticSelectionRequest, PreparedWorkPlanServiceGeneration,
+        SelectionPolicy,
+    },
 };
 
 const MAX_COMPUTATIONS: usize = 2;
@@ -77,6 +80,25 @@ pub(super) struct Automation {
     #[cfg(test)]
     pub(super) compute_probe: Option<review::ComputeProbe>,
 }
+
+/// Hold the original owner through a bounded enqueue. All fallible reads and
+/// effect identities are prepared first; dropping this value changes no state.
+#[must_use = "commit only after the guarded runtime enqueue succeeds"]
+pub(in crate::commands::execution) struct PreparedTracking<'a> {
+    automation: &'a mut Automation,
+    pending: Option<(ExecutionId, Attempt)>,
+}
+
+impl PreparedTracking<'_> {
+    pub(in crate::commands::execution) fn commit(self) {
+        if let Some((id, attempt)) = self.pending {
+            // The exclusive owner borrow prevents another track from inserting
+            // this identity between preparation and the successful enqueue.
+            self.automation.attempts.insert(id, attempt);
+        }
+    }
+}
+
 fn phase_for(receipt: &AutomaticSelectionReceipt) -> EffectPhase {
     if receipt.blocked.is_some() {
         EffectPhase::Blocked
@@ -164,10 +186,59 @@ impl Automation {
         input: &FixedInput,
         consent: Option<work_plans::CheckerConsent>,
     ) -> Result<(), ExecutionError> {
+        self.prepare_tracking(store, input, consent)?.commit();
+        Ok(())
+    }
+
+    /// Prepare tracking for input accepted by the original execution ledger.
+    /// The caller keeps the original session and settings guard throughout.
+    pub(super) fn prepare_tracking<'a>(
+        &'a mut self,
+        store: &ProjectStore,
+        input: &FixedInput,
+        consent: Option<work_plans::CheckerConsent>,
+    ) -> Result<PreparedTracking<'a>, ExecutionError> {
+        self.prepare_tracking_with(store, input, consent, || store.check_work_plan_input(input))
+    }
+
+    /// The sealed Core proposal supplies the original service authority before
+    /// its child is queued. The runtime must accept it before memory is committed.
+    pub(super) fn prepare_service_tracking<'a>(
+        &'a mut self,
+        store: &ProjectStore,
+        prepared: &PreparedWorkPlanServiceGeneration,
+        consent: Option<work_plans::CheckerConsent>,
+    ) -> Result<PreparedTracking<'a>, ExecutionError> {
+        self.prepare_tracking_with(store, prepared.input(), consent, || {
+            store.check_prepared_work_plan_service_generation(prepared)
+        })
+    }
+
+    fn prepare_tracking_with<'a>(
+        &'a mut self,
+        store: &ProjectStore,
+        input: &FixedInput,
+        consent: Option<work_plans::CheckerConsent>,
+        validate: impl FnOnce() -> Result<(), ExecutionError>,
+    ) -> Result<PreparedTracking<'a>, ExecutionError> {
+        let id = input.envelope().attempt_id;
+        if self
+            .attempts
+            .get(&id)
+            .is_some_and(|attempt| attempt.input.bytes() != input.bytes())
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::ResultMismatch,
+                "work-effect-attempt",
+            ));
+        }
         let Some(lease) = input.envelope().automation else {
-            return Ok(());
+            return Ok(PreparedTracking {
+                automation: self,
+                pending: None,
+            });
         };
-        store.check_work_plan_input(input)?;
+        validate()?;
         let plan = store.work_plan(lease.plan_id)?;
         let bindings = store.work_plan_review_checkers(&plan)?;
         if !bindings.is_empty() {
@@ -181,36 +252,46 @@ impl Automation {
                 ));
             }
         }
-        self.attempts
-            .entry(input.envelope().attempt_id)
-            .or_insert_with(|| Attempt {
-                input: input.clone(),
-                consent,
-                items: input
-                    .envelope()
-                    .items
-                    .iter()
-                    .map(|item| {
-                        (
-                            item.item_id,
-                            Item {
-                                candidate_action: ExecutionId::new(),
-                                selection_action: ExecutionId::new(),
-                                revision: None,
-                                checker: None,
-                                view: EffectView {
-                                    phase: EffectPhase::Waiting,
-                                    action_id: None,
-                                    receipt: None,
-                                    error: None,
-                                    retryable: false,
+        let pending = if self.attempts.contains_key(&id) {
+            // Reconciliation keeps the original consent, actions and effects.
+            // In particular, it cannot replace a cancelled attempt's authority.
+            None
+        } else {
+            Some((
+                id,
+                Attempt {
+                    input: input.clone(),
+                    consent,
+                    items: input
+                        .envelope()
+                        .items
+                        .iter()
+                        .map(|item| {
+                            (
+                                item.item_id,
+                                Item {
+                                    candidate_action: ExecutionId::new(),
+                                    selection_action: ExecutionId::new(),
+                                    revision: None,
+                                    checker: None,
+                                    view: EffectView {
+                                        phase: EffectPhase::Waiting,
+                                        action_id: None,
+                                        receipt: None,
+                                        error: None,
+                                        retryable: false,
+                                    },
                                 },
-                            },
-                        )
-                    })
-                    .collect(),
-            });
-        Ok(())
+                            )
+                        })
+                        .collect(),
+                },
+            ))
+        };
+        Ok(PreparedTracking {
+            automation: self,
+            pending,
+        })
     }
     pub(super) fn active(&self) -> bool {
         !self.jobs.is_empty()
@@ -848,5 +929,348 @@ impl Automation {
 impl Drop for Automation {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tracking_tests {
+    use super::*;
+    use tsumugi_core::{
+        ProjectMetadata,
+        application::{
+            AgentGenerationRequest, AuthorizeWorkPlan, AutomationEffect, ControlWorkPlan,
+            PlanOptions, WorkPlanCommand,
+        },
+        content::{SourceAdoptionHandler, SourceBundle, SourceRunner},
+    };
+
+    struct Fixture {
+        _directory: tempfile::TempDir,
+        store: ProjectStore,
+        input: FixedInput,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let directory = tempfile::tempdir().unwrap();
+            let mut store = ProjectStore::create(
+                directory.path().join("project"),
+                ProjectMetadata::create("Tracking test", "en-US", ["zh-CN"]).unwrap(),
+            )
+            .unwrap();
+            let mut runtime = ExecutionRuntime::new(&store).unwrap();
+            runtime.register_read_only(Arc::new(SourceRunner)).unwrap();
+            let source = SourceBundle::capture(
+                br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
+                br#"{"first":"Hello"}"#,
+                "en-US",
+            )
+            .unwrap()
+            .fixed_input(store.metadata().unwrap().project_id())
+            .unwrap();
+            runtime.submit(&mut store, &source).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while runtime.has_active_work(&store).unwrap() {
+                runtime.tick(&mut store).unwrap();
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            let result = store
+                .execution_current_result(
+                    source.envelope().attempt_id,
+                    source.envelope().items[0].item_id,
+                )
+                .unwrap()
+                .unwrap();
+            let preview = store
+                .source_preview(source.envelope().attempt_id, result, 0, 1)
+                .unwrap();
+            let action = store
+                .prepare_adoption_with_id(
+                    ExecutionId::new(),
+                    source.envelope().attempt_id,
+                    source.envelope().units[0].unit_id,
+                    vec![result],
+                    serde_json::to_value(preview.confirmation).unwrap(),
+                )
+                .unwrap();
+            store
+                .adopt_execution(&action, &SourceAdoptionHandler)
+                .unwrap();
+            let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
+            let unit = store.source_content(snapshot, 0, 1).unwrap().rows[0]
+                .unit_id
+                .unwrap();
+            let plan = store
+                .prepare_work_plan(
+                    Some(AiConfig {
+                        endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+                        model: "synthetic-model".into(),
+                        credential_env: String::new(),
+                        max_requests: 2,
+                        ..AiConfig::default()
+                    }),
+                    "zh-CN",
+                    &[unit],
+                    PlanOptions::default(),
+                )
+                .unwrap();
+            assert!(store.work_plan_review_checkers(&plan).unwrap().is_empty());
+            let expires_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 600;
+            let grant = store
+                .authorize_work_plan(
+                    &plan,
+                    &AuthorizeWorkPlan {
+                        action_id: ExecutionId::new(),
+                        plan_digest: plan.digest.clone(),
+                        confirmed: true,
+                        effects: vec![AutomationEffect::SaveCandidate],
+                        expires_at,
+                    },
+                )
+                .unwrap();
+            let input = FixedInput::capture(grant.input.unwrap()).unwrap();
+            // No AI runner is registered or ticked. These tests exercise only
+            // the original ledger and the in-memory tracking boundary.
+            store.enqueue_execution(&input).unwrap();
+            Self {
+                _directory: directory,
+                store,
+                input,
+            }
+        }
+
+        fn bytes(&self) -> Vec<u8> {
+            std::fs::read(self.store.directory().join("project.sqlite3")).unwrap()
+        }
+    }
+
+    #[test]
+    fn abandoned_tracking_preparation_changes_neither_owner_nor_ledger() {
+        let fixture = Fixture::new();
+        let mut automation = Automation::default();
+        let before = fixture.bytes();
+        let sequence = fixture.store.execution_sequence().unwrap();
+        let prepared = automation
+            .prepare_tracking(&fixture.store, &fixture.input, None)
+            .unwrap();
+        assert!(prepared.pending.is_some());
+        drop(prepared);
+        assert!(automation.attempts.is_empty());
+        assert!(automation.jobs.is_empty());
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.store.execution_sequence().unwrap(), sequence);
+    }
+
+    #[test]
+    fn prepared_tracking_commit_requires_no_further_store_read() {
+        let fixture = Fixture::new();
+        let mut automation = Automation::default();
+        let prepared = automation
+            .prepare_tracking(&fixture.store, &fixture.input, None)
+            .unwrap();
+        // Prove the commit seam is memory-only; a caller must still perform its
+        // real guarded enqueue successfully before invoking it.
+        fixture.store.close().unwrap();
+        prepared.commit();
+        let attempt = &automation.attempts[&fixture.input.envelope().attempt_id];
+        assert_eq!(attempt.input.bytes(), fixture.input.bytes());
+        assert_eq!(attempt.items.len(), fixture.input.envelope().items.len());
+        assert!(
+            attempt
+                .items
+                .values()
+                .all(|item| item.view.phase == EffectPhase::Waiting)
+        );
+    }
+
+    #[test]
+    fn child_tracking_commits_only_after_the_original_runtime_accepts_enqueue() {
+        let mut fixture = Fixture::new();
+        let scope = fixture
+            .store
+            .work_plan_agent_scope(fixture.input.envelope().automation.unwrap())
+            .unwrap();
+        let request = AgentGenerationRequest {
+            task_id: ExecutionId::new(),
+            attempt_id: ExecutionId::new(),
+            unit_ids: fixture
+                .store
+                .work_plan(scope.lease().plan_id)
+                .unwrap()
+                .selection_basis
+                .iter()
+                .map(|basis| basis.unit_id)
+                .collect(),
+        };
+        let child = fixture
+            .store
+            .prepare_work_plan_agent_generation(&scope, &request)
+            .unwrap();
+        let mut runtime = ExecutionRuntime::new(&fixture.store).unwrap();
+        let mut automation = Automation::default();
+        let sequence = fixture.store.execution_sequence().unwrap();
+        let prepared = automation
+            .prepare_tracking_with(&fixture.store, &child, None, || {
+                fixture
+                    .store
+                    .prepare_work_plan_agent_generation(&scope, &request)
+                    .map(|_| ())
+            })
+            .unwrap();
+        // The real runtime rejects a missing producer before its durable enqueue.
+        let error = runtime
+            .submit_child(&mut fixture.store, &child, scope.parent_task())
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidInput);
+        assert_eq!(error.stage, "capability");
+        drop(prepared);
+        assert!(automation.attempts.is_empty());
+        assert_eq!(fixture.store.execution_sequence().unwrap(), sequence);
+        assert!(fixture.store.execution_input(request.attempt_id).is_err());
+
+        runtime
+            .register(Arc::new(tsumugi_core::ai::AiRunner::with_service(
+                Arc::default(),
+            )))
+            .unwrap();
+        let prepared = automation
+            .prepare_tracking_with(&fixture.store, &child, None, || {
+                fixture
+                    .store
+                    .prepare_work_plan_agent_generation(&scope, &request)
+                    .map(|_| ())
+            })
+            .unwrap();
+        let candidate_action = prepared.pending.as_ref().unwrap().1.items
+            [&child.envelope().items[0].item_id]
+            .candidate_action;
+        runtime
+            .submit_child(&mut fixture.store, &child, scope.parent_task())
+            .unwrap();
+        prepared.commit();
+        assert_eq!(
+            fixture
+                .store
+                .execution_input(request.attempt_id)
+                .unwrap()
+                .bytes(),
+            child.bytes()
+        );
+        let attempt = &automation.attempts[&request.attempt_id];
+        assert_eq!(attempt.input.bytes(), child.bytes());
+        assert_eq!(
+            attempt.items[&child.envelope().items[0].item_id].candidate_action,
+            candidate_action
+        );
+        // The queued child is never ticked, so no model request can be sent.
+    }
+
+    #[test]
+    fn revoked_plan_fails_preparation_without_a_tracking_slot() {
+        let mut fixture = Fixture::new();
+        let lease = fixture.input.envelope().automation.unwrap();
+        fixture
+            .store
+            .control_work_plan(&ControlWorkPlan {
+                action_id: ExecutionId::new(),
+                plan_id: lease.plan_id,
+                expected_generation: lease.generation,
+                command: WorkPlanCommand::Pause,
+                confirmed: false,
+                expires_at: None,
+            })
+            .unwrap();
+        let before = fixture.bytes();
+        let mut automation = Automation::default();
+        let error = automation
+            .prepare_tracking(&fixture.store, &fixture.input, None)
+            .err()
+            .unwrap();
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert!(automation.attempts.is_empty());
+        assert_eq!(fixture.bytes(), before);
+    }
+
+    #[test]
+    fn tracking_reconciliation_preserves_original_consent_actions_and_cancelled_effect() {
+        let fixture = Fixture::new();
+        let mut automation = Automation::default();
+        // This plan has no checker slots. The values distinguish memory
+        // retention without claiming that a checker approval was captured.
+        let original = work_plans::CheckerConsent {
+            lease: fixture.input.envelope().automation.unwrap(),
+            bindings: Vec::new(),
+            expires_at_ms: 1,
+            settings_revision: UnsignedDecimal::from(0),
+            plugins: Arc::default(),
+        };
+        automation
+            .track(&fixture.store, &fixture.input, Some(original.clone()))
+            .unwrap();
+        let id = fixture.input.envelope().attempt_id;
+        let item_id = fixture.input.envelope().items[0].item_id;
+        let item = automation
+            .attempts
+            .get_mut(&id)
+            .unwrap()
+            .items
+            .get_mut(&item_id)
+            .unwrap();
+        let candidate_action = item.candidate_action;
+        let selection_action = item.selection_action;
+        item.view.phase = EffectPhase::Cancelled;
+        item.view.action_id = Some(candidate_action);
+        let replacement = work_plans::CheckerConsent {
+            expires_at_ms: 2,
+            settings_revision: UnsignedDecimal::from(1),
+            plugins: Arc::default(),
+            ..original.clone()
+        };
+        automation
+            .prepare_tracking(&fixture.store, &fixture.input, Some(replacement))
+            .unwrap()
+            .commit();
+        let attempt = &automation.attempts[&id];
+        let consent = attempt.consent.as_ref().unwrap();
+        assert_eq!(consent.expires_at_ms, original.expires_at_ms);
+        assert_eq!(consent.settings_revision, original.settings_revision);
+        assert!(Arc::ptr_eq(&consent.plugins, &original.plugins));
+        let item = &attempt.items[&item_id];
+        assert_eq!(item.candidate_action, candidate_action);
+        assert_eq!(item.selection_action, selection_action);
+        assert_eq!(item.view.phase, EffectPhase::Cancelled);
+        assert_eq!(item.view.action_id, Some(candidate_action));
+        assert!(!item.view.retryable);
+
+        let mut envelope = fixture.input.envelope().clone();
+        envelope.items[0].payload["trackingConflict"] = serde_json::json!(true);
+        let conflict = FixedInput::capture(envelope).unwrap();
+        let error = automation
+            .prepare_tracking(&fixture.store, &conflict, Some(original))
+            .err()
+            .unwrap();
+        assert_eq!(error.code, ErrorCode::ResultMismatch);
+        assert_eq!(error.stage, "work-effect-attempt");
+        assert_eq!(
+            automation.attempts[&id].input.bytes(),
+            fixture.input.bytes()
+        );
+        assert_eq!(
+            automation.attempts[&id].items[&item_id].candidate_action,
+            candidate_action
+        );
+        assert_eq!(
+            automation.attempts[&id].items[&item_id].selection_action,
+            selection_action
+        );
+        assert_eq!(
+            automation.attempts[&id].items[&item_id].view.phase,
+            EffectPhase::Cancelled
+        );
     }
 }

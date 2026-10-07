@@ -63,6 +63,14 @@ and External effect. Only child task/attempt identities and 1–100 distinct sou
 unit IDs enter the request. The acknowledgement exposes child identities and
 their captured input digest, with no grant or authorization handle.
 
+Before the first service child enqueue, the trusted caller can check its sealed
+Core preparation without writing execution or budget records. An already accepted
+child is refused at this preparation boundary; reconcile its durable receipt
+instead of reconstructing session-local effect authority. Desktop effect tracking
+supports preparing all fallible reads and action identities under its exclusive
+owner before enqueue. After acceptance the trusted caller commits only the
+in-memory tracking state.
+
 A short service receipt does not mean model completion or candidate adoption.
 Channel closure and outer completion do not release a child's original grant.
 The trusted application retains installed-settings revocation until the child's

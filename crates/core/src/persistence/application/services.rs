@@ -461,6 +461,29 @@ impl ProjectStore {
         })
     }
 
+    /// Check the original sealed preparation before its first child enqueue.
+    /// This performs no writes and creates no execution or effect authority.
+    /// An already accepted child must be reconciled through its durable receipt;
+    /// it cannot establish new session-local effect tracking from history.
+    pub fn check_prepared_work_plan_service_generation(
+        &self,
+        prepared: &PreparedWorkPlanServiceGeneration,
+    ) -> Result<(), ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| fail(ErrorCode::StorageFailed, "service-call-storage"))?;
+        super::super::review::read_snapshot(c, |_| {
+            check_prepared(c, prepared, &self.plugin_authority)?;
+            if self
+                .execution_input_if_present(prepared.input.envelope().attempt_id)?
+                .is_some()
+            {
+                return Err(fail(ErrorCode::Unauthorized, "service-child-enqueued"));
+            }
+            Ok(())
+        })
+    }
+
     /// Read durable bytes first. A historical receipt never reactivates its grant.
     pub fn work_plan_service_receipt(
         &self,

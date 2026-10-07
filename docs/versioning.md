@@ -12,6 +12,12 @@ installed settings2, receipt1 and dependencies remain unchanged. Application
 synchronized Unreleased entries and no additional bump or historical migration.
 Production Desktop component integration and full acceptance remain separate.
 
+The trusted service caller can validate the original sealed preparation before
+its first enqueue, then commit already prepared Desktop effect tracking without
+fallible storage reads. This is an additive Rust/internal-owner boundary; accepted
+historical children cannot recreate live tracking. Wire shapes, persistent formats,
+dependencies and versions remain unchanged in the same undistributed batch.
+
 Core work-plan project-service children add durable associations to the original
 execution ledger, retaining actual service descriptors, original caller grants,
 absolute deadlines and ancestor budgets. Current project format is schema 31;

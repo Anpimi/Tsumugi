@@ -328,6 +328,75 @@ impl Fixture {
 }
 
 #[test]
+fn service_tracking_preparation_is_read_only_and_does_not_restore_enqueued_children() {
+    let mut fixture = Fixture::new();
+    let prepared = fixture.prepare();
+    let sequence = fixture.store.execution_sequence().unwrap();
+    for _ in 0..2 {
+        fixture
+            .store
+            .check_prepared_work_plan_service_generation(&prepared)
+            .unwrap();
+    }
+    assert_eq!(fixture.store.execution_sequence().unwrap(), sequence);
+    assert!(
+        fixture
+            .store
+            .execution_input_if_present(prepared.input().envelope().attempt_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fixture
+            .store
+            .provider_budget(prepared.input().envelope().task_id)
+            .unwrap()
+            .is_none()
+    );
+    let receipt = fixture
+        .runtime
+        .submit_work_plan_service_child(&mut fixture.store, &prepared)
+        .unwrap();
+    let sequence = fixture.store.execution_sequence().unwrap();
+    let error = fixture
+        .store
+        .check_prepared_work_plan_service_generation(&prepared)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Unauthorized);
+    assert_eq!(error.stage, "service-child-enqueued");
+    assert_eq!(
+        fixture
+            .store
+            .work_plan_service_receipt(&receipt.identity, &fixture.call)
+            .unwrap(),
+        Some(receipt)
+    );
+    assert_eq!(fixture.store.execution_sequence().unwrap(), sequence);
+}
+
+#[test]
+fn service_tracking_preparation_rechecks_original_revocation_before_enqueue() {
+    let fixture = Fixture::new();
+    let prepared = fixture.prepare();
+    fixture.settings_revocation.request();
+    assert_eq!(
+        fixture
+            .store
+            .check_prepared_work_plan_service_generation(&prepared)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert!(
+        fixture
+            .store
+            .execution_input_if_present(prepared.input().envelope().attempt_id)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn service_generation_is_atomic_and_same_call_receipts_do_not_enqueue_again() {
     let mut fixture = Fixture::new();
     let prepared = fixture.prepare();
