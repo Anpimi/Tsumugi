@@ -192,8 +192,10 @@ prebuilt package from the fixed selection in
 [`bundled-plugins.macos-aarch64.json`](../../apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json)
 at `apps/desktop/src-tauri/resources/bundled-plugins/<id>`. Use the public source
 repository and exact commit in that catalog; preserve all package files and
-executable flags. The current catalog selects the independent WebVTT package.
-The complete two-domain distribution is still under development.
+executable flags. The current catalog selects the independent WebVTT and SMAPI
+packages with current source, mandatory review and build resources. SMAPI also
+includes its translation import resources and parser runtime. These fixed
+development candidates do not claim complete two-domain release acceptance.
 
 These are explicit build inputs. The desktop build neither fetches a latest
 package nor falls back to embedded domain code. Before bundling, it captures

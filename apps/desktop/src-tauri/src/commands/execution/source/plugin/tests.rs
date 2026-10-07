@@ -869,3 +869,10 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod native;
+
+#[cfg(all(
+    feature = "bundled-plugins",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+mod bundled;

@@ -24,6 +24,15 @@ pub(super) struct ReleaseSession {
     pub(super) plugin: plugin::PluginBuildSession,
 }
 impl ReleaseSession {
+    #[cfg(test)]
+    pub(super) fn select_for_test(
+        &mut self,
+        id: ExecutionId,
+        selection: Arc<source::capture::Selection>,
+    ) {
+        self.selection = Some((id, selection));
+    }
+
     pub(super) fn delivery_is_active(&self) -> bool {
         self.delivery.is_some()
     }

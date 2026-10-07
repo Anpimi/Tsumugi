@@ -304,8 +304,11 @@ independently prepared, source-pinned package trees alongside the runtime.
 These incompatible development changes stay in the same undistributed
 application `0.2.0-alpha.1` batch. They change no SDK wire identity, Store layout,
 current project schema or independent plugin version; there is no additional
-version bump or historical conversion. The current bundle catalog is a single
-WebVTT development candidate, not acceptance of a complete two-domain release.
+version bump or historical conversion. The current bundle catalog selects
+independent WebVTT and SMAPI development candidates with current source/review
+resources and their complete pinned SDK helpers. Updating this fixed set changes
+no application/SDK/plugin version, wire profile, Store layout or schema; it stays
+in the same undistributed batch and does not establish complete release acceptance.
 
 ## Maintaining each change
 

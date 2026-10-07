@@ -15,7 +15,7 @@ use tsumugi_plugin_host::{
     catalog::{PackageApproval, PackageOrigin},
 };
 
-fn call(
+pub(super) fn call(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     command: &str,
     request: Value,
@@ -34,7 +34,7 @@ fn call(
     )
     .map(|response| response.deserialize::<Value>().unwrap())
 }
-fn scoped(context: &Value, fields: Value) -> Value {
+pub(super) fn scoped(context: &Value, fields: Value) -> Value {
     let mut value = context.clone();
     value
         .as_object_mut()
@@ -42,14 +42,14 @@ fn scoped(context: &Value, fields: Value) -> Value {
         .extend(fields.as_object().unwrap().clone());
     value
 }
-fn consent(context: &Value, review: &Value) -> Value {
+pub(super) fn consent(context: &Value, review: &Value) -> Value {
     scoped(
         context,
         json!({"attemptId":review["attemptId"],"inputDigest":review["inputDigest"],"grantId":ExecutionId::new(),"unsandboxedExecution":true,
         "expiresAtMs":(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis()+600_000).to_string()}),
     )
 }
-fn completed(
+pub(super) fn completed(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     context: &Value,
     attempt: &Value,
@@ -69,7 +69,7 @@ fn completed(
                 item["status"]["execution"].as_str(),
                 Some("failed" | "cancelled")
             )),
-            "actual Native worker failed: {detail}"
+            "actual worker failed: {detail}"
         );
         if items
             .iter()
@@ -79,7 +79,7 @@ fn completed(
         }
         assert!(
             Instant::now() < deadline,
-            "actual Native worker did not complete: {detail}"
+            "actual worker did not complete: {detail}"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
