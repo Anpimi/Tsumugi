@@ -181,6 +181,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Source-update estimates now reflect the QA needed after adopting a new source
+  snapshot. Unchanged translations and applicable manual decisions remain;
+  checks bound to the complete previous input remain historical until rerun.
+
 - Review and WorkPlan text-checker choices remain stable while an action locks
   and unlocks its controls. Preparing a check no longer starts an unrelated
   metadata read that can compete with the original execution start.

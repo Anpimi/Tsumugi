@@ -187,6 +187,23 @@ pub(in crate::persistence::review) struct ReviewMaterial {
     units: BTreeMap<String, (String, String)>,
 }
 impl ReviewMaterial {
+    fn current_check_survives_new_source_snapshot(target: &ReviewTarget) -> bool {
+        let Some(check) = &target.current_check else {
+            return false;
+        };
+        // `requirements` binds the complete source and ReviewBasis, including
+        // its adopted snapshot identity. Source adoption allocates a new
+        // snapshot, so an unchanged unit cannot prove these inputs unchanged.
+        // This estimates applicability only; no historical proof is rebound.
+        match &check.evidence {
+            Some(_) => false,
+            #[cfg(any(test, feature = "execution-test-host"))]
+            None => true,
+            #[cfg(not(any(test, feature = "execution-test-host")))]
+            None => false,
+        }
+    }
+
     pub(in crate::persistence::review) fn load(
         connection: &Connection,
         project_id: ExecutionId,
@@ -466,6 +483,15 @@ pub(super) fn capture_in(
 }
 
 impl ProjectStore {
+    /// QA applicability for a source update that will adopt a new snapshot.
+    /// The supplied current check has already passed the normal current read.
+    pub(in crate::persistence) fn current_check_survives_new_source_snapshot(
+        &self,
+        target: &ReviewTarget,
+    ) -> bool {
+        ReviewMaterial::current_check_survives_new_source_snapshot(target)
+    }
+
     /// Read-only capture of the current policy and adopted domain requirements.
     /// Original proof and local-to-project identity mappings remain mandatory.
     pub fn capture_review_check_plan(

@@ -68,7 +68,13 @@ pub fn source_input(store: &ProjectStore) -> FixedInput {
 }
 fn source_input_with_count(store: &ProjectStore, count: usize) -> FixedInput {
     assert!((1..=2000).contains(&count));
-    let raw = vec!["same"; count].join("\n");
+    source_input_with_texts(store, &vec!["same"; count])
+}
+#[allow(dead_code)]
+pub fn source_input_with_texts(store: &ProjectStore, texts: &[&str]) -> FixedInput {
+    assert!((1..=2000).contains(&texts.len()));
+    assert!(texts.iter().all(|text| !text.contains('\n')));
+    let raw = texts.join("\n");
     let binding = declaration();
     let bundle = SourceBundle::capture_declared(
         &binding,
@@ -98,9 +104,9 @@ fn source_input_with_count(store: &ProjectStore, count: usize) -> FixedInput {
 fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
     assert_eq!(source.artifacts[1].utf8, "opaque companion");
     let lines: Vec<_> = source.artifacts[0].utf8.split('\n').collect();
-    assert!(lines.iter().all(|line| *line == "same"));
     let count = lines.len();
     let mut order = Vec::with_capacity(count);
+    let mut start = 0;
     let units = (0..count)
         .map(|index| {
             let key = if count == 2 {
@@ -109,19 +115,20 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
                 format!("item-{index:04}")
             };
             order.push(format!("occurrence-{key}"));
-            let start = index as u32 * 5;
-            let end = start + 4;
+            let end = start + lines[index].len() as u32;
+            let range_start = start;
+            start = end + 1;
             sdk::ContentUnit {
                 id: format!("unit-{key}"),
                 source_revision_id: format!("source-{key}"),
-                text: "same".into(),
+                text: lines[index].into(),
                 occurrences: vec![sdk::ContentOccurrence {
                     id: format!("occurrence-{key}"),
                     source: sdk::SourceReference {
                         artifact_id: source.artifacts[0].id.clone(),
                         range: sdk::TextRange {
                             encoding: sdk::TextEncoding::Utf8Byte,
-                            start,
+                            start: range_start,
                             end,
                         },
                     },

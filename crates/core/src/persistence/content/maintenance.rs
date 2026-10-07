@@ -303,6 +303,7 @@ impl ProjectStore {
                     && target.as_ref().is_some_and(|target| {
                         target.source_revision_id == old.source_revision_id.unwrap()
                             && !pending.contains(&target.unit_id)
+                            && self.current_check_survives_new_source_snapshot(target)
                     })
                 {
                     summary.preserved += 1;

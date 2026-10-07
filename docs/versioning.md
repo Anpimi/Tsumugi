@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Source-update estimates now use the existing QA applicability owner for a new
+adopted snapshot. Complete-input checks remain historical while translations and
+applicable manual decisions retain their existing semantics. This fixes the
+preview without changing QA digests, stored proofs, schemas, IPC, SDK/process
+contracts or dependencies. The same undistributed alpha batch and bilingual
+Unreleased entries require no extra version bump or historical migration.
+
 Text-checker discovery follows its active scope and explicit refresh, without
 restarting when an action locks or unlocks interaction. This corrects Review and
 WorkPlan preparation without changing IPC, SDK/process contracts, schemas,

@@ -881,6 +881,22 @@ fn adoption_policy_refresh_expires_qa_but_preserves_unchanged_manual_approval_an
             10,
         )
         .unwrap();
+    let estimate = store
+        .source_update_estimate(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            &preview.confirmation,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            estimate[0].preserved,
+            estimate[0].reassess,
+            estimate[0].unresolved,
+        ),
+        (0, 1, 1),
+        "unchanged text cannot preserve QA for a newly adopted checker basis",
+    );
     let action = store
         .prepare_adoption_with_id(
             ExecutionId::new(),
@@ -906,8 +922,16 @@ fn adoption_policy_refresh_expires_qa_but_preserves_unchanged_manual_approval_an
         "work-plan-checker"
     );
     assert_eq!(after.basis, before.basis);
+    assert_eq!(after.selection_id, before.selection_id);
     assert_eq!(after.current_decision, before.current_decision);
     assert!(after.current_check.is_none());
+    assert_eq!(
+        store
+            .source_impact(after.source_snapshot_id, "zh-CN", 0, 10)
+            .unwrap()
+            .summary,
+        estimate[0],
+    );
     let history = store
         .review_history(project(&store), unit, "zh-CN", 0, 25)
         .unwrap();
@@ -958,6 +982,139 @@ fn adoption_policy_refresh_expires_qa_but_preserves_unchanged_manual_approval_an
         "source-unchanged"
     );
     assert_eq!(store.content_scope().unwrap(), scope);
+}
+
+#[test]
+fn source_update_estimate_requires_fresh_qa_for_unchanged_units_without_writing() {
+    let (directory, mut store, rows) = support::source_fixture();
+    let p = project(&store);
+    let units = [rows[0].unit_id.unwrap(), rows[1].unit_id.unwrap()];
+    for unit in units {
+        save(&mut store, unit, "译文");
+        approve(&mut store, unit);
+        let (computed, _runtime, _grant) = compute_actual(&mut store, unit, Response::Exact);
+        store
+            .commit_review_evidence(computed, &Cancellation::default())
+            .unwrap();
+    }
+    let before = units.map(|unit| store.review_target(p, unit, "zh-CN").unwrap());
+    assert!(before.iter().all(|target| {
+        target.current_decision.is_some()
+            && target.current_check.as_ref().unwrap().evidence.is_some()
+    }));
+    assert!(
+        store
+            .review_work_page(p, "zh-CN", 0, 100)
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    let mut runtime = support::source_runtime(&store);
+    let input = support::source_input_with_texts(&store, &["changed é", "same"]);
+    let (_, result) = support::execute(&mut runtime, &mut store, &input);
+    let captured = store
+        .capture_source_validation(input.envelope().attempt_id, result.envelope().result_id)
+        .unwrap();
+    let (_, checked) = support::execute(&mut runtime, &mut store, captured.check_input());
+    store
+        .commit_source_validation(captured.prepare(checked).unwrap())
+        .unwrap();
+    let comparison = store
+        .source_comparison(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            0,
+            10,
+        )
+        .unwrap();
+    assert_eq!((comparison.changed, comparison.unchanged), (1, 1));
+    let mut confirmation = comparison.confirmation;
+    confirmation.actor = Some("Synthetic reviewer".into());
+    confirmation
+        .lineage
+        .push(tsumugi_core::content::LineageChoice {
+            new_ordinal: 0,
+            old_occurrence_id: rows[0].occurrence_id.unwrap(),
+            decision: tsumugi_core::content::LineageDecision::Continue,
+            reason: "Same source identity with updated text".into(),
+        });
+    let database = directory.path().join("project/project.sqlite3");
+    let stored = std::fs::read(&database).unwrap();
+    let changes = serde_json::to_value(store.changes_since(Revision::new(0).unwrap())).unwrap();
+    let estimate = store
+        .source_update_estimate(
+            input.envelope().attempt_id,
+            result.envelope().result_id,
+            &confirmation,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            estimate[0].preserved,
+            estimate[0].reassess,
+            estimate[0].unresolved,
+        ),
+        (0, 2, 0),
+    );
+    assert_eq!(std::fs::read(&database).unwrap(), stored);
+    assert_eq!(
+        serde_json::to_value(store.changes_since(Revision::new(0).unwrap())).unwrap(),
+        changes,
+    );
+    for (unit, target) in units.into_iter().zip(&before) {
+        assert_eq!(store.review_target(p, unit, "zh-CN").unwrap(), *target);
+    }
+    let action = store
+        .prepare_adoption_with_id(
+            ExecutionId::new(),
+            input.envelope().attempt_id,
+            input.envelope().units[0].unit_id,
+            vec![result.envelope().result_id],
+            serde_json::to_value(confirmation).unwrap(),
+        )
+        .unwrap();
+    store
+        .adopt_execution(&action, &tsumugi_core::content::SourceAdoptionHandler)
+        .unwrap();
+    let after = units.map(|unit| store.review_target(p, unit, "zh-CN").unwrap());
+    assert_ne!(after[0].source_revision_id, before[0].source_revision_id);
+    assert_eq!(after[1].source_revision_id, before[1].source_revision_id);
+    assert_eq!(after[1].basis, before[1].basis);
+    assert_eq!(after[1].current_decision, before[1].current_decision);
+    for (old, current) in before.iter().zip(&after) {
+        assert_ne!(current.source_snapshot_id, old.source_snapshot_id);
+        assert_eq!(current.selection_id, old.selection_id);
+        assert_eq!(current.translation_text, old.translation_text);
+        assert!(current.current_check.is_none());
+        assert!(
+            store
+                .review_history(p, current.unit_id, "zh-CN", 0, 25)
+                .unwrap()
+                .checks
+                .contains(old.current_check.as_ref().unwrap())
+        );
+    }
+    let impact = store
+        .source_impact(after[1].source_snapshot_id, "zh-CN", 0, 10)
+        .unwrap();
+    assert_eq!(impact.summary, estimate[0]);
+    let unchanged = impact
+        .rows
+        .iter()
+        .find(|row| row.current.unit_id == Some(units[1]))
+        .unwrap();
+    assert!(
+        unchanged
+            .reasons
+            .iter()
+            .any(|reason| reason == "qa-missing-or-stale")
+    );
+    assert!(
+        !unchanged
+            .reasons
+            .iter()
+            .any(|reason| reason == "approval-missing-or-stale")
+    );
 }
 
 #[path = "support/automatic.rs"]
