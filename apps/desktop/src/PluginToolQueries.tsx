@@ -12,7 +12,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 
 export interface ToolQueryState { busy: boolean; pending: boolean; hasDraft: boolean }
-export interface ToolQueryHandle { allowLeave: () => Promise<boolean> }
+export interface ToolQueryHandle { allowLeave: () => Promise<boolean>; addText: (text: string) => boolean }
 type DraftRow = { id: number; text: string };
 type Intent =
   | { kind: "prepare"; request: PluginToolPrepareRequest; view: PluginToolView; sequence: number }
@@ -175,7 +175,14 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
       request: { ...context, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest, grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true } }, current);
   }
   function answerLeave(answer: boolean) { setLeave(false); leaveResolver.current?.(answer); leaveResolver.current = null; }
-  useImperativeHandle(ref, () => ({ allowLeave() {
+  useImperativeHandle(ref, () => ({ addText(text) {
+    if (!text.length || disabled || !mounted.current || (pendingRef.current && pendingRef.current.kind !== "prepare")
+      || (running.current && pendingRef.current?.kind !== "prepare")) return false;
+    const id = nextRow.current++;
+    setRows(values => values.length === 1 && values[0].text === "" ? [{ ...values[0], text }] : [...values, { id, text }]);
+    edit();
+    return true;
+  }, allowLeave() {
     if (running.current || pendingRef.current || working) { onAttention(); return Promise.resolve(false); }
     if (!hasDraft && !capture) return Promise.resolve(true);
     onAttention(); leaveTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;

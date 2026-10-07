@@ -1,5 +1,7 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import { createRef } from "react";
+import { createRef, useRef } from "react";
+import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
+import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -991,4 +993,64 @@ it("prepares Native translation input with the approved Host and unchecked separ
   expect(screen.getByRole("button", { name: "Import for review" })).toBeDisabled();
   expect(invoke.mock.calls.find(([command]) => command === "read_plugin_translation")![1].request.environmentDigest).toBe(nativeDigest);
   expect(invoke.mock.calls.some(([command]) => command === "start_plugin_translation")).toBe(false);
+});
+
+function QueryEditor({ project }: { project: ProjectView }) {
+  const resources = useRef<ResourceHandle>(null);
+  return <><TranslationWorkbench project={project} disabled={false} onQueryText={text => resources.current?.addQueryText(text) ?? false} />
+    <ResourceWorkbench ref={resources} project={project} disabled={false} onOpenTranslation={() => false} /></>;
+}
+
+it("adds source and exact draft selection to shared query inputs while retaining unsaved editor text", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_inventory") return Promise.resolve(toolQueryInventory);
+    if (command === "read_plugin_package") return Promise.resolve(toolQueryPackage);
+    if (command === "read_plugin_tool") return Promise.resolve(toolQueryView);
+    if (command === "read_terms" || command === "list_resource_captures") return Promise.resolve([]);
+    return original(command, args);
+  });
+  render(<QueryEditor project={project} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const input = await screen.findByRole("textbox", { name: "Your draft" });
+  const text = "prefix 👩🏽‍💻\ne\u0301 suffix", selected = "👩🏽‍💻\ne\u0301";
+  await user.type(input, text);
+  await user.click(screen.getByRole("button", { name: "Look up source text" }));
+  expect(await screen.findByRole("textbox", { name: "Query text 1" })).toHaveValue("Original");
+  expect(invoke.mock.calls.some(([command]) => ["prepare_plugin_tool", "start_plugin_tool", "save_translation_revision"].includes(command))).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue(text);
+  await user.click(input);
+  if (!(input instanceof HTMLTextAreaElement)) throw new Error("Expected the real draft textarea");
+  input.setSelectionRange(text.indexOf(selected), text.indexOf(selected) + selected.length);
+  fireEvent.select(input);
+  await user.click(screen.getByRole("button", { name: "Look up selected draft text" }));
+  expect(await screen.findByRole("textbox", { name: "Query text 2" })).toHaveValue(selected);
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("Original");
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue(text);
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  expect(invoke.mock.calls.some(([command]) => ["prepare_plugin_tool", "start_plugin_tool", "save_translation_revision"].includes(command))).toBe(false);
+});
+
+it("keeps the editor and its draft when a query route is unavailable and blocks routing during composition", async () => {
+  const query = vi.fn(() => false);
+  render(<TranslationWorkbench project={project} disabled={false} onQueryText={query} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const input = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(input, "new input retained");
+  fireEvent.compositionStart(input);
+  expect(screen.getByRole("button", { name: "Look up source text" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Look up source text" }));
+  expect(query).not.toHaveBeenCalled();
+  fireEvent.compositionEnd(input);
+  await user.click(screen.getByRole("button", { name: "Look up source text" }));
+  expect(query).toHaveBeenCalledExactlyOnceWith("Original");
+  expect(await screen.findByText("Reference queries could not open. Your draft is kept. Finish or check the pending action in Resources, then retry.")).toBeVisible();
+  expect(input).toHaveValue("new input retained");
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
 });

@@ -1,5 +1,10 @@
 # Application versioning and changelog maintenance
 
+Editor source/selected-draft lookup adds literal text to the same Resource query
+draft without another execution or persistence contract. This uses existing
+internal view handles and the same undistributed version batch; no extra bump,
+profile/schema/Store/IPC/dependency change or migration is required.
+
 Resource workbench reference queries consume the existing bounded SDK helper,
 installed environment choices and original tool prepare/start/discard ledger
 commands. They add manual single/batch controls, draft and consent protection,

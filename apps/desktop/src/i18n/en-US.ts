@@ -1,5 +1,9 @@
 export const enUS = {
 toolQuery: {
+  querySource: "Look up source text", querySelection: "Look up selected draft text",
+  editorHelp: "The chosen text is added to Reference queries. Your editor draft stays here; review the reference package, target and meanings before running.",
+  editorUnavailable: "Reference queries could not open. Your draft is kept. Finish or check the pending action in Resources, then retry.",
+
   title: "Reference queries",
   help: "Look up explicitly selected meanings in an installed reference package. Each text is a separate query; results remain references.",
   provider: "Reference package",

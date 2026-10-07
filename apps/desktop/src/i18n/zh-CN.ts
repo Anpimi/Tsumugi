@@ -2,6 +2,10 @@ import type { UiMessages } from "./types";
 
 export const zhCN = {
 toolQuery: {
+  querySource: "查询源文本", querySelection: "查询已选草稿文本",
+  editorHelp: "所选文本将加入参考查询。编辑草稿仍保留在这里；执行前请审阅参考包、目标及含义。",
+  editorUnavailable: "暂时无法打开参考查询，编辑草稿已保留。请先在资源工作区完成或核对未确认操作，再重试。",
+
   title: "参考查询",
   help: "在已安装参考包中查询明确选定的含义。每段文本分别查询，结果仅作为参考。",
   provider: "参考包", chooseProvider: "选择参考包", refresh: "刷新参考包",

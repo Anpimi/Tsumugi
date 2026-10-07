@@ -24,8 +24,14 @@ associate output with captured item identities and show escaped reference
 columns or an explicit empty result. A malformed result is an error, rather
 than an empty match. Hidden tabs retain drafts, leaving explicitly discards the
 local draft/preflight, and cancellation targets the original execution task.
-No term/translation adoption is offered. Agent scope/budget orchestration and
-native acceptance remain separate work.
+No term/translation adoption is offered. In the translation editor, **Look up
+source text** and **Look up selected draft text** add the literal text to this
+same query draft. The editor's unsaved text and existing query rows stay intact;
+a lone empty query row is reused. New text invalidates the previous reviewed
+consent and requires a new capture. Routing sends no query or save command;
+a pending unknown action refuses incoming text without losing the editor draft.
+Composition blocks routing until the user finishes entering text. Agent
+scope/budget orchestration and native acceptance remain separate work.
 
 `read_plugin_tool` accepts an exact package identity/digest, tool Resource ID
 and independently approved environment digest. It reopens the installed object,

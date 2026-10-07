@@ -54,7 +54,7 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, ref }: { project: ProjectView; disabled: boolean; ref?: Ref<TranslationHandle> }) {
+export function TranslationWorkbench({ project, disabled, onQueryText, ref }: { project: ProjectView; disabled: boolean; onQueryText?: (text: string) => boolean; ref?: Ref<TranslationHandle> }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const [open, setOpen] = useWorkbenchView("translation");
@@ -87,6 +87,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const [historyStale, setHistoryStale] = useState(false);
   const [editorResources, setEditorResources] = useState<{ terms: TermResolution | null; context: ContextRevision | null; failed: boolean } | null>(null);
   const [draft, setDraft] = useState("");
+  const [hasDraftSelection, setHasDraftSelection] = useState(false), [queryUnavailable, setQueryUnavailable] = useState(false);
   const [composing, setComposing] = useState(false);
   const composingRef = useRef(false);
   const [protectionBlocked, setProtectionBlocked] = useState(false);
@@ -175,6 +176,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       : check.outcome === "cancelled" ? "review.checkCancelled" : check.hasFindings ? "review.findings" : "review.passed");
   }
   useEffect(() => { if (open) heading.current?.focus(); }, [open, tab]);
+  useEffect(() => { setHasDraftSelection(false); setQueryUnavailable(false); }, [editorTarget?.unitId, targetLocale]);
   useEffect(() => { if (entryList.current) entryList.current.scrollTop = 0; }, [listAfter, appliedQuery, targetLocale]);
   useEffect(() => {
     if (open && tab === "edit") draftField.current?.focus({ preventScroll: true });
@@ -224,6 +226,10 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (protectionBlocked || running.current || composingRef.current) return;
     setTargetLocale(locale); setPreview(null); setAttempt(null);
     if (editorTarget) { setEditorTarget(null); setHistory(null); setEditorBase(null); setEditorResources(null); setDraft(""); draftRef.current = ""; }
+  }
+  function queryText(text: string) {
+    if (!onQueryText || composingRef.current || busy || disabled || pendingSave || uncertain.length || !text.length) return;
+    setQueryUnavailable(!onQueryText(text));
   }
   const onProjectedAttempt = useCallback((id: string) => { setAttempt(id); setPreview(null); setBatchOutcome(null); }, []);
   const resetImport = useCallback(() => { setAttempt(null); setPreview(null); setBatchOutcome(null); }, []);
@@ -507,7 +513,13 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                   {navigationEnd ? <p role="status">{t("workbench.scopeEnd")}</p> : null}
                   <section className="editor-source"><h3>{t("translation.sourceText")}</h3><pre>{editorTarget.sourceText || t("translation.empty")}</pre></section>
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorBase?.selection ? editorBase.text || t("translation.empty") : t("translation.noSelection")}</pre></details>
-                  <label>{t("translation.draft")}<textarea ref={draftField} value={draft} readOnly={!editingReady} onCompositionStart={() => { composingRef.current = true; setComposing(true); }} onCompositionEnd={() => { composingRef.current = false; setComposing(false); }} aria-describedby={!editingReady ? "draft-protection-help" : undefined} onChange={event => { if (!editingReady) return; draftRef.current = event.target.value; setDraft(event.target.value); setNewerDraftSaved(false); }} onKeyDown={event => { if (composingRef.current || event.nativeEvent.isComposing) return; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!busy && (editingReady || pendingSave)) void perform(saveDraft); } }} /></label>
+                  <label>{t("translation.draft")}<textarea ref={draftField} value={draft} readOnly={!editingReady} onSelect={event => setHasDraftSelection(event.currentTarget.selectionStart < event.currentTarget.selectionEnd)} onCompositionStart={() => { composingRef.current = true; setComposing(true); }} onCompositionEnd={() => { composingRef.current = false; setComposing(false); }} aria-describedby={!editingReady ? "draft-protection-help" : undefined} onChange={event => { if (!editingReady) return; draftRef.current = event.target.value; setDraft(event.target.value); setNewerDraftSaved(false); }} onKeyDown={event => { if (composingRef.current || event.nativeEvent.isComposing) return; if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); if (!busy && (editingReady || pendingSave)) void perform(saveDraft); } }} /></label>
+                  {onQueryText ? <div className="execution-actions">
+                    <button type="button" className="secondary-button" disabled={disabled || busy || composing || !!pendingSave || uncertain.length > 0 || !editorTarget.sourceText.length} onClick={() => queryText(editorTarget.sourceText)}>{t("toolQuery.querySource")}</button>
+                    <button type="button" className="secondary-button" disabled={disabled || busy || composing || !!pendingSave || uncertain.length > 0 || !hasDraftSelection} onClick={() => { const field = draftField.current; if (field && field.selectionStart < field.selectionEnd) queryText(field.value.slice(field.selectionStart, field.selectionEnd)); }}>{t("toolQuery.querySelection")}</button>
+                    <p>{t("toolQuery.editorHelp")}</p>
+                    {queryUnavailable ? <p role="alert">{t("toolQuery.editorUnavailable")}</p> : null}
+                  </div> : null}
                   {!editingReady ? <div><p id="draft-protection-help" role="status">{t("protection.editingBlocked")}</p><button type="button" className="text-button" disabled={busy || protectionBlocked || dirty || !!pendingSave} onClick={() => void perform(current => openEditor(editorTarget, current))}>{t("protection.refreshEntry")}</button></div> : null}
                   <WorkProtectionControl context={context} target={editorTarget} locale={targetLocale} selectionId={editorBase?.selection?.eventId ?? null} selectionText={editorBase?.text ?? null} open={open && tab === "edit"} disabled={disabled || busy} draftBlocked={dirty || !!pendingSave} run={perform} onBlockedChange={setProtectionBlocked} onEditingReadyChange={onEditingReadyChange} />
                   <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={busy || composing || (!editingReady && !pendingSave) || (!dirty && !pendingSave)} onClick={() => void perform(saveDraft)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button><button className="secondary-button" disabled={busy || composing || (!editingReady && !pendingSave) || (!dirty && !pendingSave) || !list?.total} onClick={() => void perform(saveAndNext)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => { draftRef.current = editorBase?.text ?? ""; setDraft(draftRef.current); }}>{t("translation.discardDraft")}</button></div></div>

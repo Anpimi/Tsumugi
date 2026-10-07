@@ -22,7 +22,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   input protection during capture, execution consent and original-action
   reconciliation. Results use the original ledger and show escaped references,
   empty matches or result errors, with draft/leave/cancellation protection.
-  Agent integration and native acceptance remain in development.
+  Editors can add source or explicitly selected draft text to the same query
+  inputs while retaining unsaved edits and existing rows. Routing grants no
+  execution and invalidates earlier query consent; composition and unknown
+  actions are protected. Agent integration and native acceptance remain in development.
 
 - Experimental Host consumers can read explicitly selected opaque Resources and
   Skills from immutable captured packages, with exact resource schema/behavior

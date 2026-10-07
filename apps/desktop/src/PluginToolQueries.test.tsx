@@ -148,6 +148,10 @@ it("retains the exact grant and request after an unknown start acknowledgement a
   let allowed: boolean | undefined;
   await act(async () => { allowed = await ref.current?.allowLeave(); });
   expect(allowed).toBe(false);
+  let added: boolean | undefined;
+  await act(async () => { added = ref.current?.addQueryText("must not replace the unknown action"); });
+  expect(added).toBe(false);
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("single");
   await user.click(retry);
   await waitFor(() => expect(screen.queryByRole("button", { name: "Check the original action" })).toBeNull());
   const starts = invoke.mock.calls.filter(([command]) => command === "start_plugin_tool");
@@ -216,4 +220,19 @@ it("requests cancellation through the original task and preserves its execution 
   const request = invoke.mock.calls.find(([command]) => command === "cancel_execution_task")?.[1].request;
   expect(request).toMatchObject({ taskId: fixtureIdentity(1200), projectId: project.metadata.projectId, sessionToken: project.sessionToken });
   expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("queued query");
+});
+
+it("appends editor text without replacing an existing draft or inheriting its reviewed consent", async () => {
+  const { user, ref } = await open();
+  await user.type(screen.getByRole("textbox", { name: "Query text 1" }), "existing reference draft");
+  await review(user);
+  await user.click(screen.getByRole("checkbox", { name: /^I allow this exact component/ }));
+  let added: boolean | undefined;
+  await act(async () => { added = ref.current?.addQueryText("👩🏽‍💻\ne\u0301"); });
+  expect(added).toBe(true);
+  expect(screen.getByRole("textbox", { name: "Query text 1" })).toHaveValue("existing reference draft");
+  expect(screen.getByRole("textbox", { name: "Query text 2" })).toHaveValue("👩🏽‍💻\ne\u0301");
+  expect(screen.getByRole("checkbox", { name: /^I allow this exact component/ })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Run reference queries" })).toBeDisabled();
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_tool")).toBe(false);
 });

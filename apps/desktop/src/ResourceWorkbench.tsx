@@ -25,7 +25,7 @@ const termDraftFor = (term: TermDraft | null): TermDraft => term
 const stageOf = commandFailure;
 const unknownOutcome = hasUnknownOutcome;
 
-export interface ResourceHandle { allowLeave: () => Promise<boolean> }
+export interface ResourceHandle { allowLeave: () => Promise<boolean>; addQueryText: (text: string) => boolean }
 export function ResourceWorkbench({
   project, disabled, onOpenTranslation, ref,
 }: {
@@ -121,6 +121,11 @@ export function ResourceWorkbench({
     return () => { cancelled = true; };
   }, [open, project.sessionToken]);
   useImperativeHandle(ref, () => ({
+    addQueryText(text) {
+      if (disabled || running.current || pendingTerm || pendingContext || pendingDecision || !queryRef.current?.addText(text)) return false;
+      setTab("queries"); setOpen(true);
+      return true;
+    },
     async allowLeave() {
       if (running.current || pendingTerm || pendingContext || pendingDecision) {
         setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false);
