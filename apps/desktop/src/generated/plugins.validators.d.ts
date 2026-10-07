@@ -12,6 +12,7 @@ export declare function validateRequestPackage(value: unknown): value is Request
 export declare function validateRequestRuntimeInstall(value: unknown): value is Requests["runtimeInstall"];
 export declare function validateRequestRuntimeLookup(value: unknown): value is Requests["runtimeLookup"];
 export declare function validateRequestSource(value: unknown): value is Requests["source"];
+export declare function validateRequestTextReview(value: unknown): value is Requests["textReview"];
 export declare function validateRequestTool(value: unknown): value is Requests["tool"];
 export declare function validateRequestTranslation(value: unknown): value is Requests["translation"];
 export declare function validateResponseBinding(value: unknown): value is Responses["binding"];
@@ -22,5 +23,7 @@ export declare function validateResponseInventory(value: unknown): value is Resp
 export declare function validateResponsePackage(value: unknown): value is Responses["package"];
 export declare function validateResponseRuntime(value: unknown): value is Responses["runtime"];
 export declare function validateResponseSource(value: unknown): value is Responses["source"];
+export declare function validateResponseTextReview(value: unknown): value is Responses["textReview"];
+export declare function validateResponseTextReviews(value: unknown): value is Responses["textReviews"];
 export declare function validateResponseTool(value: unknown): value is Responses["tool"];
 export declare function validateResponseTranslation(value: unknown): value is Responses["translation"];

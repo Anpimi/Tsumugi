@@ -2,6 +2,31 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "EligibilityRequest": {
         "additionalProperties": false,
         "properties": {
@@ -98,6 +123,43 @@
         ],
         "type": "object"
       },
+      "PluginIdentity": {
+        "additionalProperties": false,
+        "description": "Claimed package identity; a host must authenticate the actual package source.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "publisher",
+          "id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "PluginPackageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "packageDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/PluginIdentity"
+          }
+        },
+        "required": [
+          "plugin",
+          "packageDigest"
+        ],
+        "type": "object"
+      },
       "PluginStartRequest": {
         "additionalProperties": false,
         "properties": {
@@ -134,6 +196,34 @@
         ],
         "type": "object"
       },
+      "PluginTextReviewSelection": {
+        "additionalProperties": false,
+        "description": "An explicit action-local subset. Installation never selects these rules.",
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest",
+          "rules"
+        ],
+        "type": "object"
+      },
       "ReviewCancelCheckRequest": {
         "additionalProperties": false,
         "properties": {
@@ -160,6 +250,12 @@
           "actionId": {
             "$ref": "#/definitions/ExecutionId"
           },
+          "advisoryChecks": {
+            "items": {
+              "$ref": "#/definitions/PluginTextReviewSelection"
+            },
+            "type": "array"
+          },
           "expectedBasis": {
             "type": "string"
           },
@@ -182,7 +278,8 @@
           "unitId",
           "locale",
           "expectedBasis",
-          "actionId"
+          "actionId",
+          "advisoryChecks"
         ],
         "type": "object"
       },
@@ -192,8 +289,11 @@
           "check": {
             "$ref": "#/definitions/ReviewCheckRequest"
           },
-          "execution": {
-            "$ref": "#/definitions/PluginStartRequest"
+          "executions": {
+            "items": {
+              "$ref": "#/definitions/PluginStartRequest"
+            },
+            "type": "array"
           },
           "projectId": {
             "$ref": "#/definitions/ExecutionId"
@@ -206,7 +306,7 @@
           "sessionToken",
           "projectId",
           "check",
-          "execution"
+          "executions"
         ],
         "type": "object"
       },
@@ -684,6 +784,41 @@
   "responses": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "AdvisoryReviewCheck": {
+        "additionalProperties": false,
+        "description": "Captured by the trusted package adapter. Selecting these rules neither\nadopts Resource entries nor grants permission to run the checker.",
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/TextReviewBinding"
+          },
+          "declarationResourceId": {
+            "type": "string"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "resourcePins": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourcePin"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "binding",
+          "environment",
+          "declarationResourceId",
+          "resourcePins",
+          "rules"
+        ],
+        "type": "object"
+      },
       "CapabilityBinding": {
         "additionalProperties": false,
         "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
@@ -1052,6 +1187,12 @@
             },
             "type": "array"
           },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
           "reason": {
             "type": [
               "string",
@@ -1067,6 +1208,8 @@
         },
         "required": [
           "rule",
+          "key",
+          "mandatory",
           "status",
           "reason",
           "findings"
@@ -1585,6 +1728,38 @@
           }
         ]
       },
+      "PluginExecutionBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "environment": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+              }
+            ],
+            "description": "Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "capability",
+          "profile",
+          "environment"
+        ],
+        "type": "object"
+      },
       "PluginIdentity": {
         "additionalProperties": false,
         "description": "Claimed package identity; a host must authenticate the actual package source.",
@@ -1651,6 +1826,56 @@
           "settingsRevision",
           "declaration",
           "checker",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginTextReviewView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/TextReviewBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "resourceId": {
+            "type": "string"
+          },
+          "resourcePins": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourcePin"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/ContractRef"
+            },
+            "type": "array"
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "resourceId",
+          "binding",
+          "resourcePins",
+          "rules",
           "packageOrigin",
           "environment",
           "environmentDigest",
@@ -1762,11 +1987,23 @@
       "ReviewCheckEvidence": {
         "additionalProperties": false,
         "properties": {
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
+          "advisoryChecks": {
+            "items": {
+              "$ref": "#/definitions/AdvisoryReviewCheck"
+            },
+            "type": "array"
           },
-          "inputDigest": {
-            "type": "string"
+          "diagnostics": {
+            "items": {
+              "$ref": "#/definitions/TextReviewDiagnostic"
+            },
+            "type": "array"
+          },
+          "origins": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckOriginEvidence"
+            },
+            "type": "array"
           },
           "qaBasis": {
             "type": "string"
@@ -1774,27 +2011,56 @@
           "requiredChecks": {
             "$ref": "#/definitions/RequiredCheckSet"
           },
-          "resultDigest": {
-            "type": "string"
-          },
-          "resultId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
           "results": {
             "items": {
               "$ref": "#/definitions/CheckResult"
             },
             "type": "array"
+          },
+          "sourceBinding": {
+            "$ref": "#/definitions/SourceReviewBinding"
           }
         },
         "required": [
           "qaBasis",
           "requiredChecks",
           "results",
+          "sourceBinding",
+          "advisoryChecks",
+          "origins",
+          "diagnostics"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckOriginEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "checker": {
+            "$ref": "#/definitions/ReviewCheckerKey"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/definitions/ReviewInvocationOutcome"
+          },
+          "resultDigest": {
+            "type": "string"
+          },
+          "resultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "checker",
           "attemptId",
           "inputDigest",
           "resultId",
-          "resultDigest"
+          "resultDigest",
+          "outcome"
         ],
         "type": "object"
       },
@@ -1802,7 +2068,8 @@
         "enum": [
           "completed",
           "failed",
-          "cancelled"
+          "cancelled",
+          "unknown"
         ],
         "type": "string"
       },
@@ -1839,6 +2106,84 @@
             "required": [
               "kind",
               "view"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ReviewCheckerKey": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckerPreflightView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "checker": {
+            "$ref": "#/definitions/ReviewCheckerKey"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "plugin": {
+            "$ref": "#/definitions/ReviewCheckerView"
+          }
+        },
+        "required": [
+          "checker",
+          "attemptId",
+          "inputDigest",
+          "plugin"
+        ],
+        "type": "object"
+      },
+      "ReviewCheckerView": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "format",
+                "type": "string"
+              },
+              "plugin": {
+                "$ref": "#/definitions/PluginReviewView"
+              }
+            },
+            "required": [
+              "kind",
+              "plugin"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "advisory-text",
+                "type": "string"
+              },
+              "plugin": {
+                "$ref": "#/definitions/PluginTextReviewView"
+              }
+            },
+            "required": [
+              "kind",
+              "plugin"
             ],
             "type": "object"
           }
@@ -2015,6 +2360,14 @@
         ],
         "type": "object"
       },
+      "ReviewInvocationOutcome": {
+        "enum": [
+          "succeeded",
+          "failed",
+          "unknown"
+        ],
+        "type": "string"
+      },
       "ReviewNeighbor": {
         "additionalProperties": false,
         "properties": {
@@ -2086,20 +2439,17 @@
           "actionId": {
             "$ref": "#/definitions/ExecutionId"
           },
-          "attemptId": {
-            "$ref": "#/definitions/ExecutionId"
-          },
           "basis": {
             "type": "string"
           },
-          "inputDigest": {
-            "type": "string"
+          "checkers": {
+            "items": {
+              "$ref": "#/definitions/ReviewCheckerPreflightView"
+            },
+            "type": "array"
           },
           "locale": {
             "type": "string"
-          },
-          "plugin": {
-            "$ref": "#/definitions/PluginReviewView"
           },
           "unitId": {
             "$ref": "#/definitions/ExecutionId"
@@ -2110,9 +2460,7 @@
           "unitId",
           "locale",
           "basis",
-          "attemptId",
-          "inputDigest",
-          "plugin"
+          "checkers"
         ],
         "type": "object"
       },
@@ -2291,6 +2639,9 @@
           "hasFindings": {
             "type": "boolean"
           },
+          "hasIncomplete": {
+            "type": "boolean"
+          },
           "outcome": {
             "$ref": "#/definitions/ReviewCheckOutcome"
           },
@@ -2302,7 +2653,8 @@
           "runId",
           "basis",
           "outcome",
-          "hasFindings"
+          "hasFindings",
+          "hasIncomplete"
         ],
         "type": "object"
       },
@@ -2588,6 +2940,22 @@
         ],
         "type": "object"
       },
+      "SourceReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/PluginExecutionBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/ReviewDeclaration"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker"
+        ],
+        "type": "object"
+      },
       "TermOrigin": {
         "enum": [
           "manual",
@@ -2740,6 +3108,262 @@
           "externalEntryId",
           "previousRevisionId",
           "removed"
+        ],
+        "type": "object"
+      },
+      "TextEncoding": {
+        "enum": [
+          "utf8-byte",
+          "utf16",
+          "grapheme"
+        ],
+        "type": "string"
+      },
+      "TextRange": {
+        "additionalProperties": false,
+        "description": "Half-open offsets into one exact string, never between different strings.",
+        "properties": {
+          "encoding": {
+            "$ref": "#/definitions/TextEncoding"
+          },
+          "end": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "TextReviewBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "checker": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/TextReviewDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/TextReviewResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "checker",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "TextReviewDeclaration": {
+        "additionalProperties": false,
+        "description": "One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.",
+        "properties": {
+          "checker": {
+            "type": "string"
+          },
+          "disposition": {
+            "$ref": "#/definitions/TextReviewDisposition"
+          },
+          "profile": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/definitions/TextReviewRuleDeclaration"
+            },
+            "type": "array"
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile",
+          "checker",
+          "disposition",
+          "supportingResources",
+          "rules"
+        ],
+        "type": "object"
+      },
+      "TextReviewDiagnostic": {
+        "additionalProperties": false,
+        "description": "Optional public presentation associated with one actual finding. Diagnostic\nprose is not authenticated or sanitized by these structural checks.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "$ref": "#/definitions/CheckKey"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TextReviewLocation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resourceEntry": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/TextReviewResourceEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suggestion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "code",
+          "target",
+          "location",
+          "detail",
+          "suggestion",
+          "resourceEntry"
+        ],
+        "type": "object"
+      },
+      "TextReviewDisposition": {
+        "description": "Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.",
+        "enum": [
+          "advisory"
+        ],
+        "type": "string"
+      },
+      "TextReviewField": {
+        "enum": [
+          "source",
+          "translation"
+        ],
+        "type": "string"
+      },
+      "TextReviewLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "$ref": "#/definitions/TextReviewField"
+          },
+          "range": {
+            "$ref": "#/definitions/TextRange"
+          }
+        },
+        "required": [
+          "field",
+          "range"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourceBinding": {
+        "additionalProperties": false,
+        "description": "A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourceEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "entryId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "entryId"
+        ],
+        "type": "object"
+      },
+      "TextReviewResourcePin": {
+        "additionalProperties": false,
+        "description": "Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.",
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "TextReviewRuleDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "requiresTranslation": {
+            "type": "boolean"
+          },
+          "rule": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "requiresTranslation",
+          "title",
+          "description"
         ],
         "type": "object"
       },

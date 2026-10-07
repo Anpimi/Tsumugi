@@ -472,15 +472,28 @@ pub fn review_check(
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let target = store.review_target(project, unit, locale).unwrap();
     let prepared = store
-        .prepare_review_check(project, unit, locale, &target.basis, ExecutionId::new())
+        .prepare_review_check(
+            project,
+            unit,
+            locale,
+            &target.basis,
+            ExecutionId::new(),
+            &[],
+        )
         .unwrap();
-    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let inputs = prepared.execution_inputs();
+    assert_eq!(inputs.len(), 1, "format-only fixture has one checker input");
+    let input = inputs[0].clone();
     let (grant, result) = execute(runtime, store, &input);
+    let checker = prepared.plan().unwrap().checkers()[0].key.clone();
     let captured = store
         .capture_review_check_execution(
             prepared,
-            input.envelope().attempt_id,
-            result.envelope().result_id,
+            &[tsumugi_core::ReviewCheckOrigin {
+                checker,
+                attempt_id: input.envelope().attempt_id,
+                result_id: result.envelope().result_id,
+            }],
         )
         .unwrap();
     let computed = captured.compute(&Cancellation::default()).unwrap();

@@ -2,12 +2,67 @@ import { checkedInvoke } from "./ipc";
 import type { AiConfig, AiPreviewRequest, AiStartRequest, AiReadRequest, AiEffectRetryRequest } from "./generated/ai.requests";
 import * as validators from "./generated/ai.validators";
 import type { EditorTarget } from "./TranslationWorkbench";
-import type { AiItemView as AiItem } from "./generated/ai.responses";
+import type { AiItemView as AiItem, AutomaticSelectionReceipt } from "./generated/ai.responses";
+import { checkerIdentity, contractIdentity, providerIdentity, ruleIdentity } from "./reviewIdentity";
 export type { AiConfig } from "./generated/ai.requests";
 export type { AiItemView as AiItem, AiPreviewView as AiPreview, AiPrepared, AiOutputView as AiOutput, AiView } from "./generated/ai.responses";
 export type AiStart = AiStartRequest;
 export const defaultAiConfig:AiConfig={endpoint:"",model:"",credentialEnv:"OPENAI_API_KEY",tokenField:"max_tokens",maxItems:20,concurrency:1,maxRequests:20,maxOutputTokens:2000,maxRetries:0,timeoutSeconds:60,shareTerms:false,shareContext:false};
 export const aiTarget=(item:AiItem):EditorTarget=>({unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,key:item.nativeKey,sourceText:item.sourceText});
+
+function capturedChecksMatch(receipt: AutomaticSelectionReceipt): boolean {
+  const evidence = receipt.evidence;
+  if (!evidence || receipt.rules.length !== evidence.requiredChecks.requirements.length) return false;
+  const requirements = evidence.requiredChecks.requirements;
+  const projected = new Map(receipt.rules.map(rule => [ruleIdentity(rule.key), rule]));
+  if (projected.size !== receipt.rules.length || new Set(requirements.map(requirement => ruleIdentity(requirement.key))).size !== requirements.length) return false;
+  const sourceProvider = providerIdentity(evidence.sourceBinding.checker.capability.provider);
+  const checkers = [{ provider: evidence.sourceBinding.checker.capability.provider, profile: evidence.sourceBinding.declaration.profile },
+    ...evidence.advisoryChecks.map(choice => ({ provider: choice.binding.checker.provider, profile: choice.binding.declaration.profile }))];
+  if (new Set(checkers.map(checkerIdentity)).size !== checkers.length
+    || evidence.sourceBinding.declaration.rules.some(declared => !requirements.some(requirement => requirement.mandatory
+      && requirement.key.implementation.kind === "plugin" && providerIdentity(requirement.key.implementation.provider) === sourceProvider
+      && contractIdentity(requirement.key.rule) === contractIdentity(declared.rule)))) return false;
+  if (requirements.some(requirement => {
+    const rule = projected.get(ruleIdentity(requirement.key));
+    if (!rule || rule.mandatory !== requirement.mandatory) return true;
+    const implementation = requirement.key.implementation;
+    if (implementation.kind === "core") return !requirement.mandatory;
+    const provider = providerIdentity(implementation.provider), reference = contractIdentity(requirement.key.rule);
+    if (requirement.mandatory) return provider !== sourceProvider
+      || !evidence.sourceBinding.declaration.rules.some(declared => contractIdentity(declared.rule) === reference);
+    return requirement.waivable || !evidence.advisoryChecks.some(choice => providerIdentity(choice.binding.checker.provider) === provider
+      && choice.rules.some(selected => contractIdentity(selected) === reference));
+  })) return false;
+  return evidence.advisoryChecks.every(choice => choice.rules.length > 0
+    && new Set(choice.rules.map(contractIdentity)).size === choice.rules.length
+    && choice.rules.every(selected => choice.binding.declaration.rules.some(declared => contractIdentity(declared.rule) === contractIdentity(selected))
+      && requirements.some(requirement => !requirement.mandatory && requirement.key.implementation.kind === "plugin"
+        && providerIdentity(requirement.key.implementation.provider) === providerIdentity(choice.binding.checker.provider)
+        && contractIdentity(requirement.key.rule) === contractIdentity(selected))));
+}
+
+function mandatoryChecksClean(receipt: AutomaticSelectionReceipt): boolean {
+  const evidence = receipt.evidence;
+  if (!evidence) return false;
+  return evidence.requiredChecks.requirements.filter(requirement => requirement.mandatory).every(requirement => {
+    const identity = ruleIdentity(requirement.key);
+    const rule = receipt.rules.find(rule => ruleIdentity(rule.key) === identity);
+    const results = evidence.results.filter(result => ruleIdentity(result.key) === identity);
+    if (!rule || rule.findings.length !== 0 || results.length !== 1) return false;
+    const result = results[0];
+    if (requirement.targets.length === 0 || new Set(requirement.targets).size !== requirement.targets.length
+      || result.inputDigest !== requirement.inputDigest || result.scopeDigest !== requirement.scopeDigest
+      || result.coveredTargets.length !== requirement.targets.length
+      || new Set(result.coveredTargets).size !== result.coveredTargets.length
+      || result.coveredTargets.some(target => !requirement.targets.includes(target))) return false;
+    return (rule.status === "passed" && result.outcome.kind === "completed" && result.outcome.findings.length === 0)
+      || (rule.status === "not-applicable" && result.outcome.kind === "not-applicable"
+        && result.outcome.basis.code === requirement.notApplicable?.code
+        && result.outcome.basis.basisDigest === requirement.notApplicable?.basisDigest);
+  });
+}
+
 export const aiCommands={
   preview:(request:AiPreviewRequest)=>checkedInvoke("preview_ai_translation",request,validators.validateResponsePrepared),
   start:async(request:AiStartRequest)=>{
@@ -37,13 +92,9 @@ export const aiCommands={
           || (selection !== null && (selection.unitId !== row.item.unitId
             || selection.locale !== row.item.targetLocale || selection.revisionId !== row.savedRevisionId || selection.actionId !== receipt.request.actionId || selection.previousEventId !== receipt.capturedSelectionId))
           || receipt.candidateBasis.revisionId !== row.savedRevisionId || receipt.candidateBasis.sourceRevisionId !== row.item.sourceRevisionId
-          || !receipt.evidence
-          || receipt.rules.length !== receipt.evidence.requiredChecks.requirements.length
-          || new Set(receipt.rules.map(rule => rule.rule)).size !== receipt.rules.length
-          || receipt.evidence.requiredChecks.requirements.some(requirement => !receipt.rules.some(rule =>
-            rule.rule === (requirement.key.implementation.kind === "core" ? requirement.key.rule.id : `plugin:${requirement.key.rule.id}`)))
+          || !capturedChecksMatch(receipt)
           || (selection !== null && (receipt.candidateBasis.selectionId !== selection.eventId
-            || receipt.rules.some(rule => !["passed", "not-applicable"].includes(rule.status) || rule.findings.length !== 0)))
+            || !mandatoryChecksClean(receipt)))
           || effect.error !== null || effect.retryable;
       })) throw new Error("Invalid IPC response: automatic selection");
     return result;

@@ -2,7 +2,7 @@
 //! the existing source, review and execution owners; capture grants no authority.
 use super::*;
 use crate::{
-    ReviewCheckOutcome, ReviewTarget,
+    ReviewTarget,
     execution::{
         AdoptionUnit, InputEnvelope, InputItem, MAX_RESULT_BYTES, PluginExecutionBinding, Scope,
     },
@@ -319,10 +319,7 @@ impl ReleasePlan {
                     || review.locale != locale.choice.locale
                     || review.basis_evidence.source_snapshot_id != self.source_snapshot_id
                     || review.basis_evidence.source_revision_id != review.source_revision_id
-                    || review
-                        .current_check
-                        .as_ref()
-                        .is_none_or(|c| c.outcome != ReviewCheckOutcome::Completed)
+                    || review.current_check.is_none()
                     || !super::super::review::assess(review, false).0.is_empty()
                 {
                     return Err(invalid());

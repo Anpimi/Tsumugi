@@ -3,10 +3,62 @@ import fixture from "../test/fixtures/aiCommands.contract.json";
 import { aiCommands } from "./aiCommands";
 import * as validators from "./generated/ai.validators";
 import { hasUnknownOutcome } from "./projectCommands";
+import type { AiView, CheckKey } from "./generated/ai.responses";
+import { textReviewViewFixture } from "./testSupport/textReviewFixture";
+import { fixtureIdentity } from "./testSupport/executionFixture";
+import { ruleIdentity } from "./reviewIdentity";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
+
+function automaticViewFixture(): AiView {
+  const view: unknown = structuredClone(fixture.responses.automaticView);
+  if (!validators.validateResponseView(view)) throw new Error("Invalid automatic selection fixture");
+  return view;
+}
+function receiptOf(view: AiView) {
+  const receipt = view.rows[0].automation?.receipt;
+  if (!receipt?.evidence) throw new Error("Captured selection evidence required");
+  return { receipt, evidence: receipt.evidence };
+}
+function advisoryViewFixture(status: "findings" | "failed" | "unknown" | "unavailable"): AiView {
+  const view = automaticViewFixture();
+  const { receipt, evidence } = receiptOf(view);
+  const formatRule = receipt.rules.find(rule => rule.key.implementation.kind === "plugin");
+  const formatRequirement = evidence.requiredChecks.requirements.find(requirement => requirement.key.implementation.kind === "plugin");
+  if (!formatRule || !formatRequirement) throw new Error("Format rule required");
+  const text = textReviewViewFixture();
+  const reference = structuredClone(formatRule.key.rule);
+  text.rules = [reference];
+  text.binding.declaration.rules = [{ ...text.binding.declaration.rules[0], rule: reference }];
+  const key: CheckKey = { rule: reference, implementation: { kind: "plugin", provider: text.binding.checker.provider } };
+  const requirement = { ...structuredClone(formatRequirement), key, mandatory: false, waivable: false, inputDigest: "e".repeat(64) };
+  evidence.requiredChecks.requirements.push(requirement);
+  evidence.advisoryChecks.push({ binding: text.binding, declarationResourceId: text.resourceId,
+    environment: text.environment, resourcePins: text.resourcePins, rules: text.rules });
+  evidence.origins.push({ checker: { provider: text.binding.checker.provider, profile: text.binding.declaration.profile },
+    attemptId: fixtureIdentity(940), inputDigest: requirement.inputDigest, resultId: fixtureIdentity(941), resultDigest: "f".repeat(64),
+    outcome: status === "failed" ? "failed" : status === "unknown" ? "unknown" : "succeeded" });
+  receipt.rules.push({ ...structuredClone(formatRule), key, mandatory: false, status,
+    reason: status === "findings" ? null : status === "failed" ? "Invocation failed; no check result"
+      : status === "unknown" ? "Invocation outcome unknown; no check result" : "Check unavailable",
+    findings: status === "findings" ? [{ rule: formatRule.rule, issueId: "f".repeat(64), code: "preferred-term-missing",
+      severity: "warning", detail: "Use the preferred editorial term.", waivable: false }] : [] });
+  if (status === "findings") {
+    evidence.results.push({ key, inputDigest: requirement.inputDigest, scopeDigest: requirement.scopeDigest,
+      coveredTargets: requirement.targets, outcome: { kind: "completed", findings: [{ code: "preferred-term-missing", severity: "warning", target: requirement.targets[0] }] } });
+    evidence.diagnostics.push({ key, code: "preferred-term-missing", target: requirement.targets[0], location: null,
+      detail: "Use the preferred editorial term.", suggestion: "Preferred form", resourceEntry: { contributionId: "terms", entryId: "preferred-form" } });
+  } else if (status === "unavailable") {
+    evidence.results.push({ key, inputDigest: requirement.inputDigest, scopeDigest: requirement.scopeDigest,
+      coveredTargets: requirement.targets, outcome: { kind: "unavailable" } });
+  }
+  // Distinct wire fields cannot share mutable objects as the builder does.
+  const observed: unknown = JSON.parse(JSON.stringify(view));
+  if (!validators.validateResponseView(observed)) throw new Error("Invalid joint selection fixture");
+  return observed;
+}
 
 it("validates both directions of every shared AI contract", async () => {
   for (const [validate, value] of [
@@ -109,4 +161,48 @@ it("receives the captured plugin union and rejects an injected nested authority 
   invalid.rows[0].automation.receipt.evidence.results[0].key.implementation.permission = "granted";
   invoke.mockResolvedValueOnce(invalid);
   await expect(aiCommands.read(fixture.requests.automaticRead)).rejects.toThrow();
+});
+
+it("retains independent providers with equal rule names and nonblocking advisory observations", async () => {
+  for (const status of ["findings", "failed", "unknown", "unavailable"] as const) {
+    const view = advisoryViewFixture(status);
+    const { receipt } = receiptOf(view);
+    expect(receipt.rules[2].rule).toBe(receipt.rules[3].rule);
+    expect(receipt.rules[2].key).not.toEqual(receipt.rules[3].key);
+    expect(validators.validateResponseView(view)).toBe(true);
+    invoke.mockResolvedValueOnce(view);
+    const observed = await aiCommands.read(fixture.requests.automaticRead);
+    expect(observed).toEqual(view);
+    expect(receiptOf(observed).receipt.rules[3]).toMatchObject({ mandatory: false, status });
+  }
+});
+
+it("rejects unrelated typed projections, changed action subsets and incomplete mandatory evidence", async () => {
+  const changes: Array<(view: AiView) => void> = [
+    view => { const { receipt } = receiptOf(view); receipt.rules[3].key = structuredClone(receipt.rules[2].key); },
+    view => { const { receipt } = receiptOf(view); receipt.rules[3].key.implementation = structuredClone(receipt.rules[0].key.implementation); },
+    view => { const { receipt } = receiptOf(view); const implementation = receipt.rules[3].key.implementation;
+      if (implementation.kind !== "plugin") throw new Error("Plugin rule required"); implementation.provider.plugin.version = "0.2.0"; },
+    view => { receiptOf(view).receipt.rules[3].key.rule.behaviorVersion = 2; },
+    view => { receiptOf(view).receipt.rules[3].mandatory = true; },
+    view => { receiptOf(view).evidence.advisoryChecks[0].rules = []; },
+    view => { receiptOf(view).evidence.advisoryChecks[0].rules[0].schemaVersion = 2; },
+    view => { const { evidence } = receiptOf(view); evidence.advisoryChecks.push(structuredClone(evidence.advisoryChecks[0])); },
+    view => { const { receipt, evidence } = receiptOf(view); evidence.results = evidence.results.filter(result => ruleIdentity(result.key) !== ruleIdentity(receipt.rules[0].key)); },
+    view => { receiptOf(view).receipt.rules[0].status = "unknown"; },
+    view => { receiptOf(view).evidence.results[0].outcome = { kind: "failed" }; },
+    view => { receiptOf(view).evidence.results[0].coveredTargets = ["different-unit"]; },
+    view => { receiptOf(view).evidence.results[0].inputDigest = "f".repeat(64); },
+    view => { receiptOf(view).evidence.results[0].scopeDigest = "f".repeat(64); },
+    view => { const { receipt, evidence } = receiptOf(view); receipt.rules[0].status = "not-applicable";
+      evidence.results[0].outcome = { kind: "not-applicable", basis: { code: "no-translation", basisDigest: "f".repeat(64) } }; },
+    view => { receiptOf(view).evidence.sourceBinding.declaration.rules.push({ rule: { id: "another-format-rule", schemaVersion: 1, behaviorVersion: 1 }, requiresTranslation: false }); },
+  ];
+  for (const change of changes) {
+    const view = advisoryViewFixture("findings");
+    change(view);
+    expect(validators.validateResponseView(view)).toBe(true);
+    invoke.mockResolvedValueOnce(view);
+    await expect(aiCommands.read(fixture.requests.automaticRead)).rejects.toThrow("automatic selection");
+  }
 });

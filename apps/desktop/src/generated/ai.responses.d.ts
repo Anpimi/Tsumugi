@@ -117,44 +117,6 @@ export type CommandStage =
   | "execution-quiesce";
 export type EffectPhase = "waiting" | "saving-candidate" | "checking" | "selected" | "blocked" | "failed" | "cancelled";
 export type AutomaticSelectionBlock = "protected" | "already-selected" | "checks";
-export type CheckImplementation =
-  | {
-      kind: "core";
-      validator: ContractRef;
-    }
-  | {
-      kind: "plugin";
-      provider: ProviderSelectionBinding;
-    };
-export type CheckOutcome =
-  | {
-      findings: CheckFinding2[];
-      kind: "completed";
-    }
-  | {
-      basis: NotApplicableBasis;
-      kind: "not-applicable";
-    }
-  | {
-      kind: "failed";
-    }
-  | {
-      kind: "cancelled";
-    }
-  | {
-      kind: "unavailable";
-    };
-export type FindingSeverity = "warning" | "error";
-export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
-export type WorkPlanCheckerView =
-  | {
-      kind: "ready";
-      plugin: PluginReviewView;
-    }
-  | {
-      error: CommandError;
-      kind: "unavailable";
-    };
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
  * Network/process effects still require their own host authorization.
@@ -182,6 +144,11 @@ export type PermissionRequest =
       kind: "process";
       program: string;
     };
+/**
+ * Selecting a check is not adopting its resource or requiring its findings.
+ * Blocking checks continue to use the original mandatory Review contract.
+ */
+export type TextReviewDisposition = "advisory";
 /**
  * Fixed execution choices for the two actual runtime profiles. Each variant
  * has a strict, distinct profile value and its own data/hash owner. Captured
@@ -212,6 +179,58 @@ export type NativeHostExecutableIdentity =
       value: string;
     };
 export type NativeHostProfile = "native-application-host-v1";
+export type CheckImplementation =
+  | {
+      kind: "core";
+      validator: ContractRef;
+    }
+  | {
+      kind: "plugin";
+      provider: ProviderSelectionBinding;
+    };
+export type TextReviewField = "source" | "translation";
+export type TextEncoding = "utf8-byte" | "utf16" | "grapheme";
+export type ReviewInvocationOutcome = "succeeded" | "failed" | "unknown";
+export type CheckOutcome =
+  | {
+      findings: CheckFinding2[];
+      kind: "completed";
+    }
+  | {
+      basis: NotApplicableBasis;
+      kind: "not-applicable";
+    }
+  | {
+      kind: "failed";
+    }
+  | {
+      kind: "cancelled";
+    }
+  | {
+      kind: "unavailable";
+    };
+export type FindingSeverity = "warning" | "error";
+export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
+export type WorkPlanCheckerView =
+  | {
+      checker: ReviewCheckerKey;
+      kind: "ready";
+      plugin: ReviewCheckerView;
+    }
+  | {
+      checker: ReviewCheckerKey;
+      error: CommandError;
+      kind: "unavailable";
+    };
+export type ReviewCheckerView =
+  | {
+      kind: "format";
+      plugin: PluginReviewView;
+    }
+  | {
+      kind: "advisory-text";
+      plugin: PluginTextReviewView;
+    };
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
@@ -409,156 +428,29 @@ export interface ReviewBasis {
   termRevisionIds: ExecutionId[];
 }
 export interface ReviewCheckEvidence {
-  attemptId: ExecutionId;
-  inputDigest: string;
+  advisoryChecks: AdvisoryReviewCheck[];
+  diagnostics: TextReviewDiagnostic[];
+  origins: ReviewCheckOriginEvidence[];
   qaBasis: string;
   requiredChecks: RequiredCheckSet;
-  resultDigest: string;
-  resultId: ExecutionId;
   results: CheckResult[];
+  sourceBinding: SourceReviewBinding;
 }
 /**
- * Wire projection of the host's captured union. Receiving this from a plugin
- * does not make it a trusted policy or permit it to replace the expected set.
+ * Captured by the trusted package adapter. Selecting these rules neither
+ * adopts Resource entries nor grants permission to run the checker.
  */
-export interface RequiredCheckSet {
-  policy: ContractRef;
-  requirements: CheckRequirement[];
-}
-/**
- * Schema and behavior are separate exact-match compatibility identities.
- * Matching JSON field types or a package SemVer is not behavioral compatibility.
- */
-export interface ContractRef {
-  behaviorVersion: number;
-  id: string;
-  schemaVersion: number;
-}
-export interface CheckRequirement {
-  inputDigest: string;
-  key: CheckKey;
-  mandatory: boolean;
-  notApplicable: NotApplicableBasis | null;
-  scopeDigest: string;
-  targets: string[];
-  waivable: boolean;
-}
-export interface CheckKey {
-  implementation: CheckImplementation;
-  rule: ContractRef;
-}
-/**
- * A fixed package/contribution choice, independent of any active instance.
- * Its digest is supplied by the trusted package owner; this value neither
- * authenticates those bytes nor grants permission to load or call them.
- */
-export interface ProviderSelectionBinding {
-  componentId: string;
-  contributionId: string;
-  packageDigest: string;
-  plugin: PluginIdentity;
-}
-/**
- * Claimed package identity; a host must authenticate the actual package source.
- */
-export interface PluginIdentity {
-  id: string;
-  publisher: string;
-  version: string;
-}
-/**
- * A trusted capture of an allowed reason and its exact scope basis, not a
- * plugin's claim that it is safe to skip a required check.
- */
-export interface NotApplicableBasis {
-  basisDigest: string;
-  code: string;
-}
-export interface CheckResult {
-  coveredTargets: string[];
-  inputDigest: string;
-  key: CheckKey;
-  outcome: CheckOutcome;
-  scopeDigest: string;
-}
-export interface CheckFinding2 {
-  code: string;
-  severity: FindingSeverity;
-  target: string;
-}
-/**
- * The host supplies only a saved AI revision and a durable lease. Core derives
- * the observed scope and policy from the authorized plan, never from model text.
- */
-export interface AutomaticSelectionRequest {
-  actionId: ExecutionId;
-  lease: AutomationLease;
-  locale: string;
-  projectId: ExecutionId;
-  revisionId: ExecutionId;
-  unitId: ExecutionId;
-}
-/**
- * A reference to durable authority. Possessing or editing this reference does
- * not grant permission; Core checks the stored generation at every boundary.
- */
-export interface AutomationLease {
-  generation: Revision;
-  planId: ExecutionId;
-}
-export interface CheckRuleResult {
-  findings: CheckFinding[];
-  reason: string | null;
-  rule: string;
-  status: string;
-}
-export interface CheckFinding {
-  code: string;
-  detail: string;
-  issueId: string;
-  rule: string;
-  severity: string;
-  waivable: boolean;
-}
-export interface TranslationSelection {
-  actionId: ExecutionId;
-  eventId: ExecutionId;
-  locale: string;
-  previousEventId: ExecutionId | null;
-  revisionId: ExecutionId;
-  sequence: Revision;
-  unitId: ExecutionId;
-}
-export interface AiOutputView {
-  requests: number;
-  targetLocale: string;
-  text: string;
-  unitId: ExecutionId;
-  usage: AiUsageView | null;
-  usageIncomplete: boolean;
-}
-export interface AiUsageView {
-  completionTokens: UnsignedDecimal;
-  promptTokens: UnsignedDecimal;
-}
-export interface WorkPlanView {
-  attemptId: ExecutionId | null;
-  checker: WorkPlanCheckerView | null;
-  digest: string;
-  locale: string;
-  options: PlanOptions;
-  planId: ExecutionId;
-  preview: AiPreviewView | null;
-  scope: PlanSelectionBasis[];
-}
-export interface PluginReviewView {
-  checker: CapabilityBinding;
-  declaration: ReviewDeclaration;
+export interface AdvisoryReviewCheck {
+  binding: TextReviewBinding;
+  declarationResourceId: string;
   environment: ExecutionEnvironmentDescriptor;
-  environmentDigest: string;
-  packageOrigin: PluginOriginView;
-  runtimeOrigin: PluginOriginView;
-  settingsRevision: UnsignedDecimal;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+}
+export interface TextReviewBinding {
+  checker: CapabilityBinding;
+  declaration: TextReviewDeclaration;
+  resources: TextReviewResourceBinding[];
 }
 /**
  * Captured declaration data for one selected capability. Requested permissions
@@ -580,6 +472,15 @@ export interface CapabilityDeclaration {
   profiles: ContractRef[];
 }
 /**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+/**
  * Requested upper bounds. The host must also enforce its own current limits.
  */
 export interface CapabilityLimits {
@@ -588,19 +489,49 @@ export interface CapabilityLimits {
   maxOutputBytes: number;
   timeoutMs: number;
 }
-export interface ReviewDeclaration {
-  checker: string;
-  profile: ContractRef;
-  rules: ReviewRuleDeclaration[];
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
 }
 /**
- * A rule may permit N/A only for a captured scope with no selected translation.
- * Source-only rules must still run for a source fallback. Domain findings in
- * this contract are mandatory and cannot acquire ordinary issue waivers.
+ * Claimed package identity; a host must authenticate the actual package source.
  */
-export interface ReviewRuleDeclaration {
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
+/**
+ * One provider's available rules. An invocation must use an explicitly chosen
+ * nonempty subset; installation and a matching spelling do not select rules.
+ */
+export interface TextReviewDeclaration {
+  checker: string;
+  disposition: TextReviewDisposition;
+  profile: ContractRef;
+  rules: TextReviewRuleDeclaration[];
+  supportingResources: string[];
+}
+export interface TextReviewRuleDeclaration {
+  description: string;
   requiresTranslation: boolean;
   rule: ContractRef;
+  title: string;
+}
+/**
+ * A declared Resource contribution in the exact same package as the checker.
+ * This mirrors Resource metadata, without coupling review to tool declarations.
+ */
+export interface TextReviewResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
 }
 /**
  * Exact tool and Host choices for a fixed invocation. Paths are logical within
@@ -644,12 +575,218 @@ export interface NativeHostEnvironmentDescriptor {
   protocolVersion: number;
   sdkVersion: string;
 }
+/**
+ * Exact package Resource bytes captured by the Host, never a plugin's mutable
+ * lookup or a claim that the referenced resource has been adopted by a project.
+ */
+export interface TextReviewResourcePin {
+  contributionId: string;
+  schema: ContractRef;
+  sha256: string;
+}
+/**
+ * Optional public presentation associated with one actual finding. Diagnostic
+ * prose is not authenticated or sanitized by these structural checks.
+ */
+export interface TextReviewDiagnostic {
+  code: string;
+  detail: string | null;
+  key: CheckKey;
+  location: TextReviewLocation | null;
+  resourceEntry: TextReviewResourceEntry | null;
+  suggestion: string | null;
+  target: string;
+}
+export interface CheckKey {
+  implementation: CheckImplementation;
+  rule: ContractRef;
+}
+export interface TextReviewLocation {
+  field: TextReviewField;
+  range: TextRange;
+}
+/**
+ * Half-open offsets into one exact string, never between different strings.
+ */
+export interface TextRange {
+  encoding: TextEncoding;
+  end: number;
+  start: number;
+}
+export interface TextReviewResourceEntry {
+  contributionId: string;
+  entryId: string;
+}
+export interface ReviewCheckOriginEvidence {
+  attemptId: ExecutionId;
+  checker: ReviewCheckerKey;
+  inputDigest: string;
+  outcome: ReviewInvocationOutcome;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface ReviewCheckerKey {
+  profile: ContractRef;
+  provider: ProviderSelectionBinding;
+}
+/**
+ * Wire projection of the host's captured union. Receiving this from a plugin
+ * does not make it a trusted policy or permit it to replace the expected set.
+ */
+export interface RequiredCheckSet {
+  policy: ContractRef;
+  requirements: CheckRequirement[];
+}
+export interface CheckRequirement {
+  inputDigest: string;
+  key: CheckKey;
+  mandatory: boolean;
+  notApplicable: NotApplicableBasis | null;
+  scopeDigest: string;
+  targets: string[];
+  waivable: boolean;
+}
+/**
+ * A trusted capture of an allowed reason and its exact scope basis, not a
+ * plugin's claim that it is safe to skip a required check.
+ */
+export interface NotApplicableBasis {
+  basisDigest: string;
+  code: string;
+}
+export interface CheckResult {
+  coveredTargets: string[];
+  inputDigest: string;
+  key: CheckKey;
+  outcome: CheckOutcome;
+  scopeDigest: string;
+}
+export interface CheckFinding2 {
+  code: string;
+  severity: FindingSeverity;
+  target: string;
+}
+export interface SourceReviewBinding {
+  checker: PluginExecutionBinding;
+  declaration: ReviewDeclaration;
+}
+export interface PluginExecutionBinding {
+  capability: CapabilityBinding;
+  /**
+   * Exact captured Node artifacts or actual native application Host identity.
+   * This data value does not authenticate its source or grant execution.
+   */
+  environment: ExecutionEnvironmentDescriptor;
+  profile: ContractRef | null;
+}
+export interface ReviewDeclaration {
+  checker: string;
+  profile: ContractRef;
+  rules: ReviewRuleDeclaration[];
+}
+/**
+ * A rule may permit N/A only for a captured scope with no selected translation.
+ * Source-only rules must still run for a source fallback. Domain findings in
+ * this contract are mandatory and cannot acquire ordinary issue waivers.
+ */
+export interface ReviewRuleDeclaration {
+  requiresTranslation: boolean;
+  rule: ContractRef;
+}
+/**
+ * The host supplies only a saved AI revision and a durable lease. Core derives
+ * the observed scope and policy from the authorized plan, never from model text.
+ */
+export interface AutomaticSelectionRequest {
+  actionId: ExecutionId;
+  lease: AutomationLease;
+  locale: string;
+  projectId: ExecutionId;
+  revisionId: ExecutionId;
+  unitId: ExecutionId;
+}
+/**
+ * A reference to durable authority. Possessing or editing this reference does
+ * not grant permission; Core checks the stored generation at every boundary.
+ */
+export interface AutomationLease {
+  generation: Revision;
+  planId: ExecutionId;
+}
+export interface CheckRuleResult {
+  findings: CheckFinding[];
+  key: CheckKey;
+  mandatory: boolean;
+  reason: string | null;
+  rule: string;
+  status: string;
+}
+export interface CheckFinding {
+  code: string;
+  detail: string;
+  issueId: string;
+  rule: string;
+  severity: string;
+  waivable: boolean;
+}
+export interface TranslationSelection {
+  actionId: ExecutionId;
+  eventId: ExecutionId;
+  locale: string;
+  previousEventId: ExecutionId | null;
+  revisionId: ExecutionId;
+  sequence: Revision;
+  unitId: ExecutionId;
+}
+export interface AiOutputView {
+  requests: number;
+  targetLocale: string;
+  text: string;
+  unitId: ExecutionId;
+  usage: AiUsageView | null;
+  usageIncomplete: boolean;
+}
+export interface AiUsageView {
+  completionTokens: UnsignedDecimal;
+  promptTokens: UnsignedDecimal;
+}
+export interface WorkPlanView {
+  attemptId: ExecutionId | null;
+  checkers: WorkPlanCheckerView[];
+  digest: string;
+  locale: string;
+  options: PlanOptions;
+  planId: ExecutionId;
+  preview: AiPreviewView | null;
+  scope: PlanSelectionBasis[];
+}
+export interface PluginReviewView {
+  checker: CapabilityBinding;
+  declaration: ReviewDeclaration;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
 export interface PluginOriginView {
   publisherId: string;
   sourceId: string;
 }
+export interface PluginTextReviewView {
+  binding: TextReviewBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
 export interface PlanOptions {
   adoptResources: boolean;
+  advisoryChecks: AdvisoryReviewCheck[];
   deliver: boolean;
   selectionPolicy: SelectionPolicy;
   stages: StageChoice[];

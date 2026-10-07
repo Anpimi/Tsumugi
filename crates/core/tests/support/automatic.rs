@@ -8,8 +8,19 @@ pub fn candidate_request(
     text: &str,
     policy: SelectionPolicy,
 ) -> AutomaticSelectionRequest {
+    candidate_request_with_advisory(store, unit, text, policy, &[])
+}
+
+pub fn candidate_request_with_advisory(
+    store: &mut ProjectStore,
+    unit: ExecutionId,
+    text: &str,
+    policy: SelectionPolicy,
+    advisory_checks: &[tsumugi_core::AdvisoryReviewCheck],
+) -> AutomaticSelectionRequest {
     let mut options = PlanOptions {
         selection_policy: policy,
+        advisory_checks: advisory_checks.to_vec(),
         ..PlanOptions::default()
     };
     options

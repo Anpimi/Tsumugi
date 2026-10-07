@@ -209,15 +209,23 @@ pub(in crate::persistence) fn targets_in(
     // Keep only the small saved QA projections. The ledger validates one full
     // original frame at a time within this same read snapshot.
     let mut recorded = BTreeMap::new();
+    let mut owners = BTreeMap::new();
     for mut check in checks {
         if basis_digest(&check.basis_evidence)? != check.basis {
             return Err(failure(ErrorCode::CorruptLedger, "review-basis"));
         }
-        check.outcome = check_outcome(&check.rules).to_owned();
+        check.outcome = check_outcome(&check.rules);
         checks::validate_projection(&check)?;
         if let Some(evidence) = &check.evidence {
-            let pair = (evidence.attempt_id, evidence.result_id);
-            if recorded.insert(pair, check).is_some() {
+            for origin in &evidence.origins {
+                if owners
+                    .insert((origin.attempt_id, origin.result_id), check.run_id)
+                    .is_some()
+                {
+                    return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
+                }
+            }
+            if recorded.insert(check.run_id, check).is_some() {
                 return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
             }
         } else {
@@ -230,16 +238,54 @@ pub(in crate::persistence) fn targets_in(
             }
         }
     }
-    let pairs: Vec<_> = recorded.keys().copied().collect();
+    let pairs: Vec<_> = owners.keys().copied().collect();
+    // The number of fixed slots is bounded. Restore one original frame at a
+    // time, in bounded batches within this same snapshot; do not retain all
+    // provider inputs for a whole editor scope.
+    for batch in pairs.chunks(10_000) {
+        super::super::ledger::visit_result_pairs(connection, batch, |original| {
+            let pair = (
+                original.input.envelope().attempt_id,
+                original.result.envelope().result_id,
+            );
+            let run_id = owners
+                .remove(&pair)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let check = recorded
+                .get(&run_id)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let evidence = check
+                .evidence
+                .as_ref()
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let saved = evidence
+                .origins
+                .iter()
+                .find(|o| (o.attempt_id, o.result_id) == pair)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+            let request = checks::request_digest(
+                project_id,
+                check.unit_id,
+                &check.locale,
+                &check.basis,
+                check.action_id,
+                &evidence.advisory_checks,
+            )?;
+            checks::validate_saved_frames(
+                project_id,
+                check,
+                &request,
+                saved,
+                &original.input,
+                &original.result,
+            )
+        })?;
+    }
+    if !owners.is_empty() {
+        return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
+    }
     let mut materials = BTreeMap::new();
-    super::super::ledger::visit_result_pairs(connection, &pairs, |original| {
-        let pair = (
-            original.input.envelope().attempt_id,
-            original.result.envelope().result_id,
-        );
-        let check = recorded
-            .remove(&pair)
-            .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-origin"))?;
+    for (_, check) in recorded {
         let evidence = check
             .evidence
             .as_ref()
@@ -247,20 +293,6 @@ pub(in crate::persistence) fn targets_in(
         let target = targets
             .get_mut(&check.unit_id)
             .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-unit"))?;
-        let request = digest(&(
-            project_id,
-            check.unit_id,
-            check.locale.as_str(),
-            check.basis.as_str(),
-            check.action_id,
-        ))?;
-        checks::validate_saved_frames(
-            project_id,
-            &check,
-            &request,
-            &original.input,
-            &original.result,
-        )?;
         if !materials.contains_key(&target.source_snapshot_id) {
             materials.insert(
                 target.source_snapshot_id,
@@ -274,10 +306,6 @@ pub(in crate::persistence) fn targets_in(
         )? {
             target.current_check = Some(check);
         }
-        Ok(())
-    })?;
-    if !recorded.is_empty() {
-        return Err(failure(ErrorCode::CorruptLedger, "review-check-origin"));
     }
     let fallbacks: Vec<FallbackDecision> = json_rows(connection,
         "WITH wanted AS MATERIALIZED (SELECT value unit_id FROM json_each(?3)),

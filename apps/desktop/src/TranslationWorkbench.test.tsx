@@ -114,6 +114,22 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it.each(["completed", "unknown"] as const)("does not label incomplete selected QA as passed (%s)", async outcome => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const result = await original(command, args);
+    if (command === "read_review_summary_page") result.rows[0].currentCheck = {
+      runId: fixtureIdentity(940), basis: result.rows[0].basis, outcome, hasFindings: false, hasIncomplete: true,
+    };
+    return result;
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  await userEvent.click(screen.getByRole("button", { name: "Translations" }));
+  const label = i18n.t(outcome === "unknown" ? "review.checkUnknown" : "review.qaUnavailable");
+  expect(await screen.findByText((_, element) => element?.className === "entry-status" && Boolean(element.textContent?.includes(label)))).toBeVisible();
+  expect(screen.queryByText((_, element) => element?.className === "entry-status" && Boolean(element.textContent?.includes(i18n.t("review.passed"))))).not.toBeInTheDocument();
+});
 async function captureDeclaredTranslation(user: ReturnType<typeof userEvent.setup>) {
   const choose = await screen.findByRole("button", { name: "Choose translation folder" });
   await waitFor(() => expect(choose).toBeEnabled()); await user.click(choose);

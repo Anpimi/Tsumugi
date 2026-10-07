@@ -19,6 +19,7 @@ macro_rules! handlers {
         super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
         super::plugins::translations::read_plugin_translation,
         super::plugins::tools::read_plugin_tool,
+        super::plugins::reviews::text::read_plugin_text_review, super::plugins::reviews::text::read_plugin_text_reviews,
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
         super::plugins::runtimes::set_plugin_native_host_approval,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
@@ -295,8 +296,23 @@ impl ExecutionHost {
     }
     fn tick(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         self.poll_queries(store)?;
+        let review_authority = self.review.prepare_runtime_tick(store, &mut self.runtime)?;
         self.review.tick(store, &mut self.runtime)?;
-        self.runtime.tick(store).map_err(map_read)?;
+        let checker_consent = self.ai.prepare_runtime_tick(store, &mut self.runtime)?;
+        let mut dispatch = || self.runtime.tick(store).map_err(map_read);
+        match (review_authority, checker_consent) {
+            (Some((plugins, revision)), consent) => {
+                if consent.as_ref().is_some_and(|consent| {
+                    consent.settings_revision != revision
+                        || !Arc::ptr_eq(&consent.plugins, &plugins)
+                }) {
+                    return Err(review::checkers::stale());
+                }
+                plugins.with_environment_revision(revision, dispatch)?;
+            }
+            (None, Some(consent)) => consent.with_current_environment(dispatch)?,
+            (None, None) => dispatch()?,
+        }
         self.ai.tick(store, &mut self.runtime);
         if self.quiescing {
             match self.finish_quiesce(store) {
@@ -368,6 +384,10 @@ impl ExecutionHost {
         self.ai.stop();
         self.work_plans.stop();
         self.release.stop();
+        // Per-slot revocation requires the still-owned live runtime generation.
+        // Drain admitted checker grants before Core withdraws the whole epoch.
+        self.review.prepare_runtime_tick(store, &mut self.runtime)?;
+        self.ai.prepare_runtime_tick(store, &mut self.runtime)?;
         for job in self.queries.drain(..) {
             self.retired_queries.push(job.thread);
         }

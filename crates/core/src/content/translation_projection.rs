@@ -526,9 +526,16 @@ mod tests {
                 .key_byte_range,
             None
         );
+        // FixedInput sorts random item IDs; position does not identify ordinal 0.
+        let empty_entry = input
+            .envelope()
+            .items
+            .iter()
+            .find(|item| item.payload.as_u64() == Some(0))
+            .unwrap();
         assert_eq!(
             restored
-                .output(&input, input.envelope().items[0].item_id)
+                .output(&input, empty_entry.item_id)
                 .unwrap()
                 .entry
                 .unwrap()

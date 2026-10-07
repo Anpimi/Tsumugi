@@ -32,6 +32,45 @@ impl ProjectStore {
         self.source_review_binding(plan.selection_basis[0].source_snapshot_id)
     }
 
+    /// Fixed checker slots are available before any candidate is generated.
+    pub fn work_plan_review_checkers(
+        &self,
+        plan: &WorkPlan,
+    ) -> Result<Vec<crate::ReviewChecker>, ExecutionError> {
+        plan.validate()?;
+        let Some(binding) = self.work_plan_review_binding(plan)? else {
+            if !plan.options.advisory_checks.is_empty() {
+                return Err(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "work-plan-checker",
+                ));
+            }
+            return Ok(Vec::new());
+        };
+        let mut checkers = vec![crate::ReviewChecker {
+            key: crate::ReviewCheckerKey {
+                provider: binding.checker.capability.provider.clone(),
+                profile: binding.declaration.profile.clone(),
+            },
+            kind: crate::ReviewCheckerKind::Format,
+            binding: binding.checker,
+        }];
+        checkers.extend(plan.options.advisory_checks.iter().map(|c| c.checker()));
+        if checkers
+            .iter()
+            .map(|c| &c.key)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != checkers.len()
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "work-plan-checker",
+            ));
+        }
+        Ok(checkers)
+    }
+
     pub fn prepare_work_plan(
         &self,
         config: Option<AiConfig>,
@@ -146,6 +185,7 @@ impl ProjectStore {
             let current =
                 super::review::targets_in(connection, plan.project_id, &units, &plan.locale)?;
             let review = self.work_plan_review_binding(plan)?;
+            self.work_plan_review_checkers(plan)?;
             if plan
                 .options
                 .requests(crate::application::AutomationEffect::RunChecks)
@@ -378,6 +418,7 @@ mod tests {
                 mode: StageMode::Manual,
             }],
             selection_policy: SelectionPolicy::CandidatesOnly,
+            advisory_checks: Vec::new(),
             adopt_resources: false,
             deliver: false,
         };

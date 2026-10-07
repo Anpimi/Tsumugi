@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Experimental joint Review QA now captures mandatory source-format checks and
+explicit action-local advisory text rules in one fixed union. Each checker has
+its own original execution input, task, grant and result provenance. Current QA
+and checked selection use mandatory coverage while retaining advisory findings,
+diagnostics and invocation failures. Desktop consumers must regenerate the
+internal multi-checker IPC contracts; the previous single-checker shape is not
+a compatibility path. The current-only project format advances to schema 30;
+earlier development directories are refused unchanged, without migration.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch, with synchronized Unreleased entries and no additional SemVer bump.
+SDK/process wire contracts, installed settings/Store layouts and dependency versions
+are unchanged. This does not publish a release or adopt knowledge Resources.
+
 The experimental SDK's advisory text-review declaration, input and report use
 new schema/behavior 1/1 identities and reuse the original CheckResult and finite
 ReviewCheckError contracts. They add same-package Host resource-pin validation

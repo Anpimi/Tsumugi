@@ -16,7 +16,7 @@ fn plan(store: &ProjectStore, unit: ExecutionId) -> ReviewCheckPlan {
     let project = project(store);
     let target = store.review_target(project, unit, "zh-CN").unwrap();
     store
-        .capture_review_check_plan(project, unit, "zh-CN", &target.basis)
+        .capture_review_check_plan(project, unit, "zh-CN", &target.basis, &[])
         .unwrap()
 }
 fn save(store: &mut ProjectStore, unit: ExecutionId, text: &str) {
@@ -124,7 +124,14 @@ fn adopted_capture_preserves_original_source_and_exact_identity_without_writes()
         assert_eq!(provider, &captured.binding().checker.capability.provider);
     }
     let prepared = store
-        .prepare_review_check(project, unit, "zh-CN", &target.basis, ExecutionId::new())
+        .prepare_review_check(
+            project,
+            unit,
+            "zh-CN",
+            &target.basis,
+            ExecutionId::new(),
+            &[],
+        )
         .unwrap();
     assert_eq!(prepared.plan().unwrap().basis(), captured.basis());
     assert_eq!(snapshot(&path), before);
@@ -273,7 +280,7 @@ fn capture_refuses_wrong_project_language_unit_and_stale_basis_without_writes() 
     ] {
         assert!(
             store
-                .capture_review_check_plan(p, u, locale, basis)
+                .capture_review_check_plan(p, u, locale, basis, &[])
                 .is_err()
         );
     }
@@ -337,7 +344,7 @@ fn corrupted_source_mapping_is_rejected_by_the_original_snapshot_owner() {
         .unwrap();
     let before = snapshot(&path);
     let error = store
-        .capture_review_check_plan(project, unit, "zh-CN", &target.basis)
+        .capture_review_check_plan(project, unit, "zh-CN", &target.basis, &[])
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::CorruptLedger);
     assert_eq!(snapshot(&path), before);

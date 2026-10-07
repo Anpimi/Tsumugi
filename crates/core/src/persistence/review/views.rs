@@ -35,6 +35,7 @@ pub struct ReviewSummaryCheck {
     pub basis: String,
     pub outcome: ReviewCheckOutcome,
     pub has_findings: bool,
+    pub has_incomplete: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -82,6 +83,12 @@ impl From<ReviewTarget> for ReviewSummary {
                 basis: check.basis,
                 outcome: check.outcome,
                 has_findings: check.rules.iter().any(|rule| rule.status == "findings"),
+                has_incomplete: check.rules.iter().any(|rule| {
+                    !matches!(
+                        rule.status.as_str(),
+                        "passed" | "findings" | "not-applicable"
+                    )
+                }),
             }),
         }
     }

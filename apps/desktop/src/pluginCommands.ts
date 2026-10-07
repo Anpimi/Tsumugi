@@ -1,6 +1,10 @@
 import { checkedInvoke } from "./ipc";
-import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool } from "./generated/plugins.validators";
-import type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
+import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
+import type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginTextReviewRequest } from "./generated/plugins.requests";
+import type { ReviewCheckRequest } from "./generated/review.requests";
+export type PluginTextReviewSelection = ReviewCheckRequest["advisoryChecks"][number];
+export type { PluginTextReviewRequest } from "./generated/plugins.requests";
+export type { PluginTextReviewView, PluginTextReviewListView, PluginTextReviewListEntry } from "./generated/plugins.responses";
 export type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
 export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView, PluginBuildView, PluginTranslationView, PluginToolView } from "./generated/plugins.responses";
 
@@ -19,4 +23,14 @@ export const pluginCommands = {
   translation: (request: PluginTranslationRequest) => checkedInvoke("read_plugin_translation", request, validateResponseTranslation),
   source: (request: PluginSourceRequest) => checkedInvoke("read_plugin_source", request, validateResponseSource),
   tool: (request: PluginToolRequest) => checkedInvoke("read_plugin_tool", request, validateResponseTool),
+  textReview: async (request: PluginTextReviewRequest) => {
+    const view = await checkedInvoke("read_plugin_text_review", request, validateResponseTextReview);
+    const provider = view.binding.checker.provider;
+    if (view.resourceId !== request.resourceId || view.environmentDigest !== request.environmentDigest
+      || provider.packageDigest !== request.package.packageDigest
+      || provider.plugin.publisher !== request.package.plugin.publisher || provider.plugin.id !== request.package.plugin.id
+      || provider.plugin.version !== request.package.plugin.version) throw new Error("Invalid IPC acknowledgement: text review");
+    return view;
+  },
+  textReviews: () => checkedInvoke("read_plugin_text_reviews", undefined, validateResponseTextReviews),
 };

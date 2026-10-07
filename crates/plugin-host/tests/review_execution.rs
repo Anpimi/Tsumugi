@@ -166,7 +166,14 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
         }
         let target = store.review_target(project, unit, "zh-CN").unwrap();
         let prepared = store
-            .prepare_review_check(project, unit, "zh-CN", &target.basis, ExecutionId::new())
+            .prepare_review_check(
+                project,
+                unit,
+                "zh-CN",
+                &target.basis,
+                ExecutionId::new(),
+                &[],
+            )
             .unwrap();
         let plan = prepared.plan().unwrap();
         assert_eq!(
@@ -184,20 +191,25 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
                 .execution_binding(Some(binding.declaration.profile.clone()))
                 .unwrap()
         );
-        let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+        let inputs = prepared.execution_inputs();
+        assert_eq!(inputs.len(), 1, "format-only review has one checker input");
+        let input = &inputs[0];
+        prepared.validate_execution_input(input).unwrap();
         assert_eq!(
-            runtime.submit(&mut store, &input).unwrap_err().code,
+            runtime.submit(&mut store, input).unwrap_err().code,
             ErrorCode::Unauthorized
         );
-        authorize(&runtime, &mut store, &input);
-        let result = execute(&mut runtime, &mut store, &input);
+        authorize(&runtime, &mut store, input);
+        let result = execute(&mut runtime, &mut store, input);
         let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+        let origin = tsumugi_core::ReviewCheckOrigin {
+            checker: plan.checkers()[0].key.clone(),
+            attempt_id: input.envelope().attempt_id,
+            result_id: result.envelope().result_id,
+        };
+        let checker = origin.checker.clone();
         let computed = store
-            .capture_review_check_execution(
-                prepared,
-                input.envelope().attempt_id,
-                result.envelope().result_id,
-            )
+            .capture_review_check_execution(prepared, &[origin])
             .unwrap()
             .compute(&Cancellation::default())
             .unwrap();
@@ -207,7 +219,11 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
             computed.results().len(),
             computed.plan().fixed_checks().set().requirements.len()
         );
-        assert_eq!(computed.domain_result().digest(), result.digest());
+        assert_eq!(
+            computed.checker_result(&checker).unwrap().digest(),
+            result.digest()
+        );
+        let expected_checker_digest = result.digest().to_owned();
         let domain: Vec<_> = computed
             .results()
             .iter()
@@ -281,9 +297,16 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
         let run = store
             .commit_review_evidence(computed, &Cancellation::default())
             .unwrap();
+        let evidence = run.evidence.as_ref().unwrap();
+        assert_eq!(evidence.origins.len(), 1);
+        let checker_origin = evidence
+            .origins
+            .iter()
+            .find(|origin| &origin.checker == &checker)
+            .unwrap();
         assert_eq!(
-            run.evidence.as_ref().unwrap().result_digest,
-            result.digest()
+            checker_origin.result_digest.as_str(),
+            expected_checker_digest.as_str()
         );
         assert_eq!(
             store
@@ -334,29 +357,43 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
             tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
         );
         let prepared = store.prepare_automatic_selection(&request).unwrap();
-        let input = prepared
-            .review_check()
-            .unwrap()
-            .domain_execution_input(ExecutionId::new())
-            .unwrap();
-        authorize(&runtime, &mut store, &input);
-        let result = execute(&mut runtime, &mut store, &input);
+        let review_check = prepared.review_check().unwrap();
+        let inputs = review_check.execution_inputs();
+        assert_eq!(
+            inputs.len(),
+            1,
+            "format-only selection has one checker input"
+        );
+        let input = &inputs[0];
+        review_check.validate_execution_input(input).unwrap();
+        authorize(&runtime, &mut store, input);
+        let result = execute(&mut runtime, &mut store, input);
+        let origin = tsumugi_core::ReviewCheckOrigin {
+            checker: review_check.plan().unwrap().checkers()[0].key.clone(),
+            attempt_id: input.envelope().attempt_id,
+            result_id: result.envelope().result_id,
+        };
+        let checker = origin.checker.clone();
         let computed = store
-            .capture_automatic_selection_execution(
-                prepared,
-                input.envelope().attempt_id,
-                result.envelope().result_id,
-            )
+            .capture_automatic_selection_execution(prepared, &[origin])
             .unwrap()
             .compute(&Cancellation::default())
             .unwrap();
+        let expected_checker_digest = result.digest().to_owned();
         let prior = store.review_target(project, unit, "zh-CN").unwrap();
         let receipt = store
             .commit_automatic_selection(computed, &Cancellation::default())
             .unwrap();
+        let evidence = receipt.evidence.as_ref().unwrap();
+        assert_eq!(evidence.origins.len(), 1);
+        let checker_origin = evidence
+            .origins
+            .iter()
+            .find(|origin| &origin.checker == &checker)
+            .unwrap();
         assert_eq!(
-            receipt.evidence.as_ref().unwrap().result_digest,
-            result.digest()
+            checker_origin.result_digest.as_str(),
+            expected_checker_digest.as_str()
         );
         let current = store.review_target(project, unit, "zh-CN").unwrap();
         if clean {
@@ -472,17 +509,28 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
             .unwrap();
         let target = store.review_target(project, unit, locale).unwrap();
         let prepared = store
-            .prepare_review_check(project, unit, locale, &target.basis, ExecutionId::new())
-            .unwrap();
-        let domain = prepared.domain_execution_input(ExecutionId::new()).unwrap();
-        authorize(&runtime, &mut store, &domain);
-        let checked = execute(&mut runtime, &mut store, &domain);
-        let computed = store
-            .capture_review_check_execution(
-                prepared,
-                domain.envelope().attempt_id,
-                checked.envelope().result_id,
+            .prepare_review_check(
+                project,
+                unit,
+                locale,
+                &target.basis,
+                ExecutionId::new(),
+                &[],
             )
+            .unwrap();
+        let inputs = prepared.execution_inputs();
+        assert_eq!(inputs.len(), 1, "format-only review has one checker input");
+        let input = &inputs[0];
+        prepared.validate_execution_input(input).unwrap();
+        authorize(&runtime, &mut store, input);
+        let checked = execute(&mut runtime, &mut store, input);
+        let origin = tsumugi_core::ReviewCheckOrigin {
+            checker: prepared.plan().unwrap().checkers()[0].key.clone(),
+            attempt_id: input.envelope().attempt_id,
+            result_id: checked.envelope().result_id,
+        };
+        let computed = store
+            .capture_review_check_execution(prepared, &[origin])
             .unwrap()
             .compute(&Cancellation::default())
             .unwrap();

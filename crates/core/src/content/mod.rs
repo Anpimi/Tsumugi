@@ -385,6 +385,7 @@ fn source_contract_error(error: sdk::ContractError) -> ExecutionError {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct SourceReviewBinding {
     pub declaration: sdk::ReviewDeclaration,
     pub checker: PluginExecutionBinding,

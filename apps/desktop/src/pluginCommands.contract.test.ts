@@ -7,9 +7,32 @@ import runtime from "../test/fixtures/pluginRuntime.contract.json";
 import source from "../test/fixtures/pluginSource.contract.json";
 import translation from "../test/fixtures/pluginTranslation.contract.json";
 import build from "../test/fixtures/pluginBuild.contract.json";
+import { textReviewViewFixture } from "./testSupport/textReviewFixture";
+import { validateRequestTextReview, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+
+it("reads text declarations without a grant and preserves an unavailable Resource observation", async () => {
+  const view = textReviewViewFixture();
+  const request = { package: { plugin: view.binding.checker.provider.plugin, packageDigest: view.binding.checker.provider.packageDigest },
+    resourceId: view.resourceId, environmentDigest: view.environmentDigest };
+  expect(validateRequestTextReview(request)).toBe(true);
+  expect(validateRequestTextReview({ ...request, permissionGranted: true })).toBe(false);
+  expect(validateResponseTextReview(view)).toBe(true);
+  const missing = { settingsRevision: "1", entries: [{ package: request.package, resourceId: request.resourceId, environmentDigest: null,
+    availability: { kind: "unavailable", error: { code: "dependency-conflict", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-runtime-missing" } } }] };
+  expect(validateResponseTextReviews(missing)).toBe(true);
+  invoke.mockResolvedValueOnce(missing);
+  expect(await pluginCommands.textReviews()).toEqual(missing);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_text_reviews", { request: undefined });
+  invoke.mockResolvedValueOnce(view);
+  expect(await pluginCommands.textReview(request)).toEqual(view);
+  expect(invoke).toHaveBeenLastCalledWith("read_plugin_text_review", { request });
+  invoke.mockResolvedValueOnce({ ...view, resourceId: "another-profile" });
+  await expect(pluginCommands.textReview(request)).rejects.toThrow("acknowledgement");
+  expect(validateResponseTextReview({ ...view, resourcePins: undefined })).toBe(false);
+});
 
 it("keeps the shared source recipe, exact providers and installed environment in one read snapshot", () => {
   expect(validateRequestSource(source.request)).toBe(true);

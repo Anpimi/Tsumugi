@@ -4,8 +4,8 @@
 mod support;
 use std::sync::Arc;
 use tsumugi_core::{
-    ComputedReviewEvidence, PreparedReviewCheck, ProjectStore, ReviewDecisionKind, ReviewWrite,
-    SaveTranslationRevision, execution::*,
+    ComputedReviewEvidence, PreparedReviewCheck, ProjectStore, ReviewCheckOrigin, ReviewCheckerKey,
+    ReviewDecisionKind, ReviewWrite, SaveTranslationRevision, execution::*,
 };
 use tsumugi_plugin_sdk as sdk;
 
@@ -164,8 +164,42 @@ fn prepare(store: &ProjectStore, unit: ExecutionId, action: ExecutionId) -> Prep
     let project = project(store);
     let target = store.review_target(project, unit, "zh-CN").unwrap();
     store
-        .prepare_review_check(project, unit, "zh-CN", &target.basis, action)
+        .prepare_review_check(project, unit, "zh-CN", &target.basis, action, &[])
         .unwrap()
+}
+fn execution_input(prepared: &PreparedReviewCheck) -> FixedInput {
+    let inputs = prepared.execution_inputs();
+    assert_eq!(inputs.len(), 1, "format-only fixture has one checker input");
+    inputs[0].clone()
+}
+fn checker_key(prepared: &PreparedReviewCheck, input: &FixedInput) -> ReviewCheckerKey {
+    let key: ReviewCheckerKey =
+        serde_json::from_value(input.envelope().settings["checkerKey"].clone()).unwrap();
+    assert!(
+        prepared
+            .plan()
+            .unwrap()
+            .checkers()
+            .iter()
+            .any(|checker| checker.key == key)
+    );
+    key
+}
+fn capture_review(
+    store: &ProjectStore,
+    prepared: PreparedReviewCheck,
+    input: &FixedInput,
+    result: &FixedResult,
+) -> Result<tsumugi_core::CapturedReviewCheckExecution, ExecutionError> {
+    let checker = checker_key(&prepared, input);
+    store.capture_review_check_execution(
+        prepared,
+        &[ReviewCheckOrigin {
+            checker,
+            attempt_id: input.envelope().attempt_id,
+            result_id: result.envelope().result_id,
+        }],
+    )
 }
 fn save(store: &mut ProjectStore, unit: ExecutionId, text: &str) {
     let project = project(store);
@@ -204,26 +238,29 @@ fn live_exact_result_is_bound_to_the_action_and_computes_outside_sqlite_without_
     let action = ExecutionId::new();
     let prepared = prepare(&store, unit, action);
     let mut runtime = runtime(&store, &prepared, Response::Exact);
-    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let input = execution_input(&prepared);
     assert!(prepared.recorded_run().is_none());
-    prepared.validate_domain_execution_input(&input).unwrap();
+    prepared.validate_execution_input(&input).unwrap();
     let mut substituted = input.envelope().clone();
-    substituted.task_id = ExecutionId::new();
+    substituted.settings["actionId"] = serde_json::json!(ExecutionId::new());
     assert_eq!(
         prepared
-            .validate_domain_execution_input(&FixedInput::capture(substituted).unwrap())
+            .validate_execution_input(&FixedInput::capture(substituted).unwrap())
             .unwrap_err()
             .stage,
-        "review-check-action"
+        "semantic-check-input"
     );
     let mut substituted = input.envelope().clone();
     substituted.items[0].payload["targetLocale"] = serde_json::json!("ja-JP");
     assert!(
         prepared
-            .validate_domain_execution_input(&FixedInput::capture(substituted).unwrap())
+            .validate_execution_input(&FixedInput::capture(substituted).unwrap())
             .is_err()
     );
-    assert_eq!(input.envelope().task_id, action);
+    assert_eq!(
+        input.envelope().settings["actionId"],
+        serde_json::json!(action)
+    );
     assert_eq!(input.envelope().operation, REVIEW_CHECK_OPERATION);
     assert_eq!(
         input.envelope().plugin.as_ref().unwrap(),
@@ -243,13 +280,8 @@ fn live_exact_result_is_bound_to_the_action_and_computes_outside_sqlite_without_
     let (_, result) = support::execute(&mut runtime, &mut store, &input);
     let path = directory.path().join("project/project.sqlite3");
     let before = std::fs::read(&path).unwrap();
-    let captured = store
-        .capture_review_check_execution(
-            prepared,
-            input.envelope().attempt_id,
-            result.envelope().result_id,
-        )
-        .unwrap();
+    let checker = checker_key(&prepared, &input);
+    let captured = capture_review(&store, prepared, &input, &result).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), before);
     assert!(
         store
@@ -261,8 +293,14 @@ fn live_exact_result_is_bound_to_the_action_and_computes_outside_sqlite_without_
     store.close().unwrap();
     let computed = captured.compute(&Cancellation::default()).unwrap();
     assert_eq!(computed.action_id(), action);
-    assert_eq!(computed.domain_input().digest(), input.digest());
-    assert_eq!(computed.domain_result().digest(), result.digest());
+    assert_eq!(
+        computed.checker_input(&checker).unwrap().digest(),
+        input.digest()
+    );
+    assert_eq!(
+        computed.checker_result(&checker).unwrap().digest(),
+        result.digest()
+    );
     assert!(computed.coverage().complete);
     assert_eq!(
         computed.results().len(),
@@ -288,14 +326,9 @@ fn empty_or_partial_actual_output_preserves_missing_mandatory_coverage() {
         save(&mut store, unit, "译文");
         let prepared = prepare(&store, unit, ExecutionId::new());
         let mut runtime = runtime(&store, &prepared, response);
-        let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+        let input = execution_input(&prepared);
         let (_, result) = support::execute(&mut runtime, &mut store, &input);
-        let computed = store
-            .capture_review_check_execution(
-                prepared,
-                input.envelope().attempt_id,
-                result.envelope().result_id,
-            )
+        let computed = capture_review(&store, prepared, &input, &result)
             .unwrap()
             .compute(&Cancellation::default())
             .unwrap();
@@ -327,15 +360,9 @@ fn authorized_synthetic_checker_cannot_forge_core_provider_version_basis_scope_o
         save(&mut store, unit, "译文");
         let prepared = prepare(&store, unit, ExecutionId::new());
         let mut runtime = runtime(&store, &prepared, response);
-        let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+        let input = execution_input(&prepared);
         let (_, result) = support::execute(&mut runtime, &mut store, &input);
-        let captured = store
-            .capture_review_check_execution(
-                prepared,
-                input.envelope().attempt_id,
-                result.envelope().result_id,
-            )
-            .unwrap();
+        let captured = capture_review(&store, prepared, &input, &result).unwrap();
         assert_eq!(
             captured.compute(&Cancellation::default()).unwrap_err().code,
             ErrorCode::ResultMismatch
@@ -358,26 +385,17 @@ fn another_action_or_substituted_input_cannot_supply_review_evidence() {
         save(&mut store, unit, "译文");
         let prepared = prepare(&store, unit, ExecutionId::new());
         let mut runtime = runtime(&store, &prepared, Response::Exact);
-        let mut envelope = prepared
-            .domain_execution_input(ExecutionId::new())
-            .unwrap()
-            .envelope()
-            .clone();
+        let mut envelope = execution_input(&prepared).envelope().clone();
         if substitute {
             envelope.items[0].payload["selections"][0]["translationText"] =
                 serde_json::json!("替换");
         } else {
-            envelope.task_id = ExecutionId::new();
+            envelope.settings["actionId"] = serde_json::json!(ExecutionId::new());
         }
         let input = FixedInput::capture(envelope).unwrap();
         let (_, result) = support::execute(&mut runtime, &mut store, &input);
         assert_eq!(
-            store
-                .capture_review_check_execution(
-                    prepared,
-                    input.envelope().attempt_id,
-                    result.envelope().result_id
-                )
+            capture_review(&store, prepared, &input, &result)
                 .unwrap_err()
                 .code,
             ErrorCode::ResultMismatch
@@ -393,23 +411,13 @@ fn revoked_grant_refuses_capture_and_cancelled_owned_computation_retains_actual_
     let action = ExecutionId::new();
     let prepared = prepare(&store, unit, action);
     let mut runtime = runtime(&store, &prepared, Response::Exact);
-    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let input = execution_input(&prepared);
     let (grant, result) = support::execute(&mut runtime, &mut store, &input);
-    let captured = store
-        .capture_review_check_execution(
-            prepared,
-            input.envelope().attempt_id,
-            result.envelope().result_id,
-        )
-        .unwrap();
+    let checker = checker_key(&prepared, &input);
+    let captured = capture_review(&store, prepared, &input, &result).unwrap();
     runtime.revoke_plugin(&mut store, grant).unwrap();
     assert_eq!(
-        store
-            .capture_review_check_execution(
-                prepare(&store, unit, action),
-                input.envelope().attempt_id,
-                result.envelope().result_id
-            )
+        capture_review(&store, prepare(&store, unit, action), &input, &result)
             .unwrap_err()
             .code,
         ErrorCode::Unauthorized
@@ -418,7 +426,10 @@ fn revoked_grant_refuses_capture_and_cancelled_owned_computation_retains_actual_
     cancellation.request();
     let computed = captured.compute(&cancellation).unwrap();
     assert!(!computed.coverage().complete);
-    assert_eq!(computed.domain_result().digest(), result.digest());
+    assert_eq!(
+        computed.checker_result(&checker).unwrap().digest(),
+        result.digest()
+    );
     assert!(
         computed
             .core_rules()
@@ -444,14 +455,9 @@ fn compute_actual(
 ) -> (ComputedReviewEvidence, ExecutionRuntime, ExecutionId) {
     let prepared = prepare(store, unit, ExecutionId::new());
     let mut runtime = runtime(store, &prepared, response);
-    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let input = execution_input(&prepared);
     let (grant, result) = support::execute(&mut runtime, store, &input);
-    let computed = store
-        .capture_review_check_execution(
-            prepared,
-            input.envelope().attempt_id,
-            result.envelope().result_id,
-        )
+    let computed = capture_review(store, prepared, &input, &result)
         .unwrap()
         .compute(&Cancellation::default())
         .unwrap();
@@ -578,14 +584,9 @@ fn adoption_rechecks_revocation_cancellation_selection_and_concurrent_check_with
             "selection" => save(&mut store, unit, "较新的输入"),
             "cas" => {
                 let prepared = prepare(&store, unit, ExecutionId::new());
-                let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+                let input = execution_input(&prepared);
                 let (_, result) = support::execute(&mut runtime, &mut store, &input);
-                let second = store
-                    .capture_review_check_execution(
-                        prepared,
-                        input.envelope().attempt_id,
-                        result.envelope().result_id,
-                    )
+                let second = capture_review(&store, prepared, &input, &result)
                     .unwrap()
                     .compute(&Cancellation::default())
                     .unwrap();
@@ -661,6 +662,21 @@ fn saved_checks_without_actual_evidence_are_refused_in_current_and_historical_re
             .into_iter()
             .map(|rule| tsumugi_core::CheckRuleResult {
                 rule: rule.into(),
+                key: sdk::CheckKey {
+                    rule: sdk::ContractRef {
+                        id: rule.into(),
+                        schema_version: 1,
+                        behavior_version: 1,
+                    },
+                    implementation: sdk::CheckImplementation::Core {
+                        validator: sdk::ContractRef {
+                            id: "tsumugi.core-review".into(),
+                            schema_version: 1,
+                            behavior_version: 1,
+                        },
+                    },
+                },
+                mandatory: true,
                 status: "passed".into(),
                 reason: None,
                 findings: vec![],
@@ -959,15 +975,16 @@ fn automatic_computed(
     let prepared = store.prepare_automatic_selection(request).unwrap();
     let check = prepared.review_check().unwrap();
     let mut runtime = runtime(store, check, response);
-    let input = check.domain_execution_input(ExecutionId::new()).unwrap();
+    let input = execution_input(check);
     let (_, result) = support::execute(&mut runtime, store, &input);
     let grant = result.envelope().plugin.as_ref().unwrap().authorization_id;
+    let origin = ReviewCheckOrigin {
+        checker: checker_key(check, &input),
+        attempt_id: input.envelope().attempt_id,
+        result_id: result.envelope().result_id,
+    };
     let computed = store
-        .capture_automatic_selection_execution(
-            prepared,
-            input.envelope().attempt_id,
-            result.envelope().result_id,
-        )
+        .capture_automatic_selection_execution(prepared, &[origin])
         .unwrap()
         .compute(&Cancellation::default())
         .unwrap();
@@ -1215,18 +1232,13 @@ fn cloned_preflight_retains_the_original_check_cas_across_replay() {
     let unit = rows[0].unit_id.unwrap();
     save(&mut store, unit, "译文");
     let prepared = prepare(&store, unit, ExecutionId::new());
-    let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+    let input = execution_input(&prepared);
     let mut runtime = runtime(&store, &prepared, Response::Exact);
     let (_, result) = support::execute(&mut runtime, &mut store, &input);
     let newer = prepare(&store, unit, ExecutionId::new());
-    let newer_input = newer.domain_execution_input(ExecutionId::new()).unwrap();
+    let newer_input = execution_input(&newer);
     let (_, newer_result) = support::execute(&mut runtime, &mut store, &newer_input);
-    let newer = store
-        .capture_review_check_execution(
-            newer,
-            newer_input.envelope().attempt_id,
-            newer_result.envelope().result_id,
-        )
+    let newer = capture_review(&store, newer, &newer_input, &newer_result)
         .unwrap()
         .compute(&Cancellation::default())
         .unwrap();
@@ -1234,13 +1246,8 @@ fn cloned_preflight_retains_the_original_check_cas_across_replay() {
         .commit_review_evidence(newer, &Cancellation::default())
         .unwrap();
     let replay = prepared.clone();
-    replay.validate_domain_execution_input(&input).unwrap();
-    let computed = store
-        .capture_review_check_execution(
-            replay,
-            input.envelope().attempt_id,
-            result.envelope().result_id,
-        )
+    replay.validate_execution_input(&input).unwrap();
+    let computed = capture_review(&store, replay, &input, &result)
         .unwrap()
         .compute(&Cancellation::default())
         .unwrap();

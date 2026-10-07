@@ -16,7 +16,9 @@ export function reviewSummaryFor(target: ReviewTarget): ReviewSummary {
   return { unitId: target.unitId, locale: target.locale, nativeKey: target.nativeKey, sourceSnapshotId: target.sourceSnapshotId, sourceRevisionId: target.sourceRevisionId,
     sourcePreview: target.sourceText, translationPreview: target.translationText, selectionId: target.selectionId, revisionId: target.revisionId, basis: target.basis,
     currentDecision: target.currentDecision ? { decisionId: target.currentDecision.decisionId, basis: target.currentDecision.basis, kind: target.currentDecision.kind } : null,
-    currentCheck: target.currentCheck ? { runId: target.currentCheck.runId, basis: target.currentCheck.basis, outcome: target.currentCheck.outcome, hasFindings: target.currentCheck.rules.some(rule => rule.status === "findings") } : null };
+    currentCheck: target.currentCheck ? { runId: target.currentCheck.runId, basis: target.currentCheck.basis, outcome: target.currentCheck.outcome,
+      hasFindings: target.currentCheck.rules.some(rule => rule.status === "findings"),
+      hasIncomplete: target.currentCheck.rules.some(rule => !["passed", "findings", "not-applicable"].includes(rule.status)) } : null };
 }
 export function reviewSummaryPageFixture(rows: ReviewSummary[], overrides: Partial<ReviewSummaryPage> = {}): ReviewSummaryPage {
   return { rows, nextOrdinal: null, total: rows.length, scopeId: fixtureIdentity(609), sourceSnapshotId: rows[0]?.sourceSnapshotId ?? fixtureIdentity(600), readVersion: "view", ...overrides };

@@ -653,6 +653,7 @@ fn review_check_cancel_and_translation_save_do_not_block_the_command_loop() {
             locale: "zh-CN".into(),
             expected_basis: "stale-fixture".into(),
             action_id,
+            advisory_checks: Vec::new(),
         },
     ));
     let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());

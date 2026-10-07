@@ -2,10 +2,14 @@
 export const EffectKindValues = ["read-only","proposal","external"] as const;
 export const FindingSeverityValues = ["warning","error"] as const;
 export const NativeHostProfileValues = ["native-application-host-v1"] as const;
-export const ReviewCheckOutcomeValues = ["completed","failed","cancelled"] as const;
+export const ReviewCheckOutcomeValues = ["completed","failed","cancelled","unknown"] as const;
 export const ReviewDecisionKindValues = ["approve","request-changes"] as const;
+export const ReviewInvocationOutcomeValues = ["succeeded","failed","unknown"] as const;
 export const RuntimeArchitectureValues = ["aarch64","x86_64"] as const;
 export const RuntimeEnvironmentProfileValues = ["node-system-libraries-v1"] as const;
 export const RuntimeOperatingSystemValues = ["macos","linux"] as const;
 export const TermOriginValues = ["manual","external"] as const;
+export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
+export const TextReviewDispositionValues = ["advisory"] as const;
+export const TextReviewFieldValues = ["source","translation"] as const;
 export const TranslationOriginValues = ["import","manual","ai"] as const;

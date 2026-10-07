@@ -40,9 +40,27 @@ fn finding_for<V: Serialize>(
         waivable,
     })
 }
+pub(crate) fn core_check_key(rule: &str) -> tsumugi_plugin_sdk::CheckKey {
+    tsumugi_plugin_sdk::CheckKey {
+        rule: tsumugi_plugin_sdk::ContractRef {
+            id: rule.into(),
+            schema_version: 1,
+            behavior_version: 1,
+        },
+        implementation: tsumugi_plugin_sdk::CheckImplementation::Core {
+            validator: tsumugi_plugin_sdk::ContractRef {
+                id: "tsumugi.core-review".into(),
+                schema_version: 1,
+                behavior_version: 1,
+            },
+        },
+    }
+}
 fn result(rule: &str, findings: Vec<CheckFinding>, reason: Option<&str>) -> CheckRuleResult {
     CheckRuleResult {
         rule: rule.to_owned(),
+        key: core_check_key(rule),
+        mandatory: true,
         status: if reason.is_some() {
             "not-applicable"
         } else if findings.is_empty() {

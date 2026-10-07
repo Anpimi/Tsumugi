@@ -44,6 +44,15 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental joint QA captures mandatory source-format rules and explicitly
+  selected advisory text rules in one fixed check set. Independent checker
+  inputs and permissions retain original ledger provenance. Current QA and
+  checked selection distinguish required coverage from advisory findings and
+  invocation failures; history preserves typed rules and text diagnostics.
+  Desktop previews and WorkPlans require consent for each selected checker.
+  The current project format is schema 30; earlier development directories are
+  refused unchanged without migration. Knowledge Resources remain unadopted.
+
 - Experimental SDK advisory text checks now declare explicit rule subsets and
   exact resource pins independently of file formats, with typed Unicode finding
   locations. Host metadata validates the actual package and resource bytes;

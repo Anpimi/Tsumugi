@@ -1,18 +1,28 @@
-//! Accepted Review work owns its continuation through real runtime execution,
-//! outside-actor computation and the original Core QA adoption boundary.
+//! Accepted Review work uses independent original runtime channels and the
+//! single Core QA adoption boundary. Previews cannot grant execution authority.
+use super::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::*;
-use crate::commands::plugins::reviews::PluginReviewView;
-use tsumugi_core::{CapturedReviewCheckExecution, PreparedReviewCheck};
-use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
+use crate::commands::plugins::ApplicationPlugins;
+use std::collections::BTreeSet;
+use tsumugi_core::{
+    AdvisoryReviewCheck, CapturedReviewCheckExecution, PreparedReviewCheck, ReviewCheckOrigin,
+    ReviewCheckerKey,
+};
 
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
-    ReviewCheckStartRequest {
-        check: ReviewCheckRequest,
-        execution: PluginStartRequest
-    }
+    ReviewCheckStartRequest { check: ReviewCheckRequest, executions: Vec<PluginStartRequest> }
 );
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ReviewCheckerPreflightView {
+    pub checker: ReviewCheckerKey,
+    pub attempt_id: ExecutionId,
+    pub input_digest: String,
+    pub plugin: ReviewCheckerView,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -21,11 +31,8 @@ pub struct ReviewPluginCheckView {
     pub unit_id: ExecutionId,
     pub locale: String,
     pub basis: String,
-    pub attempt_id: ExecutionId,
-    pub input_digest: String,
-    pub plugin: PluginReviewView,
+    pub checkers: Vec<ReviewCheckerPreflightView>,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -34,23 +41,67 @@ pub enum ReviewCheckPreparation {
     Plugin { view: ReviewPluginCheckView },
 }
 
+#[derive(Clone)]
+struct Slot {
+    key: ReviewCheckerKey,
+    input: FixedInput,
+    environment: CheckerEnvironment,
+    start: Option<PluginStartRequest>,
+}
 struct Preflight {
     prepared: PreparedReviewCheck,
     request: ReviewCheckRequest,
-    input: FixedInput,
+    slots: Vec<Slot>,
     view: ReviewPluginCheckView,
-    start: Option<PluginStartRequest>,
 }
 type Reply = Box<dyn FnOnce(Result<CapturedReviewCheckExecution, CommandError>) + Send>;
 struct Job {
+    request: ReviewCheckRequest,
+    executions: Vec<PluginStartRequest>,
+    _registration: ReviewCheckRegistration,
     cancellation: Cancellation,
-    input: FixedInput,
-    prepared: Option<PreparedReviewCheck>,
+    plugins: Arc<ApplicationPlugins>,
+    settings_revision: UnsignedDecimal,
+    slots: Vec<Slot>,
+    prepared: PreparedReviewCheck,
+    attached: bool,
+    observing: bool,
+    terminal: bool,
     reply: Option<Reply>,
     cancellation_sent: bool,
-    cancellation_action: ExecutionId,
+    cancellation_actions: Vec<ExecutionId>,
 }
-
+impl Job {
+    fn cancel_channels(
+        &mut self,
+        store: &mut ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<(), CommandError> {
+        if self.cancellation_sent {
+            return Ok(());
+        }
+        for (slot, action) in self.slots.iter().zip(&self.cancellation_actions) {
+            if let Some(start) = &slot.start {
+                runtime
+                    .revoke_plugin(store, start.grant_id)
+                    .map_err(map_adopt)?;
+            }
+            match store.execution_input(slot.input.envelope().attempt_id) {
+                Ok(_) => {
+                    runtime
+                        .cancel(store, slot.input.envelope().task_id, *action)
+                        .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
+                }
+                Err(error)
+                    if error.code == ErrorCode::InvalidInput
+                        && error.stage == "execution-storage" => {}
+                Err(error) => return Err(map_read(error)),
+            }
+        }
+        self.cancellation_sent = true;
+        Ok(())
+    }
+}
 #[derive(Default)]
 pub(in crate::commands::execution) struct ReviewSession {
     preflight: Option<Preflight>,
@@ -58,7 +109,7 @@ pub(in crate::commands::execution) struct ReviewSession {
 }
 impl ReviewSession {
     pub(in crate::commands::execution) fn active(&self) -> bool {
-        !self.jobs.is_empty()
+        self.jobs.values().any(|job| job.attached || !job.terminal)
     }
     pub(in crate::commands::execution) fn stop(&mut self) {
         self.preflight = None;
@@ -66,78 +117,138 @@ impl ReviewSession {
             job.cancellation.request();
         }
     }
+    /// Withdraw the original grants before queued manual checks can dispatch.
+    /// The returned snapshot guards the ordinary runtime's actual tick as well.
+    pub(in crate::commands::execution) fn prepare_runtime_tick(
+        &mut self,
+        store: &mut ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<Option<(Arc<ApplicationPlugins>, UnsignedDecimal)>, CommandError> {
+        let mut authority = None;
+        for job in self.jobs.values_mut() {
+            if !job.cancellation.is_requested() {
+                if let Err(error) = job
+                    .plugins
+                    .with_environment_revision(job.settings_revision, || Ok(()))
+                {
+                    if matches!(
+                        error.code,
+                        CommandErrorCode::Busy
+                            | CommandErrorCode::StorageFailed
+                            | CommandErrorCode::OutcomeUnknown
+                    ) {
+                        return Err(error);
+                    }
+                    job.cancellation.request();
+                }
+            }
+            if job.cancellation.is_requested() {
+                job.cancel_channels(store, runtime)?;
+            } else if job.slots.iter().any(|slot| slot.start.is_some()) {
+                if authority.as_ref().is_some_and(|(plugins, revision)| {
+                    *revision != job.settings_revision || !Arc::ptr_eq(plugins, &job.plugins)
+                }) {
+                    return Err(stale());
+                }
+                authority = Some((job.plugins.clone(), job.settings_revision));
+            }
+        }
+        self.jobs
+            .retain(|_, job| job.attached || !job.cancellation_sent);
+        Ok(authority)
+    }
     pub(in crate::commands::execution) fn tick(
         &mut self,
         store: &mut ProjectStore,
         runtime: &mut ExecutionRuntime,
     ) -> Result<(), CommandError> {
         for job in self.jobs.values_mut() {
-            if job.prepared.is_none() {
+            if job.cancellation.is_requested() && !job.cancellation_sent {
+                job.cancel_channels(store, runtime)?;
+            }
+            if !job.observing {
+                // Detached error replies do not detach their original channels
+                // from authority/cancellation. Real terminal frames determine
+                // whether the retained retry occupies active project work.
+                job.terminal = true;
+                for slot in &job.slots {
+                    match store.execution_attempt(slot.input.envelope().attempt_id, false) {
+                        Ok(status) => {
+                            if status.items.is_empty() {
+                                return Err(map_read(ExecutionError::new(
+                                    ErrorCode::CorruptLedger,
+                                    "review-check-item",
+                                )));
+                            }
+                            if status.items.iter().any(|item| {
+                                matches!(
+                                    item.execution,
+                                    ExecutionState::Queued | ExecutionState::Dispatched
+                                )
+                            }) {
+                                job.terminal = false;
+                            }
+                        }
+                        Err(error)
+                            if error.code == ErrorCode::InvalidInput
+                                && error.stage == "execution-storage" =>
+                        {
+                            job.terminal = false
+                        }
+                        Err(error) => return Err(map_read(error)),
+                    }
+                }
                 continue;
             }
-            if job.cancellation.is_requested() && !job.cancellation_sent {
-                runtime
-                    .cancel(store, job.input.envelope().task_id, job.cancellation_action)
-                    .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
-                job.cancellation_sent = true;
-            }
-            let attempt = job.input.envelope().attempt_id;
-            let status = match runtime.attempt(store, attempt) {
-                Ok(status) => status,
+            let observed = (|| {
+                if job.cancellation.is_requested() {
+                    return Err(cancelled());
+                }
+                let mut origins = Vec::with_capacity(job.slots.len());
+                for slot in &job.slots {
+                    let attempt = slot.input.envelope().attempt_id;
+                    let status = runtime.attempt(store, attempt).map_err(map_read)?;
+                    let item = status.items.first().ok_or_else(|| {
+                        map_read(ExecutionError::new(
+                            ErrorCode::CorruptLedger,
+                            "review-check-item",
+                        ))
+                    })?;
+                    if matches!(
+                        item.execution,
+                        ExecutionState::Queued | ExecutionState::Dispatched
+                    ) {
+                        return Ok(None);
+                    }
+                    let result = store
+                        .execution_current_result(attempt, item.item_id)
+                        .map_err(map_read)?
+                        .ok_or_else(|| CommandError::unknown(CommandStage::ExecutionAdopt))?;
+                    origins.push(ReviewCheckOrigin {
+                        checker: slot.key.clone(),
+                        attempt_id: attempt,
+                        result_id: result,
+                    });
+                }
+                store
+                    .capture_review_check_execution(job.prepared.clone(), &origins)
+                    .map(Some)
+                    .map_err(map_adopt)
+            })();
+            let result = match observed {
+                Ok(None) => continue,
                 Err(error)
                     if matches!(
                         error.code,
-                        ErrorCode::Busy | ErrorCode::StorageFailed | ErrorCode::OutcomeUnknown
+                        CommandErrorCode::Busy | CommandErrorCode::StorageFailed
                     ) =>
                 {
-                    return Err(map_read(error));
+                    return Err(error);
                 }
-                Err(error) => {
-                    job.prepared = None;
-                    if let Some(reply) = job.reply.take() {
-                        reply(Err(map_read(error)));
-                    }
-                    continue;
-                }
+                Ok(Some(capture)) => Ok(capture),
+                Err(error) => Err(error),
             };
-            let Some(item) = status.items.first() else {
-                job.prepared = None;
-                if let Some(reply) = job.reply.take() {
-                    reply(Err(map_read(ExecutionError::new(
-                        ErrorCode::CorruptLedger,
-                        "review-check-item",
-                    ))));
-                }
-                continue;
-            };
-            let result = match item.execution {
-                ExecutionState::Queued | ExecutionState::Dispatched
-                    if !job.cancellation.is_requested() =>
-                {
-                    continue;
-                }
-                _ if job.cancellation.is_requested() => Err(cancelled()),
-                ExecutionState::Succeeded => {
-                    let prepared = job.prepared.take().expect("pending capture");
-                    store
-                        .execution_current_result(attempt, item.item_id)
-                        .and_then(|result| {
-                            result.ok_or_else(|| {
-                                ExecutionError::new(ErrorCode::CorruptLedger, "review-check-result")
-                            })
-                        })
-                        .and_then(|result| {
-                            store.capture_review_check_execution(prepared, attempt, result)
-                        })
-                        .map_err(map_adopt)
-                }
-                ExecutionState::Unknown => Err(CommandError::unknown(CommandStage::ExecutionAdopt)),
-                _ => Err(map_adopt(ExecutionError::new(
-                    ErrorCode::OutputInvalid,
-                    "review-check-execution",
-                ))),
-            };
-            job.prepared = None;
+            job.observing = false;
             if let Some(reply) = job.reply.take() {
                 reply(result);
             }
@@ -145,7 +256,6 @@ impl ReviewSession {
         Ok(())
     }
 }
-
 fn cancelled() -> CommandError {
     map_adopt(ExecutionError::new(
         ErrorCode::Cancelled,
@@ -153,14 +263,34 @@ fn cancelled() -> CommandError {
     ))
 }
 fn stale() -> CommandError {
-    map_adopt(ExecutionError::new(
-        ErrorCode::DependencyConflict,
-        "review-check-preflight",
-    ))
+    super::checkers::stale()
+}
+fn preflight_view(
+    request: &ReviewCheckRequest,
+    slots: &[Slot],
+) -> Result<ReviewPluginCheckView, CommandError> {
+    Ok(ReviewPluginCheckView {
+        action_id: request.action_id,
+        unit_id: request.unit_id,
+        locale: request.locale.clone(),
+        basis: request.expected_basis.clone(),
+        checkers: slots
+            .iter()
+            .map(|slot| {
+                Ok(ReviewCheckerPreflightView {
+                    checker: slot.key.clone(),
+                    attempt_id: slot.input.envelope().attempt_id,
+                    input_digest: slot.input.digest().into(),
+                    plugin: slot.environment.view()?,
+                })
+            })
+            .collect::<Result<_, CommandError>>()?,
+    })
 }
 fn capture(
     store: &ProjectStore,
     request: &ReviewCheckRequest,
+    choices: &[AdvisoryReviewCheck],
 ) -> Result<PreparedReviewCheck, CommandError> {
     store
         .prepare_review_check(
@@ -169,8 +299,49 @@ fn capture(
             &request.locale,
             &request.expected_basis,
             request.action_id,
+            choices,
         )
         .map_err(map_adopt)
+}
+fn recorded(
+    store: &ProjectStore,
+    request: &ReviewCheckRequest,
+) -> Result<Option<CheckRun>, CommandError> {
+    let Some(run) = store
+        .review_check_action(request.project_id, request.action_id)
+        .map_err(map_read)?
+    else {
+        return Ok(None);
+    };
+    if run.unit_id != request.unit_id
+        || run.locale != request.locale
+        || run.basis != request.expected_basis
+    {
+        return Err(stale());
+    }
+    let choices = run
+        .evidence
+        .as_ref()
+        .map(|e| e.advisory_checks.as_slice())
+        .unwrap_or(&[]);
+    if choices.len() != request.advisory_checks.len() {
+        return Err(stale());
+    }
+    for (saved, selected) in choices.iter().zip(&request.advisory_checks) {
+        if saved.binding.checker.provider.plugin != selected.package.plugin
+            || saved.binding.checker.provider.package_digest != selected.package.package_digest
+            || saved.declaration_resource_id != selected.resource_id
+            || saved.environment.digest().map_err(|_| stale())? != selected.environment_digest
+            || saved.rules != selected.rules
+        {
+            return Err(stale());
+        }
+    }
+    capture(store, request, choices)?
+        .recorded_run()
+        .cloned()
+        .ok_or_else(stale)
+        .map(Some)
 }
 
 #[tauri::command]
@@ -180,94 +351,159 @@ pub async fn prepare_review_checks(
 ) -> Result<ReviewCheckPreparation, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionRead)?;
     let initial = request.clone();
-    let captured = lease.submit(
-        "prepare_review_checks.capture",
-        CommandStage::ExecutionRead,
-        move |sessions| {
-            let active = authorized(
-                sessions,
-                &initial.session_token,
-                initial.project_id,
-                CommandStage::ExecutionRead,
-            )?;
-            let (host, store) = active.execution_parts()?;
-            host.allow_mutation()?;
-            let prepared = capture(store, &initial)?;
-            if let Some(run) = prepared.recorded_run() {
-                return Ok(Err(ReviewCheckPreparation::Recorded { run: run.clone() }));
-            }
-            if let Some(prior) = &host.review.preflight {
-                if prior.request == initial {
-                    prepared
-                        .validate_domain_execution_input(&prior.input)
-                        .map_err(map_adopt)?;
-                    return Ok(Err(ReviewCheckPreparation::Plugin {
-                        view: prior.view.clone(),
+    let prior = lease
+        .run(
+            "prepare_review_checks.recorded",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                if let Some(run) = recorded(store, &initial)? {
+                    return Ok(Some(ReviewCheckPreparation::Recorded { run }));
+                }
+                host.allow_mutation()?;
+                if let Some(job) = host.review.jobs.get(&initial.action_id) {
+                    if job.request != initial {
+                        return Err(stale());
+                    }
+                    let current = capture(
+                        store,
+                        &initial,
+                        job.prepared.plan().ok_or_else(stale)?.advisory_checks(),
+                    )?;
+                    for slot in &job.slots {
+                        current
+                            .validate_execution_input(&slot.input)
+                            .map_err(map_adopt)?;
+                    }
+                    return Ok(Some(ReviewCheckPreparation::Plugin {
+                        view: preflight_view(&initial, &job.slots)?,
                     }));
                 }
-            }
-            let binding = prepared.plan().ok_or_else(stale)?.binding().clone();
-            let input = prepared
-                .domain_execution_input(ExecutionId::new())
-                .map_err(map_adopt)?;
-            Ok(Ok((prepared, input, binding)))
-        },
-    )?;
-    let io = state.io.clone();
-    let plugins = state.plugins.clone();
-    tauri::async_runtime::spawn(async move {
-        let (prepared, input, binding) = match captured.await? {
-            Ok(value) => value,
-            Err(view) => return Ok(view),
-        };
-        let plugin = io
-            .run(CommandStage::ExecutionRead, move || {
-                plugins.capture_review(&binding)?.view()
-            })
-            .await?;
-        lease
-            .run(
-                "prepare_review_checks.finish",
-                CommandStage::ExecutionRead,
-                move |sessions| {
-                    let active = authorized(
-                        sessions,
-                        &request.session_token,
-                        request.project_id,
-                        CommandStage::ExecutionRead,
-                    )?;
-                    let (host, store) = active.execution_parts()?;
-                    host.allow_mutation()?;
-                    let current = capture(store, &request)?;
-                    if let Some(run) = current.recorded_run() {
-                        return Ok(ReviewCheckPreparation::Recorded { run: run.clone() });
+                if let Some(preflight) = &host.review.preflight {
+                    if preflight.request == initial {
+                        let current = capture(
+                            store,
+                            &initial,
+                            preflight
+                                .prepared
+                                .plan()
+                                .ok_or_else(stale)?
+                                .advisory_checks(),
+                        )?;
+                        for slot in &preflight.slots {
+                            current
+                                .validate_execution_input(&slot.input)
+                                .map_err(map_adopt)?;
+                        }
+                        return Ok(Some(ReviewCheckPreparation::Plugin {
+                            view: preflight.view.clone(),
+                        }));
                     }
-                    current
-                        .validate_domain_execution_input(&input)
-                        .map_err(map_adopt)?;
-                    let view = ReviewPluginCheckView {
-                        action_id: request.action_id,
-                        unit_id: request.unit_id,
-                        locale: request.locale.clone(),
-                        basis: request.expected_basis.clone(),
-                        attempt_id: input.envelope().attempt_id,
-                        input_digest: input.digest().into(),
-                        plugin,
-                    };
-                    host.review.preflight = Some(Preflight {
-                        prepared,
-                        request,
+                }
+                Ok(None)
+            },
+        )
+        .await?;
+    if let Some(view) = prior {
+        return Ok(view);
+    }
+    let plugins = state.plugins.clone();
+    let selected = request.advisory_checks.clone();
+    let choices = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            capture_advisory(&plugins, &selected)
+        })
+        .await?;
+    let initial = request.clone();
+    let prepared = lease
+        .run(
+            "prepare_review_checks.capture",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                capture(store, &initial, &choices)
+            },
+        )
+        .await?;
+    if let Some(run) = prepared.recorded_run() {
+        return Ok(ReviewCheckPreparation::Recorded { run: run.clone() });
+    }
+    let plan = prepared.plan().ok_or_else(stale)?.clone();
+    let inputs = prepared.execution_inputs().to_vec();
+    let plugins = state.plugins.clone();
+    let slots = state
+        .io
+        .run(CommandStage::ExecutionRead, move || {
+            plan.checkers()
+                .iter()
+                .zip(inputs)
+                .map(|(checker, input)| {
+                    Ok(Slot {
+                        key: checker.key.clone(),
                         input,
-                        view: view.clone(),
+                        environment: CheckerEnvironment::capture(
+                            &plugins,
+                            checker,
+                            plan.binding(),
+                            plan.advisory_checks(),
+                        )?,
                         start: None,
-                    });
-                    Ok(ReviewCheckPreparation::Plugin { view })
-                },
-            )
-            .await
-    })
-    .await
-    .map_err(|_| CommandError::unknown(CommandStage::ExecutionRead))?
+                    })
+                })
+                .collect::<Result<Vec<_>, CommandError>>()
+        })
+        .await?;
+    lease
+        .run(
+            "prepare_review_checks.finish",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                let current = capture(
+                    store,
+                    &request,
+                    prepared.plan().ok_or_else(stale)?.advisory_checks(),
+                )?;
+                if let Some(run) = current.recorded_run() {
+                    return Ok(ReviewCheckPreparation::Recorded { run: run.clone() });
+                }
+                for slot in &slots {
+                    current
+                        .validate_execution_input(&slot.input)
+                        .map_err(map_adopt)?;
+                }
+                let view = preflight_view(&request, &slots)?;
+                host.review.preflight = Some(Preflight {
+                    prepared,
+                    request,
+                    slots,
+                    view: view.clone(),
+                });
+                Ok(ReviewCheckPreparation::Plugin { view })
+            },
+        )
+        .await
 }
 
 #[tauri::command]
@@ -276,45 +512,48 @@ pub async fn run_review_checks(
     request: ReviewCheckStartRequest,
 ) -> Result<CheckRun, CommandError> {
     if request.session_token != request.check.session_token
-        || request.session_token != request.execution.session_token
         || request.project_id != request.check.project_id
-        || request.project_id != request.execution.project_id
+        || request.executions.iter().any(|execution| {
+            execution.session_token != request.session_token
+                || execution.project_id != request.project_id
+        })
     {
         return Err(stale());
     }
-    let cancellation = Cancellation::default();
     let registry = Arc::clone(&state.review_check_cancellations);
-    {
+    let (cancellation, inserted) = {
         let mut checks = registry
             .lock()
             .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?;
-        if let Some((session, project, _)) = checks.get(&request.check.action_id) {
+        if let Some((session, project, cancellation)) = checks.get(&request.check.action_id) {
             if session != &request.session_token || *project != request.project_id {
                 return Err(CommandError::simple(
                     CommandErrorCode::SessionInvalid,
                     CommandStage::ExecutionAdopt,
                 ));
             }
-            // This invocation has not rejected the original accepted action.
-            // Keep its request/grant until the original continuation settles.
-            return Err(CommandError::unknown(CommandStage::ExecutionAdopt));
+            (cancellation.clone(), false)
+        } else {
+            let cancellation = Cancellation::default();
+            checks.insert(
+                request.check.action_id,
+                (
+                    request.session_token.clone(),
+                    request.project_id,
+                    cancellation.clone(),
+                ),
+            );
+            (cancellation, true)
         }
-        checks.insert(
-            request.check.action_id,
-            (
-                request.session_token.clone(),
-                request.project_id,
-                cancellation.clone(),
-            ),
-        );
-    }
-    let registration = ReviewCheckRegistration {
+    };
+    let mut registration = inserted.then(|| ReviewCheckRegistration {
         registry,
         action: request.check.action_id,
-    };
+    });
     let lease = state.sessions.lease(CommandStage::ExecutionAdopt)?;
     let initial = request.clone();
     let token = cancellation.clone();
+    let job_plugins = state.plugins.clone();
     let admitted = lease.submit(
         "run_review_checks.capture",
         CommandStage::ExecutionAdopt,
@@ -326,68 +565,111 @@ pub async fn run_review_checks(
                 CommandStage::ExecutionAdopt,
             )?;
             let (host, store) = active.execution_parts()?;
-            let prepared = capture(store, &initial.check)?;
-            if let Some(run) = prepared.recorded_run() {
-                return Ok(Err(run.clone()));
+            if let Some(run) = recorded(store, &initial.check)? {
+                return Ok(Err(run));
             }
             host.allow_mutation()?;
             if token.is_requested() {
                 return Err(cancelled());
             }
-            if !initial.execution.unsandboxed_execution {
-                return Err(map_adopt(ExecutionError::new(
-                    ErrorCode::Unauthorized,
-                    "plugin-consent-required",
-                )));
+            if host
+                .review
+                .jobs
+                .get(&initial.check.action_id)
+                .is_some_and(|job| job.attached)
+            {
+                return Err(CommandError::unknown(CommandStage::ExecutionAdopt));
             }
-            if host.review.jobs.len() >= 2 {
+            if !host.review.jobs.contains_key(&initial.check.action_id)
+                && host.review.jobs.len() >= 2
+            {
                 return Err(CommandError::simple(
                     CommandErrorCode::Busy,
                     CommandStage::ExecutionAdopt,
                 ));
             }
-            let preflight = host
-                .review
-                .preflight
-                .as_ref()
-                .filter(|preflight| {
-                    preflight.request == initial.check
-                        && preflight.input.envelope().attempt_id == initial.execution.attempt_id
-                        && preflight.input.digest() == initial.execution.input_digest
-                })
-                .ok_or_else(stale)?;
-            if preflight
-                .start
-                .as_ref()
-                .is_some_and(|start| start != &initial.execution)
+            let (prepared, slots) =
+                if let Some(job) = host.review.jobs.get(&initial.check.action_id) {
+                    if job.request != initial.check || job.executions != initial.executions {
+                        return Err(stale());
+                    }
+                    (job.prepared.clone(), job.slots.clone())
+                } else {
+                    let preflight = host
+                        .review
+                        .preflight
+                        .as_ref()
+                        .filter(|p| p.request == initial.check)
+                        .ok_or_else(stale)?;
+                    (preflight.prepared.clone(), preflight.slots.clone())
+                };
+            if slots.len() != initial.executions.len() {
+                return Err(stale());
+            }
+            let current = capture(
+                store,
+                &initial.check,
+                prepared.plan().ok_or_else(stale)?.advisory_checks(),
+            )?;
+            let mut identities = BTreeSet::new();
+            for (slot, execution) in slots.iter().zip(&initial.executions) {
+                if !execution.unsandboxed_execution {
+                    return Err(map_adopt(ExecutionError::new(
+                        ErrorCode::Unauthorized,
+                        "plugin-consent-required",
+                    )));
+                }
+                if execution.attempt_id != slot.input.envelope().attempt_id
+                    || execution.input_digest != slot.input.digest()
+                    || !identities.insert(execution.grant_id)
+                    || slot.start.as_ref().is_some_and(|start| start != execution)
+                {
+                    return Err(stale());
+                }
+                current
+                    .validate_execution_input(&slot.input)
+                    .map_err(map_adopt)?;
+            }
+            let settings_revision = slots
+                .first()
+                .ok_or_else(stale)?
+                .environment
+                .settings_revision();
+            if slots
+                .iter()
+                .any(|slot| slot.environment.settings_revision() != settings_revision)
             {
                 return Err(stale());
             }
-            prepared
-                .validate_domain_execution_input(&preflight.input)
-                .map_err(map_adopt)?;
-            // Preserve the preflight CAS across uncertain enqueue/commit retries.
-            // Recapturing its expected prior check could overwrite newer QA.
-            let prepared = preflight.prepared.clone();
-            let input = preflight.input.clone();
-            let started = preflight.start.is_some();
-            let binding = prepared.plan().ok_or_else(stale)?.binding().clone();
-            host.review.jobs.insert(
-                initial.check.action_id,
-                Job {
-                    cancellation: token,
-                    input: input.clone(),
-                    prepared: None,
-                    reply: None,
-                    cancellation_sent: false,
-                    cancellation_action: ExecutionId::new(),
-                },
-            );
-            Ok(Ok((prepared, input, binding, started)))
+            if let Some(job) = host.review.jobs.get_mut(&initial.check.action_id) {
+                job.attached = true;
+            } else {
+                host.review.jobs.insert(
+                    initial.check.action_id,
+                    Job {
+                        request: initial.check.clone(),
+                        executions: initial.executions.clone(),
+                        _registration: registration.take().ok_or_else(stale)?,
+                        cancellation: token,
+                        plugins: job_plugins,
+                        settings_revision,
+                        slots: slots.clone(),
+                        prepared: prepared.clone(),
+                        attached: true,
+                        observing: false,
+                        terminal: false,
+                        reply: None,
+                        cancellation_sent: false,
+                        cancellation_actions: slots.iter().map(|_| ExecutionId::new()).collect(),
+                    },
+                );
+            }
+            Ok(Ok((prepared, slots)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
+    let admission_plugins = plugins.clone();
     #[cfg(test)]
     let probe = {
         let mut pending = state.review_compute_probe.lock().unwrap();
@@ -401,34 +683,42 @@ pub async fn run_review_checks(
         }
     };
     tauri::async_runtime::spawn(async move {
-        let _registration = registration;
+        let mut attached = false;
         let work = async {
-            let (prepared, input, binding, started) = match admitted.await? {
-                Ok(value) => value,
+            let (prepared, slots) = match admitted.await? {
+                Ok(value) => {
+                    attached = true;
+                    value
+                }
                 Err(run) => return Ok(run),
             };
-            let loaded = if started {
-                None
-            } else {
-                Some(
-                    io.run(CommandStage::ExecutionAdopt, move || {
-                        let environment = plugins.capture_review(&binding)?;
-                        RunnerProxy::new(
-                            environment.package.image().clone(),
-                            &environment.binding.declaration.checker,
-                            environment.runtime.clone(),
-                            environment.staging_parent.clone(),
-                            HostLimits::default(),
-                        )
-                        .map(Arc::new)
-                        .map_err(map_adopt)
-                    })
-                    .await?,
-                )
-            };
+            let loaded = io
+                .run(CommandStage::ExecutionAdopt, move || {
+                    slots
+                        .into_iter()
+                        .map(|slot| {
+                            let environment = slot.environment.reopen(&plugins)?;
+                            let runner = if slot.start.is_none() {
+                                Some(environment.clone().runner()?)
+                            } else {
+                                None
+                            };
+                            Ok((slot, environment, runner))
+                        })
+                        .collect::<Result<Vec<_>, CommandError>>()
+                })
+                .await?;
+            let settings_revision = loaded.first().ok_or_else(stale)?.1.settings_revision();
+            if loaded
+                .iter()
+                .any(|(_, environment, _)| environment.settings_revision() != settings_revision)
+            {
+                return Err(stale());
+            }
+            let commit_plugins = admission_plugins.clone();
             let (sender, mut receiver) = tauri::async_runtime::channel(1);
-            let dispatch_request = request.clone();
-            let dispatched_token = cancellation.clone();
+            let dispatch = request.clone();
+            let token = cancellation.clone();
             lease
                 .run(
                     "run_review_checks.dispatch",
@@ -436,50 +726,84 @@ pub async fn run_review_checks(
                     move |sessions| {
                         let active = authorized(
                             sessions,
-                            &dispatch_request.session_token,
-                            dispatch_request.project_id,
+                            &dispatch.session_token,
+                            dispatch.project_id,
                             CommandStage::ExecutionAdopt,
                         )?;
                         let (host, store) = active.execution_parts()?;
                         host.allow_mutation()?;
-                        if dispatched_token.is_requested() {
+                        if token.is_requested() {
                             return Err(cancelled());
                         }
-                        // Recapture before granting execution, after installed-store IO.
-                        capture(store, &dispatch_request.check)?
-                            .validate_domain_execution_input(&input)
-                            .map_err(map_adopt)?;
-                        if let Some(runner) = loaded {
-                            host.register_plugin(
-                                runner,
-                                input.envelope().plugin.clone().ok_or_else(stale)?,
-                            )
-                            .map_err(map_adopt)?;
-                            host.runtime
-                                .authorize_plugin(
-                                    store,
-                                    dispatch_request.execution.grant_id,
-                                    &input,
-                                    dispatch_request.execution.expires_at_ms.get(),
-                                    PluginConsent {
-                                        unsandboxed_execution: true,
-                                    },
-                                )
+                        let current = capture(
+                            store,
+                            &dispatch.check,
+                            prepared.plan().ok_or_else(stale)?.advisory_checks(),
+                        )?;
+                        for ((slot, environment, runner), execution) in
+                            loaded.into_iter().zip(&dispatch.executions)
+                        {
+                            current
+                                .validate_execution_input(&slot.input)
                                 .map_err(map_adopt)?;
-                            if let Some(preflight) = &mut host.review.preflight {
-                                if preflight.request == dispatch_request.check {
-                                    preflight.start = Some(dispatch_request.execution.clone());
-                                }
-                            }
+                            admission_plugins.with_environment_revision(
+                                environment.settings_revision(),
+                                || {
+                                    if let Some(runner) = runner {
+                                        host.register_plugin(
+                                            runner,
+                                            slot.input
+                                                .envelope()
+                                                .plugin
+                                                .clone()
+                                                .ok_or_else(stale)?,
+                                        )
+                                        .map_err(map_adopt)?;
+                                        host.runtime
+                                            .authorize_plugin(
+                                                store,
+                                                execution.grant_id,
+                                                &slot.input,
+                                                execution.expires_at_ms.get(),
+                                                PluginConsent {
+                                                    unsandboxed_execution: true,
+                                                },
+                                            )
+                                            .map_err(map_adopt)?;
+                                        host.review
+                                            .jobs
+                                            .get_mut(&dispatch.check.action_id)
+                                            .ok_or_else(stale)?
+                                            .slots
+                                            .iter_mut()
+                                            .find(|s| s.key == slot.key)
+                                            .ok_or_else(stale)?
+                                            .start = Some(execution.clone());
+                                        if let Some(preflight) = host
+                                            .review
+                                            .preflight
+                                            .as_mut()
+                                            .filter(|p| p.request == dispatch.check)
+                                        {
+                                            preflight
+                                                .slots
+                                                .iter_mut()
+                                                .find(|s| s.key == slot.key)
+                                                .ok_or_else(stale)?
+                                                .start = Some(execution.clone());
+                                        }
+                                    }
+                                    host.runtime.submit(store, &slot.input).map_err(map_adopt)?;
+                                    Ok(())
+                                },
+                            )?;
                         }
-                        // Exact replay submits the original channel; it cannot renew its grant.
-                        host.runtime.submit(store, &input).map_err(map_adopt)?;
                         let job = host
                             .review
                             .jobs
-                            .get_mut(&dispatch_request.check.action_id)
+                            .get_mut(&dispatch.check.action_id)
                             .ok_or_else(stale)?;
-                        job.prepared = Some(prepared);
+                        job.observing = true;
                         job.reply = Some(Box::new(move |result| {
                             let _ = sender.try_send(result);
                         }));
@@ -502,7 +826,7 @@ pub async fn run_review_checks(
                     captured.compute(&token).map_err(map_adopt)
                 })
                 .await?;
-            let commit_request = request.clone();
+            let commit = request.clone();
             let token = cancellation.clone();
             lease
                 .run(
@@ -511,21 +835,34 @@ pub async fn run_review_checks(
                     move |sessions| {
                         let active = authorized(
                             sessions,
-                            &commit_request.session_token,
-                            commit_request.project_id,
+                            &commit.session_token,
+                            commit.project_id,
                             CommandStage::ExecutionAdopt,
                         )?;
                         let (host, store) = active.execution_parts()?;
+                        if let Some(run) = recorded(store, &commit.check)? {
+                            return Ok(run);
+                        }
                         host.allow_mutation()?;
-                        store
-                            .commit_review_evidence(computed, &token)
-                            .map_err(map_adopt)
+                        commit_plugins.with_environment_revision(settings_revision, || {
+                            store
+                                .commit_review_evidence(computed, &token)
+                                .map_err(map_adopt)
+                        })
                     },
                 )
                 .await
         }
         .await;
-        // The same reserved lease guarantees cleanup after any accepted failure.
+        if !attached {
+            return work;
+        }
+        let stop_channels = cancellation.is_requested()
+            || work
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.reason.as_deref() == Some("plugin-settings-changed"));
+        let completed = work.is_ok();
         let cleanup = lease
             .run(
                 "run_review_checks.finish",
@@ -537,21 +874,26 @@ pub async fn run_review_checks(
                         request.project_id,
                         CommandStage::ExecutionRead,
                     )?;
-                    let (host, _) = active.execution_parts()?;
-                    if let Some(job) = host.review.jobs.remove(&request.check.action_id) {
-                        job.cancellation.request();
+                    let (host, store) = active.execution_parts()?;
+                    if let Some(job) = host.review.jobs.get_mut(&request.check.action_id) {
+                        let stop_channels = stop_channels || job.cancellation.is_requested();
+                        job.attached = false;
+                        job.observing = false;
+                        job.reply = None;
+                        if stop_channels && !job.cancellation_sent {
+                            job.cancellation.request();
+                            job.cancel_channels(store, &mut host.runtime)?;
+                        }
+                        if completed || job.cancellation_sent {
+                            host.review.jobs.remove(&request.check.action_id);
+                        }
                     }
                     Ok(())
                 },
             )
             .await;
-        match work {
-            Ok(run) => {
-                cleanup?;
-                Ok(run)
-            }
-            Err(error) => Err(error),
-        }
+        cleanup?;
+        work
     })
     .await
     .map_err(|_| CommandError::unknown(CommandStage::ExecutionAdopt))?

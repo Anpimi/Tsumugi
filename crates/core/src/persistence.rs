@@ -50,14 +50,16 @@ pub use resources::{
     SaveTerm, TermOrigin, TermResolution, TermResolutionEntry, TermRevision, TmMatchKind,
     TmSuggestion,
 };
+pub(crate) use review::validate_choices;
 pub use review::{
-    CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun, ComputedReviewEvidence,
-    Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite,
-    PreparedReviewCheck, ReviewBasis, ReviewCheckEvidence, ReviewCheckOutcome, ReviewCheckPlan,
-    ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor,
-    ReviewPage, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,
-    ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, Waiver, WaiverWrite,
-    WorkItem, WorkPage,
+    AdvisoryReviewCheck, CapturedReviewCheckExecution, CheckFinding, CheckRuleResult, CheckRun,
+    ComputedReviewEvidence, Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision,
+    FallbackWrite, PreparedReviewCheck, ReviewBasis, ReviewCheckEvidence, ReviewCheckOrigin,
+    ReviewCheckOriginEvidence, ReviewCheckOutcome, ReviewCheckPlan, ReviewChecker,
+    ReviewCheckerKey, ReviewCheckerKind, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
+    ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewScopeCapture,
+    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    ReviewTarget, ReviewWrite, Waiver, WaiverWrite, WorkItem, WorkPage,
 };
 pub use translation::{
     SaveTranslationRevision, SelectTranslationRevision, TranslationAdoptionConfirmation,
@@ -70,7 +72,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 28;
+pub(crate) const SCHEMA_VERSION: i64 = 30;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\

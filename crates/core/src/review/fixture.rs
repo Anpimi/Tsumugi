@@ -42,6 +42,8 @@ pub(crate) fn interrupted_rules(status: &str, reason: &str) -> Vec<CheckRuleResu
         .into_iter()
         .map(|rule| CheckRuleResult {
             rule: rule.to_owned(),
+            key: core_check_key(rule),
+            mandatory: true,
             status: status.to_owned(),
             reason: Some(reason.to_owned()),
             findings: Vec::new(),
@@ -163,6 +165,8 @@ pub(crate) fn check_rules(
     let placeholder_result = if source_markers.is_err() || target_markers.is_err() {
         CheckRuleResult {
             rule: "placeholders".into(),
+            key: core_check_key("placeholders"),
+            mandatory: true,
             status: "unavailable".into(),
             reason: Some("Marker syntax is unsupported or malformed".into()),
             findings: placeholders,

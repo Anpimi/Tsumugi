@@ -1,5 +1,7 @@
-import { PluginPermissions } from "./PluginManager";
-import { reviewFindingLabel, reviewRuleLabel, reviewReasonKey } from "./reviewLabels";
+import { ReviewCheckerDetails, ReviewDiagnosticDetails, checkerIdentity, capturedRuleLabel, ruleIdentity } from "./ReviewCheckers";
+import { TextReviewSelections } from "./TextReviewSelections";
+import type { PluginTextReviewSelection } from "./pluginCommands";
+import { reviewFindingLabel, reviewReasonKey } from "./reviewLabels";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
@@ -12,9 +14,9 @@ import { reviewCommands as commands, type Eligibility, type EligibilityReason, t
   type ReviewCheckRequest, type ReviewCheckStartRequest, type ReviewPluginCheckView, type ReviewHistoryPage, type ReviewTarget, type ReviewSummary, type ReviewSummaryPage, type ReviewWrite, type WaiverWrite, type WorkPage } from "./reviewCommands";
 
 type Tab = "review" | "work" | "eligibility";
-type Pending = { kind: "decision"; request: ReviewWrite } | { kind: "check"; request: ReviewCheckRequest; execution: ReviewCheckStartRequest["execution"] }
+type Pending = { kind: "decision"; request: ReviewWrite } | { kind: "check"; request: ReviewCheckRequest; executions: ReviewCheckStartRequest["executions"] }
   | { kind: "waiver"; request: WaiverWrite } | { kind: "fallback"; request: FallbackWrite };
-type Notice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "checkCancelled" | "cancelRequested" | null;
+type Notice = "saved" | "unknown" | "conflict" | "error" | "checkFailed" | "checkCancelled" | "checkUnknown" | "cancelRequested" | null;
 const MAX_BATCH = 100;
 export interface ReviewHandle { allowLeave: () => Promise<boolean>; showWork: () => void }
 
@@ -27,9 +29,10 @@ function isConflict(error: unknown) {
 }
 function draftKey(target: Pick<ReviewTarget, "locale" | "unitId">) { return `${target.locale}:${target.unitId}`; }
 
-export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
+export function ReviewWorkbench({ project, disabled, onOpenTranslation, onOpenExtensions, ref }: {
   project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean;
   ref?: Ref<ReviewHandle>;
+  onOpenExtensions?: () => void;
 }) {
   const { t } = useTranslation();
   const session = executionContext(project);
@@ -57,10 +60,16 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [batchPrompt, setBatchPrompt] = useState(false);
   const [batchRunning, setBatchRunning] = useState(false);
   const [checkReview, setCheckReview] = useState<{ request: ReviewCheckRequest; view: ReviewPluginCheckView } | null>(null);
-  const [checkConsent, setCheckConsent] = useState<string | null>(null);
+  const [advisoryChecks, setAdvisoryChecks] = useState<PluginTextReviewSelection[]>([]);
+  const [checkConsent, setCheckConsent] = useState<string[]>([]);
+  const currentCheck = selected?.currentCheck ?? null;
   const currentCheckReview = selected && checkReview && checkReview.request.sessionToken === session.sessionToken
     && checkReview.request.projectId === session.projectId && checkReview.request.unitId === selected?.unitId
-    && checkReview.request.locale === selected.locale && checkReview.request.expectedBasis === selected.basis ? checkReview : null;
+    && checkReview.request.locale === selected.locale && checkReview.request.expectedBasis === selected.basis
+    && JSON.stringify(checkReview.request.advisoryChecks) === JSON.stringify(advisoryChecks) ? checkReview : null;
+  const slotConsentKey = (slot: ReviewPluginCheckView["checkers"][number]) => JSON.stringify([session, currentCheckReview?.request, slot]);
+  const checkersConfirmed = Boolean(currentCheckReview && currentCheckReview.view.checkers.length > 0
+    && currentCheckReview.view.checkers.every(slot => checkConsent.includes(slotConsentKey(slot))));
   const [activeCheckId, setActiveCheckId] = useState<string | null>(null);
   const cancellableCheckId = activeCheckId ?? (pending?.kind === "check" ? pending.request.actionId : null);
   const [batchStatus, setBatchStatus] = useState<{ applied: number; conflicted: number; failed: number } | null>(null);
@@ -184,12 +193,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     running.current = true; setBusy(true); setPending(action); setNotice(null);
     if (action.kind === "check") setActiveCheckId(action.request.actionId);
     try {
-      let checkOutcome: "completed" | "failed" | "cancelled" | null = null;
+      let checkOutcome: "completed" | "failed" | "cancelled" | "unknown" | null = null;
       if (action.kind === "decision") await commands.decide(session, action.request);
-      if (action.kind === "check") checkOutcome = (await commands.check({ ...session, check: action.request, execution: action.execution })).outcome;
+      if (action.kind === "check") checkOutcome = (await commands.check({ ...session, check: action.request, executions: action.executions })).outcome;
       if (action.kind === "waiver") await commands.waive(session, action.request);
       if (action.kind === "fallback") await commands.fallback(session, action.request);
-      setPending(null); setNotice(checkOutcome === "failed" ? "checkFailed" : checkOutcome === "cancelled" ? "checkCancelled" : "saved"); setWork(null); setEligibility(null);
+      setPending(null); setNotice(checkOutcome === "unknown" ? "checkUnknown" : checkOutcome === "failed" ? "checkFailed" : checkOutcome === "cancelled" ? "checkCancelled" : "saved"); setWork(null); setEligibility(null);
       if (action.kind === "decision") {
         setChosen(previous => {
           const key = `${action.request.locale}:${action.request.unitId}`;
@@ -233,10 +242,10 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (!selected || running.current) return;
     const target = selected;
     const ticket = generation.current;
-    running.current = true; setBusy(true); setNotice(null); setCheckReview(null); setCheckConsent(null);
+    running.current = true; setBusy(true); setNotice(null); setCheckReview(null); setCheckConsent([]);
     try {
       const actionId = await executionCommands.identity(session);
-      const request = { ...session, actionId, unitId: target.unitId, locale: target.locale, expectedBasis: target.basis };
+      const request = { ...session, actionId, unitId: target.unitId, locale: target.locale, expectedBasis: target.basis, advisoryChecks };
       const value = await commands.prepareCheck(request);
       if (!alive.current || generation.current !== ticket) return;
       if (value.kind === "plugin") setCheckReview({ request, view: value.view });
@@ -245,18 +254,18 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     finally { running.current = false; if (alive.current && generation.current === ticket) setBusy(false); }
   }
   async function check() {
-    if (!currentCheckReview || checkConsent !== currentCheckReview.view.inputDigest || running.current) return;
+    if (!currentCheckReview || !checkersConfirmed || running.current) return;
     const review = currentCheckReview;
     const ticket = generation.current;
     running.current = true; setBusy(true);
     try {
-      const grantId = await executionCommands.identity(session);
+      const executions = await Promise.all(review.view.checkers.map(async slot => ({ ...session,
+        grantId: await executionCommands.identity(session), attemptId: slot.attemptId, inputDigest: slot.inputDigest,
+        expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true })));
       if (!alive.current || generation.current !== ticket) return;
-      const execution = { ...session, grantId, attemptId: review.view.attemptId, inputDigest: review.view.inputDigest,
-        expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true };
       running.current = false;
-      setCheckReview(null); setCheckConsent(null);
-      await execute({ kind: "check", request: review.request, execution });
+      setCheckReview(null); setCheckConsent([]);
+      await execute({ kind: "check", request: review.request, executions });
     } catch (error) { if (alive.current) { setNotice("error"); setReason(errorReason(error)); } }
     finally { running.current = false; if (alive.current) setBusy(false); }
   }
@@ -338,11 +347,11 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   function ruleStatusLabel(status: string) {
     return t(status === "passed" ? "review.passed" : status === "not-applicable" ? "review.notApplicable"
       : status === "findings" ? "review.findings" : status === "failed" ? "review.checkFailed"
-      : status === "cancelled" ? "review.checkCancelled" : "review.qaUnavailable");
+      : status === "cancelled" ? "review.checkCancelled" : status === "unknown" ? "review.checkUnknown" : "review.qaUnavailable");
   }
   function ruleReasonLabel(status: string) {
     return t(status === "not-applicable" ? "review.noSelectedTranslationReason" : status === "failed" ? "review.checkFailedHelp"
-      : status === "cancelled" ? "review.checkCancelledHelp" : "review.placeholderUnavailable");
+      : status === "cancelled" ? "review.checkCancelledHelp" : status === "unknown" ? "review.checkUnknownHelp" : "review.incompleteCoverageHelp");
   }
 
   return <>
@@ -359,7 +368,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
               {t(value === "review" ? "review.reviewTab" : value === "work" ? "review.workTab" : "review.eligibilityTab")}
             </button>)}
           </div>
-          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
+          {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "checkUnknown" ? t("review.checkUnknownHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
           {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
           {pending ? <button className="secondary-button" disabled={busy} onClick={() => void execute(pending)}>{t("review.retry")}</button> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
@@ -392,30 +401,36 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                 <div className="form-actions"><button className="primary-button" disabled={busy || !selected.selectionId || !actor.trim()} onClick={() => void decide("approve")}>{t("review.approve")}</button>
                   <button className="secondary-button" disabled={busy || !selected.selectionId || !actor.trim()} onClick={() => void decide("request-changes")}>{t("review.requestChanges")}</button>
                   {!selected.selectionId ? <button className="secondary-button" disabled={busy || !actor.trim()} onClick={() => void fallback(!selected.currentFallback)}>{t(selected.currentFallback ? "review.withdrawFallback" : "review.fallback")}</button> : null}</div>
-                {currentCheckReview ? <section aria-label={t("sourcePlugin.executionReview")}>
-                  <p>{t("review.qaRun")} · {currentCheckReview.view.plugin.checker.provider.plugin.id} {currentCheckReview.view.plugin.checker.provider.plugin.version}</p>
-                  <p>{t(currentCheckReview.view.plugin.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", {
-                    version: currentCheckReview.view.plugin.environment.profile === "node-system-libraries-v1" ? currentCheckReview.view.plugin.environment.toolVersion : currentCheckReview.view.plugin.environment.hostVersion,
-                    system: currentCheckReview.view.plugin.environment.platform.operatingSystem, architecture: currentCheckReview.view.plugin.environment.platform.architecture })}</p>
-                  <PluginPermissions permissions={currentCheckReview.view.plugin.checker.declaration.permissions} />
-                  <p>{t("sourcePlugin.unsandboxed")}</p>
-                  <label className="source-check"><input type="checkbox" checked={checkConsent === currentCheckReview.view.inputDigest} disabled={busy}
-                    onChange={event => setCheckConsent(event.target.checked ? currentCheckReview.view.inputDigest : null)} />{t("review.checkConsent")}</label>
-                </section> : null}
-                <div className="form-actions">{currentCheckReview ? <button className="secondary-button" disabled={busy || checkConsent !== currentCheckReview.view.inputDigest} onClick={() => void check()}>{t("review.check")}</button>
+                <p>{t("review.formatChecksRequired")}</p>
+                <TextReviewSelections value={advisoryChecks} active={open} scopeKey={JSON.stringify([session, selected.unitId, selected.locale])}
+                  disabled={busy || pending !== null || disabled} onOpenExtensions={onOpenExtensions}
+                  onSnapshotRevision={revision => { if (currentCheckReview?.view.checkers.some(slot => slot.plugin.plugin.settingsRevision !== revision)) { setCheckReview(null); setCheckConsent([]); } }}
+                  onChange={choices => { generation.current++; setAdvisoryChecks(choices); setCheckReview(null); setCheckConsent([]); }} />
+                {currentCheckReview ? currentCheckReview.view.checkers.map(slot => <fieldset key={checkerIdentity(slot.checker)}>
+                  <legend>{t("review.checkerConsentScope", { plugin: `${slot.checker.provider.plugin.publisher}/${slot.checker.provider.plugin.id} ${slot.checker.provider.plugin.version}`, profile: slot.checker.profile.id })}</legend>
+                  <ReviewCheckerDetails view={slot.plugin} />
+                  <label className="source-check"><input type="checkbox" checked={checkConsent.includes(slotConsentKey(slot))} disabled={busy || disabled}
+                    onChange={event => { const key = slotConsentKey(slot); setCheckConsent(previous => event.target.checked ? [...previous.filter(value => value !== key), key] : previous.filter(value => value !== key)); }} />{t("review.checkConsent")}</label>
+                </fieldset>) : null}
+                <div className="form-actions">{currentCheckReview ? <button className="secondary-button" disabled={busy || disabled || !checkersConfirmed} onClick={() => void check()}>{t("review.check")}</button>
                   : <button className="secondary-button" disabled={busy || pending !== null} onClick={() => void prepareCheck()}>{busy ? t("review.checking") : t("review.prepareCheck")}</button>}
                   {cancellableCheckId ? <button className="secondary-button" onClick={() => void cancelCheck()}>{t("review.cancelCheck")}</button> : null}</div>
-                <h4>{t("review.qaCurrent")}</h4>{!selected.currentCheck ? <p>{t("review.qaMissing")}</p> : selected.currentCheck.rules.map(rule => <div key={rule.rule} className="review-rule"><strong>{reviewRuleLabel(t, rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                <h4>{t("review.qaCurrent")}</h4>{!currentCheck ? <p>{t("review.qaMissing")}</p> : currentCheck.rules.map(rule => <div key={ruleIdentity(rule.key)} className="review-rule"><strong>{capturedRuleLabel(t, currentCheck, rule)}</strong> — {ruleStatusLabel(rule.status)}
+                  <p>{t(rule.mandatory ? "review.mandatoryRule" : "review.advisoryRule")}</p>
                   {rule.reason ? <p>{ruleReasonLabel(rule.status)}</p> : null}
-                  {rule.findings.map(finding => <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</p>
+                  {rule.findings.map(finding => <div key={finding.issueId}><p>{reviewFindingLabel(t, finding.rule, finding.code)}</p>
+                    {finding.detail ? <p>{finding.detail}</p> : null}
+                    <ReviewDiagnosticDetails run={currentCheck} rule={rule} code={finding.code} />
                     {selected.currentWaivers.some(waiver => waiver.issueId === finding.issueId) ? <><p>{t("review.waived")}</p><button className="text-button" disabled={busy || !actor.trim()} onClick={() => void waive(finding.issueId, false, selected.currentWaivers.find(waiver => waiver.issueId === finding.issueId)!.waiverId)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={busy || !actor.trim()} onClick={() => void waive(finding.issueId, true, null)}>{t("review.waive")}</button> : null}</div>)}
                 </div>)}
                 <details><summary>{t("review.history")}</summary>{history && history.decisions.length + history.checks.length + history.waivers.length + history.fallbacks.length === 0 ? <p>{t("review.historyEmpty")}</p> : null}
                   {history?.decisions.map(item => <p key={item.decisionId}>{item.createdAt} · {item.actor} · {t(item.kind === "approve" ? "review.currentApproval" : "review.changesRequested")}{item.decisionId === selected.currentDecision?.decisionId ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
                   {history?.checks.map(item => <div key={item.runId} className="review-history-check"><p>{item.createdAt} · {t("review.qaRun")} · {item.validatorVersion}{item.runId === selected.currentCheck?.runId ? "" : ` · ${t("review.earlier")}`}</p>
-                    <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{reviewRuleLabel(t, rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
+                    <ul>{item.rules.map(rule => <li key={ruleIdentity(rule.key)}><strong>{capturedRuleLabel(t, item, rule)}</strong> — {ruleStatusLabel(rule.status)}
+                      <p>{t(rule.mandatory ? "review.mandatoryRule" : "review.advisoryRule")}</p>
                       {rule.reason ? ` · ${ruleReasonLabel(rule.status)}` : ""}
-                      {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{reviewFindingLabel(t, finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</li>)}</ul> : null}
+                      {rule.findings.length > 0 ? <ul>{rule.findings.map(finding => <li key={finding.issueId}>{reviewFindingLabel(t, finding.rule, finding.code)}
+                        {finding.detail ? <p>{finding.detail}</p> : null}<ReviewDiagnosticDetails run={item} rule={rule} code={finding.code} /></li>)}</ul> : null}
                     </li>)}</ul>
                   </div>)}
                   {history?.waivers.map(item => <p key={item.waiverId}>{item.createdAt} · {item.actor} · {t(item.grant ? "review.waived" : "review.revokeWaiver")}{selected.currentWaivers.some(waiver => waiver.waiverId === item.waiverId) ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}

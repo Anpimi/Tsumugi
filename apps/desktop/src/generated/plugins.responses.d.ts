@@ -214,6 +214,20 @@ export type NativeHostUnavailableReason = "unsupported-platform" | "identity-una
 export type PluginObjectState = "sealed" | "recovery-required";
 export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
+/**
+ * Selecting a check is not adopting its resource or requiring its findings.
+ * Blocking checks continue to use the original mandatory Review contract.
+ */
+export type TextReviewDisposition = "advisory";
+export type PluginTextReviewAvailability =
+  | {
+      kind: "ready";
+      view: PluginTextReviewView;
+    }
+  | {
+      error: CommandError;
+      kind: "unavailable";
+    };
 export type ToolQueryPathPart = string | number;
 
 export interface Responses {
@@ -225,6 +239,8 @@ export interface Responses {
   package: PluginPackageDetailsView;
   runtime: RuntimeEnvironmentDescriptor;
   source: PluginSourceView;
+  textReview: PluginTextReviewView;
+  textReviews: PluginTextReviewListView;
   tool: PluginToolView;
   translation: PluginTranslationView;
 }
@@ -554,6 +570,74 @@ export interface ReviewDeclaration {
 export interface ReviewRuleDeclaration {
   requiresTranslation: boolean;
   rule: ContractRef;
+}
+export interface PluginTextReviewView {
+  binding: TextReviewBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  resourceId: string;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+export interface TextReviewBinding {
+  checker: CapabilityBinding;
+  declaration: TextReviewDeclaration;
+  resources: TextReviewResourceBinding[];
+}
+/**
+ * One provider's available rules. An invocation must use an explicitly chosen
+ * nonempty subset; installation and a matching spelling do not select rules.
+ */
+export interface TextReviewDeclaration {
+  checker: string;
+  disposition: TextReviewDisposition;
+  profile: ContractRef;
+  rules: TextReviewRuleDeclaration[];
+  supportingResources: string[];
+}
+export interface TextReviewRuleDeclaration {
+  description: string;
+  requiresTranslation: boolean;
+  rule: ContractRef;
+  title: string;
+}
+/**
+ * A declared Resource contribution in the exact same package as the checker.
+ * This mirrors Resource metadata, without coupling review to tool declarations.
+ */
+export interface TextReviewResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+/**
+ * Exact package Resource bytes captured by the Host, never a plugin's mutable
+ * lookup or a claim that the referenced resource has been adopted by a project.
+ */
+export interface TextReviewResourcePin {
+  contributionId: string;
+  schema: ContractRef;
+  sha256: string;
+}
+export interface PluginTextReviewListView {
+  entries: PluginTextReviewListEntry[];
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * A missing environment is an observed unavailable Resource, never a synthetic
+ * digest or a selectable request. An existing selection keeps its exact digest.
+ */
+export interface PluginTextReviewListEntry {
+  availability: PluginTextReviewAvailability;
+  environmentDigest: string | null;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
 }
 export interface PluginToolView {
   binding: CapabilityToolBinding;

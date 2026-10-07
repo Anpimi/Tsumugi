@@ -12,7 +12,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
     thread,
-    time::{Instant, Duration},
+    time::{Duration, Instant},
 };
 fn source_project() -> (tempfile::TempDir, ProjectStore, Vec<ContentRow>) {
     let temp = tempfile::tempdir().unwrap();
@@ -279,7 +279,12 @@ fn direct_ai_wire_partial_budget_candidates_and_reopen() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
@@ -391,7 +396,12 @@ fn direct_ai_retry_invalid_and_unknown_are_bounded() {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+        runtime
+            .register_with_policy(
+                Arc::new(AiRunner::default()),
+                RecoveryPolicy::ExternalUnknown,
+            )
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         drain(&mut runtime, &mut store, input.envelope().attempt_id);
         let view = runtime
@@ -462,7 +472,12 @@ fn direct_ai_rejects_bad_configuration_and_preserves_manual_selection() {
         })
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     let result = store
@@ -510,7 +525,12 @@ fn direct_ai_candidate_checks_source_locale_and_cancellation_at_commit() {
             .fixed_input(store.metadata().unwrap().project_id())
             .unwrap();
         let mut runtime = ExecutionRuntime::new(&store).unwrap();
-        runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+        runtime
+            .register_with_policy(
+                Arc::new(AiRunner::default()),
+                RecoveryPolicy::ExternalUnknown,
+            )
+            .unwrap();
         runtime.submit(&mut store, &input).unwrap();
         drain(&mut runtime, &mut store, input.envelope().attempt_id);
         let result = store
@@ -571,7 +591,12 @@ fn direct_ai_missing_credential_dispatches_no_http() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     let view = runtime
@@ -622,7 +647,12 @@ fn direct_ai_concurrency_and_total_request_budget_are_shared() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     server.join().unwrap();
@@ -758,7 +788,12 @@ fn direct_ai_auth_child() {
         .fixed_input(store.metadata().unwrap().project_id())
         .unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    runtime.register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown).unwrap();
+    runtime
+        .register_with_policy(
+            Arc::new(AiRunner::default()),
+            RecoveryPolicy::ExternalUnknown,
+        )
+        .unwrap();
     runtime.submit(&mut store, &input).unwrap();
     drain(&mut runtime, &mut store, input.envelope().attempt_id);
     let result = store

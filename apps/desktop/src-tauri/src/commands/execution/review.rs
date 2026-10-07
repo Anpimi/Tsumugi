@@ -1,4 +1,5 @@
 use super::*;
+pub(in crate::commands::execution) mod checkers;
 pub(in crate::commands) mod plugin;
 pub(super) use plugin::ReviewSession;
 
@@ -149,7 +150,8 @@ request!(
         unit_id: ExecutionId,
         locale: String,
         expected_basis: String,
-        action_id: ExecutionId
+        action_id: ExecutionId,
+        advisory_checks: Vec<crate::commands::plugins::reviews::PluginTextReviewSelection>
     }
 );
 request!(
@@ -459,6 +461,9 @@ pub async fn run_fixture_review_checks(
     state: State<'_, AppState>,
     request: ReviewCheckRequest,
 ) -> Result<CheckRun, CommandError> {
+    if !request.advisory_checks.is_empty() {
+        return Err(checkers::stale());
+    }
     let cancellation = Cancellation::default();
     let running_checks = Arc::clone(&state.review_check_cancellations);
     {
@@ -524,6 +529,7 @@ pub async fn run_fixture_review_checks(
                     &initial.locale,
                     &initial.expected_basis,
                     initial.action_id,
+                    &[],
                 )
                 .map(CheckCapture::Prepared)
                 .map_err(|error| mapped(error, CommandStage::ExecutionAdopt))

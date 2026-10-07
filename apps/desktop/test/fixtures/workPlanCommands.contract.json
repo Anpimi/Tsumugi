@@ -30,8 +30,10 @@
         ],
         "selectionPolicy": "candidates-only",
         "adoptResources": false,
-        "deliver": false
-      }
+        "deliver": false,
+        "advisoryChecks": []
+      },
+      "advisoryChecks": []
     },
     "authorize": {
       "projectId": "60000000-0000-4000-8000-000000000001",
@@ -44,7 +46,7 @@
         "save-candidate"
       ],
       "expiresAt": "18446744073709551615",
-      "checkerExecution": false
+      "checkerExecutions": []
     },
     "start": {
       "projectId": "60000000-0000-4000-8000-000000000001",
@@ -62,7 +64,7 @@
       "command": "pause",
       "confirmed": false,
       "expiresAt": null,
-      "checkerExecution": false
+      "checkerExecutions": []
     },
     "status": {
       "projectId": "60000000-0000-4000-8000-000000000001",
@@ -107,7 +109,8 @@
         ],
         "selectionPolicy": "candidates-only",
         "adoptResources": false,
-        "deliver": false
+        "deliver": false,
+        "advisoryChecks": []
       },
       "scope": [
         {
@@ -166,7 +169,7 @@
         "recipe": "direct-translation-1"
       },
       "attemptId": "60000000-0000-4000-8000-000000000002",
-      "checker": null
+      "checkers": []
     },
     "receipt": {
       "actionId": "60000000-0000-4000-8000-000000000008",
@@ -202,7 +205,8 @@
           ],
           "selectionPolicy": "candidates-only",
           "adoptResources": false,
-          "deliver": false
+          "deliver": false,
+          "advisoryChecks": []
         },
         "scope": [
           {
@@ -261,7 +265,7 @@
           "recipe": "direct-translation-1"
         },
         "attemptId": "60000000-0000-4000-8000-000000000002",
-        "checker": null
+        "checkers": []
       },
       "lease": {
         "planId": "60000000-0000-4000-8000-000000000007",

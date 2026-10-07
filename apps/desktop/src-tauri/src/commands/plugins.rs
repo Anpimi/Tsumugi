@@ -34,6 +34,10 @@ pub use packages::{
     PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
     PluginPackageDetailsView, PluginPackageRequest,
 };
+pub use reviews::{
+    PluginTextReviewAvailability, PluginTextReviewListEntry, PluginTextReviewListView,
+    PluginTextReviewRequest, PluginTextReviewSelection, PluginTextReviewView,
+};
 pub use runtimes::{
     PluginNativeHostApprovalRequest, PluginNativeHostOfferView, PluginRuntimeInstallRequest,
     PluginRuntimeLookupRequest, PluginRuntimeOfferView,

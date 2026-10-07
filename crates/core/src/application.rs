@@ -171,6 +171,7 @@ pub struct SetWorkProtection {
 pub struct PlanOptions {
     pub stages: Vec<StageChoice>,
     pub selection_policy: SelectionPolicy,
+    pub advisory_checks: Vec<crate::AdvisoryReviewCheck>,
     pub adopt_resources: bool,
     pub deliver: bool,
 }
@@ -201,6 +202,7 @@ impl Default for PlanOptions {
                 },
             ],
             selection_policy: SelectionPolicy::CandidatesOnly,
+            advisory_checks: Vec::new(),
             adopt_resources: false,
             deliver: false,
         }
@@ -209,6 +211,7 @@ impl Default for PlanOptions {
 
 impl PlanOptions {
     pub fn validate(&self) -> Result<(), ExecutionError> {
+        crate::persistence::validate_choices(&self.advisory_checks)?;
         let mut stages = BTreeSet::new();
         if self.stages.is_empty()
             || self.stages.len() > 5
@@ -218,6 +221,7 @@ impl PlanOptions {
                 .any(|choice| !stages.insert(choice.stage))
             || (self.selection_policy != SelectionPolicy::CandidatesOnly
                 && (!self.assisted(WorkStage::Generation) || !self.assisted(WorkStage::Checks)))
+            || (!self.advisory_checks.is_empty() && !self.assisted(WorkStage::Checks))
             || (self.adopt_resources && !self.assisted(WorkStage::Resources))
             || (self.deliver && !self.assisted(WorkStage::Delivery))
         {

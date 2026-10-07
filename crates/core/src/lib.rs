@@ -14,13 +14,9 @@ mod review;
 #[cfg(any(test, feature = "execution-test-host"))]
 pub use persistence::BuildLocaleChoice;
 pub use persistence::{
-    AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
-    ComparisonView, MergeBasis,
-};
-pub use persistence::{
-    AttemptView, CaptureContext, CapturedAutomaticSelection, CapturedReviewCheckExecution,
-    ChangeScope, ChangeSnapshot, CheckFinding, CheckRuleResult, CheckRun,
-    ComputedAutomaticSelection, ComputedReviewEvidence, ContextCapture, ContextItem,
+    AdvisoryReviewCheck, AttemptView, CaptureContext, CapturedAutomaticSelection,
+    CapturedReviewCheckExecution, ChangeScope, ChangeSnapshot, CheckFinding, CheckRuleResult,
+    CheckRun, ComputedAutomaticSelection, ComputedReviewEvidence, ContextCapture, ContextItem,
     ContextOmission, ContextRevision, DeliveryFile, DeliveryFileState, DeliveryState, DeliveryView,
     Eligibility, EligibilityLocale, EligibilityReason, FallbackDecision, FallbackWrite,
     GlossaryCapture, GlossaryEntry, GlossaryFile, ImpactItem, ImpactPage, ImpactReason,
@@ -29,16 +25,22 @@ pub use persistence::{
     ReleaseAdoptionHandler, ReleaseException, ReleaseExceptionKind, ReleaseView, ReleasedArtifact,
     ResourceChangeKind, ResourceDecision, ResourceDecisionKind, ResourceDecisionResult,
     ResourceImpactConfidence, ResourceImpactKind, ResourceImpactStatus, ResourcePreview,
-    ResourcePreviewRow, ReviewBasis, ReviewCheckEvidence, ReviewCheckOutcome, ReviewCheckPlan,
-    ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot, ReviewHistoryPage, ReviewNeighbor,
-    ReviewPage, ReviewScopeCapture, ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck,
-    ReviewSummaryDecision, ReviewSummaryPage, ReviewTarget, ReviewWrite, SaveContext, SaveTerm,
-    SaveTranslationRevision, SelectTranslationRevision, TaskView, TermOrigin, TermResolution,
-    TermResolutionEntry, TermRevision, TmMatchKind, TmSuggestion, TranslationAdoptionConfirmation,
+    ResourcePreviewRow, ReviewBasis, ReviewCheckEvidence, ReviewCheckOrigin,
+    ReviewCheckOriginEvidence, ReviewCheckOutcome, ReviewCheckPlan, ReviewChecker,
+    ReviewCheckerKey, ReviewCheckerKind, ReviewDecision, ReviewDecisionKind, ReviewEditorSnapshot,
+    ReviewHistoryPage, ReviewInvocationOutcome, ReviewNeighbor, ReviewPage, ReviewScopeCapture,
+    ReviewScopeUnit, ReviewSummary, ReviewSummaryCheck, ReviewSummaryDecision, ReviewSummaryPage,
+    ReviewTarget, ReviewWrite, SaveContext, SaveTerm, SaveTranslationRevision,
+    SelectTranslationRevision, TaskView, TermOrigin, TermResolution, TermResolutionEntry,
+    TermRevision, TmMatchKind, TmSuggestion, TranslationAdoptionConfirmation,
     TranslationAdoptionHandler, TranslationEditBasis, TranslationHistory, TranslationMatch,
     TranslationOrigin, TranslationPreview, TranslationPreviewRow, TranslationRevision,
     TranslationSaveReceipt, TranslationSelection, TranslationSelectionDecision,
     TranslationSourceContext, Waiver, WaiverWrite, WorkItem, WorkPage,
+};
+pub use persistence::{
+    AiAdoptionHandler, ArenaAdoptionHandler, ComparisonEntry, ComparisonRequest, ComparisonSummary,
+    ComparisonView, MergeBasis,
 };
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
 

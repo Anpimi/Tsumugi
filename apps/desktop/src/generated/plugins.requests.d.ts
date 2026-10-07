@@ -15,6 +15,7 @@ export interface Requests {
   runtimeInstall: PluginRuntimeInstallRequest;
   runtimeLookup: PluginRuntimeLookupRequest;
   source: PluginSourceRequest;
+  textReview: PluginTextReviewRequest;
   tool: PluginToolRequest;
   translation: PluginTranslationRequest;
 }
@@ -83,6 +84,14 @@ export interface PluginRuntimeLookupRequest {
   environmentDigest: string;
 }
 export interface PluginSourceRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+}
+/**
+ * Exact Resource/environment choice, without an execution grant.
+ */
+export interface PluginTextReviewRequest {
   environmentDigest: string;
   package: PluginPackageRequest;
   resourceId: string;

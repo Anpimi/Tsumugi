@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { QueryClient, useQuery } from "@tanstack/react-query";
 import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -46,13 +46,15 @@ export function PluginPermissions({ permissions }: { permissions: PermissionRequ
 
 /** Application configuration stays mounted across project switches and panel
  * close. A rejected/unknown mutation retains its original request for recovery. */
-export function PluginManager({ disabled, onBusyChange }: { disabled: boolean; onBusyChange: (busy: boolean) => void }) {
+export interface PluginManagerHandle { open: () => void }
+export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boolean; onBusyChange: (busy: boolean) => void; ref?: Ref<PluginManagerHandle> }) {
   const { t } = useTranslation();
   const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
     networkMode: "always", retry: false, staleTime: 0, gcTime: 60_000,
     refetchOnWindowFocus: false, refetchOnReconnect: false,
   } } }));
   const [open, setOpen] = useState(false);
+  useImperativeHandle(ref, () => ({ open: () => setOpen(true) }));
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
   const mounted = useRef(true);

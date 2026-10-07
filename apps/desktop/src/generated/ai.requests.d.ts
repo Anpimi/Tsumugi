@@ -9,6 +9,68 @@ export type AutomationEffect =
 export type UnsignedDecimal = string;
 export type WorkPlanCommand = "pause" | "stop" | "take-over" | "continue";
 export type Revision = string;
+/**
+ * Read-only concerns project state; proposals are not already-adopted changes.
+ * Network/process effects still require their own host authorization.
+ */
+export type EffectKind = "read-only" | "proposal" | "external";
+/**
+ * These are requested permissions, never an authorization token.
+ */
+export type PermissionRequest =
+  | {
+      kind: "captured-input";
+    }
+  | {
+      kind: "staged-output";
+    }
+  | {
+      contract: ContractRef;
+      kind: "project-service";
+    }
+  | {
+      destination: string;
+      kind: "network";
+    }
+  | {
+      kind: "process";
+      program: string;
+    };
+/**
+ * Selecting a check is not adopting its resource or requiring its findings.
+ * Blocking checks continue to use the original mandatory Review contract.
+ */
+export type TextReviewDisposition = "advisory";
+/**
+ * Fixed execution choices for the two actual runtime profiles. Each variant
+ * has a strict, distinct profile value and its own data/hash owner. Captured
+ * Node serialization and digests remain exactly those of its existing type.
+ */
+export type ExecutionEnvironmentDescriptor = RuntimeEnvironmentDescriptor | NativeHostEnvironmentDescriptor;
+export type RuntimeArchitecture = "aarch64" | "x86_64";
+export type RuntimeOperatingSystem = "macos" | "linux";
+/**
+ * The installer must independently verify that the approved tool distribution
+ * depends only on the supported platform's system libraries. The profile does
+ * not describe arbitrary Homebrew/npm installations, a sandbox or a captured
+ * OS image. Runtime capture must refuse unsupported profiles and platforms.
+ */
+export type RuntimeEnvironmentProfile = "node-system-libraries-v1";
+/**
+ * Identity of the actual application Host executable. This neither identifies
+ * a publisher nor captures operating-system libraries or dynamically loaded
+ * images. It must come from the trusted Host's OS observation, not a worker.
+ */
+export type NativeHostExecutableIdentity =
+  | {
+      kind: "darwin-code-directory-hash-v1";
+      value: string;
+    }
+  | {
+      kind: "linux-executable-sha256-v1";
+      value: string;
+    };
+export type NativeHostProfile = "native-application-host-v1";
 export type SelectionPolicy = "candidates-only" | "missing-only" | "replace-captured-selection";
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
@@ -73,7 +135,7 @@ export interface WorkPlanActionRequest {
 }
 export interface WorkPlanAuthorizeRequest {
   actionId: ExecutionId;
-  checkerExecution: boolean;
+  checkerExecutions: ReviewCheckerKey[];
   confirmed: boolean;
   digest: string;
   effects: AutomationEffect[];
@@ -82,9 +144,41 @@ export interface WorkPlanAuthorizeRequest {
   projectId: ExecutionId;
   sessionToken: string;
 }
+export interface ReviewCheckerKey {
+  profile: ContractRef;
+  provider: ProviderSelectionBinding;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
+}
+/**
+ * A fixed package/contribution choice, independent of any active instance.
+ * Its digest is supplied by the trusted package owner; this value neither
+ * authenticates those bytes nor grants permission to load or call them.
+ */
+export interface ProviderSelectionBinding {
+  componentId: string;
+  contributionId: string;
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
+/**
+ * Claimed package identity; a host must authenticate the actual package source.
+ */
+export interface PluginIdentity {
+  id: string;
+  publisher: string;
+  version: string;
+}
 export interface WorkPlanControlRequest {
   actionId: ExecutionId;
-  checkerExecution: boolean;
+  checkerExecutions: ReviewCheckerKey[];
   command: WorkPlanCommand;
   confirmed: boolean;
   expectedGeneration: Revision;
@@ -94,6 +188,7 @@ export interface WorkPlanControlRequest {
   sessionToken: string;
 }
 export interface WorkPlanPrepareRequest {
+  advisoryChecks: PluginTextReviewSelection[];
   config?: AiConfig | null;
   locale: string;
   options: PlanOptions;
@@ -101,11 +196,145 @@ export interface WorkPlanPrepareRequest {
   sessionToken: string;
   unitIds: ExecutionId[];
 }
+/**
+ * An explicit action-local subset. Installation never selects these rules.
+ */
+export interface PluginTextReviewSelection {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
+  rules: ContractRef[];
+}
+export interface PluginPackageRequest {
+  packageDigest: string;
+  plugin: PluginIdentity;
+}
 export interface PlanOptions {
   adoptResources: boolean;
+  advisoryChecks: AdvisoryReviewCheck[];
   deliver: boolean;
   selectionPolicy: SelectionPolicy;
   stages: StageChoice[];
+}
+/**
+ * Captured by the trusted package adapter. Selecting these rules neither
+ * adopts Resource entries nor grants permission to run the checker.
+ */
+export interface AdvisoryReviewCheck {
+  binding: TextReviewBinding;
+  declarationResourceId: string;
+  environment: ExecutionEnvironmentDescriptor;
+  resourcePins: TextReviewResourcePin[];
+  rules: ContractRef[];
+}
+export interface TextReviewBinding {
+  checker: CapabilityBinding;
+  declaration: TextReviewDeclaration;
+  resources: TextReviewResourceBinding[];
+}
+/**
+ * Captured declaration data for one selected capability. Requested permissions
+ * remain declarations; validation does not establish an active provider, a
+ * grant, current authority or permission to adopt a result.
+ */
+export interface CapabilityBinding {
+  declaration: CapabilityDeclaration;
+  provider: ProviderSelectionBinding;
+}
+export interface CapabilityDeclaration {
+  contract: ContractRef;
+  effect: EffectKind;
+  errorSchema: ContractRef;
+  inputSchema: ContractRef;
+  limits: CapabilityLimits;
+  outputSchema: ContractRef;
+  permissions: PermissionRequest[];
+  profiles: ContractRef[];
+}
+/**
+ * Requested upper bounds. The host must also enforce its own current limits.
+ */
+export interface CapabilityLimits {
+  concurrency: number;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  timeoutMs: number;
+}
+/**
+ * One provider's available rules. An invocation must use an explicitly chosen
+ * nonempty subset; installation and a matching spelling do not select rules.
+ */
+export interface TextReviewDeclaration {
+  checker: string;
+  disposition: TextReviewDisposition;
+  profile: ContractRef;
+  rules: TextReviewRuleDeclaration[];
+  supportingResources: string[];
+}
+export interface TextReviewRuleDeclaration {
+  description: string;
+  requiresTranslation: boolean;
+  rule: ContractRef;
+  title: string;
+}
+/**
+ * A declared Resource contribution in the exact same package as the checker.
+ * This mirrors Resource metadata, without coupling review to tool declarations.
+ */
+export interface TextReviewResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
+/**
+ * Exact tool and Host choices for a fixed invocation. Paths are logical within
+ * their respective artifacts, never machine paths. The trusted installer owns
+ * approval of these bytes and the tool version, independently of worker output.
+ * A digest is derived from the whole validated value, not separately supplied.
+ */
+export interface RuntimeEnvironmentDescriptor {
+  host: RuntimeArtifactBinding;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: RuntimeEnvironmentProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+  tool: RuntimeArtifactBinding;
+  toolVersion: string;
+}
+export interface RuntimeArtifactBinding {
+  entrypoint: string;
+  /**
+   * Digest of every actual file and its executable flag, including metadata,
+   * dependencies and licenses; this is not the entrypoint's file digest.
+   */
+  treeDigest: string;
+}
+export interface RuntimePlatform {
+  architecture: RuntimeArchitecture;
+  operatingSystem: RuntimeOperatingSystem;
+}
+/**
+ * The native executable and its package resources are already fixed by the
+ * separate provider binding. Native execution has no Node/tool/bootstrap tree.
+ * This profile instead records the actual application Host executable identity.
+ */
+export interface NativeHostEnvironmentDescriptor {
+  executable: NativeHostExecutableIdentity;
+  hostVersion: string;
+  platform: RuntimePlatform;
+  processProtocol: number;
+  profile: NativeHostProfile;
+  protocolVersion: number;
+  sdkVersion: string;
+}
+/**
+ * Exact package Resource bytes captured by the Host, never a plugin's mutable
+ * lookup or a claim that the referenced resource has been adopted by a project.
+ */
+export interface TextReviewResourcePin {
+  contributionId: string;
+  schema: ContractRef;
+  sha256: string;
 }
 export interface StageChoice {
   mode: StageMode;

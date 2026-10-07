@@ -173,7 +173,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, ref }: { 
   function qaState(row: ReviewSummary) {
     const check = row.currentCheck;
     return t(!check || check.basis !== row.basis ? "workbench.qaPending" : check.outcome === "failed" ? "review.checkFailed"
-      : check.outcome === "cancelled" ? "review.checkCancelled" : check.hasFindings ? "review.findings" : "review.passed");
+      : check.outcome === "cancelled" ? "review.checkCancelled" : check.outcome === "unknown" ? "review.checkUnknown"
+      : check.hasIncomplete ? "review.qaUnavailable" : check.hasFindings ? "review.findings" : "review.passed");
   }
   useEffect(() => { if (open) heading.current?.focus(); }, [open, tab]);
   useEffect(() => { setHasDraftSelection(false); setQueryUnavailable(false); }, [editorTarget?.unitId, targetLocale]);

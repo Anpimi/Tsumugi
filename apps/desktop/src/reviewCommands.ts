@@ -2,6 +2,7 @@ import type { SessionRequest } from "./executionCommands";
 import { checkedInvoke } from "./ipc";
 import type { ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
 import * as validators from "./generated/review.validators";
+import { checkerIdentity, contractIdentity } from "./reviewIdentity";
 
 export type { ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
 export type { ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
@@ -33,6 +34,26 @@ export const reviewCommands = {
     const result = await checkedInvoke("prepare_review_checks", request, validators.validateResponsePrepareCheck);
     const captured = result.kind === "recorded" ? result.run : result.view;
     requireConfirmation(sameAction(captured, request) && captured.basis === request.expectedBasis);
+    if (result.kind === "plugin") {
+      const slots = result.view.checkers;
+      requireConfirmation(slots.length > 0 && new Set(slots.map(slot => checkerIdentity(slot.checker))).size === slots.length
+        && new Set(slots.map(slot => slot.attemptId)).size === slots.length);
+      for (const slot of slots) {
+        const plugin = slot.plugin;
+        const capability = plugin.kind === "format" ? plugin.plugin.checker : plugin.plugin.binding.checker;
+        const declaration = plugin.kind === "format" ? plugin.plugin.declaration : plugin.plugin.binding.declaration;
+        requireConfirmation(checkerIdentity(slot.checker) === checkerIdentity({ provider: capability.provider, profile: declaration.profile }));
+        if (plugin.kind === "advisory-text") {
+          requireConfirmation(request.advisoryChecks.some(choice => choice.resourceId === plugin.plugin.resourceId
+            && choice.environmentDigest === plugin.plugin.environmentDigest
+            && choice.package.packageDigest === capability.provider.packageDigest
+            && choice.package.plugin.publisher === capability.provider.plugin.publisher
+            && choice.package.plugin.id === capability.provider.plugin.id && choice.package.plugin.version === capability.provider.plugin.version
+            && JSON.stringify(choice.rules.map(contractIdentity)) === JSON.stringify(plugin.plugin.rules.map(contractIdentity))));
+        }
+      }
+      requireConfirmation(slots.filter(slot => slot.plugin.kind === "advisory-text").length === request.advisoryChecks.length);
+    }
     return result;
   },
   check: async (request: ReviewCheckStartRequest) => {
