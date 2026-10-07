@@ -1,6 +1,7 @@
 //! Work-plan commands share the ordinary project session and runtime.
 pub(crate) mod agent;
 pub(crate) mod broker;
+pub(crate) mod generation;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
@@ -23,6 +24,7 @@ use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 #[derive(Default)]
 pub(super) struct WorkPlanSession {
     prepared: Option<WorkPlan>,
+    generation: generation::GenerationSession,
     environments: BTreeMap<ExecutionId, (String, Vec<CheckerEnvironment>)>,
     checker_consents: BTreeMap<ExecutionId, CheckerConsent>,
     agent_scopes: BTreeMap<ExecutionId, WorkPlanAgentScope>,
@@ -31,8 +33,12 @@ pub(super) struct WorkPlanSession {
     tool_intents: BTreeMap<ExecutionId, broker::HumanToolIntent>,
 }
 impl WorkPlanSession {
+    pub(super) fn generation_preparation_active(&self) -> bool {
+        self.generation.active()
+    }
     pub(super) fn stop(&mut self) {
         self.prepared = None;
+        self.generation.stop();
         self.environments.clear();
         self.checker_consents.clear();
         self.agent_scopes.clear();
@@ -1180,6 +1186,7 @@ pub async fn set_work_protection(
 #[cfg(test)]
 mod tests {
     mod broker_tests;
+    mod generation_tests;
     mod settings;
     use super::*;
     use serde_json::{Value, json};
@@ -1464,8 +1471,18 @@ mod tests {
     }
     fn local_provider_sequence_after_setup(
         texts: Vec<&'static str>,
+        gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        setup: Option<mpsc::Receiver<()>>,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_sequence_with_accept_timeout(texts, gate, setup, Duration::from_secs(5))
+    }
+    // Installed artifact hashing can precede an actual child HTTP dispatch.
+    // This fixture wait does not alter the model's request timeout or budget.
+    fn local_provider_sequence_with_accept_timeout(
+        texts: Vec<&'static str>,
         mut gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
         setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
     ) -> (AiConfig, JoinHandle<Value>) {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1489,7 +1506,7 @@ mod tests {
             }
             let mut last = Value::Null;
             for text in texts {
-                let deadline = Instant::now() + Duration::from_secs(5);
+                let deadline = Instant::now() + accept_timeout;
                 let mut stream = loop {
                     match listener.accept() {
                         Ok((stream, _)) => break stream,

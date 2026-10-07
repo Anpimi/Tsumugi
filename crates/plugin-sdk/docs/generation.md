@@ -5,8 +5,12 @@ The experimental `tsumugi.work-plan-generation` service uses schema/behavior
 the public data shapes and parsers; it has no Core, project database, model,
 credential, queue or authorization dependency. Desktop can observe an installed
 generation component through a read-only, explicit provider/profile/environment
-selection. Component execution and end-to-end product acceptance remain separate
-integration work.
+selection. Its experimental trusted Desktop prepare/start commands use a separate
+ordinary component grant and a scope-neutral factory captured for each actual
+Host dispatch. The original project service enqueues sealed AI children through
+the existing ledger, budget and candidate owner; child execution and effects must
+both settle before releasing their original caller association. End-to-end
+workbench/native product acceptance remains separate integration work.
 
 The Host selects the exact service provider, handle, project, scope, activation
 generation and configuration digest in the existing `ServiceBinding`. The
@@ -45,8 +49,9 @@ configuration, lease, consent or budget overrides, are refused.
 
 The existing process `ServiceRequest` carries the original outer invocation
 context and a separate `EncodedPayload` for this input. Its context input digest
-still identifies the outer component input. The service payload SHA identifies
-these generation bytes; the two digests have different meanings.
+identifies the encoded outer item payload, rather than the complete application
+execution envelope. The service payload SHA identifies these generation bytes;
+the digests have different meanings.
 
 A successful `GenerationServiceReceipt` contains only `taskId`, `attemptId` and
 `inputDigest`, where the digest identifies the actual captured child execution

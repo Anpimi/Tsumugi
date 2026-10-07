@@ -94,6 +94,9 @@ export interface Requests {
   workPlanAgentToolStart: WorkPlanAgentToolStartRequest;
   workPlanAuthorize: WorkPlanAuthorizeRequest;
   workPlanControl: WorkPlanControlRequest;
+  workPlanGenerationDiscard: WorkPlanGenerationDiscardRequest;
+  workPlanGenerationPrepare: WorkPlanGenerationPrepareRequest;
+  workPlanGenerationStart: WorkPlanGenerationStartRequest;
   workPlanPrepare: WorkPlanPrepareRequest;
   workPlanStart: WorkPlanStartRequest;
   workPlanStatus: WorkPlanStatusRequest;
@@ -261,6 +264,47 @@ export interface WorkPlanControlRequest {
   projectId: ExecutionId;
   sessionToken: string;
   toolExecution: boolean;
+}
+export interface WorkPlanGenerationDiscardRequest {
+  attemptId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface WorkPlanGenerationPrepareRequest {
+  attemptId: ExecutionId;
+  component: PluginGenerationComponentRequest;
+  generation: GenerationServiceInput;
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+}
+export interface PluginGenerationComponentRequest {
+  environmentDigest: string;
+  profile: ContractRef | null;
+  provider: ProviderSelectionBinding;
+}
+/**
+ * No model, text payload, destination, consent, lease or budget can be supplied.
+ * The real Host derives input from the original plan and checks current scope.
+ */
+export interface GenerationServiceInput {
+  attemptId: string;
+  taskId: string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [string, ...string[]];
+}
+export interface WorkPlanGenerationStartRequest {
+  attemptId: ExecutionId;
+  expiresAtMs: UnsignedDecimal;
+  grantId: ExecutionId;
+  inputDigest: string;
+  projectId: ExecutionId;
+  scopeId: ExecutionId;
+  sessionToken: string;
+  unsandboxedExecution: boolean;
 }
 export interface WorkPlanPrepareRequest {
   advisoryChecks: PluginTextReviewSelection[];

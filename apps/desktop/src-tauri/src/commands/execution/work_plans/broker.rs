@@ -369,7 +369,7 @@ pub(super) fn restore_consent(
     }
 }
 
-fn current_consent(
+pub(super) fn current_consent(
     host: &ExecutionHost,
     store: &ProjectStore,
     scope: &WorkPlanAgentScope,

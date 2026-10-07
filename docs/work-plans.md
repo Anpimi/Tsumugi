@@ -71,8 +71,38 @@ requires a Project-scoped JavaScript component, a required Single dependency on
 the canonical generation service, matching ProjectService permission, External
 effect and the exact SDK input/receipt/error references. The response keeps the
 actual binding, settings revision and package/runtime provenance. This read does
-not open a WorkPlan scope, issue an execution grant or run a component. Component
-start, per-dispatch service binding and child effect integration remain separate.
+not open a WorkPlan scope, issue an execution grant or run a component.
+
+The experimental Desktop commands `prepare_work_plan_generation_component`,
+`start_work_plan_generation_component` and `discard_work_plan_generation_component`
+use that same installed selection and the already opened WorkPlan scope. Read-only
+preparation fixes one ordinary outer attempt, explicit child identities and source
+subset. Start requires its own unsandboxed execution consent and ordinary plugin
+grant; the outer input has no automation lease. The component cannot replace the
+fixed generation proposal, model, destination, effects or original parent budget.
+The canonical receipt/error payload limit and the complete result-frame allowance
+are separate; frame identity and digest metadata do not consume the payload limit.
+
+The original project executor supplies a weak callback and the original installation
+owner. Cached capability runners keep a scope-neutral service factory. Every actual
+Core dispatch captures its original session/runtime generation, fixed input, permit,
+settings revocation signal and absolute deadline. Its actual Host service caller
+enters a short owner operation: reconcile the durable original call first, or prepare
+sealed Core child input and Desktop effect identities before the guarded atomic
+enqueue. It never waits for model completion. Full checker/tool consents share one
+settings guard; a fresh settings read cannot renew an old signal or grant.
+
+Unknown authorization/enqueue only reconciles the same identity. Known rejected
+enqueues can reuse an already authorized original grant within its original deadline;
+no new consent or deadline is inferred. The child uses the original AI runner,
+ancestor budget and ordinary candidate/check/selection owner. Process closure or
+idle execution does not release a child's association: execution, owned retired
+producers/computations and authorized effects/checkers must all settle. Unknown
+outcomes, retryable effects and storage errors retain the original association.
+An unreadable acknowledgement after enqueue remains unknown. Confirmed terminal
+release preserves the completed effect view; historical receipts never rebuild
+live effect tracking. Full workbench/native
+product acceptance and wider autonomous orchestration remain in development.
 
 Before the first service child enqueue, the trusted caller can check its sealed
 Core preparation without writing execution or budget records. An already accepted

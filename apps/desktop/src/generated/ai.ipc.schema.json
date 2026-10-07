@@ -443,6 +443,36 @@
       "ExecutionId": {
         "type": "string"
       },
+      "GenerationServiceInput": {
+        "additionalProperties": false,
+        "description": "No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.",
+        "properties": {
+          "attemptId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "taskId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "NativeHostEnvironmentDescriptor": {
         "additionalProperties": false,
         "description": "The native executable and its package resources are already fixed by the\nseparate provider binding. Native execution has no Node/tool/bootstrap tree.\nThis profile instead records the actual application Host executable identity.",
@@ -644,6 +674,33 @@
           "advisoryChecks",
           "adoptResources",
           "deliver"
+        ],
+        "type": "object"
+      },
+      "PluginGenerationComponentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "profile",
+          "environmentDigest"
         ],
         "type": "object"
       },
@@ -1307,6 +1364,98 @@
         ],
         "type": "object"
       },
+      "WorkPlanGenerationDiscardRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanGenerationPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "component": {
+            "$ref": "#/definitions/PluginGenerationComponentRequest"
+          },
+          "generation": {
+            "$ref": "#/definitions/GenerationServiceInput"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "attemptId",
+          "component",
+          "generation"
+        ],
+        "type": "object"
+      },
+      "WorkPlanGenerationStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
+        ],
+        "type": "object"
+      },
       "WorkPlanPrepareRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1590,6 +1739,15 @@
       "workPlanControl": {
         "$ref": "#/definitions/WorkPlanControlRequest"
       },
+      "workPlanGenerationDiscard": {
+        "$ref": "#/definitions/WorkPlanGenerationDiscardRequest"
+      },
+      "workPlanGenerationPrepare": {
+        "$ref": "#/definitions/WorkPlanGenerationPrepareRequest"
+      },
+      "workPlanGenerationStart": {
+        "$ref": "#/definitions/WorkPlanGenerationStartRequest"
+      },
       "workPlanPrepare": {
         "$ref": "#/definitions/WorkPlanPrepareRequest"
       },
@@ -1614,6 +1772,9 @@
       "workPlanPrepare",
       "workPlanAuthorize",
       "workPlanStart",
+      "workPlanGenerationPrepare",
+      "workPlanGenerationStart",
+      "workPlanGenerationDiscard",
       "workPlanAgentOpen",
       "workPlanAgentPrepare",
       "workPlanAgentStart",
@@ -3411,6 +3572,36 @@
         ],
         "type": "string"
       },
+      "GenerationServiceInput": {
+        "additionalProperties": false,
+        "description": "No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.",
+        "properties": {
+          "attemptId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "taskId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "ItemStatus": {
         "additionalProperties": false,
         "properties": {
@@ -3762,6 +3953,49 @@
           "capability",
           "profile",
           "environment"
+        ],
+        "type": "object"
+      },
+      "PluginGenerationComponentView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "binding",
+          "profile",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
         ],
         "type": "object"
       },
@@ -5255,6 +5489,49 @@
           }
         ]
       },
+      "WorkPlanGenerationPreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "component": {
+            "$ref": "#/definitions/PluginGenerationComponentView"
+          },
+          "generation": {
+            "$ref": "#/definitions/GenerationServiceInput"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scopeId",
+          "parentTask",
+          "attemptId",
+          "inputDigest",
+          "component",
+          "generation",
+          "scope",
+          "budget"
+        ],
+        "type": "object"
+      },
       "WorkPlanReceiptView": {
         "additionalProperties": false,
         "properties": {
@@ -5579,6 +5856,9 @@
       "workPlanAgentTool": {
         "$ref": "#/definitions/WorkPlanAgentToolView"
       },
+      "workPlanGenerationPreflight": {
+        "$ref": "#/definitions/WorkPlanGenerationPreflight"
+      },
       "workPlanReceipt": {
         "$ref": "#/definitions/WorkPlanReceiptView"
       },
@@ -5595,6 +5875,7 @@
       "view",
       "effectRetry",
       "workPlan",
+      "workPlanGenerationPreflight",
       "workPlanAgent",
       "workPlanAgentGeneration",
       "workPlanAgentTool",

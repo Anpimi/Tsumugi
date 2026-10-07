@@ -60,6 +60,13 @@ struct Attempt {
     input: FixedInput,
     items: BTreeMap<ExecutionId, Item>,
     consent: Option<work_plans::CheckerConsent>,
+    service_origin: ServiceOriginState,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ServiceOriginState {
+    Untracked,
+    Retained,
+    Released,
 }
 enum Computed {
     Candidate(PreparedAdoption),
@@ -76,14 +83,16 @@ struct Job {
 pub(super) struct Automation {
     attempts: BTreeMap<ExecutionId, Attempt>,
     jobs: Vec<Job>,
-    retired: Vec<JoinHandle<()>>,
+    retired: Vec<(ExecutionId, JoinHandle<()>)>,
     #[cfg(test)]
     pub(super) compute_probe: Option<review::ComputeProbe>,
 }
 
 /// Hold the original owner through a bounded enqueue. All fallible reads and
 /// effect identities are prepared first; dropping this value changes no state.
-#[must_use = "commit only after the guarded runtime enqueue succeeds"]
+/// An unknown enqueue retains the same identities for later reconciliation,
+/// without claiming that a durable child exists or restoring any authority.
+#[must_use = "commit only after the guarded runtime enqueue succeeds or has an unknown outcome"]
 pub(in crate::commands::execution) struct PreparedTracking<'a> {
     automation: &'a mut Automation,
     pending: Option<(ExecutionId, Attempt)>,
@@ -120,6 +129,25 @@ fn command_failure(item: &mut Item, error: CommandError) {
         CommandErrorCode::Busy | CommandErrorCode::StorageFailed | CommandErrorCode::OutcomeUnknown
     );
     item.view.error = Some(error);
+}
+fn checker_channel_unsettled(
+    store: &ProjectStore,
+    runtime: &ExecutionRuntime,
+    input: &FixedInput,
+) -> Result<bool, ExecutionError> {
+    let child = input.envelope().attempt_id;
+    if runtime
+        .input_if_present(store, child)?
+        .is_some_and(|stored| stored.bytes() != input.bytes())
+    {
+        return Err(ExecutionError::new(
+            ErrorCode::ResultMismatch,
+            "work-check-attempt",
+        ));
+    }
+    // Authorization can precede a failed submit. Explicitly absent inputs have
+    // no queued effects, but the Runtime still checks owned producer handles.
+    runtime.has_unsettled_attempt(store, child)
 }
 fn cancel_channels(
     checker: &mut CheckerAttempt,
@@ -202,16 +230,21 @@ impl Automation {
     }
 
     /// The sealed Core proposal supplies the original service authority before
-    /// its child is queued. The runtime must accept it before memory is committed.
+    /// its child is queued. Only an accepted or unknown original enqueue can
+    /// commit these identities; a historical receipt cannot recreate tracking.
     pub(super) fn prepare_service_tracking<'a>(
         &'a mut self,
         store: &ProjectStore,
         prepared: &PreparedWorkPlanServiceGeneration,
         consent: Option<work_plans::CheckerConsent>,
     ) -> Result<PreparedTracking<'a>, ExecutionError> {
-        self.prepare_tracking_with(store, prepared.input(), consent, || {
+        let mut tracking = self.prepare_tracking_with(store, prepared.input(), consent, || {
             store.check_prepared_work_plan_service_generation(prepared)
-        })
+        })?;
+        if let Some((_, attempt)) = &mut tracking.pending {
+            attempt.service_origin = ServiceOriginState::Retained;
+        }
+        Ok(tracking)
     }
 
     fn prepare_tracking_with<'a>(
@@ -262,6 +295,7 @@ impl Automation {
                 Attempt {
                     input: input.clone(),
                     consent,
+                    service_origin: ServiceOriginState::Untracked,
                     items: input
                         .envelope()
                         .items
@@ -302,6 +336,75 @@ impl Automation {
                         || item.checker.as_ref().is_some_and(|check| check.pending)
                 })
             })
+    }
+    pub(super) fn release_terminal_service_origins(
+        &mut self,
+        store: &ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<(), ExecutionError> {
+        for (id, attempt) in &mut self.attempts {
+            if attempt.service_origin != ServiceOriginState::Retained
+                || self.jobs.iter().any(|job| job.attempt == *id)
+                || self.retired.iter().any(|(attempt, _)| attempt == id)
+            {
+                continue;
+            }
+            let Some(input) = runtime.input_if_present(store, *id)? else {
+                // An unknown enqueue may not yet have a confirmed ledger entry.
+                continue;
+            };
+            if input.bytes() != attempt.input.bytes() {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "work-effect-attempt",
+                ));
+            }
+            if runtime.has_unsettled_attempt(store, *id)? {
+                continue;
+            }
+            let mut settled = true;
+            for item in attempt.items.values() {
+                if item.view.retryable
+                    || item
+                        .view
+                        .error
+                        .as_ref()
+                        .is_some_and(|error| error.code == CommandErrorCode::OutcomeUnknown)
+                    || !matches!(
+                        item.view.phase,
+                        EffectPhase::Saved
+                            | EffectPhase::Selected
+                            | EffectPhase::Blocked
+                            | EffectPhase::Cancelled
+                            | EffectPhase::Failed
+                    )
+                {
+                    settled = false;
+                    break;
+                }
+                let Some(checker) = &item.checker else {
+                    continue;
+                };
+                if checker.pending {
+                    settled = false;
+                    break;
+                }
+                for channel in checker.channels.iter().filter(|channel| channel.submitted) {
+                    if checker_channel_unsettled(store, runtime, &channel.input)? {
+                        settled = false;
+                        break;
+                    }
+                }
+                if !settled {
+                    break;
+                }
+            }
+            if settled {
+                store.release_work_plan_service_origin(*id)?;
+                attempt.service_origin = ServiceOriginState::Released;
+            }
+        }
+        Ok(())
     }
     pub(super) fn stop(&mut self) {
         for job in &self.jobs {
@@ -366,6 +469,11 @@ impl Automation {
     ) -> Result<Option<work_plans::CheckerConsent>, CommandError> {
         let mut dispatch_consent = None;
         for (id, attempt) in &mut self.attempts {
+            // Released children retain their completed effect view as history.
+            // Their withdrawn authority must not turn completion into failure.
+            if attempt.service_origin == ServiceOriginState::Released {
+                continue;
+            }
             let controlled = store
                 .check_work_plan_input(&attempt.input)
                 .map_err(map_adopt);
@@ -452,9 +560,12 @@ impl Automation {
         Ok(dispatch_consent)
     }
     pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
-        self.retired.retain(|thread| !thread.is_finished());
+        self.retired.retain(|(_, thread)| !thread.is_finished());
         // Control is checked before accepting results or dispatching another checker.
         for (id, attempt) in &mut self.attempts {
+            if attempt.service_origin == ServiceOriginState::Released {
+                continue;
+            }
             if let Err(error) = store.check_work_plan_input(&attempt.input) {
                 for job in self.jobs.iter().filter(|job| job.attempt == *id) {
                     job.cancellation.request();
@@ -488,7 +599,7 @@ impl Automation {
                 continue;
             };
             let job = self.jobs.remove(index);
-            self.retired.push(job.thread);
+            self.retired.push((job.attempt, job.thread));
             let Some(attempt) = self.attempts.get_mut(&job.attempt) else {
                 continue;
             };
@@ -530,6 +641,9 @@ impl Automation {
         // The ordinary runtime owns native execution and its cancellation. Only
         // owned evidence leaves the project thread for Core/domain computation.
         for (attempt_id, attempt) in &mut self.attempts {
+            if attempt.service_origin == ServiceOriginState::Released {
+                continue;
+            }
             for (item_id, item) in &mut attempt.items {
                 let Some(checker) = item.checker.as_mut() else {
                     continue;
@@ -665,6 +779,9 @@ impl Automation {
                 .filter(|item| item.checker.as_ref().is_some_and(|checker| checker.pending))
                 .count();
         for (attempt_id, attempt) in &mut self.attempts {
+            if attempt.service_origin == ServiceOriginState::Released {
+                continue;
+            }
             if occupied >= MAX_COMPUTATIONS {
                 break;
             }
@@ -1272,5 +1389,421 @@ mod tracking_tests {
             automation.attempts[&id].items[&item_id].view.phase,
             EffectPhase::Cancelled
         );
+    }
+
+    mod service_lifecycle {
+        use super::*;
+        use tsumugi_core::application::{WorkPlanServiceCall, WorkPlanServiceOrigin};
+        use tsumugi_plugin_sdk as sdk;
+
+        struct MetadataRunner(PluginExecutionBinding);
+        impl Runner for MetadataRunner {
+            fn capability_id(&self) -> &str {
+                &self.0.capability.declaration.contract.id
+            }
+            fn capability_version(&self) -> &str {
+                "1:1"
+            }
+            fn plugin_provider(&self) -> Option<&sdk::ProviderSelectionBinding> {
+                Some(&self.0.capability.provider)
+            }
+            fn plugin_environment(&self) -> Option<&sdk::ExecutionEnvironmentDescriptor> {
+                Some(&self.0.environment)
+            }
+            fn run(
+                &self,
+                _: DispatchRequest,
+                _: Cancellation,
+                _: ResultSender,
+            ) -> Result<(), ExecutionError> {
+                Err(ExecutionError::new(
+                    ErrorCode::Unauthorized,
+                    "metadata-only-fixture",
+                ))
+            }
+        }
+
+        struct ServiceFixture {
+            fixture: Fixture,
+            runtime: ExecutionRuntime,
+            origin: WorkPlanServiceOrigin,
+            source_unit: ExecutionId,
+        }
+        impl ServiceFixture {
+            fn new() -> Self {
+                let mut fixture = Fixture::new();
+                let scope = fixture
+                    .store
+                    .work_plan_agent_scope(fixture.input.envelope().automation.unwrap())
+                    .unwrap();
+                let source_unit = fixture
+                    .store
+                    .work_plan(scope.lease().plan_id)
+                    .unwrap()
+                    .selection_basis[0]
+                    .unit_id;
+                let wire: serde_json::Value = serde_json::from_str(include_str!(
+                    "../../../../../test/fixtures/pluginGenerationComponent.contract.json"
+                ))
+                .unwrap();
+                let view: crate::commands::plugins::PluginGenerationComponentView =
+                    serde_json::from_value(wire["view"].clone()).unwrap();
+                let binding = PluginExecutionBinding {
+                    capability: view.binding,
+                    profile: view.profile,
+                    environment: view.environment,
+                };
+                let mut runtime = ExecutionRuntime::new(&fixture.store).unwrap();
+                runtime
+                    .register(Arc::new(MetadataRunner(binding.clone())))
+                    .unwrap();
+                runtime
+                    .register(Arc::new(tsumugi_core::ai::AiRunner::with_service(
+                        Arc::default(),
+                    )))
+                    .unwrap();
+                let payload = sdk::GenerationServiceInput {
+                    task_id: ExecutionId::new().to_string(),
+                    attempt_id: ExecutionId::new().to_string(),
+                    unit_ids: vec![source_unit.to_string()],
+                };
+                let mut envelope = InputEnvelope::new(
+                    fixture.store.metadata().unwrap().project_id(),
+                    "generation-component",
+                    &binding.capability.declaration.contract.id,
+                    &binding.capability_version(),
+                    vec![InputItem::new(
+                        Scope {
+                            kind: "generation-component".into(),
+                            id: "synthetic-generation".into(),
+                            locale: None,
+                        },
+                        serde_json::to_value(payload).unwrap(),
+                        vec![],
+                    )],
+                )
+                .unwrap();
+                envelope.plugin = Some(binding.clone());
+                let outer = FixedInput::capture(envelope).unwrap();
+                let expires_at = u64::try_from(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis(),
+                )
+                .unwrap()
+                    + 60_000;
+                runtime
+                    .authorize_plugin(
+                        &mut fixture.store,
+                        ExecutionId::new(),
+                        &outer,
+                        expires_at,
+                        PluginConsent {
+                            unsandboxed_execution: true,
+                        },
+                    )
+                    .unwrap();
+                runtime.submit(&mut fixture.store, &outer).unwrap();
+                let dispatch = fixture
+                    .store
+                    .dispatch_execution_item(
+                        outer.envelope().attempt_id,
+                        outer.envelope().items[0].item_id,
+                    )
+                    .unwrap();
+                let selected = binding.capability.provider;
+                let provider = sdk::ProviderBinding {
+                    plugin: selected.plugin,
+                    component_id: selected.component_id,
+                    contribution_id: selected.contribution_id,
+                    package_digest: selected.package_digest,
+                    instance_id: "synthetic-channel".into(),
+                    activation_generation: 1,
+                };
+                let invocation = outer
+                    .plugin_request(dispatch.item_id, dispatch.dispatch_token, &provider)
+                    .unwrap();
+                let service = sdk::ServiceBinding {
+                    handle_id: "generation-service".into(),
+                    provider_id: "synthetic-generator".into(),
+                    contract: sdk::generation_service_contract(),
+                    input_schema: sdk::generation_service_input_contract(),
+                    output_schema: sdk::generation_service_receipt_contract(),
+                    error_schema: sdk::generation_service_error_contract(),
+                    effect: sdk::EffectKind::External,
+                    project_id: invocation.context.project_id.clone(),
+                    scope_id: invocation.context.scope_id.clone(),
+                    activation_generation: 1,
+                    configuration_digest: "d".repeat(64),
+                    limits: binding.capability.declaration.limits,
+                };
+                let origin = fixture
+                    .store
+                    .capture_work_plan_service_origin(
+                        &scope,
+                        &dispatch,
+                        &invocation,
+                        &service,
+                        dispatch.deadline().unwrap(),
+                        &Cancellation::default(),
+                        &Cancellation::default(),
+                    )
+                    .unwrap();
+                Self {
+                    fixture,
+                    runtime,
+                    origin,
+                    source_unit,
+                }
+            }
+
+            fn prepare(&self, call_id: &str) -> PreparedWorkPlanServiceGeneration {
+                let input = sdk::GenerationServiceInput {
+                    task_id: ExecutionId::new().to_string(),
+                    attempt_id: ExecutionId::new().to_string(),
+                    unit_ids: vec![self.source_unit.to_string()],
+                };
+                self.fixture
+                    .store
+                    .prepare_work_plan_service_generation(
+                        &self.origin,
+                        &WorkPlanServiceCall {
+                            handle_id: "generation-service".into(),
+                            call_id: call_id.into(),
+                            input: sdk::EncodedPayload::capture(
+                                sdk::generation_service_input_contract(),
+                                serde_json::to_string(&input).unwrap(),
+                            )
+                            .unwrap(),
+                        },
+                    )
+                    .unwrap()
+            }
+
+            fn enqueue(
+                &mut self,
+                automation: &mut Automation,
+                prepared: &PreparedWorkPlanServiceGeneration,
+            ) {
+                let tracking = automation
+                    .prepare_service_tracking(&self.fixture.store, prepared, None)
+                    .unwrap();
+                self.runtime
+                    .submit_work_plan_service_child(&mut self.fixture.store, prepared)
+                    .unwrap();
+                tracking.commit();
+            }
+
+            fn fail(&mut self, input: &FixedInput) {
+                let item = input.envelope().items[0].item_id;
+                let dispatch = self
+                    .fixture
+                    .store
+                    .dispatch_execution_item(input.envelope().attempt_id, item)
+                    .unwrap();
+                let result = FixedResult::capture(
+                    ResultEnvelope {
+                        plugin: None,
+                        project_id: input.envelope().project_id,
+                        attempt_id: input.envelope().attempt_id,
+                        item_id: item,
+                        result_id: ExecutionId::new(),
+                        supersedes: None,
+                        dispatch_token: dispatch.dispatch_token,
+                        capability_id: input.envelope().capability_id.clone(),
+                        capability_version: input.envelope().capability_version.clone(),
+                        outcome: ExecutionState::Failed,
+                        output: None,
+                        diagnostic: Some(Diagnostic {
+                            code: "synthetic-known-failure".into(),
+                            retry_safe: false,
+                        }),
+                    },
+                    input,
+                    dispatch.dispatch_token,
+                )
+                .unwrap();
+                self.fixture.store.save_execution_result(&result).unwrap();
+            }
+
+            fn release(&mut self, automation: &mut Automation) -> Result<(), ExecutionError> {
+                automation.release_terminal_service_origins(&self.fixture.store, &mut self.runtime)
+            }
+        }
+
+        #[test]
+        fn service_release_is_per_child_and_preserves_another_queued_child() {
+            let mut fixture = ServiceFixture::new();
+            let mut automation = Automation::default();
+            let first = fixture.prepare("first-child");
+            let second = fixture.prepare("second-child");
+            fixture.enqueue(&mut automation, &first);
+            fixture.enqueue(&mut automation, &second);
+            let first_id = first.input().envelope().attempt_id;
+            let second_id = second.input().envelope().attempt_id;
+            fixture.fail(first.input());
+            fixture.release(&mut automation).unwrap();
+            assert_eq!(
+                automation.attempts[&first_id].service_origin,
+                ServiceOriginState::Retained,
+                "effects still wait for tracking"
+            );
+            automation.tick(&mut fixture.fixture.store, &mut fixture.runtime);
+            assert!(automation.active(), "the other child still waits");
+            fixture.release(&mut automation).unwrap();
+            assert_eq!(
+                automation.attempts[&first_id].service_origin,
+                ServiceOriginState::Released
+            );
+            assert_eq!(
+                automation.attempts[&second_id].service_origin,
+                ServiceOriginState::Retained
+            );
+            let item = first.input().envelope().items[0].item_id;
+            let completed = serde_json::to_value(automation.view(first_id, item).unwrap()).unwrap();
+            automation
+                .prepare_runtime_tick(&mut fixture.fixture.store, &mut fixture.runtime)
+                .unwrap();
+            automation.tick(&mut fixture.fixture.store, &mut fixture.runtime);
+            fixture.release(&mut automation).unwrap();
+            assert_eq!(
+                serde_json::to_value(automation.view(first_id, item).unwrap()).unwrap(),
+                completed
+            );
+            assert!(
+                fixture
+                    .fixture
+                    .store
+                    .check_work_plan_input(first.input())
+                    .is_err()
+            );
+            fixture
+                .fixture
+                .store
+                .check_work_plan_input(second.input())
+                .unwrap();
+            let mut historical = Automation::default();
+            assert!(
+                historical
+                    .prepare_service_tracking(&fixture.fixture.store, &first, None)
+                    .is_err()
+            );
+            assert!(historical.attempts.is_empty());
+        }
+
+        #[test]
+        fn service_release_keeps_unknown_execution_and_retryable_effects_when_idle() {
+            let mut fixture = ServiceFixture::new();
+            let mut automation = Automation::default();
+            let prepared = fixture.prepare("unknown-child");
+            fixture.enqueue(&mut automation, &prepared);
+            let id = prepared.input().envelope().attempt_id;
+            let item_id = prepared.input().envelope().items[0].item_id;
+            let dispatch = fixture
+                .fixture
+                .store
+                .dispatch_execution_item(id, item_id)
+                .unwrap();
+            fixture
+                .fixture
+                .store
+                .note_execution_unknown(id, dispatch.item_id, "synthetic-unknown")
+                .unwrap();
+            automation.tick(&mut fixture.fixture.store, &mut fixture.runtime);
+            assert!(!automation.active());
+            fixture.release(&mut automation).unwrap();
+            assert_eq!(
+                automation.attempts[&id].service_origin,
+                ServiceOriginState::Retained
+            );
+            fixture
+                .fixture
+                .store
+                .check_work_plan_input(prepared.input())
+                .unwrap();
+
+            let prepared = fixture.prepare("retryable-effect");
+            fixture.enqueue(&mut automation, &prepared);
+            let id = prepared.input().envelope().attempt_id;
+            let item_id = prepared.input().envelope().items[0].item_id;
+            fixture.fail(prepared.input());
+            automation.tick(&mut fixture.fixture.store, &mut fixture.runtime);
+            for code in [
+                CommandErrorCode::Busy,
+                CommandErrorCode::StorageFailed,
+                CommandErrorCode::OutcomeUnknown,
+            ] {
+                command_failure(
+                    automation
+                        .attempts
+                        .get_mut(&id)
+                        .unwrap()
+                        .items
+                        .get_mut(&item_id)
+                        .unwrap(),
+                    CommandError::simple(code, CommandStage::ExecutionAdopt),
+                );
+                assert!(!automation.active());
+                fixture.release(&mut automation).unwrap();
+                assert_eq!(
+                    automation.attempts[&id].service_origin,
+                    ServiceOriginState::Retained
+                );
+                fixture
+                    .fixture
+                    .store
+                    .check_work_plan_input(prepared.input())
+                    .unwrap();
+            }
+        }
+
+        #[test]
+        fn unknown_enqueue_tracking_keeps_original_actions_without_claiming_child_presence() {
+            let mut fixture = ServiceFixture::new();
+            let mut automation = Automation::default();
+            let prepared = fixture.prepare("uncertain-enqueue");
+            let id = prepared.input().envelope().attempt_id;
+            let item_id = prepared.input().envelope().items[0].item_id;
+            // Retain the prevalidated identities at an uncertain enqueue seam.
+            automation
+                .prepare_service_tracking(&fixture.fixture.store, &prepared, None)
+                .unwrap()
+                .commit();
+            let action = automation.attempts[&id].items[&item_id].candidate_action;
+            assert!(
+                fixture
+                    .runtime
+                    .input_if_present(&fixture.fixture.store, id)
+                    .unwrap()
+                    .is_none()
+            );
+            fixture.release(&mut automation).unwrap();
+            assert_eq!(
+                automation.attempts[&id].service_origin,
+                ServiceOriginState::Retained
+            );
+            fixture
+                .runtime
+                .submit_work_plan_service_child(&mut fixture.fixture.store, &prepared)
+                .unwrap();
+            automation
+                .prepare_tracking(&fixture.fixture.store, prepared.input(), None)
+                .unwrap()
+                .commit();
+            assert_eq!(
+                automation.attempts[&id].items[&item_id].candidate_action,
+                action
+            );
+            assert_eq!(
+                automation.attempts[&id].service_origin,
+                ServiceOriginState::Retained
+            );
+            assert!(
+                automation
+                    .prepare_service_tracking(&fixture.fixture.store, &prepared, None)
+                    .is_err()
+            );
+        }
     }
 }

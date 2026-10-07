@@ -60,6 +60,9 @@ macro_rules! handlers {
         arena::create_arena_comparison,arena::read_arena_comparison,arena::list_arena_comparisons,
         arena::reveal_arena_identity,arena::save_arena_merge,
         work_plans::prepare_work_plan,work_plans::authorize_work_plan,work_plans::start_work_plan,
+        work_plans::generation::prepare_work_plan_generation_component,
+        work_plans::generation::start_work_plan_generation_component,
+        work_plans::generation::discard_work_plan_generation_component,
         work_plans::agent::open_work_plan_agent_scope,
         work_plans::agent::prepare_work_plan_agent_generation,work_plans::agent::start_work_plan_agent_generation,
         work_plans::broker::prepare_work_plan_agent_tool,work_plans::broker::start_work_plan_agent_tool,
@@ -175,6 +178,7 @@ pub(super) struct ExecutionHost {
     work_plans: work_plans::WorkPlanSession,
     tools: tools::ToolSession,
     plugin_registrations: Vec<PluginExecutionBinding>,
+    service_factory: Option<Arc<dyn tsumugi_plugin_host::core::ProjectServiceFactory>>,
 }
 struct QueryJob {
     query: Arc<OutcomeQuery>,
@@ -201,6 +205,7 @@ impl ExecutionHost {
             work_plans: work_plans::WorkPlanSession::default(),
             tools: tools::ToolSession::default(),
             plugin_registrations: Vec::new(),
+            service_factory: None,
         };
         #[cfg(any(test, feature = "execution-test-host"))]
         host.runtime
@@ -281,6 +286,7 @@ impl ExecutionHost {
             || self.ai.active()
             || self.review.active()
             || self.tools.active()
+            || self.work_plans.generation_preparation_active()
             || !self.queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
@@ -318,6 +324,9 @@ impl ExecutionHost {
             (None, None) => dispatch()?,
         }
         self.ai.tick(store, &mut self.runtime);
+        self.ai
+            .release_terminal_service_origins(store, &mut self.runtime)
+            .map_err(map_recover)?;
         if self.quiescing {
             match self.finish_quiesce(store) {
                 Ok(()) => {}
@@ -429,6 +438,17 @@ impl ExecutionHost {
                 "plugin-registration-limit",
             ));
         }
+        let runner = if binding.capability.declaration.permissions.iter().any(|permission| {
+            matches!(permission, tsumugi_plugin_sdk::PermissionRequest::ProjectService { contract }
+                if *contract == tsumugi_plugin_sdk::generation_service_contract())
+        }) {
+            let factory = self.service_factory.as_ref().ok_or_else(|| {
+                ExecutionError::new(ErrorCode::Unauthorized, "project-service-session")
+            })?;
+            Arc::new((*runner).clone().with_service_factory(factory.clone()))
+        } else {
+            runner
+        };
         self.runtime.register(runner)?;
         self.plugin_registrations.push(binding);
         Ok(())
@@ -446,7 +466,27 @@ impl ActiveSession {
     }
     fn execution_parts(&mut self) -> Result<(&mut ExecutionHost, &mut ProjectStore), CommandError> {
         if self.execution.is_none() {
-            self.execution = Some(ExecutionHost::new(&self.store)?);
+            let mut host = ExecutionHost::new(&self.store)?;
+            if let Some(context) = &self.services {
+                host.service_factory =
+                    Some(Arc::new(work_plans::generation::GenerationFactory::new(
+                        context.clone(),
+                        self.token.clone(),
+                        host.runtime.generation(),
+                        ExecutionId::parse(
+                            &self
+                                .store
+                                .metadata()
+                                .map_err(|error| {
+                                    map_persistence_error(error, CommandStage::ExecutionRead)
+                                })?
+                                .project_id()
+                                .to_string(),
+                        )
+                        .map_err(map_read)?,
+                    )));
+            }
+            self.execution = Some(host);
         }
         Ok((
             self.execution.as_mut().expect("initialized"),

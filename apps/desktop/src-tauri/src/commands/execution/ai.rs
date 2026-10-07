@@ -36,6 +36,14 @@ impl AiSession {
     pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
         self.automation.tick(store, runtime);
     }
+    pub(super) fn release_terminal_service_origins(
+        &mut self,
+        store: &ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<(), ExecutionError> {
+        self.automation
+            .release_terminal_service_origins(store, runtime)
+    }
     pub(super) fn prepare_runtime_tick(
         &mut self,
         store: &mut ProjectStore,

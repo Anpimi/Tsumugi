@@ -8,7 +8,16 @@ Regenerate the internal IPC consumers. Public SDK/process contracts, project
 schema31, WorkPlan2, settings2, receipt1 and dependencies are unchanged. The same
 undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no
 additional bump; bilingual Unreleased entries describe this additive boundary.
-Component start and the production service broker remain in development.
+Desktop adds strict internal human prepare/start/discard IPC for ordinary generation
+components and a trusted per-dispatch service broker on the existing executor.
+Regenerate the AI-domain consumers. The outer plugin grant, sealed child origin,
+original AI/candidate owners and per-child terminal release introduce no persistent
+format or SDK/process contract change. The same undistributed application/SDK
+batch needs no extra bump. Full workbench/native acceptance remains in development.
+Canonical generation results use the existing bounded JSON frame allowance;
+the declared raw payload limit remains separate and unchanged. This internal
+budget correction and Core's independent captured-payload-limit check change no
+wire shape, persistent format, dependency or version.
 
 The SDK adds public work-plan generation service/input/receipt/error contracts
 with independent schema/behavior 1/1. Core's experimental service adapter now
@@ -20,7 +29,7 @@ validators share the Rust definition. Process2, project schema31, WorkPlan2,
 installed settings2, receipt1 and dependencies remain unchanged. Application
 `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` remain the same undistributed batch, with
 synchronized Unreleased entries and no additional bump or historical migration.
-Production Desktop component integration and full acceptance remain separate.
+Full workbench/native product acceptance remains separate.
 
 The trusted service caller can validate the original sealed preparation before
 its first enqueue, then commit already prepared Desktop effect tracking without
@@ -37,7 +46,7 @@ the matching Process-2 SDK and Host. Internal WorkPlan format 2, installed
 settings 2 and dependencies remain unchanged. Application `0.2.0-alpha.1` and
 SDK `0.1.0-alpha.1` remain the same undistributed batch; synchronized Unreleased
 entries require no additional SemVer bump or historical migration. Production
-Desktop integration and full product acceptance remain in development.
+Desktop workbench/native acceptance remains in development.
 
 Core service-origin capture also requires the installation owner's original
 one-way revocation signal. This changes the experimental Rust adapter API;

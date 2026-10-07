@@ -142,11 +142,32 @@ impl SessionCallback {
 
 impl Default for SessionExecutor {
     fn default() -> Self {
+        Self::new(Arc::new(super::plugins::ApplicationPlugins::default()))
+    }
+}
+
+impl SessionExecutor {
+    pub(super) fn new(plugins: Arc<super::plugins::ApplicationPlugins>) -> Self {
         let (sender, receiver) = mpsc::channel::<Job>();
+        let admission = Arc::new(SessionAdmission {
+            sender,
+            normal: Capacity::new(PROJECT_CAPACITY),
+            control: Capacity::new(CONTROL_CAPACITY),
+            accepting: AtomicBool::new(true),
+        });
+        let services = super::ProjectServiceContext {
+            callback: SessionCallback {
+                admission: Arc::downgrade(&admission),
+            },
+            plugins,
+        };
         let changes: Arc<Mutex<Option<super::changes::ChangeSink>>> = Arc::default();
         let sink = changes.clone();
         std::thread::Builder::new().name("project-commands".into()).spawn(move || {
-            let mut sessions = SessionManager::default();
+            let mut sessions = SessionManager {
+                services: Some(services),
+                ..SessionManager::default()
+            };
             let mut last_tick = Instant::now();
             let mut notifications = super::changes::Notifications::default();
             let mut sequence = 0_u64;
@@ -194,15 +215,7 @@ impl Default for SessionExecutor {
                 }
             }
         }).expect("failed to start project command thread");
-        Self {
-            admission: Arc::new(SessionAdmission {
-                sender,
-                normal: Capacity::new(PROJECT_CAPACITY),
-                control: Capacity::new(CONTROL_CAPACITY),
-                accepting: AtomicBool::new(true),
-            }),
-            changes,
-        }
+        Self { admission, changes }
     }
 }
 

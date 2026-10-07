@@ -397,6 +397,66 @@ fn service_tracking_preparation_rechecks_original_revocation_before_enqueue() {
 }
 
 #[test]
+fn committed_service_child_receipt_read_failure_retains_original_input() {
+    let mut fixture = Fixture::new();
+    let prepared = fixture.prepare();
+    let identity = prepared.identity().unwrap();
+    fixture
+        .store
+        .connection()
+        .unwrap()
+        .execute_batch(
+            "CREATE TEMP TRIGGER corrupt_service_ack AFTER INSERT ON application_service_calls
+             BEGIN
+                 UPDATE application_service_calls SET origin=x'00'
+                 WHERE child_attempt=NEW.child_attempt;
+             END;",
+        )
+        .unwrap();
+    let error = fixture
+        .runtime
+        .submit_work_plan_service_child(&mut fixture.store, &prepared)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::OutcomeUnknown);
+    let read_error = fixture
+        .store
+        .work_plan_service_receipt(&identity, &fixture.call)
+        .unwrap_err();
+    assert_eq!(read_error.code, ErrorCode::CorruptLedger);
+    assert_eq!(error.stage, read_error.stage);
+    assert_eq!(error.item_ids, read_error.item_ids);
+    assert_eq!(error.conflict, read_error.conflict);
+    let child = prepared.input().envelope().attempt_id;
+    let retained = fixture
+        .runtime
+        .input_if_present(&fixture.store, child)
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.bytes(), prepared.input().bytes());
+    assert!(
+        fixture
+            .runtime
+            .has_unsettled_attempt(&fixture.store, child)
+            .unwrap()
+    );
+    assert_eq!(
+        fixture.store.execution_attempt(child, false).unwrap().items[0].execution,
+        ExecutionState::Queued
+    );
+    let calls: i64 = fixture
+        .store
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM application_service_calls WHERE child_attempt=?1",
+            [child.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(calls, 1);
+}
+
+#[test]
 fn service_generation_is_atomic_and_same_call_receipts_do_not_enqueue_again() {
     let mut fixture = Fixture::new();
     let prepared = fixture.prepare();

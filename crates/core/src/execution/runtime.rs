@@ -358,7 +358,13 @@ impl ExecutionRuntime {
             Some(prepared),
         )?;
         store
-            .work_plan_service_receipt(&identity, &prepared.call)?
+            .work_plan_service_receipt(&identity, &prepared.call)
+            .map_err(|mut error| {
+                // Enqueue and activation already succeeded. Failure to read
+                // their ACK cannot retract the accepted child or its tracking.
+                error.code = ErrorCode::OutcomeUnknown;
+                error
+            })?
             .ok_or_else(|| ExecutionError::new(ErrorCode::OutcomeUnknown, "service-child-receipt"))
     }
     fn submit_with_parent(
@@ -416,6 +422,42 @@ impl ExecutionRuntime {
         self.workers
             .iter()
             .any(|worker| worker.request.input.envelope().attempt_id == attempt)
+    }
+    /// Read the original ledger's explicit presence result without granting or
+    /// restoring execution authority. Storage errors remain errors.
+    pub fn input_if_present(
+        &self,
+        store: &ProjectStore,
+        attempt: ExecutionId,
+    ) -> Result<Option<FixedInput>, ExecutionError> {
+        store.execution_input_if_present(attempt)
+    }
+
+    /// An ended channel or an idle scheduler does not settle an attempt. Retired
+    /// producers and unresolved outcomes retain their original association.
+    pub fn has_unsettled_attempt(
+        &self,
+        store: &ProjectStore,
+        attempt: ExecutionId,
+    ) -> Result<bool, ExecutionError> {
+        if self.is_active(attempt) || self.retired.iter().any(|(id, _)| *id == attempt) {
+            return Ok(true);
+        }
+        if self.input_if_present(store, attempt)?.is_none() {
+            return Ok(false);
+        }
+        // Preserve the ledger's actual Dispatched state. A nonexecuting view
+        // projects it to Unknown for recovery presentation instead.
+        Ok(store
+            .execution_attempt(attempt, true)?
+            .items
+            .iter()
+            .any(|item| {
+                matches!(
+                    item.execution,
+                    ExecutionState::Queued | ExecutionState::Dispatched | ExecutionState::Unknown
+                )
+            }))
     }
     /// Rebuild only eligible remaining work from durable evidence. Capability
     /// registration and enqueue-time checks remain authoritative.

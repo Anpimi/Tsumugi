@@ -6,18 +6,30 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental Desktop generation-component commands prepare a fixed source subset
+  and require a separate ordinary component execution grant. A cached runner captures
+  its original WorkPlan scope for each real dispatch; actual Host calls enqueue AI
+  children through the existing ledger, ancestor budget and candidate owner. Original
+  consent, settings revocation and deadlines survive the short acknowledgement.
+  Unknown outcomes reconcile without renewal; each child retains its association
+  until execution and authorized effects settle. An unreadable enqueue acknowledgement
+  remains unknown, and terminal release preserves the completed effect view.
+  Canonical generation results reserve frame metadata separately from the unchanged
+  payload limit; Core also verifies that captured payload limit for success,
+  failure and unknown outcomes. Full workbench/native acceptance remains in development.
+
 - Desktop can read an installed generation component's exact provider, explicit
   profile, approved environment and provenance without running it or granting
   execution. Incompatible service dependencies, effects and SDK data contracts
   are refused. This selection does not authorize a WorkPlan or complete the
-  component execution and service integration.
+  workbench/native product acceptance.
 
 - SDK work-plan generation now has public bounded input, child acknowledgement
   and finite error contracts. Core requires their exact schema/behavior 1/1
   references and the original External effect, using the same SDK parser.
   Requests cannot override model, sharing, effects or budget; acknowledgements
   expose no grant or renewal handle. Earlier experimental bindings must use
-  the current contracts. Production Desktop component integration remains
+  the current contracts. Full workbench/native product acceptance remains
   separate work.
 
 - Experimental Core project-service generation retains actual component and

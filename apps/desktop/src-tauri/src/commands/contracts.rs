@@ -294,6 +294,11 @@ struct AiRequests {
     work_plan_prepare: execution::work_plans::WorkPlanPrepareRequest,
     work_plan_authorize: execution::work_plans::WorkPlanAuthorizeRequest,
     work_plan_start: execution::work_plans::WorkPlanStartRequest,
+    work_plan_generation_prepare:
+        execution::work_plans::generation::WorkPlanGenerationPrepareRequest,
+    work_plan_generation_start: execution::work_plans::generation::WorkPlanGenerationStartRequest,
+    work_plan_generation_discard:
+        execution::work_plans::generation::WorkPlanGenerationDiscardRequest,
     work_plan_agent_open: execution::work_plans::agent::WorkPlanAgentOpenRequest,
     work_plan_agent_prepare: execution::work_plans::agent::WorkPlanAgentPrepareRequest,
     work_plan_agent_start: execution::work_plans::agent::WorkPlanAgentStartRequest,
@@ -314,6 +319,7 @@ struct AiResponses {
     view: execution::ai::AiView,
     effect_retry: bool,
     work_plan: execution::work_plans::WorkPlanView,
+    work_plan_generation_preflight: execution::work_plans::generation::WorkPlanGenerationPreflight,
     work_plan_agent: execution::work_plans::agent::WorkPlanAgentView,
     work_plan_agent_generation: execution::work_plans::agent::WorkPlanAgentGenerationView,
     work_plan_agent_tool: execution::work_plans::broker::WorkPlanAgentToolView,

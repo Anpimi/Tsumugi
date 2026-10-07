@@ -258,6 +258,7 @@ export interface Responses {
   workPlanAgent: WorkPlanAgentView;
   workPlanAgentGeneration: WorkPlanAgentGenerationView;
   workPlanAgentTool: WorkPlanAgentToolView;
+  workPlanGenerationPreflight: WorkPlanGenerationPreflight;
   workPlanReceipt: WorkPlanReceiptView;
   workPlanStatus: WorkPlanStatusView;
   workProtection: WorkProtection;
@@ -938,6 +939,38 @@ export interface WorkPlanAgentToolView {
   scopeId: ExecutionId;
   taskId: ExecutionId;
   toolHandle: ExecutionId;
+}
+export interface WorkPlanGenerationPreflight {
+  attemptId: ExecutionId;
+  budget: ProviderBudget;
+  component: PluginGenerationComponentView;
+  generation: GenerationServiceInput;
+  inputDigest: string;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+}
+export interface PluginGenerationComponentView {
+  binding: CapabilityBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  profile: ContractRef | null;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * No model, text payload, destination, consent, lease or budget can be supplied.
+ * The real Host derives input from the original plan and checks current scope.
+ */
+export interface GenerationServiceInput {
+  attemptId: string;
+  taskId: string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [string, ...string[]];
 }
 export interface WorkPlanStatusView {
   effects: AutomationEffect[];

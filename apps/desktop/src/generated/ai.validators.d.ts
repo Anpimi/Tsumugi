@@ -13,6 +13,9 @@ export declare function validateRequestWorkPlanAgentToolPrepare(value: unknown):
 export declare function validateRequestWorkPlanAgentToolStart(value: unknown): value is Requests["workPlanAgentToolStart"];
 export declare function validateRequestWorkPlanAuthorize(value: unknown): value is Requests["workPlanAuthorize"];
 export declare function validateRequestWorkPlanControl(value: unknown): value is Requests["workPlanControl"];
+export declare function validateRequestWorkPlanGenerationDiscard(value: unknown): value is Requests["workPlanGenerationDiscard"];
+export declare function validateRequestWorkPlanGenerationPrepare(value: unknown): value is Requests["workPlanGenerationPrepare"];
+export declare function validateRequestWorkPlanGenerationStart(value: unknown): value is Requests["workPlanGenerationStart"];
 export declare function validateRequestWorkPlanPrepare(value: unknown): value is Requests["workPlanPrepare"];
 export declare function validateRequestWorkPlanStart(value: unknown): value is Requests["workPlanStart"];
 export declare function validateRequestWorkPlanStatus(value: unknown): value is Requests["workPlanStatus"];
@@ -27,6 +30,7 @@ export declare function validateResponseWorkPlanAction(value: unknown): value is
 export declare function validateResponseWorkPlanAgent(value: unknown): value is Responses["workPlanAgent"];
 export declare function validateResponseWorkPlanAgentGeneration(value: unknown): value is Responses["workPlanAgentGeneration"];
 export declare function validateResponseWorkPlanAgentTool(value: unknown): value is Responses["workPlanAgentTool"];
+export declare function validateResponseWorkPlanGenerationPreflight(value: unknown): value is Responses["workPlanGenerationPreflight"];
 export declare function validateResponseWorkPlanReceipt(value: unknown): value is Responses["workPlanReceipt"];
 export declare function validateResponseWorkPlanStatus(value: unknown): value is Responses["workPlanStatus"];
 export declare function validateResponseWorkProtection(value: unknown): value is Responses["workProtection"];
