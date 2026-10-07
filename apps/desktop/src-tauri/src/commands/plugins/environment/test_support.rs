@@ -208,6 +208,9 @@ impl ApplicationPlugins {
         self.provision(&mut manager).unwrap();
         let store = manager.store.as_mut().unwrap();
         let current = store.settings(|| true).unwrap();
+        // Match the production mutation boundary: withdraw the original epoch
+        // before promoting settings, including a later restoration of approval.
+        self.revoke_environment_authority().unwrap();
         store
             .update_settings(
                 current.revision(),

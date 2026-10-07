@@ -278,3 +278,296 @@ fn generation_component_closed_channel_child_obeys_real_disable_and_cannot_reviv
         grant
     );
 }
+
+#[test]
+fn generation_component_prepared_before_settings_withdrawal_needs_a_new_human_action() {
+    for disable_package in [true, false] {
+        let mut fixture = Fixture::create();
+        let (component, _installed, runtime_approval) = install_generation(&fixture);
+        let (config, provider) = local_provider_sequence_at_request(
+            vec!["original root candidate", "explicit restored child"],
+            None,
+            None,
+            Duration::from_secs(90),
+            Duration::from_secs(1),
+        );
+        let (plan, grant) = fixture.start_candidates(config);
+        let root = fixture.wait_saved(&plan["attemptId"]);
+        let scope = fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":grant["lease"]}),
+            )
+            .unwrap();
+        let outer = ExecutionId::new();
+        let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
+        let preparing = json!({"scopeId":scope["scopeId"],"attemptId":outer,"component":component,"generation":generation});
+        let preflight = fixture
+            .call("prepare_work_plan_generation_component", preparing.clone())
+            .unwrap();
+        let starting = json!({"scopeId":scope["scopeId"],"attemptId":outer,"inputDigest":preflight["inputDigest"],
+            "grantId":ExecutionId::new(),"expiresAtMs":(SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()+60_000).to_string(),"unsandboxedExecution":true});
+        let plugins = fixture.app.state::<AppState>().plugins.clone();
+        let revision = plugins.environment_settings_revision().unwrap();
+        assert_eq!(preflight["component"]["settingsRevision"], json!(revision));
+        let original_epoch = plugins.with_environment_authority(revision, Ok).unwrap();
+        assert!(!original_epoch.is_requested());
+        let package = json!({"plugin":component["provider"]["plugin"],"packageDigest":component["provider"]["packageDigest"]});
+        if disable_package {
+            call(
+                &fixture.webview,
+                "set_plugin_enabled",
+                json!({"package":package,"enabled":false,
+                "expectedRevision":revision,"actionId":ExecutionId::new()}),
+            )
+            .unwrap();
+        } else {
+            // Native runtime approval IPC does not edit a captured Node identity.
+            // This test uses the same Store CAS and original revocation boundary.
+            plugins.replace_test_runtime_approvals(vec![]);
+        }
+        assert!(original_epoch.is_requested());
+        let withdrawn_revision = plugins.environment_settings_revision().unwrap();
+        assert_eq!(withdrawn_revision.get(), revision.get() + 1);
+        let before = fixture.bytes();
+        let count = fixture.attempt_count();
+        let before_root = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":plan["attemptId"]}),
+            )
+            .unwrap();
+        assert_eq!(before_root["budget"]["dispatched"], 1);
+        assert_eq!(
+            fixture
+                .call("prepare_work_plan_generation_component", preparing.clone())
+                .unwrap(),
+            preflight
+        );
+        assert!(
+            fixture
+                .call("start_work_plan_generation_component", starting.clone())
+                .is_err()
+        );
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(
+            fixture
+                .call(
+                    "read_ai_translation",
+                    json!({"attemptId":plan["attemptId"]})
+                )
+                .unwrap(),
+            before_root
+        );
+        assert!(
+            !fixture
+                .directory
+                .path()
+                .join("component-observer.txt")
+                .exists()
+        );
+        if disable_package {
+            call(
+                &fixture.webview,
+                "set_plugin_enabled",
+                json!({"package":package,"enabled":true,
+                "expectedRevision":withdrawn_revision,"actionId":ExecutionId::new()}),
+            )
+            .unwrap();
+        } else {
+            plugins.replace_test_runtime_approvals(vec![runtime_approval]);
+        }
+        let restored_revision = plugins.environment_settings_revision().unwrap();
+        assert_eq!(restored_revision.get(), revision.get() + 2);
+        assert!(
+            original_epoch.is_requested(),
+            "restoration cannot revive the old epoch"
+        );
+        let restored_epoch = plugins
+            .with_environment_authority(restored_revision, Ok)
+            .unwrap();
+        assert!(!restored_epoch.is_requested());
+        let before = fixture.bytes();
+        assert_eq!(
+            fixture
+                .call("prepare_work_plan_generation_component", preparing.clone())
+                .unwrap(),
+            preflight
+        );
+        let error = fixture
+            .call("start_work_plan_generation_component", starting.clone())
+            .unwrap_err();
+        assert_eq!(error["code"], "result-mismatch");
+        assert_eq!(error["reason"], "generation-component-identity");
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(
+            fixture
+                .call(
+                    "read_ai_translation",
+                    json!({"attemptId":plan["attemptId"]})
+                )
+                .unwrap(),
+            before_root
+        );
+        let original_attempt = outer;
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+                assert!(
+                    host.runtime
+                        .input_if_present(store, original_attempt)
+                        .unwrap()
+                        .is_none()
+                );
+            });
+        assert_eq!(
+            fixture
+                .call(
+                    "discard_work_plan_generation_component",
+                    json!({"attemptId":outer}),
+                )
+                .unwrap(),
+            true
+        );
+        // A separate explicit action captures the restored revision and requests
+        // an ordinary component grant. The original parent budget is unchanged.
+        let fresh = start_component(&fixture, component, &grant);
+        assert_ne!(fresh.outer, outer);
+        assert_ne!(fresh.generation["attemptId"], generation["attemptId"]);
+        assert_ne!(fresh.generation["taskId"], generation["taskId"]);
+        assert_ne!(fresh.starting["grantId"], starting["grantId"]);
+        assert_eq!(
+            fresh.preflight["component"]["settingsRevision"],
+            json!(restored_revision)
+        );
+        assert_eq!(fresh.preflight["parentTask"], preflight["parentTask"]);
+        // The enqueue acknowledgement precedes actual process activation and
+        // child creation. The non-null AI detail API is read only afterwards.
+        let child_id: ExecutionId =
+            serde_json::from_value(fresh.generation["attemptId"].clone()).unwrap();
+        let fresh_outer = fresh.outer;
+        let enqueue_deadline = Instant::now() + Duration::from_secs(12);
+        loop {
+            let enqueued = fixture
+                .app
+                .state::<AppState>()
+                .sessions
+                .with(move |sessions| {
+                    let (host, store) =
+                        sessions.active.as_mut().unwrap().execution_parts().unwrap();
+                    host.tick(store).unwrap();
+                    if host
+                        .runtime
+                        .input_if_present(store, child_id)
+                        .unwrap()
+                        .is_some()
+                    {
+                        return true;
+                    }
+                    let outer = store.execution_attempt(fresh_outer, true).unwrap();
+                    assert!(
+                        !outer.items.iter().any(|item| matches!(
+                            item.execution,
+                            ExecutionState::Failed
+                                | ExecutionState::CancelledBeforeDispatch
+                                | ExecutionState::Unknown
+                        )),
+                        "component ended without its child: {outer:?}"
+                    );
+                    false
+                });
+            if enqueued {
+                break;
+            }
+            assert!(
+                Instant::now() < enqueue_deadline,
+                "actual component did not enqueue child"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let child = fixture.wait_saved(&fresh.generation["attemptId"]);
+        assert_eq!(
+            child["rows"][0]["output"]["text"],
+            "explicit restored child"
+        );
+        assert_eq!(child["budget"]["dispatched"], 2);
+        assert_eq!(child["budget"]["limit"], 2);
+        wait_outer_closed(&fixture, &fresh);
+        assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+        let connection = rusqlite::Connection::open_with_flags(
+            fixture.directory.path().join("project/project.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let original_grants: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM plugin_execution_grants WHERE attempt_id=?1 OR grant_id=?2",
+                [
+                    outer.to_string(),
+                    starting["grantId"].as_str().unwrap().to_owned(),
+                ],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(original_grants, 0);
+        let association: (String, String) = connection
+            .query_row(
+                "SELECT outer_attempt, child_attempt FROM application_service_calls",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            association,
+            (
+                fresh.outer.to_string(),
+                fresh.generation["attemptId"].as_str().unwrap().into()
+            )
+        );
+        drop(connection);
+        let historical_root = fixture
+            .call(
+                "read_ai_translation",
+                json!({"attemptId":plan["attemptId"]}),
+            )
+            .unwrap();
+        assert_eq!(
+            historical_root["rows"][0]["savedRevisionId"],
+            root["rows"][0]["savedRevisionId"]
+        );
+        fixture.reopen();
+        assert_eq!(
+            fixture
+                .call(
+                    "read_ai_translation",
+                    json!({"attemptId":fresh.generation["attemptId"]})
+                )
+                .unwrap()["rows"][0]["savedRevisionId"],
+            child["rows"][0]["savedRevisionId"]
+        );
+        assert!(
+            fixture
+                .call("start_work_plan_generation_component", starting)
+                .is_err()
+        );
+        assert!(
+            fixture
+                .call("start_work_plan_generation_component", fresh.starting)
+                .is_err()
+        );
+        assert_eq!(
+            fixture
+                .call(
+                    "read_ai_translation",
+                    json!({"attemptId":fresh.generation["attemptId"]})
+                )
+                .unwrap()["budget"],
+            child["budget"]
+        );
+    }
+}
