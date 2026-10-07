@@ -54,6 +54,12 @@ for (const kind of ['text-review-input', 'text-review-declaration', 'text-review
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   textReviewSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
+const generationSchemas = new Map();
+for (const kind of ['generation-service-input', 'generation-service-receipt', 'generation-service-error', 'generation-service-types']) {
+  const url = new URL(`crates/plugin-sdk/schemas/${kind}.schema.json`, root);
+  cargo(`check-${kind}-schema`, fileURLToPath(url));
+  generationSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
+}
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
 const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
 const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
@@ -131,6 +137,16 @@ for (const kind of ['text-review-input', 'text-review-declaration', 'text-review
   const validator = standaloneCode(ajv, ajv.compile(textReviewSchemas.get(kind)));
   if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
     throw new Error('The generated text review validator requires a runtime dependency.');
+  }
+  outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
+}
+outputs.push([new URL('crates/plugin-sdk/javascript/generation.d.ts', root), await compile(generationSchemas.get('generation-service-types'), 'GenerationServiceTypes', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+for (const kind of ['generation-service-input', 'generation-service-receipt', 'generation-service-error']) {
+  const validator = standaloneCode(ajv, ajv.compile(generationSchemas.get(kind)));
+  if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
+    throw new Error('The generated generation validator requires a runtime dependency.');
   }
   outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
 }

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GenerationServiceInput",
+  "description": "No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.",
+  "type": "object",
+  "properties": {
+    "attemptId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+    },
+    "unitIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$"
+      },
+      "maxItems": 100,
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "taskId",
+    "attemptId",
+    "unitIds"
+  ]
+}

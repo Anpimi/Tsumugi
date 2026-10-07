@@ -56,6 +56,13 @@ remaining deadline without changing captured model settings. The component's
 outer input has no automation lease and cannot use the read-only tool delegation
 path to acquire generation permission.
 
+The public SDK [generation service contract](../crates/plugin-sdk/docs/generation.md)
+owns its schema/behavior 1/1 input, acknowledgement and finite error shapes. Core
+uses that SDK parser and requires the exact selected contract/schema versions
+and External effect. Only child task/attempt identities and 1–100 distinct source
+unit IDs enter the request. The acknowledgement exposes child identities and
+their captured input digest, with no grant or authorization handle.
+
 A short service receipt does not mean model completion or candidate adoption.
 Channel closure and outer completion do not release a child's original grant.
 The trusted application retains installed-settings revocation until the child's

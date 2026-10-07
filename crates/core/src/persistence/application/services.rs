@@ -57,7 +57,19 @@ impl WorkPlanServiceCall {
         }
         .validate_against(binding, context)
         .map_err(|_| fail(ErrorCode::InvalidInput, "service-call-input"))?;
-        codec::decode(self.input.utf8.as_bytes(), MAX_INPUT_BYTES)
+        sdk::validate_generation_service_binding(binding)
+            .map_err(|_| fail(ErrorCode::InvalidInput, "service-generation-contract"))?;
+        let generation = sdk::parse_generation_service_input(self.input.utf8.as_bytes())
+            .map_err(|_| fail(ErrorCode::InvalidInput, "service-call-input"))?;
+        Ok(AgentGenerationRequest {
+            task_id: ExecutionId::parse(&generation.task_id)?,
+            attempt_id: ExecutionId::parse(&generation.attempt_id)?,
+            unit_ids: generation
+                .unit_ids
+                .iter()
+                .map(|id| ExecutionId::parse(id))
+                .collect::<Result<_, _>>()?,
+        })
     }
 }
 
@@ -366,6 +378,9 @@ impl ProjectStore {
         {
             return Err(fail(ErrorCode::Unauthorized, "service-origin-dispatch"));
         }
+        check_permission(&dispatch.input, service)?;
+        sdk::validate_generation_service_binding(service)
+            .map_err(|_| fail(ErrorCode::InvalidInput, "service-generation-contract"))?;
         let deadline = original
             .instant
             .min(host_deadline)

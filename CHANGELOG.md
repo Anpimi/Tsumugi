@@ -6,6 +6,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- SDK work-plan generation now has public bounded input, child acknowledgement
+  and finite error contracts. Core requires their exact schema/behavior 1/1
+  references and the original External effect, using the same SDK parser.
+  Requests cannot override model, sharing, effects or budget; acknowledgements
+  expose no grant or renewal handle. Earlier experimental bindings must use
+  the current contracts. Production Desktop component integration remains
+  separate work.
+
 - Experimental Core project-service generation retains actual component and
   service provenance with the original WorkPlan scope, grant, deadline and
   ancestor budget. Durable call receipts reconcile without resubmitting or

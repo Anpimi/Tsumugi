@@ -65,7 +65,7 @@ fn binding() -> PluginExecutionBinding {
                 permissions: vec![
                     sdk::PermissionRequest::CapturedInput,
                     sdk::PermissionRequest::ProjectService {
-                        contract: contract("example.ai-generation"),
+                        contract: sdk::generation_service_contract(),
                     },
                 ],
                 limits: sdk::CapabilityLimits {
@@ -219,10 +219,10 @@ impl Fixture {
         let service = sdk::ServiceBinding {
             handle_id: "generation-service".into(),
             provider_id: "example.ai-generation".into(),
-            contract: contract("example.ai-generation"),
-            input_schema: contract("example.ai-generation-input"),
-            output_schema: contract("example.ai-generation-receipt"),
-            error_schema: contract("example.ai-generation-error"),
+            contract: sdk::generation_service_contract(),
+            input_schema: sdk::generation_service_input_contract(),
+            output_schema: sdk::generation_service_receipt_contract(),
+            error_schema: sdk::generation_service_error_contract(),
             effect: sdk::EffectKind::External,
             project_id: invocation.context.project_id.clone(),
             scope_id: invocation.context.scope_id.clone(),
@@ -257,7 +257,7 @@ impl Fixture {
             handle_id: "generation-service".into(),
             call_id: "original-call".into(),
             input: sdk::EncodedPayload::capture(
-                contract("example.ai-generation-input"),
+                sdk::generation_service_input_contract(),
                 serde_json::to_string(&generation).unwrap(),
             )
             .unwrap(),
@@ -669,6 +669,43 @@ fn service_origin_rejects_forged_context_and_reconstructed_dispatch_deadlines() 
             .unwrap_err()
             .code,
         ErrorCode::Unauthorized
+    );
+}
+
+#[test]
+fn service_origin_requires_the_public_generation_schema_before_child_enqueue() {
+    let fixture = Fixture::new();
+    let generation =
+        sdk::parse_generation_service_input(fixture.call.input.utf8.as_bytes()).unwrap();
+    for change in 0..4 {
+        let mut service = fixture.origin.record.service.clone();
+        match change {
+            0 => service.input_schema.schema_version += 1,
+            1 => service.output_schema.id = "example.other-output".into(),
+            2 => service.error_schema.behavior_version += 1,
+            _ => service.input_schema.id = "example.opaque-generation".into(),
+        }
+        let error = fixture
+            .store
+            .capture_work_plan_service_origin(
+                &fixture.origin.scope,
+                &fixture.dispatch,
+                &fixture.origin.record.invocation,
+                &service,
+                fixture.origin.deadline(),
+                &fixture.cancellation,
+                &fixture.settings_revocation,
+            )
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidInput);
+        assert_eq!(error.stage, "service-generation-contract");
+    }
+    assert!(
+        fixture
+            .store
+            .execution_attempt_ids(ExecutionId::parse(&generation.task_id).unwrap())
+            .unwrap()
+            .is_empty()
     );
 }
 

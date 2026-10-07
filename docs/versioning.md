@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+The SDK adds public work-plan generation service/input/receipt/error contracts
+with independent schema/behavior 1/1. Core's experimental service adapter now
+requires those exact references and the original External effect, and decodes
+the request through the SDK's bounded parser. Consumers of earlier experimental
+bindings must use the current contracts; no alternate namespace or legacy
+payload decoder is retained. Generated public schemas, JavaScript types and
+validators share the Rust definition. Process2, project schema31, WorkPlan2,
+installed settings2, receipt1 and dependencies remain unchanged. Application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` remain the same undistributed batch, with
+synchronized Unreleased entries and no additional bump or historical migration.
+Production Desktop component integration and full acceptance remain separate.
+
 Core work-plan project-service children add durable associations to the original
 execution ledger, retaining actual service descriptors, original caller grants,
 absolute deadlines and ancestor budgets. Current project format is schema 31;

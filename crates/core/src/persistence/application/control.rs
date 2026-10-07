@@ -1184,7 +1184,7 @@ pub(super) fn derive_agent_generation(
     request: &AgentGenerationRequest,
 ) -> Result<FixedInput, ExecutionError> {
     let original = plan.fixed_input()?;
-    if request.unit_ids.len() > 100 {
+    if request.unit_ids.len() > tsumugi_plugin_sdk::MAX_GENERATION_SERVICE_UNITS {
         return Err(err(ErrorCode::LimitExceeded, "work-plan-agent-items"));
     }
     let selected = request
