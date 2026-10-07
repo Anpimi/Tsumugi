@@ -235,6 +235,7 @@ export interface Responses {
   build: PluginBuildView;
   candidate: PluginCandidateView | null;
   error: CommandError;
+  generationComponent: PluginGenerationComponentView;
   inventory: PluginInventoryView;
   package: PluginPackageDetailsView;
   runtime: RuntimeEnvironmentDescriptor;
@@ -425,6 +426,15 @@ export interface CommandError {
   recoveryGuidance?: RecoveryGuidance | null;
   recoveryRequired: boolean;
   stage: CommandStage;
+}
+export interface PluginGenerationComponentView {
+  binding: CapabilityBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  profile: ContractRef | null;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
 }
 /**
  * Installation and approval remain separate even when only one exists. These

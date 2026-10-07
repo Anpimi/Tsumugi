@@ -43,6 +43,7 @@ struct PluginRequests {
     translation: plugins::PluginTranslationRequest,
     build: plugins::PluginBuildRequest,
     tool: plugins::PluginToolRequest,
+    generation_component: plugins::PluginGenerationComponentRequest,
     text_review: plugins::PluginTextReviewRequest,
 }
 #[derive(JsonSchema)]
@@ -58,6 +59,7 @@ struct PluginResponses {
     translation: plugins::PluginTranslationView,
     build: plugins::PluginBuildView,
     tool: plugins::PluginToolView,
+    generation_component: plugins::PluginGenerationComponentView,
     text_review: plugins::PluginTextReviewView,
     text_reviews: plugins::PluginTextReviewListView,
     error: CommandError,

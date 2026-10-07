@@ -63,6 +63,17 @@ and External effect. Only child task/attempt identities and 1–100 distinct sou
 unit IDs enter the request. The acknowledgement exposes child identities and
 their captured input digest, with no grant or authorization handle.
 
+Desktop's `read_plugin_generation_component` observes one installed generation
+component through the existing package and approved-runtime owner. The request
+contains the complete provider identity, an explicit profile (`null` only for
+a profile-independent declaration) and the exact environment digest. Selection
+requires a Project-scoped JavaScript component, a required Single dependency on
+the canonical generation service, matching ProjectService permission, External
+effect and the exact SDK input/receipt/error references. The response keeps the
+actual binding, settings revision and package/runtime provenance. This read does
+not open a WorkPlan scope, issue an execution grant or run a component. Component
+start, per-dispatch service binding and child effect integration remain separate.
+
 Before the first service child enqueue, the trusted caller can check its sealed
 Core preparation without writing execution or budget records. An already accepted
 child is refused at this preparation boundary; reconcile its durable receipt
@@ -78,7 +89,8 @@ execution and authorized effects are terminal. Repeating a call identity only
 reads its original receipt; generic retry cannot replace its attempt to lose the
 origin. Reopening preserves historical associations but cannot reconstruct live
 authority or renew deadlines. This Core adapter requires the matching Process-2
-SDK and Host; production Desktop service selection remains separate integration.
+SDK and Host; production Desktop execution and service binding remain separate
+integration.
 
 Core origin capture requires the installation owner's original one-way
 revocation signal. Every child authority check reads it directly, including

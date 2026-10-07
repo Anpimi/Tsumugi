@@ -3,8 +3,10 @@
 The experimental `tsumugi.work-plan-generation` service uses schema/behavior
 `1/1`. It delegates to an already authorized application WorkPlan. The SDK owns
 the public data shapes and parsers; it has no Core, project database, model,
-credential, queue or authorization dependency. Production Desktop component
-selection and end-to-end product acceptance remain separate integration work.
+credential, queue or authorization dependency. Desktop can observe an installed
+generation component through a read-only, explicit provider/profile/environment
+selection. Component execution and end-to-end product acceptance remain separate
+integration work.
 
 The Host selects the exact service provider, handle, project, scope, activation
 generation and configuration digest in the existing `ServiceBinding`. The

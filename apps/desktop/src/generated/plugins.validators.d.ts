@@ -4,6 +4,7 @@ import type { Responses } from "./plugins.responses";
 export declare function validateRequestBuild(value: unknown): value is Requests["build"];
 export declare function validateRequestDefaultsInstall(value: unknown): value is Requests["defaultsInstall"];
 export declare function validateRequestEnable(value: unknown): value is Requests["enable"];
+export declare function validateRequestGenerationComponent(value: unknown): value is Requests["generationComponent"];
 export declare function validateRequestInstall(value: unknown): value is Requests["install"];
 export declare function validateRequestInventory(value: unknown): value is Requests["inventory"];
 export declare function validateRequestLookup(value: unknown): value is Requests["lookup"];
@@ -19,6 +20,7 @@ export declare function validateResponseBinding(value: unknown): value is Respon
 export declare function validateResponseBuild(value: unknown): value is Responses["build"];
 export declare function validateResponseCandidate(value: unknown): value is Responses["candidate"];
 export declare function validateResponseError(value: unknown): value is Responses["error"];
+export declare function validateResponseGenerationComponent(value: unknown): value is Responses["generationComponent"];
 export declare function validateResponseInventory(value: unknown): value is Responses["inventory"];
 export declare function validateResponsePackage(value: unknown): value is Responses["package"];
 export declare function validateResponseRuntime(value: unknown): value is Responses["runtime"];

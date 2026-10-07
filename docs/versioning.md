@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+Desktop adds an internal read-only generation-component selection request and
+response, generated from their Rust/Serde definitions. The request fixes the
+complete provider, an explicitly present profile (reference or null) and an
+approved environment; observation supplies no execution or WorkPlan authority.
+Regenerate the internal IPC consumers. Public SDK/process contracts, project
+schema31, WorkPlan2, settings2, receipt1 and dependencies are unchanged. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no
+additional bump; bilingual Unreleased entries describe this additive boundary.
+Component start and the production service broker remain in development.
+
 The SDK adds public work-plan generation service/input/receipt/error contracts
 with independent schema/behavior 1/1. Core's experimental service adapter now
 requires those exact references and the original External effect, and decodes

@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Desktop can read an installed generation component's exact provider, explicit
+  profile, approved environment and provenance without running it or granting
+  execution. Incompatible service dependencies, effects and SDK data contracts
+  are refused. This selection does not authorize a WorkPlan or complete the
+  component execution and service integration.
+
 - SDK work-plan generation now has public bounded input, child acknowledgement
   and finite error contracts. Core requires their exact schema/behavior 1/1
   references and the original External effect, using the same SDK parser.

@@ -18,6 +18,7 @@ use tsumugi_plugin_sdk as sdk;
 pub(super) mod builds;
 pub(super) mod defaults;
 mod environment;
+pub(super) mod generation;
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(in crate::commands) use environment::test_support::Fixture as InstalledFixture;
 pub(super) mod packages;
@@ -30,6 +31,7 @@ pub use builds::{PluginBuildRequest, PluginBuildView};
 pub use defaults::{PluginDefaultsInstallRequest, PluginDefaultsOfferView};
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(in crate::commands) use environment::test_support::Fixture as InstalledPluginFixture;
+pub use generation::{PluginGenerationComponentRequest, PluginGenerationComponentView};
 pub use packages::{
     PluginCandidateView, PluginEnableRequest, PluginInstallRequest, PluginLookupRequest,
     PluginPackageDetailsView, PluginPackageRequest,
