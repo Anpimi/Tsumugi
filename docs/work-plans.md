@@ -38,10 +38,11 @@ renames and global resource-clock increments do not invalidate a plan whose
 actual scoped evidence is unchanged. A successful comparison is evidence
 validation, not execution or mutation authorization.
 
-Schema 16 stores plan authority, control generations, action receipts, execution
-associations, checked selection receipts and unit protection beside the existing
-execution ledger. This initial development build opens current schema 16 only. Unsupported development
-projects are preserved and refused; recreate projects and reimport source files.
+The current schema stores plan authority, control generations, action receipts,
+execution associations, checked selection receipts and unit protection beside
+the existing execution ledger. This development build opens current schema 28
+only. Unsupported development projects are preserved and refused; recreate
+projects and reimport source files.
 
 `authorize_work_plan` is a trusted human-facing boundary. It accepts an explicit
 confirmation, the exact plan digest, the exact supported effect set and an expiry
@@ -62,6 +63,9 @@ basis. The plan's own checked selections count as progress; a later manual or
 other-plan selection changes the basis and requires a new plan. After initial
 enqueue its returned work is a child of the original task:
 submit it with the returned `parent_task` so all ancestor budgets remain charged.
+Each child item must retain the parent's captured item scope, payload and exact
+dependency identities and expected revisions. Adding, removing or changing a
+dependency is refused before enqueue; canonical dependency ordering is preserved.
 The desktop workbench displays the original plan budget across these attempts,
 including earlier request usage and unresolved reservations.
 Control never refunds requests, resets unknown exposure or rolls back committed

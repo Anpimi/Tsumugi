@@ -3,6 +3,87 @@ use crate::ai::provider::ProviderService;
 use std::process::{Command, Stdio};
 
 #[test]
+fn provider_children_keep_the_exact_parent_dependencies() {
+    let (_temp, mut store, rows) = source_project();
+    let preview = store
+        .preview_ai(
+            config("http://127.0.0.1:9/v1/chat/completions".into()),
+            "zh-CN",
+            &[rows[0].unit_id.unwrap()],
+        )
+        .unwrap();
+    let project = store.metadata().unwrap().project_id();
+    let dependency = Dependency {
+        kind: "captured-source".into(),
+        id: rows[0].source_revision_id.unwrap().to_string(),
+        expected_revision: Revision::new(1).unwrap(),
+    };
+    let mut other_dependency = dependency.clone();
+    other_dependency.id = rows[1].source_revision_id.unwrap().to_string();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime
+        .register_with_policy(Arc::new(AiRunner::default()), RecoveryPolicy::ExternalUnknown)
+        .unwrap();
+
+    for parent_dependencies in [
+        vec![],
+        vec![dependency.clone()],
+        vec![dependency.clone(), other_dependency.clone()],
+    ] {
+        let capture = |dependencies| {
+            let mut envelope = preview.fixed_input(project).unwrap().envelope().clone();
+            envelope.items[0].dependencies = dependencies;
+            FixedInput::capture(envelope).unwrap()
+        };
+        let parent = capture(parent_dependencies.clone());
+        runtime.submit(&mut store, &parent).unwrap();
+        let mut changed_revision = dependency.clone();
+        changed_revision.expected_revision = Revision::new(2).unwrap();
+        let mut changed_kind = dependency.clone();
+        changed_kind.kind = "captured-context".into();
+        for dependencies in [
+            vec![],
+            vec![dependency.clone()],
+            vec![other_dependency.clone()],
+            vec![changed_revision],
+            vec![changed_kind],
+            vec![dependency.clone(), other_dependency.clone()],
+        ] {
+            if dependencies == parent_dependencies {
+                continue;
+            }
+            let child = capture(dependencies);
+            assert_eq!(
+                child.envelope().items[0].scope,
+                parent.envelope().items[0].scope
+            );
+            assert_eq!(
+                child.envelope().items[0].payload,
+                parent.envelope().items[0].payload
+            );
+            let error = runtime
+                .submit_child(&mut store, &child, parent.envelope().task_id)
+                .unwrap_err();
+            assert_eq!(error.code, ErrorCode::Unauthorized);
+            assert_eq!(error.stage, "provider-parent-scope");
+            assert!(store.execution_input(child.envelope().attempt_id).is_err());
+        }
+        let child = capture(parent_dependencies.into_iter().rev().collect());
+        runtime
+            .submit_child(&mut store, &child, parent.envelope().task_id)
+            .unwrap();
+        let stored = store.execution_input(child.envelope().attempt_id).unwrap();
+        assert_eq!(stored.envelope(), child.envelope());
+        assert_eq!(stored.digest(), child.digest());
+        let budget = store
+            .provider_budget(parent.envelope().task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!((budget.dispatched, budget.unresolved), (0, 0));
+    }
+}
+
+#[test]
 fn provider_shared_parent_budget_persists_and_scope_cannot_expand() {
     let (temp, mut store, rows) = source_project();
     let (url, calls, wire) = server("ok");

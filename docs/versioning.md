@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Provider child tasks now retain their parent item's exact captured dependencies,
+including identities and expected revisions. This corrects the existing enqueue
+scope check without changing project schema 28, settings format 2, IPC, SDK,
+process profiles or dependency versions. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` remain the same undistributed batch; synchronized Unreleased
+entries require no additional bump or historical migration.
+
 Editor source/selected-draft lookup adds literal text to the same Resource query
 draft without another execution or persistence contract. This uses existing
 internal view handles and the same undistributed version batch; no extra bump,

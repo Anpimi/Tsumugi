@@ -201,6 +201,7 @@ pub(super) fn record_input(
             || !e.items.iter().all(|i| {
                 parent_input.envelope().items.iter().any(|p| {
                     p.scope == i.scope
+                        && p.dependencies == i.dependencies
                         && p.payload.get("item").unwrap_or(&p.payload)
                             == i.payload.get("item").unwrap_or(&i.payload)
                 })

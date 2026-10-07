@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Provider child tasks cannot add, remove or change their parent's captured
+  input dependencies. Exact dependency identities and expected revisions remain
+  fixed while children share the original ancestor budgets.
+
 - Experimental SDK and Host consumers can bind read-only tool Resources to an
   original captured capability, exact profile and same-package Resource/Skill
   support. Generated JavaScript contracts share the Rust definition; inspection
