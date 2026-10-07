@@ -21,13 +21,13 @@ export function TextReviewSelections({ value, onChange, disabled, active, scopeK
   const observed = useRef(onSnapshotRevision);
   useEffect(() => { observed.current = onSnapshotRevision; }, [onSnapshotRevision]);
   useEffect(() => {
-    if (!active || disabled) return;
+    if (!active) return;
     let current = true;
     setDiscovery({ kind: "loading" });
     void pluginCommands.textReviews().then(view => { if (current) { setDiscovery({ kind: "ready", view }); observed.current?.(view.settingsRevision); } })
       .catch(error => { if (current) setDiscovery({ kind: "failed", error: commandFailure(error) }); });
     return () => { current = false; };
-  }, [active, disabled, scopeKey, refresh]);
+  }, [active, scopeKey, refresh]);
   const entries = discovery.kind === "ready" ? discovery.view.entries : [];
   const selectableIdentity = (entry: PluginTextReviewListEntry) => entry.environmentDigest === null ? null
     : textReviewSelectionIdentity({ ...entry, environmentDigest: entry.environmentDigest });

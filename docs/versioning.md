@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+Text-checker discovery follows its active scope and explicit refresh, without
+restarting when an action locks or unlocks interaction. This corrects Review and
+WorkPlan preparation without changing IPC, SDK/process contracts, schemas,
+settings, dependencies or execution authority. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch and bilingual Unreleased
+entries require no additional bump or historical migration.
+
 Installed package choice discovery now orders metadata reads to respect the
 existing exclusive Store lock. Source/build refresh and workbench re-entry use
 the completed current scan before reading an execution environment. This fixes

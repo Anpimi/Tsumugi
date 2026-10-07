@@ -181,6 +181,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Review and WorkPlan text-checker choices remain stable while an action locks
+  and unlocks its controls. Preparing a check no longer starts an unrelated
+  metadata read that can compete with the original execution start.
+
 - New-project destination previews use the native path separator, including
   macOS root directories, to match the actual project location.
 

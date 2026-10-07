@@ -340,3 +340,33 @@ it("captures explicit text rules and requires each checker consent while replayi
   expect(requests[0].executions.map((execution: { attemptId: string }) => execution.attemptId))
     .toEqual([reviewWire.responses.prepareCheck.view.checkers[0].attemptId, fixtureIdentity(930)]);
 });
+
+it("runs a prepared check without starting competing text metadata discovery", async () => {
+  const original = invoke.getMockImplementation()!;
+  let discoveries = 0;
+  let metadataBusy = false;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_text_reviews" && ++discoveries > 1) {
+      metadataBusy = true;
+      return new Promise(() => {});
+    }
+    if (command === "run_review_checks") {
+      if (metadataBusy) throw { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-store-busy" };
+      const check = reviewCheckFixture(targets.first, (args.request.check as { actionId: string }).actionId);
+      targets.first.currentCheck = check;
+      return check;
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await screen.findByText(/No text suggestion checkers are installed/);
+  await user.click(screen.getByRole("button", { name: "Review check permissions" }));
+  await user.click(await screen.findByRole("checkbox", { name: i18n.t("review.checkConsent") }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await waitFor(() => expect(screen.queryByText("Current checks have not run or are stale.")).not.toBeInTheDocument());
+  expect(invoke.mock.calls.filter(([command]) => command === "run_review_checks")).toHaveLength(1);
+  expect(discoveries).toBe(1);
+});

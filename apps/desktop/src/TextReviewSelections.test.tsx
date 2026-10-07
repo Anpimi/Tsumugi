@@ -70,3 +70,24 @@ it("shows read failures without substituting an empty successful list", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Text checkers could not be read");
   expect(screen.queryByText(/No text suggestion checkers are installed/)).not.toBeInTheDocument();
 });
+
+it("preserves discovered choices while interaction is locked and unlocked", async () => {
+  const onChange = vi.fn();
+  const props = { value: [], onChange, active: true, scopeKey: "same-action" };
+  const rendered = render(<TextReviewSelections {...props} disabled={false} />);
+  const rules = await screen.findAllByRole("checkbox", { name: "Preferred form" });
+  rendered.rerender(<TextReviewSelections {...props} disabled />);
+  for (const rule of rules) expect(rule).toBeDisabled();
+  read.mockImplementationOnce(() => new Promise(() => {}));
+  rendered.rerender(<TextReviewSelections {...props} disabled={false} />);
+  expect(screen.getAllByRole("checkbox", { name: "Preferred form" })).toHaveLength(2);
+  for (const rule of rules) expect(rule).toBeEnabled();
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+it("discovers the current scope even when interaction is initially locked", async () => {
+  render(<TextReviewSelections value={[]} onChange={vi.fn()} active disabled scopeKey="locked-action" />);
+  for (const rule of await screen.findAllByRole("checkbox", { name: "Preferred form" })) expect(rule).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Refresh text checkers" })).toBeDisabled();
+});
