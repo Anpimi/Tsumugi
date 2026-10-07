@@ -44,6 +44,12 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Added
 
+- Experimental SDK advisory text checks now declare explicit rule subsets and
+  exact resource pins independently of file formats, with typed Unicode finding
+  locations. Host metadata validates the actual package and resource bytes;
+  components receive the immutable actual provider. These helpers grant no
+  resource adoption or project QA qualification.
+
 - macOS Apple silicon builds now enable the upstream SHA-256 hardware backend
   for Core and its linked SDK/Host consumers. Complete input and result digest
   checks keep the same algorithm and exact byte identities.

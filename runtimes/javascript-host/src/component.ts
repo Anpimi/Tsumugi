@@ -133,7 +133,12 @@ export class ComponentSession {
   private async invoke(request: InvocationRequest, abort: AbortController): Promise<void> {
     if (this.phase !== 'active' || abort.signal.aborted) return;
     const handler: CapabilityHandler = this.root.get(this.handlerKey);
-    const output = await handler(request.input, Object.freeze({ context: request.context, profile: request.profile ?? null, signal: abort.signal }));
+    const output = await handler(request.input, Object.freeze({
+      context: request.context,
+      provider: this.activation!.provider,
+      profile: request.profile ?? null,
+      signal: abort.signal,
+    }));
     if (this.phase !== 'active' || abort.signal.aborted) return;
     if (!output) throw new Error('Invalid output');
     const { kind, utf8 } = output;

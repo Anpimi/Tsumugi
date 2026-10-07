@@ -1,0 +1,921 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TextReviewTypes",
+  "type": "object",
+  "properties": {
+    "binding": {
+      "$ref": "#/$defs/TextReviewBinding"
+    },
+    "declaration": {
+      "$ref": "#/$defs/TextReviewDeclaration"
+    },
+    "error": {
+      "$ref": "#/$defs/ReviewCheckError"
+    },
+    "input": {
+      "$ref": "#/$defs/TextReviewCheckInput"
+    },
+    "report": {
+      "$ref": "#/$defs/TextReviewCheckReport"
+    }
+  },
+  "required": [
+    "declaration",
+    "binding",
+    "input",
+    "report",
+    "error"
+  ],
+  "$defs": {
+    "CapabilityBinding": {
+      "description": "Captured declaration data for one selected capability. Requested permissions\nremain declarations; validation does not establish an active provider, a\ngrant, current authority or permission to adopt a result.",
+      "type": "object",
+      "properties": {
+        "declaration": {
+          "$ref": "#/$defs/CapabilityDeclaration"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderSelectionBinding"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "declaration"
+      ]
+    },
+    "CapabilityDeclaration": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "effect": {
+          "$ref": "#/$defs/EffectKind"
+        },
+        "errorSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "limits": {
+          "$ref": "#/$defs/CapabilityLimits"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PermissionRequest"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContractRef"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "inputSchema",
+        "outputSchema",
+        "errorSchema",
+        "profiles",
+        "effect",
+        "permissions",
+        "limits"
+      ]
+    },
+    "CapabilityLimits": {
+      "description": "Requested upper bounds. The host must also enforce its own current limits.",
+      "type": "object",
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "maximum": 65535,
+          "minimum": 1
+        },
+        "maxInputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "maxInputBytes",
+        "maxOutputBytes",
+        "concurrency",
+        "timeoutMs"
+      ]
+    },
+    "CheckFinding": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/$defs/FindingSeverity"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "target",
+        "severity"
+      ]
+    },
+    "CheckImplementation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "core"
+            },
+            "validator": {
+              "$ref": "#/$defs/ContractRef"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "validator"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plugin"
+            },
+            "provider": {
+              "$ref": "#/$defs/ProviderSelectionBinding"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "provider"
+          ]
+        }
+      ]
+    },
+    "CheckKey": {
+      "type": "object",
+      "properties": {
+        "implementation": {
+          "$ref": "#/$defs/CheckImplementation"
+        },
+        "rule": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "implementation"
+      ]
+    },
+    "CheckOutcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "findings": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CheckFinding"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "completed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "findings"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "basis": {
+              "$ref": "#/$defs/NotApplicableBasis"
+            },
+            "kind": {
+              "type": "string",
+              "const": "not-applicable"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "basis"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "CheckRequirement": {
+      "type": "object",
+      "properties": {
+        "inputDigest": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/CheckKey"
+        },
+        "mandatory": {
+          "type": "boolean"
+        },
+        "notApplicable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NotApplicableBasis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scopeDigest": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "waivable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "inputDigest",
+        "scopeDigest",
+        "targets",
+        "mandatory",
+        "waivable"
+      ]
+    },
+    "CheckResult": {
+      "type": "object",
+      "properties": {
+        "coveredTargets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputDigest": {
+          "type": "string"
+        },
+        "key": {
+          "$ref": "#/$defs/CheckKey"
+        },
+        "outcome": {
+          "$ref": "#/$defs/CheckOutcome"
+        },
+        "scopeDigest": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "inputDigest",
+        "scopeDigest",
+        "coveredTargets",
+        "outcome"
+      ]
+    },
+    "ContractRef": {
+      "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+      "type": "object",
+      "properties": {
+        "behaviorVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string"
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "schemaVersion",
+        "behaviorVersion"
+      ]
+    },
+    "EffectKind": {
+      "description": "Read-only concerns project state; proposals are not already-adopted changes.\nNetwork/process effects still require their own host authorization.",
+      "type": "string",
+      "enum": [
+        "read-only",
+        "proposal",
+        "external"
+      ]
+    },
+    "FindingSeverity": {
+      "type": "string",
+      "enum": [
+        "warning",
+        "error"
+      ]
+    },
+    "NotApplicableBasis": {
+      "description": "A trusted capture of an allowed reason and its exact scope basis, not a\nplugin's claim that it is safe to skip a required check.",
+      "type": "object",
+      "properties": {
+        "basisDigest": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "basisDigest"
+      ]
+    },
+    "PermissionRequest": {
+      "description": "These are requested permissions, never an authorization token.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "captured-input"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "staged-output"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "contract": {
+              "$ref": "#/$defs/ContractRef"
+            },
+            "kind": {
+              "type": "string",
+              "const": "project-service"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "contract"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "destination": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "network"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "destination"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "process"
+            },
+            "program": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "program"
+          ]
+        }
+      ]
+    },
+    "PluginIdentity": {
+      "description": "Claimed package identity; a host must authenticate the actual package source.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "publisher": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "publisher",
+        "id",
+        "version"
+      ]
+    },
+    "ProviderSelectionBinding": {
+      "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
+      "type": "object",
+      "properties": {
+        "componentId": {
+          "type": "string"
+        },
+        "contributionId": {
+          "type": "string"
+        },
+        "packageDigest": {
+          "type": "string"
+        },
+        "plugin": {
+          "$ref": "#/$defs/PluginIdentity"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "plugin",
+        "componentId",
+        "contributionId",
+        "packageDigest"
+      ]
+    },
+    "ReviewCheckError": {
+      "description": "Public descriptions and operation-local unit references only. Arbitrary\ndiagnostic text is not thereby authenticated or safe to disclose.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ReviewCheckErrorCode"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "unitId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "detail"
+      ]
+    },
+    "ReviewCheckErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid-input",
+        "unsupported-profile",
+        "invalid-source",
+        "invalid-translation",
+        "unsupported-structure",
+        "limit-exceeded",
+        "cancelled"
+      ]
+    },
+    "TextEncoding": {
+      "type": "string",
+      "enum": [
+        "utf8-byte",
+        "utf16",
+        "grapheme"
+      ]
+    },
+    "TextRange": {
+      "description": "Half-open offsets into one exact string, never between different strings.",
+      "type": "object",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/TextEncoding"
+        },
+        "end": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "encoding",
+        "start",
+        "end"
+      ]
+    },
+    "TextReviewBinding": {
+      "type": "object",
+      "properties": {
+        "checker": {
+          "$ref": "#/$defs/CapabilityBinding"
+        },
+        "declaration": {
+          "$ref": "#/$defs/TextReviewDeclaration"
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextReviewResourceBinding"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "declaration",
+        "checker",
+        "resources"
+      ]
+    },
+    "TextReviewCheckInput": {
+      "description": "Generic captured text only. The profile selects the text checker, not the\noriginal file format. Mapping to project revisions remains Host-owned.",
+      "type": "object",
+      "properties": {
+        "profile": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckRequirement"
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextReviewResourcePin"
+          }
+        },
+        "selections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextReviewSelection"
+          }
+        },
+        "sourceLanguage": {
+          "type": "string"
+        },
+        "targetLanguage": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "sourceLanguage",
+        "targetLanguage",
+        "resources",
+        "selections",
+        "requirements"
+      ]
+    },
+    "TextReviewCheckReport": {
+      "description": "A successful report includes one explicit outcome for every selected rule.\nFailed/cancelled/unavailable outcomes are not converted to passed coverage.",
+      "type": "object",
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextReviewDiagnostic"
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CheckResult"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "results",
+        "diagnostics"
+      ]
+    },
+    "TextReviewDeclaration": {
+      "description": "One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.",
+      "type": "object",
+      "properties": {
+        "checker": {
+          "type": "string"
+        },
+        "disposition": {
+          "$ref": "#/$defs/TextReviewDisposition"
+        },
+        "profile": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextReviewRuleDeclaration"
+          }
+        },
+        "supportingResources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "checker",
+        "disposition",
+        "supportingResources",
+        "rules"
+      ]
+    },
+    "TextReviewDiagnostic": {
+      "description": "Optional public presentation associated with one actual finding. Diagnostic\nprose is not authenticated or sanitized by these structural checks.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "$ref": "#/$defs/CheckKey"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextReviewLocation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resourceEntry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextReviewResourceEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suggestion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "code",
+        "target"
+      ]
+    },
+    "TextReviewDisposition": {
+      "description": "Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.",
+      "type": "string",
+      "enum": [
+        "advisory"
+      ]
+    },
+    "TextReviewField": {
+      "type": "string",
+      "enum": [
+        "source",
+        "translation"
+      ]
+    },
+    "TextReviewLocation": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/TextReviewField"
+        },
+        "range": {
+          "$ref": "#/$defs/TextRange"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "field",
+        "range"
+      ]
+    },
+    "TextReviewResourceBinding": {
+      "description": "A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.",
+      "type": "object",
+      "properties": {
+        "contributionId": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contributionId",
+        "schema"
+      ]
+    },
+    "TextReviewResourceEntry": {
+      "type": "object",
+      "properties": {
+        "contributionId": {
+          "type": "string"
+        },
+        "entryId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contributionId",
+        "entryId"
+      ]
+    },
+    "TextReviewResourcePin": {
+      "description": "Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.",
+      "type": "object",
+      "properties": {
+        "contributionId": {
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "contributionId",
+        "schema",
+        "sha256"
+      ]
+    },
+    "TextReviewRuleDeclaration": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "requiresTranslation": {
+          "type": "boolean"
+        },
+        "rule": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "requiresTranslation",
+        "title",
+        "description"
+      ]
+    },
+    "TextReviewSelection": {
+      "type": "object",
+      "properties": {
+        "sourceRevisionId": {
+          "type": "string"
+        },
+        "sourceText": {
+          "type": "string"
+        },
+        "translationText": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unitId": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "unitId",
+        "sourceRevisionId",
+        "sourceText"
+      ]
+    }
+  }
+}

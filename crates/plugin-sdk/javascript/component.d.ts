@@ -1,4 +1,4 @@
-import type { ContractRef, EncodedPayload, InvocationContext } from './process.js';
+import type { ContractRef, EncodedPayload, InvocationContext, ProviderBinding } from './process.js';
 
 /** A proposal payload. The Host supplies the exact schema and digest; Core
  * remains responsible for semantic validation, authority and adoption. */
@@ -8,6 +8,9 @@ export interface CapabilityOutput {
 }
 export interface InvocationMetadata {
   readonly context: Readonly<InvocationContext>;
+  /** The Host-validated channel identity, separate from untrusted input data.
+   * Inspecting it supplies no grant, installer or transport authority. */
+  readonly provider: Readonly<ProviderBinding>;
   readonly profile: Readonly<ContractRef> | null;
   readonly signal: AbortSignal;
 }

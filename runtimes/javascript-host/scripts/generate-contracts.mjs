@@ -48,6 +48,12 @@ for (const kind of ['tool-declaration', 'tool-types']) {
   cargo(`check-${kind}-schema`, fileURLToPath(url));
   toolSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
 }
+const textReviewSchemas = new Map();
+for (const kind of ['text-review-input', 'text-review-declaration', 'text-review-report', 'text-review-types']) {
+  const url = new URL(`crates/plugin-sdk/schemas/${kind}.schema.json`, root);
+  cargo(`check-${kind}-schema`, fileURLToPath(url));
+  textReviewSchemas.set(kind, JSON.parse(await readFile(url, 'utf8')));
+}
 const schema = JSON.parse(await readFile(schemaURL, 'utf8'));
 const contentTypes = JSON.parse(await readFile(contentTypesURL, 'utf8'));
 const sourceInput = JSON.parse(await readFile(sourceInputURL, 'utf8'));
@@ -118,6 +124,16 @@ if (/^\s*import\s/m.test(toolValidator) || /\brequire\s*\(/.test(toolValidator))
   throw new Error('The generated tool validator requires a runtime dependency.');
 }
 outputs.push([new URL('crates/plugin-sdk/javascript/validate-tool-declaration.mjs', root), banner + sourceValidatorAttribution + toolValidator]);
+outputs.push([new URL('crates/plugin-sdk/javascript/text-review.d.ts', root), await compile(textReviewSchemas.get('text-review-types'), 'TextReviewTypes', {
+  bannerComment: banner, additionalProperties: false, unreachableDefinitions: true,
+})]);
+for (const kind of ['text-review-input', 'text-review-declaration', 'text-review-report']) {
+  const validator = standaloneCode(ajv, ajv.compile(textReviewSchemas.get(kind)));
+  if (/^\s*import\s/m.test(validator) || /\brequire\s*\(/.test(validator)) {
+    throw new Error('The generated text review validator requires a runtime dependency.');
+  }
+  outputs.push([new URL(`crates/plugin-sdk/javascript/validate-${kind}.mjs`, root), banner + sourceValidatorAttribution + validator]);
+}
 for (const [url, source] of outputs) {
   if (process.argv.includes('--check')) {
     if (await readFile(url, 'utf8') !== source) throw new Error(`Stale generated contract: ${url.pathname.split('/').at(-1)}`);

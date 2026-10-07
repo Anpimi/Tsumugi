@@ -97,6 +97,33 @@ test('channel refuses a different provider and emits no proposal', { timeout: 50
   assert.deepEqual(h.frames.map(f => f.kind), ['ready']);
 });
 
+test('component metadata exposes the immutable actual channel independently of payload claims', { timeout: 5000 }, async t => {
+  const h = await harness(t, `export default {activate(api){api.register((input,meta) => {
+    const claimed = JSON.parse(input.utf8).provider;
+    let mutationRefused = false;
+    try { meta.provider.plugin.id = claimed.plugin.id; } catch { mutationRefused = true; }
+    return {kind:'succeeded',utf8:JSON.stringify({provider:meta.provider,
+      frozen:Object.isFrozen(meta) && Object.isFrozen(meta.provider) && Object.isFrozen(meta.provider.plugin),
+      mutationRefused})};
+  });}};`);
+  const request = structuredClone(fixture);
+  request.input.utf8 = JSON.stringify({ provider: { plugin: { id: 'payload-forgery' } } });
+  request.input.sha256 = createHash('sha256').update(request.input.utf8, 'utf8').digest('hex');
+  request.context.inputDigest = request.input.sha256;
+  h.send({ kind: 'activate', data: activation });
+  await h.waitFor(() => h.frames.length === 1);
+  h.send({ kind: 'invoke', data: request });
+  await h.waitFor(() => h.frames.length === 2);
+  const result = h.frames[1].data;
+  assert.equal(result.outcome.kind, 'succeeded');
+  assert.deepEqual(JSON.parse(result.outcome.output.utf8), {
+    provider: activation.provider, frozen: true, mutationRefused: true,
+  });
+  assert.deepEqual(result.provider, activation.provider);
+  h.send({ kind: 'close', data: { provider: activation.provider } });
+  assert.deepEqual(await h.ended, [0, null]);
+});
+
 test('cancelled queued invocation never enters the component handler', { timeout: 5000 }, async t => {
   const h = await harness(t, `${imports} export default {activate(api){
     api.register(async () => {await writeFile('entered','yes'); return {kind:'succeeded',utf8:'unexpected'}});

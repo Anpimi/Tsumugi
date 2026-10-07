@@ -1,0 +1,81 @@
+{
+  "results": [
+    {
+      "key": {
+        "rule": {
+          "id": "example.preferred-form",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "implementation": {
+          "kind": "plugin",
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "text-support",
+              "version": "0.1.0"
+            },
+            "componentId": "worker",
+            "contributionId": "text-review-check",
+            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "scopeDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "coveredTargets": [
+        "unit-0"
+      ],
+      "outcome": {
+        "kind": "completed",
+        "findings": [
+          {
+            "code": "preferred-form-missing",
+            "target": "unit-0",
+            "severity": "warning"
+          }
+        ]
+      }
+    }
+  ],
+  "diagnostics": [
+    {
+      "key": {
+        "rule": {
+          "id": "example.preferred-form",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "implementation": {
+          "kind": "plugin",
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "text-support",
+              "version": "0.1.0"
+            },
+            "componentId": "worker",
+            "contributionId": "text-review-check",
+            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "code": "preferred-form-missing",
+      "target": "unit-0",
+      "location": {
+        "field": "translation",
+        "range": {
+          "encoding": "utf16",
+          "start": 0,
+          "end": 13
+        }
+      },
+      "detail": "The selected editorial preference is absent.",
+      "suggestion": "前提",
+      "resourceEntry": {
+        "contributionId": "terms",
+        "entryId": "meaning"
+      }
+    }
+  ]
+}

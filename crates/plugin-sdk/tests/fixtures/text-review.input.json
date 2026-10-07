@@ -1,0 +1,60 @@
+{
+  "profile": {
+    "id": "example.editorial-text",
+    "schemaVersion": 1,
+    "behaviorVersion": 1
+  },
+  "sourceLanguage": "en",
+  "targetLanguage": "zh-CN",
+  "resources": [
+    {
+      "contributionId": "terms",
+      "schema": {
+        "id": "example.editorial-resource",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "sha256": "cf84ecb9e58795f52a199169cbca2d105b51c173dccbedb3a7f990725a6cee85"
+    }
+  ],
+  "selections": [
+    {
+      "unitId": "unit-0",
+      "sourceRevisionId": "revision-0",
+      "sourceText": "An explicit premise 👩🏽‍💻 é",
+      "translationText": "👩🏽‍💻 é 译文"
+    }
+  ],
+  "requirements": [
+    {
+      "key": {
+        "rule": {
+          "id": "example.preferred-form",
+          "schemaVersion": 1,
+          "behaviorVersion": 1
+        },
+        "implementation": {
+          "kind": "plugin",
+          "provider": {
+            "plugin": {
+              "publisher": "example",
+              "id": "text-support",
+              "version": "0.1.0"
+            },
+            "componentId": "worker",
+            "contributionId": "text-review-check",
+            "packageDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "inputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "scopeDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "targets": [
+        "unit-0"
+      ],
+      "mandatory": false,
+      "waivable": false,
+      "notApplicable": null
+    }
+  ]
+}

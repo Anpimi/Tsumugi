@@ -31,6 +31,14 @@ and exact `utf8`; the Host supplies captured schema, provider, context and diges
 Exceptions terminate the channel, not a fabricated domain error payload. Domain
 schemas still require their own semantic validators in Core.
 
+Invocation metadata also exposes the frozen actual `provider` from the
+Host-validated activation/request channel. Components can compare a payload's
+claimed provider selection to it without receiving grants or transport handles.
+Payload fields cannot replace this identity, and result reception still checks
+the actual channel independently. Build and capture the current Host when using
+SDK components that require this metadata; earlier development runtime trees
+do not provide the added facade field.
+
 Close stops new handlers, aborts active work and waits for activation, handlers and
 owned asynchronous cleanup. A cleanup failure cannot produce `closed`. Late output
 is discarded after cancellation/close; cancellation is not rollback. A completed

@@ -41,6 +41,14 @@ versioned mandatory domain rules and an immutable checker Resource. Results reus
 the existing check coverage contract. Core qualification and desktop execution
 remain separate consumers; reading metadata grants no execution or review approval.
 
+The same [review contract](docs/review.md) also defines explicit advisory text
+checks independent of a source format. They capture selected rules, source and
+translation text, exact supporting-resource pins and typed finding locations.
+Their reports reuse the original check identities and coverage; they neither
+adopt a resource nor replace mandatory source checks. The Host binds actual
+packages and bytes. Joint project QA, qualification and desktop choices remain
+separate consumers.
+
 [Read-only capability tools](docs/tools.md) select an existing capability, exact
 profile and same-package Resource/Skill support without duplicating its contracts
 or permissions. The SDK and Host validate fixed metadata; application discovery,

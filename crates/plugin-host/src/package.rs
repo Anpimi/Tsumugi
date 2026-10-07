@@ -153,6 +153,59 @@ impl PackageImage {
         .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
         .map_err(|_| HostError::InvalidContract)
     }
+    /// Bind an explicitly selected supplemental text checker to this package.
+    /// Its advisory declaration cannot replace a source's mandatory format
+    /// checks, adopt its supporting resources or authorize an invocation.
+    pub fn text_review_declaration(&self, contribution_id: &str) -> HostResult<TextReviewBinding> {
+        let binding = parse_text_review_declaration(
+            self.resource_bytes(contribution_id, &text_review_declaration_contract())?,
+        )
+        .and_then(|declaration| declaration.bind(&self.manifest, &self.digest))
+        .map_err(|_| HostError::InvalidContract)?;
+        for resource in &binding.resources {
+            self.resource_bytes(&resource.contribution_id, &resource.schema)?;
+        }
+        Ok(binding)
+    }
+    /// Capture exact supporting-resource byte digests from the same immutable
+    /// declaration and package. The resource payloads remain opaque to the Host.
+    pub fn text_review_resource_pins(
+        &self,
+        contribution_id: &str,
+    ) -> HostResult<Vec<TextReviewResourcePin>> {
+        self.text_review_declaration(contribution_id)?
+            .resources
+            .iter()
+            .map(|resource| {
+                let bytes = self.resource_bytes(&resource.contribution_id, &resource.schema)?;
+                Ok(TextReviewResourcePin {
+                    contribution_id: resource.contribution_id.clone(),
+                    schema: resource.schema.clone(),
+                    sha256: format!("{:x}", Sha256::digest(bytes)),
+                })
+            })
+            .collect()
+    }
+    /// Verify a fixed text-check request against the actual declaration and
+    /// supporting bytes. This validates data; current grants and channel/result
+    /// reception remain separate execution boundaries.
+    pub fn validate_text_review_input(
+        &self,
+        contribution_id: &str,
+        input: &TextReviewCheckInput,
+    ) -> HostResult<TextReviewBinding> {
+        let binding = self.text_review_declaration(contribution_id)?;
+        binding
+            .validate_input(input)
+            .map_err(|_| HostError::InvalidContract)?;
+        let expected = self.text_review_resource_pins(contribution_id)?;
+        if input.resources.len() != expected.len()
+            || input.resources.iter().any(|pin| !expected.contains(pin))
+        {
+            return Err(HostError::InvalidContract);
+        }
+        Ok(binding)
+    }
     /// Resolve a read-only tool to the original capability and same-package
     /// resources/Skill. This performs no activation, dispatch or model request.
     pub fn capability_tool(&self, contribution_id: &str) -> HostResult<CapabilityToolBinding> {

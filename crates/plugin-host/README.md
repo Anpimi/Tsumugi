@@ -75,6 +75,16 @@ permissions and executable supporting bytes are refused. Metadata inspection
 does not activate a component or grant execution; application consumers must
 recheck current availability, fixed selections and actual per-attempt authority.
 
+`PackageImage::text_review_declaration` binds an explicitly selected advisory
+text-check Resource to its original read-only capability and same-package
+supporting resources. `text_review_resource_pins` hashes the actual captured
+resource bytes; `validate_text_review_input` compares a fixed request to that
+declaration, provider and complete pin set. Wrong schemas, package selections,
+claimed resource hashes and executable support are refused without running a
+component. This metadata boundary grants no execution, resource adoption or
+project QA qualification; actual channel reception and current policy remain
+independent requirements.
+
 `PackageImage::resource_bytes` reads one explicitly selected Resource from the
 immutable captured package after an exact schema and behavior match.
 `skill_bytes` reads one declared Skill from the same image. Both reject a wrong

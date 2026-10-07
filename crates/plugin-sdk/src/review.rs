@@ -2,6 +2,9 @@
 //! Policy, human decisions, waivers, runtime authority and persistence remain
 //! host-owned. A declaration or a completed check grants none of those powers.
 
+mod text;
+pub use text::*;
+
 use crate::{
     validation::{encoded_limit, language_label, name, opaque_id, reference, unique},
     *,

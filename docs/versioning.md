@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+The experimental SDK's advisory text-review declaration, input and report use
+new schema/behavior 1/1 identities and reuse the original CheckResult and finite
+ReviewCheckError contracts. They add same-package Host resource-pin validation
+and generated public JavaScript bindings. The Component facade now exposes the
+Host-validated immutable provider; components requiring it need a current built
+and captured Host. Process protocol 1, project formats, installed settings/Store
+layouts, dependencies and version sources are unchanged. This remains the same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, with
+synchronized Unreleased changelogs and no additional SemVer bump or historical
+migration. Joint project QA and qualification are separate integration work.
+
 Provider child tasks now retain their parent item's exact captured dependencies,
 including identities and expected revisions. This corrects the existing enqueue
 scope check without changing project schema 28, settings format 2, IPC, SDK,
