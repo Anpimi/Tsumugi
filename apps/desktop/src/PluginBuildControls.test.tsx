@@ -80,6 +80,58 @@ beforeEach(async () => {
 });
 afterEach(() => { cleanup(); if (originalScroll) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScroll); else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView"); });
 
+it("orders installed builder discovery, refresh and re-entry around the exclusive Store", async () => {
+  const original = invoke.getMockImplementation()!;
+  const second = { ...pluginBuildPackage, packageDigest: "d".repeat(64),
+    manifest: { ...pluginBuildPackage.manifest, plugin: { ...pluginBuildPackage.manifest.plugin, id: "synthetic-builder" } } };
+  const packages = [pluginBuildPackage, second];
+  const inventory = { ...pluginBuildInventory,
+    packages: packages.map(item => ({ ...pluginBuildInventory.packages[0], plugin: item.manifest.plugin, packageDigest: item.packageDigest })),
+    packageDecisions: packages.map(item => ({ ...pluginBuildInventory.packageDecisions[0], plugin: item.manifest.plugin, packageDigest: item.packageDigest })) };
+  let active = false, inventories = 0, environments = 0, reads = 0;
+  let releaseEnvironment!: () => void, releaseRefresh!: () => void, releaseReopen!: () => void;
+  const firstEnvironment = new Promise<void>(resolve => { releaseEnvironment = resolve; });
+  const refreshRead = new Promise<void>(resolve => { releaseRefresh = resolve; });
+  const reopenRead = new Promise<void>(resolve => { releaseReopen = resolve; });
+  invoke.mockImplementation(async (command, args) => {
+    if (!["read_plugin_inventory", "read_plugin_package", "read_plugin_build"].includes(command)) return original(command, args);
+    if (active) throw { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-store-busy" };
+    active = true;
+    try {
+      if (command === "read_plugin_inventory") {
+        if (++inventories === 2) await refreshRead;
+        if (inventories === 3) await reopenRead;
+        return inventory;
+      }
+      if (command === "read_plugin_package") { reads++; return packages.find(item => item.packageDigest === args.request.packageDigest); }
+      if (++environments === 1) await firstEnvironment;
+      return pluginBuildView;
+    } finally { active = false; }
+  });
+  render(<ReleaseWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await waitFor(() => expect(environments).toBe(1));
+  expect(reads).toBe(2);
+  expect(screen.getByRole("button", { name: i18n.t("releasePlugin.refresh") })).toBeDisabled();
+  expect(screen.getByRole("combobox", { name: i18n.t("releasePlugin.builder") })).toBeDisabled();
+  await act(async () => { releaseEnvironment(); });
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("releasePlugin.refresh") })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.refresh") }));
+  await waitFor(() => expect(inventories).toBe(2));
+  expect(environments).toBe(1);
+  await act(async () => { releaseRefresh(); });
+  await waitFor(() => expect(environments).toBe(2));
+  await user.click(screen.getByRole("button", { name: "Back to overview" }));
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await waitFor(() => expect(inventories).toBe(3));
+  expect(environments).toBe(2);
+  await act(async () => { releaseReopen(); });
+  await waitFor(() => expect(environments).toBe(3));
+  expect(reads).toBe(6);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
 async function ready(locales = ["zh-CN"], twoFiles = true) {
   const user = userEvent.setup(), ref = createRef<ReleaseHandle>();
   const view = render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);

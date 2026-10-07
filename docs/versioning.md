@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+Installed package choice discovery now orders metadata reads to respect the
+existing exclusive Store lock. Source/build refresh and workbench re-entry use
+the completed current scan before reading an execution environment. This fixes
+desktop discovery without changing IPC, SDK/process contracts, schemas, stored
+settings, dependencies or execution authority. It remains the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; both Unreleased
+changelogs record the fix, with no additional version bump or migration.
+
+New-project path previews now use the native separator already supplied by
+Tauri. Actual project creation still uses its existing native join operation;
+no stored locator, schema, IPC or dependency changes are required. This fix
+shares the same undistributed version batch and bilingual Unreleased entries.
+
 Experimental joint Review QA now captures mandatory source-format checks and
 explicit action-local advisory text rules in one fixed union. Each checker has
 its own original execution input, task, grant and result provenance. Current QA

@@ -39,6 +39,75 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+it("discovers multiple enabled source packages without competing for the installed Store", async () => {
+  const original = invoke.getMockImplementation()!;
+  const second = { ...pluginSourcePackage, packageDigest: "d".repeat(64),
+    manifest: { ...pluginSourcePackage.manifest, plugin: { ...pluginSourcePackage.manifest.plugin, id: "synthetic-caption" } } };
+  const reference = { ...pluginSourcePackage, packageDigest: "c".repeat(64),
+    manifest: { ...pluginSourcePackage.manifest, plugin: { ...pluginSourcePackage.manifest.plugin, id: "synthetic-reference" }, contributions: [] } };
+  const packages = [pluginSourcePackage, second, reference];
+  const inventory = { ...pluginSourceInventory,
+    packages: packages.map(item => ({ ...pluginSourceInventory.packages[0], plugin: item.manifest.plugin, packageDigest: item.packageDigest })),
+    packageDecisions: packages.map(item => ({ ...pluginSourceInventory.packageDecisions[0], plugin: item.manifest.plugin, packageDigest: item.packageDigest })) };
+  let active = false;
+  let release!: () => void;
+  const firstRead = new Promise<void>(resolve => { release = resolve; });
+  let releaseRefresh!: () => void;
+  const refreshRead = new Promise<void>(resolve => { releaseRefresh = resolve; });
+  let releaseReopen!: () => void;
+  const reopenRead = new Promise<void>(resolve => { releaseReopen = resolve; });
+  let reads = 0;
+  let inventories = 0;
+  let environments = 0;
+  invoke.mockImplementation(async (command: string, args: { request?: { packageDigest?: string } }) => {
+    if (!["read_plugin_inventory", "read_plugin_package", "read_plugin_source"].includes(command)) return original(command, args);
+    if (active) throw { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-store-busy" };
+    active = true;
+    try {
+      if (command === "read_plugin_inventory") {
+        if (++inventories === 2) await refreshRead;
+        if (inventories === 3) await reopenRead;
+        return inventory;
+      }
+      if (command === "read_plugin_source") { environments++; return pluginSourceView; }
+      if (++reads === 1) await firstRead;
+      const value = packages.find(item => item.packageDigest === args.request?.packageDigest);
+      if (!value) throw new Error("Unexpected package read");
+      return value;
+    } finally { active = false; }
+  });
+  render(<SourceWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  await waitFor(() => expect(reads).toBe(1));
+  await act(async () => { release(); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  const choices = within(screen.getByRole("combobox", { name: "Source format" })).getAllByRole("option");
+  expect(choices.map(option => option.textContent)).toEqual(packages.slice(0, 2).map(item => `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${pluginSourceRequest.resourceId}`));
+  expect(choices.some(option => option.textContent?.includes(reference.manifest.plugin.id))).toBe(false);
+  expect(reads).toBe(3);
+  expect(environments).toBe(1);
+  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
+  await waitFor(() => expect(inventories).toBe(2));
+  expect(environments).toBe(1);
+  expect(screen.getByRole("button", { name: "Choose source folder" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Refresh installed source choices" })).toBeDisabled();
+  await act(async () => { releaseRefresh(); });
+  await waitFor(() => expect(reads).toBe(6));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
+  expect(environments).toBe(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Back to overview" }));
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  await waitFor(() => expect(inventories).toBe(3));
+  expect(environments).toBe(2);
+  await act(async () => { releaseReopen(); });
+  await waitFor(() => expect(reads).toBe(9));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
+  expect(environments).toBe(3);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
 it.each([["en-US", "Source content", "Choose source folder", "I confirm", "Check source files", "The source operation could not complete."], ["zh-CN", "源内容", "选择源文件夹", "我确认", "检查源文件", "源操作未能完成"]])("loads installed source declarations and recovers from capture failure in %s", async (locale, entry, choose, declaration, check, message) => {
   await i18n.changeLanguage(locale);
   const original = invoke.getMockImplementation()!;
@@ -81,7 +150,7 @@ it("retains an update selection when reopening an already imported project", asy
   expect(invoke.mock.calls.filter(([name]) => name === "read_source_content")).toHaveLength(contentReads);
 });
 
-it("ignores an outdated source environment after a new installed-choice refresh", async () => {
+it("prevents competing refresh and ignores an outdated source environment after leaving the view", async () => {
   let complete!: (value: unknown) => void;
   const original = invoke.getMockImplementation()!;
   let reads = 0;
@@ -93,11 +162,12 @@ it("ignores an outdated source environment after a new installed-choice refresh"
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Source content" }));
   await waitFor(() => expect(reads).toBe(1));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh installed source choices" })).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Refresh installed source choices" })).toBeDisabled();
   expect(screen.getByText(i18n.t("execution.working"))).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Refresh installed source choices" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Back to overview" }));
   await act(async () => complete({ ...pluginSourceView, declaration: { ...pluginSourceView.declaration, displayName: "STALE ENVIRONMENT" } }));
+  await user.click(screen.getByRole("button", { name: "Source content" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Choose source folder" })).toBeEnabled());
   expect(screen.queryByText("STALE ENVIRONMENT")).not.toBeInTheDocument();
   expect(screen.queryByText(i18n.t("execution.working"))).not.toBeInTheDocument();
 });

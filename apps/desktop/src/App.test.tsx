@@ -13,6 +13,7 @@ import pluginCandidate from "../test/fixtures/pluginPackage.contract.json";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   join: vi.fn(),
+  sep: vi.fn(),
   open: vi.fn(),
   onCloseRequested: vi.fn(),
   close: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock("./SessionReadProvider", async importOriginal => {
   return { ...actual, SessionReadProvider: (props: React.ComponentProps<typeof actual.SessionReadProvider>) => <actual.SessionReadProvider {...props} bridge={false}/> };
 });
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
-vi.mock("@tauri-apps/api/path", () => ({ join: mocks.join }));
+vi.mock("@tauri-apps/api/path", () => ({ join: mocks.join, sep: mocks.sep }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -72,6 +73,19 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it.each([["/", "/synthetic/projects/", "/synthetic/projects/demo"], ["/", "/", "/demo"], ["\\", "C:\\Projects\\", "C:\\Projects\\demo"]])("previews a new project with the native separator %s under %s", async (separator, parent, destination) => {
+    mocks.sep.mockReturnValue(separator);
+    const user = userEvent.setup();
+    await renderApp();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    await user.type(screen.getByLabelText(/Parent folder/), parent);
+    const directoryName = screen.getByLabelText(/New folder name/);
+    await user.clear(directoryName);
+    await user.type(directoryName, "demo");
+    expect(screen.getByText(destination, { selector: "code" })).toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "create_project")).toBe(false);
+  });
+
   it("confirms stopping active work before closing and permits returning without cancellation", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     let stopped = false;
@@ -523,6 +537,7 @@ describe("project lifecycle workbench", () => {
     localStorage.clear();
     await i18n.changeLanguage("en-US");
     mocks.join.mockResolvedValue("C:\\Projects\\demo");
+    mocks.sep.mockReturnValue("\\");
     mocks.open.mockResolvedValue(null);
     mocks.onCloseRequested.mockResolvedValue(() => undefined);
     mocks.close.mockResolvedValue(undefined);

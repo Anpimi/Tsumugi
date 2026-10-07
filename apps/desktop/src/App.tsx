@@ -15,7 +15,7 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@radix-ui/react-dialog";
-import { join as joinPath } from "@tauri-apps/api/path";
+import { join as joinPath, sep as pathSeparator } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import {
@@ -207,10 +207,10 @@ function isPresetLocale(value: string): boolean {
 }
 
 function previewDestination(parentDirectory: string, directoryName: string): string {
-  const parent = parentDirectory.trim().replace(/[\\/]+$/, "");
+  const parent = parentDirectory.trim();
   const child = directoryName.trim();
   if (!parent || !child) return "";
-  return `${parent}\\${child}`;
+  return `${parent.replace(/[\\/]+$/, "")}${pathSeparator()}${child}`;
 }
 
 function isSafeChildDirectoryName(value: string): boolean {

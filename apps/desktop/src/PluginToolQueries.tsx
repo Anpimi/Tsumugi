@@ -5,7 +5,7 @@ import { createToolQuery, ToolQueryError, type ToolQueryPresentation } from "../
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type PluginToolPrepareRequest, type PluginToolPreflight, type PluginStartRequest, type PluginToolDiscardRequest, type CancelRequest } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
-import { pluginCommands, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
+import { pluginCommands, readEnabledPluginPackages, type PluginToolRequest, type PluginToolView } from "./pluginCommands";
 import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
 import { PluginPermissions } from "./PluginManager";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
@@ -66,9 +66,7 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
   const inventory = useSessionQuery({ key: ["tool-query-inventory", refresh], scopes: [], enabled: open && !disabled,
     read: async () => {
       const value = await pluginCommands.inventory();
-      const enabled = value.packages.filter(item => item.state === "sealed" && value.packageDecisions.some(decision => decision.enabled
-        && decision.packageDigest === item.packageDigest && jsonIdentity(decision.plugin) === jsonIdentity(item.plugin)));
-      const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
+      const packages = await readEnabledPluginPackages(value);
       const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource"
         && contribution.contribution.schema.id === "tsumugi.capability-tool-declaration" && contribution.contribution.schema.schemaVersion === 1
         && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`,

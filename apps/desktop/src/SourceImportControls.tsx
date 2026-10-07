@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { PluginPermissions } from "./PluginManager";
 import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion, type PluginComponentRuntime, type PluginEnvironmentChoice } from "./pluginEnvironments";
-import { pluginCommands, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
+import { pluginCommands, readEnabledPluginPackages, type PluginSourceRequest, type PluginSourceView } from "./pluginCommands";
 import { sourceCommands, type PluginCaptureRequest, type PluginSourceSelection, type PluginSourcePreflight, type PluginStartRequest, type SourceCheckPrepareRequest, type SourceCheckReview, type SourceCheckFinishRequest } from "./sourceCommands";
 import { executionCommands, executionContext, type AttemptDetail } from "./executionCommands";
 import { useSessionQuery } from "./SessionReadProvider";
@@ -49,8 +49,9 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
   const [environment, setEnvironment] = useState<PluginSourceView | null>(null);
   const [environmentLoading, setEnvironmentLoading] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [inventoryReady, setInventoryReady] = useState(false);
+  const [inventoryReadyAt, setInventoryReadyAt] = useState<number | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const inventoryReady = inventoryReadyAt === refresh;
   const [selection, setSelection] = useState<PluginSourceSelection | null>(null);
   const [declared, setDeclared] = useState(false);
   const [captureIntent, setCaptureIntent] = useState<PluginCaptureRequest | null>(null);
@@ -80,31 +81,30 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; }; }, []);
   useEffect(() => { onState({ busy: busy || checkActive, pending, hasDraft: !!selection || !!checkReview && !checkAttempt && !validated }); }, [busy, checkActive, pending, !!selection, !!checkReview, checkAttempt, validated, onState]);
   useEffect(() => {
-    if (!open) return;
+    if (!open) { setInventoryReadyAt(null); setLoading(false); return; }
     let stale = false;
-    setLoading(true); setInventoryReady(false);
+    setLoading(true); setInventoryReadyAt(null);
     void (async () => {
       try {
         const inventory = await pluginCommands.inventory();
-        const enabled = inventory.packages.filter(item => item.state === "sealed" && inventory.packageDecisions.some(decision => decision.enabled && decision.packageDigest === item.packageDigest && decision.plugin.id === item.plugin.id && decision.plugin.version === item.plugin.version && decision.plugin.publisher === item.plugin.publisher));
-        const packages = await Promise.all(enabled.map(item => pluginCommands.package({ plugin: item.plugin, packageDigest: item.packageDigest })));
+        const packages = await readEnabledPluginPackages(inventory, () => !stale);
         const next = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.source-import-declaration" && contribution.contribution.schema.schemaVersion === 2 && contribution.contribution.schema.behaviorVersion === 2 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
         const environments = approvedPluginEnvironments(inventory);
-        if (!stale) { setInventoryReady(true); setChoices(next); setEnvironments(environments); setChoiceKey(current => current || next[0]?.key || ""); setRuntimeDigest(current => current || matchingPluginEnvironments(environments, next[0]?.runtimeKinds ?? [])[0]?.environmentDigest || ""); }
+        if (!stale) { setInventoryReadyAt(refresh); setChoices(next); setEnvironments(environments); setChoiceKey(current => current || next[0]?.key || ""); setRuntimeDigest(current => current || matchingPluginEnvironments(environments, next[0]?.runtimeKinds ?? [])[0]?.environmentDigest || ""); }
       } catch (error) { if (!stale) setFailure(commandFailure(error)); }
       finally { if (!stale) setLoading(false); }
     })();
     return () => { stale = true; };
   }, [open, project.sessionToken, refresh]);
   useEffect(() => {
-    if (!open || !choice || !environmentAvailable) { setEnvironment(null); setEnvironmentLoading(false); return; }
+    if (!open || !inventoryReady || loading || !choice || !environmentAvailable) { setEnvironment(null); setEnvironmentLoading(false); return; }
     let stale = false;
     setEnvironment(null); setEnvironmentLoading(true);
     void pluginCommands.source({ package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest })
       .then(value => { if (!stale) setEnvironment(value); }, error => { if (!stale) setFailure(commandFailure(error)); })
       .finally(() => { if (!stale) setEnvironmentLoading(false); });
     return () => { stale = true; };
-  }, [open, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, refresh]);
+  }, [open, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, inventoryReady, loading, refresh]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
   useEffect(() => { if (checkRead.error) setFailure(commandFailure(checkRead.error)); }, [checkRead.error]);
   useEffect(() => {
@@ -154,15 +154,15 @@ export function SourceImportControls({ project, open, canCapture, proposal, vali
     {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("sourcePlugin.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
     {busy || loading || environmentLoading ? <p role="status">{t("execution.working")}</p> : null}
     {canCapture || (proposal && !validated) ? <>
-      <label className="source-field">{t("source.integration")}<select value={choiceKey} disabled={locked || checkActive || loading} onChange={event => { changed(); const key = event.target.value; setChoiceKey(key); const matching = matchingPluginEnvironments(environments, choices.find(item => item.key === key)?.runtimeKinds ?? []); setRuntimeDigest(current => matching.some(item => item.environmentDigest === current) ? current : matching[0]?.environmentDigest ?? ""); }}>
+      <label className="source-field">{t("source.integration")}<select value={choiceKey} disabled={locked || checkActive || loading || environmentLoading} onChange={event => { changed(); const key = event.target.value; setChoiceKey(key); const matching = matchingPluginEnvironments(environments, choices.find(item => item.key === key)?.runtimeKinds ?? []); setRuntimeDigest(current => matching.some(item => item.environmentDigest === current) ? current : matching[0]?.environmentDigest ?? ""); }}>
         {!choices.some(item => item.key === choiceKey) ? <option value={choiceKey}>{t("sourcePlugin.choosePackage")}</option> : null}
         {choices.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
       </select></label>
-      <label className="source-field">{t("sourcePlugin.runtime")}<select value={runtimeDigest} disabled={locked || checkActive || loading} onChange={event => { changed(); setRuntimeDigest(event.target.value); }}>
+      <label className="source-field">{t("sourcePlugin.runtime")}<select value={runtimeDigest} disabled={locked || checkActive || loading || environmentLoading} onChange={event => { changed(); setRuntimeDigest(event.target.value); }}>
         {!runtimes.some(item => item.environmentDigest === runtimeDigest) ? <option value={runtimeDigest}>{t("sourcePlugin.chooseRuntime")}</option> : null}
         {runtimes.map(item => <option key={item.environmentDigest} value={item.environmentDigest}>{t(item.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(item.environment), system: item.environment.platform.operatingSystem, architecture: item.environment.platform.architecture })}</option>)}
       </select></label>
-      <button className="secondary-button" disabled={locked || checkActive} onClick={() => { setFailure(null); setRefresh(value => value + 1); }}>{t("sourcePlugin.refresh")}</button>
+      <button className="secondary-button" disabled={locked || checkActive || loading || environmentLoading} onClick={() => { setFailure(null); setRefresh(value => value + 1); }}>{t("sourcePlugin.refresh")}</button>
       {unavailable ? <p role="status">{t("sourcePlugin.unavailable")}</p> : null}
       {environment ? <p>{environment.declaration.displayName}</p> : null}
     </> : null}

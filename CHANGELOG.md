@@ -181,6 +181,14 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- New-project destination previews use the native path separator, including
+  macOS root directories, to match the actual project location.
+
+- Installed source, translation, build and reference choices read enabled package
+  metadata sequentially, avoiding Store contention when several extensions are
+  enabled. Source and build refreshes wait for their current metadata and
+  environment reads, including when returning to the workbench.
+
 - Translation import refreshes the editor entry list after individual or batch adoption and confirmed recovery, preserving its query, page and any draft. Cancelling an unsaved-draft leave confirmation returns focus to the editor. Declared translation fields use the existing form layout, and installed source-environment reads keep their loading feedback visible until completion.
 
 - Preparing a plugin translation preview before its independent check completes now reports an incomplete check instead of a corrupt project. Rejected checks still block preview, and a missing proof for a result already marked qualified remains a corruption error.
