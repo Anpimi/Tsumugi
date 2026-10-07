@@ -1,5 +1,12 @@
 # Application versioning and changelog maintenance
 
+The optional Core Host adapter now captures a service broker separately for
+each actual dispatch, permit and cancellation handle. This changes the
+experimental Rust adapter API without changing wire contracts, persistent
+formats or dependencies. It remains in the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; both Unreleased changelogs describe
+the behavior, with no additional version bump or historical migration.
+
 The experimental project-service transport advances the independently owned
 process protocol to 2. Activation now requires a service table and the channel
 supports exact service requests/responses. Generate current SDK bindings and

@@ -25,6 +25,13 @@ dependencies, capability permissions/effects and project scope before staging or
 spawning. Ordinary `launch` supplies no services and still refuses missing
 required dependencies. Service availability never grants execution permission.
 
+With `core-adapter`, a cached `RunnerProxy` can accept a trusted
+`ProjectServiceFactory`. It captures a separate broker for each real
+`DispatchRequest`, matching Core permit and cancellation handle. Capture shares
+the bounded startup allowance and continuously checks authority; failure never
+launches a child without the requested services. The factory cannot retain a
+particular invocation's work-plan scope as the cached proxy's authority.
+
 For each call, the Host supplies a `ServiceCaller` derived from the actual channel
 and original invocation, then checks the exact handle, context, contract, payload
 and current guards. `ServiceCaller::deadline()` exposes the fixed absolute outer

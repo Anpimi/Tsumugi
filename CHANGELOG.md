@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental Core Host adapters now select project-service brokers separately
+  for every actual dispatch and grant, including when a capability proxy is
+  cached. Unfinished selection is bounded; selection failure does not launch a
+  component with omitted services.
+
 - Experimental SDK and Host add bounded project-service calls for JavaScript
   components. Exact selected providers, scopes, schemas, effects and original
   invocation contexts remain fixed; cancellation, revocation and the original
