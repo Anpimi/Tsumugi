@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+The experimental read-only tool declaration now has an optional bounded text
+query presentation. Its input/output references must exactly match the original
+capability; generated JavaScript and internal Desktop DTOs include the new
+shape. The public helper constructs original opaque payloads without another
+executor or authority, and consumers must regenerate contracts. Tools without
+this presentation remain callable through their declared capability. This stays
+in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1`
+batch; tool schema/behavior 1/1, process frames, project schema 28, installed
+settings 2 and dependencies are unchanged. Synchronized Unreleased entries
+require no extra bump or historical wire/format migration. Product interfaces
+and Agent scope/budget integration still require their own acceptance.
+
 Desktop read-only tool discovery and fixed single/batch query preparation now
 extend the generated internal plugin/execution IPC contracts. Consumers must
 regenerate their DTOs and validators; no historical wire fallback is supplied.

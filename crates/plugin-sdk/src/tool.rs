@@ -5,6 +5,8 @@ use crate::{
     *,
 };
 use serde::{Deserialize, Serialize};
+mod query;
+pub use query::*;
 
 pub const MAX_TOOL_DECLARATION_BYTES: usize = 16 * 1024;
 pub const MAX_TOOL_RESOURCES: usize = 16;
@@ -45,6 +47,10 @@ pub struct CapabilityToolDeclaration {
     pub profile: Option<ContractRef>,
     pub supporting_resources: Vec<String>,
     pub skill: Option<String>,
+    /// Optional bounded semantic text-query presentation. It grants no access
+    /// beyond the original capability and remains untrusted package data.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<ToolQueryDeclaration>,
 }
 impl CapabilityToolDeclaration {
     pub fn validate(&self) -> Result<(), ContractError> {
@@ -67,6 +73,9 @@ impl CapabilityToolDeclaration {
         }
         if let Some(skill) = &self.skill {
             name(skill, "tool.skill")?;
+        }
+        if let Some(query) = &self.query {
+            query.validate()?;
         }
         encoded_limit(self, MAX_TOOL_DECLARATION_BYTES, "tool")
     }
@@ -140,6 +149,19 @@ impl CapabilityToolBinding {
         self.declaration.validate()?;
         self.capability.validate()?;
         let capability = &self.capability.declaration;
+        if let Some(query) = &self.declaration.query {
+            encoded_limit(
+                &query.input_template,
+                capability.limits.max_input_bytes as usize,
+                "tool.query.inputTemplate",
+            )?;
+            if query.input_schema != capability.input_schema
+                || query.output_schema != capability.output_schema
+                || query.max_text_bytes > capability.limits.max_input_bytes
+            {
+                return Err(invalid("tool.query.capability"));
+            }
+        }
         if self.capability.provider.contribution_id != self.declaration.capability_id
             || capability.effect != EffectKind::ReadOnly
             || capability

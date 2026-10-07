@@ -214,6 +214,7 @@ export type NativeHostUnavailableReason = "unsupported-platform" | "identity-una
 export type PluginObjectState = "sealed" | "recovery-required";
 export type RuntimeAvailability =
   "available" | "unsupported-platform" | "system-too-old" | "system-version-unknown" | "resources-unavailable";
+export type ToolQueryPathPart = string | number;
 
 export interface Responses {
   binding: CapabilityBinding;
@@ -582,9 +583,53 @@ export interface CapabilityToolDeclaration {
   description: string;
   name: string;
   profile: ContractRef | null;
+  /**
+   * Optional bounded semantic text-query presentation. It grants no access
+   * beyond the original capability and remains untrusted package data.
+   */
+  query?: ToolQueryDeclaration | null;
   skill: string | null;
   supportingResources: string[];
   title: string;
+}
+export interface ToolQueryDeclaration {
+  inputSchema: ContractRef;
+  inputTemplate: unknown;
+  maxTextBytes: number;
+  output: ToolQueryOutput;
+  outputSchema: ContractRef;
+  /**
+   * Explicit senses or categories. Matching text alone does not select them.
+   */
+  selections: ToolQuerySelection;
+  /**
+   * One explicit target option; no host-side locale or value normalization.
+   */
+  target: ToolQuerySelection;
+  textPath: ToolQueryPathPart[];
+}
+export interface ToolQueryOutput {
+  columns: ToolQueryColumn[];
+  emptyDescription: string;
+  entriesPath: ToolQueryPathPart[];
+  maxEntries: number;
+}
+export interface ToolQueryColumn {
+  label: string;
+  path: ToolQueryPathPart[];
+}
+export interface ToolQuerySelection {
+  description: string;
+  label: string;
+  maxSelected: number;
+  minSelected: number;
+  options: ToolQueryOption[];
+  path: ToolQueryPathPart[];
+}
+export interface ToolQueryOption {
+  description: string;
+  label: string;
+  value: string;
 }
 export interface ToolResourceBinding {
   contributionId: string;

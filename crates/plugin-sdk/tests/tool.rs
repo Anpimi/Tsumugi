@@ -12,6 +12,102 @@ fn binding() -> CapabilityToolBinding {
         .bind(&manifest().validate().unwrap(), &"a".repeat(64))
         .unwrap()
 }
+fn query_declaration() -> CapabilityToolDeclaration {
+    parse_tool_declaration(include_bytes!("fixtures/tool.query.json")).unwrap()
+}
+
+#[test]
+fn text_query_binds_exact_original_schemas_and_preserves_template_and_unicode() {
+    let declaration = query_declaration();
+    let bound = declaration
+        .bind(&manifest().validate().unwrap(), &"a".repeat(64))
+        .unwrap();
+    assert_eq!(bound.capability, binding().capability);
+    assert_eq!(bound.declaration, declaration);
+    assert_eq!(
+        parse_tool_declaration(&serde_json::to_vec(&declaration).unwrap()).unwrap(),
+        declaration
+    );
+    assert_eq!(
+        declaration.query.as_ref().unwrap().input_template["basis"]["revision"],
+        "é-👩🏽‍💻"
+    );
+    for change in 0..4 {
+        let mut invalid = declaration.clone();
+        let query = invalid.query.as_mut().unwrap();
+        match change {
+            0 => query.input_schema.behavior_version += 1,
+            1 => query.output_schema.id = "example.other".into(),
+            2 => query.max_text_bytes = 1025,
+            _ => query.input_template["basis"]["oversized"] = json!("x".repeat(1024)),
+        }
+        invalid.validate().unwrap();
+        assert!(
+            invalid
+                .bind(&manifest().validate().unwrap(), &"a".repeat(64))
+                .is_err(),
+            "case {change}"
+        );
+    }
+}
+
+#[test]
+fn text_query_refuses_missing_wrong_type_overlapping_and_unsafe_paths() {
+    for change in 0..10 {
+        let mut declaration = query_declaration();
+        let query = declaration.query.as_mut().unwrap();
+        match change {
+            0 => query.text_path.clear(),
+            1 => query.text_path = vec![ToolQueryPathPart::Key("__proto__".into())],
+            2 => query.text_path = vec![ToolQueryPathPart::Key("constructor".into())],
+            3 => {
+                query.text_path = vec![
+                    ToolQueryPathPart::Key("rows".into()),
+                    ToolQueryPathPart::Index(1),
+                    ToolQueryPathPart::Key("text".into()),
+                ]
+            }
+            4 => query.input_template["rows"][0]["text"] = json!(null),
+            5 => query.target.path = query.text_path.clone(),
+            6 => query.selections.path = vec![ToolQueryPathPart::Key("rows".into())],
+            7 => query.output.entries_path = vec![ToolQueryPathPart::Key("prototype".into())],
+            8 => query.output.columns[0].path = vec![ToolQueryPathPart::Key("\u{0}".into())],
+            _ => query.text_path = vec![ToolQueryPathPart::Index(2000)],
+        }
+        assert!(declaration.validate().is_err(), "case {change}");
+    }
+}
+
+#[test]
+fn text_query_refuses_duplicate_unknown_unbounded_choices_and_output_claims() {
+    for change in 0..11 {
+        let mut declaration = query_declaration();
+        let query = declaration.query.as_mut().unwrap();
+        match change {
+            0 => query.target.max_selected = 2,
+            1 => query
+                .selections
+                .options
+                .push(query.selections.options[0].clone()),
+            2 => query.selections.max_selected = 3,
+            3 => query.input_template["rows"][0]["selected"] = json!(["unknown"]),
+            4 => query.input_template["rows"][0]["selected"] = json!(["term", "term"]),
+            5 => query.input_template["target"] = json!("unknown"),
+            6 => query.output.max_entries = MAX_TOOL_QUERY_ENTRIES + 1,
+            7 => query.output.columns.push(query.output.columns[0].clone()),
+            8 => query.max_text_bytes = 0,
+            9 => query.selections.options[0].label = " ".into(),
+            _ => query.output.empty_description = "é".repeat(513),
+        }
+        assert!(declaration.validate().is_err(), "case {change}");
+    }
+    let mut value = serde_json::to_value(query_declaration()).unwrap();
+    value["query"]["script"] = json!("do not execute");
+    assert!(parse_tool_declaration(&serde_json::to_vec(&value).unwrap()).is_err());
+    value["query"].as_object_mut().unwrap().remove("script");
+    value["query"]["target"]["options"][0]["grant"] = json!(true);
+    assert!(parse_tool_declaration(&serde_json::to_vec(&value).unwrap()).is_err());
+}
 fn capability(manifest: &mut PluginManifest) -> &mut CapabilityDeclaration {
     let ContributionKind::Capability { declaration } = &mut manifest.contributions[0].contribution
     else {

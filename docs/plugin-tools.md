@@ -6,6 +6,13 @@ installed package/runtime settings and Core execution ledger. The application
 owns discovery, session authorization and execution consent; each package owns
 its original capability, domain input/output/error contracts and guidance.
 
+An optional SDK `query` presentation supplies a bounded fixed input template,
+explicit target and category choices, and reference-result columns. The public
+SDK's `createToolQuery` helper constructs original single or batch payloads and
+distinguishes empty matches from malformed output. The Desktop view captures
+this metadata with the original binding; it grants no execution or adoption.
+Product query controls and Agent orchestration remain separate integration work.
+
 `read_plugin_tool` accepts an exact package identity/digest, tool Resource ID
 and independently approved environment digest. It reopens the installed object,
 binds its actual capability, verifies supporting Resource/Skill files and matches

@@ -578,6 +578,17 @@
               }
             ]
           },
+          "query": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ToolQueryDeclaration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."
+          },
           "skill": {
             "type": [
               "string",
@@ -2469,6 +2480,184 @@
         "required": [
           "profile",
           "revisionBasis"
+        ],
+        "type": "object"
+      },
+      "ToolQueryColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "path"
+        ],
+        "type": "object"
+      },
+      "ToolQueryDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputTemplate": true,
+          "maxTextBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "output": {
+            "$ref": "#/definitions/ToolQueryOutput"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "selections": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "Explicit senses or categories. Matching text alone does not select them."
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "One explicit target option; no host-side locale or value normalization."
+          },
+          "textPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputSchema",
+          "outputSchema",
+          "inputTemplate",
+          "textPath",
+          "maxTextBytes",
+          "target",
+          "selections",
+          "output"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOption": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryColumn"
+            },
+            "type": "array"
+          },
+          "emptyDescription": {
+            "type": "string"
+          },
+          "entriesPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          },
+          "maxEntries": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entriesPath",
+          "columns",
+          "maxEntries",
+          "emptyDescription"
+        ],
+        "type": "object"
+      },
+      "ToolQueryPathPart": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "maximum": 1999,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ]
+      },
+      "ToolQuerySelection": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "maxSelected": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minSelected": {
+            "maximum": 64,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryOption"
+            },
+            "type": "array"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "description",
+          "path",
+          "options",
+          "minSelected",
+          "maxSelected"
         ],
         "type": "object"
       },

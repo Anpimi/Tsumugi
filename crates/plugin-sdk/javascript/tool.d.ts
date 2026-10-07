@@ -33,6 +33,11 @@ export type PermissionRequest =
       kind: "process";
       program: string;
     };
+/**
+ * This interface was referenced by `ToolTypes`'s JSON-Schema
+ * via the `definition` "ToolQueryPathPart".
+ */
+export type ToolQueryPathPart = string | number;
 
 export interface ToolTypes {
   binding: CapabilityToolBinding;
@@ -138,9 +143,77 @@ export interface CapabilityToolDeclaration {
   description: string;
   name: string;
   profile?: ContractRef | null;
+  /**
+   * Optional bounded semantic text-query presentation. It grants no access
+   * beyond the original capability and remains untrusted package data.
+   */
+  query?: ToolQueryDeclaration | null;
   skill?: string | null;
   supportingResources: string[];
   title: string;
+}
+/**
+ * This interface was referenced by `ToolTypes`'s JSON-Schema
+ * via the `definition` "ToolQueryDeclaration".
+ */
+export interface ToolQueryDeclaration {
+  inputSchema: ContractRef;
+  inputTemplate: unknown;
+  maxTextBytes: number;
+  output: ToolQueryOutput;
+  outputSchema: ContractRef;
+  selections: ToolQuerySelection;
+  target: ToolQuerySelection1;
+  textPath: ToolQueryPathPart[];
+}
+/**
+ * This interface was referenced by `ToolTypes`'s JSON-Schema
+ * via the `definition` "ToolQueryOutput".
+ */
+export interface ToolQueryOutput {
+  columns: ToolQueryColumn[];
+  emptyDescription: string;
+  entriesPath: ToolQueryPathPart[];
+  maxEntries: number;
+}
+/**
+ * This interface was referenced by `ToolTypes`'s JSON-Schema
+ * via the `definition` "ToolQueryColumn".
+ */
+export interface ToolQueryColumn {
+  label: string;
+  path: ToolQueryPathPart[];
+}
+/**
+ * Explicit senses or categories. Matching text alone does not select them.
+ */
+export interface ToolQuerySelection {
+  description: string;
+  label: string;
+  maxSelected: number;
+  minSelected: number;
+  options: ToolQueryOption[];
+  path: ToolQueryPathPart[];
+}
+/**
+ * This interface was referenced by `ToolTypes`'s JSON-Schema
+ * via the `definition` "ToolQueryOption".
+ */
+export interface ToolQueryOption {
+  description: string;
+  label: string;
+  value: string;
+}
+/**
+ * One explicit target option; no host-side locale or value normalization.
+ */
+export interface ToolQuerySelection1 {
+  description: string;
+  label: string;
+  maxSelected: number;
+  minSelected: number;
+  options: ToolQueryOption[];
+  path: ToolQueryPathPart[];
 }
 /**
  * This interface was referenced by `ToolTypes`'s JSON-Schema
@@ -149,4 +222,16 @@ export interface CapabilityToolDeclaration {
 export interface ToolResourceBinding {
   contributionId: string;
   schema: ContractRef;
+}
+/**
+ * This interface was referenced by `ToolTypes`'s JSON-Schema
+ * via the `definition` "ToolQuerySelection".
+ */
+export interface ToolQuerySelection2 {
+  description: string;
+  label: string;
+  maxSelected: number;
+  minSelected: number;
+  options: ToolQueryOption[];
+  path: ToolQueryPathPart[];
 }

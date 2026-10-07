@@ -40,6 +40,29 @@ fn capture(manifest: sdk::PluginManifest, files: BTreeMap<String, PackageFile>) 
 }
 
 #[test]
+fn captured_text_query_retains_the_original_capability_and_rejects_schema_substitution() {
+    let mut source = files();
+    source.get_mut("tool.json").unwrap().bytes =
+        include_bytes!("../../plugin-sdk/tests/fixtures/tool.query.json").to_vec();
+    let image = capture(manifest(), source.clone());
+    let binding = image.capability_tool("query-tool").unwrap();
+    assert_eq!(
+        binding.capability,
+        sdk::bind_capability(image.manifest(), "query", image.package_digest()).unwrap()
+    );
+    assert!(binding.declaration.query.is_some());
+    let original = binding.clone();
+    let mut changed = binding.declaration;
+    changed.query.as_mut().unwrap().input_schema.schema_version += 1;
+    source.get_mut("tool.json").unwrap().bytes = serde_json::to_vec(&changed).unwrap();
+    assert_eq!(
+        capture(manifest(), source).capability_tool("query-tool"),
+        Err(HostError::InvalidContract)
+    );
+    assert_eq!(image.capability_tool("query-tool").unwrap(), original);
+}
+
+#[test]
 fn captured_tool_resolves_original_capability_and_opaque_support_without_activation() {
     let image = capture(manifest(), files());
     let binding = image.capability_tool("query-tool").unwrap();

@@ -158,6 +158,17 @@
             }
           ]
         },
+        "query": {
+          "description": "Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolQueryDeclaration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skill": {
           "type": [
             "string",
@@ -343,6 +354,176 @@
         "componentId",
         "contributionId",
         "packageDigest"
+      ]
+    },
+    "ToolQueryColumn": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "path"
+      ]
+    },
+    "ToolQueryDeclaration": {
+      "type": "object",
+      "properties": {
+        "inputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "inputTemplate": true,
+        "maxTextBytes": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "output": {
+          "$ref": "#/$defs/ToolQueryOutput"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/ContractRef"
+        },
+        "selections": {
+          "description": "Explicit senses or categories. Matching text alone does not select them.",
+          "$ref": "#/$defs/ToolQuerySelection"
+        },
+        "target": {
+          "description": "One explicit target option; no host-side locale or value normalization.",
+          "$ref": "#/$defs/ToolQuerySelection"
+        },
+        "textPath": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "inputSchema",
+        "outputSchema",
+        "inputTemplate",
+        "textPath",
+        "maxTextBytes",
+        "target",
+        "selections",
+        "output"
+      ]
+    },
+    "ToolQueryOption": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "label",
+        "description"
+      ]
+    },
+    "ToolQueryOutput": {
+      "type": "object",
+      "properties": {
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryColumn"
+          }
+        },
+        "emptyDescription": {
+          "type": "string"
+        },
+        "entriesPath": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        },
+        "maxEntries": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entriesPath",
+        "columns",
+        "maxEntries",
+        "emptyDescription"
+      ]
+    },
+    "ToolQueryPathPart": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "maximum": 1999,
+          "minimum": 0
+        }
+      ]
+    },
+    "ToolQuerySelection": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "maxSelected": {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        "minSelected": {
+          "type": "integer",
+          "maximum": 64,
+          "minimum": 0
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryOption"
+          }
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolQueryPathPart"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "description",
+        "path",
+        "options",
+        "minSelected",
+        "maxSelected"
       ]
     },
     "ToolResourceBinding": {

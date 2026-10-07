@@ -13,8 +13,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   guidance grants no authority. Desktop commands prepare fixed single or batch
   query inputs and use the existing execution ledger with explicit per-attempt
   consent, exact installed settings/runtime rechecks and original-start
-  reconciliation. Read-only results remain unadopted; product query interfaces
-  and Agent integration are still in development.
+  reconciliation. Tools can also declare bounded text-query presentation,
+  explicit target/category choices and reference-result columns. The public
+  JavaScript helper preserves the captured input template for single and batch
+  consumers and distinguishes empty matches from malformed results. Read-only
+  results remain unadopted; product query interfaces and Agent integration are
+  still in development.
 
 - Experimental Host consumers can read explicitly selected opaque Resources and
   Skills from immutable captured packages, with exact resource schema/behavior
