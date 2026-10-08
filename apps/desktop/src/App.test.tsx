@@ -832,6 +832,98 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(0);
   });
 
+  it.each([
+    { editor: "Rename", field: "Project name", command: "rename_project", error: "Enter a project name." },
+    { editor: "Edit target languages", field: "Target locales", command: "set_target_locales",
+      error: "Enter at least one valid target language tag, such as zh-Hans. Remove duplicate languages." },
+  ])("validates a blank $field before Save and continue without leaving the project", async ({ editor, field, command, error }) => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: editor }));
+    const input = screen.getByRole("textbox", { name: field });
+    await user.clear(input);
+    await user.type(input, "   ");
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Save and continue" }));
+    expect(await within(dialog).findByText(error)).toBeVisible();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveValue("   ");
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(0);
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === "close_project")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+    expect(input).toHaveValue("   ");
+    expect(input).toBeEnabled();
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(0);
+  });
+
+  it("saves hidden metadata from the window-close dialog after entering Tasks", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(input);
+    await user.type(input, "Hidden draft");
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "list_execution_tasks") return [];
+      if (command === "rename_project") return {
+        sessionToken: "session-1", locator: "C:\\Projects\\demo",
+        metadata: metadata("Hidden draft", "2"), outcome: "changed", directoryChanged: false,
+      };
+      if (command === "close_project") return { closed: true };
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByText(/No tasks in this project/);
+    await user.keyboard("{Control>}s{/Control}");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(0);
+    const event = { preventDefault: vi.fn() };
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0](event); });
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Save and continue" }));
+    await waitFor(() => expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1));
+    expect(mocks.invoke).toHaveBeenCalledWith("rename_project", {
+      request: { sessionToken: "session-1", expectedRevision: "1", displayName: "Hidden draft" },
+    });
+    await waitFor(() => expect(mocks.destroy).toHaveBeenCalledOnce());
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { editor: "Rename", field: "Project name", command: "rename_project", error: "Enter a project name." },
+    { editor: "Edit target languages", field: "Target locales", command: "set_target_locales",
+      error: "Enter at least one valid target language tag, such as zh-Hans. Remove duplicate languages." },
+  ])("validates hidden metadata $field from the window-close dialog after entering Tasks", async ({ editor, field, command, error }) => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: editor }));
+    const input = screen.getByRole("textbox", { name: field });
+    await user.clear(input);
+    await user.type(input, "   ");
+    mocks.invoke.mockImplementation(async (name: string) => name === "list_execution_tasks" ? [] : projectView());
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByText(/No tasks in this project/);
+    await user.keyboard("{Control>}s{/Control}");
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(0);
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Save and continue" }));
+    expect(await within(dialog).findByText(error)).toBeVisible();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === command)).toHaveLength(0);
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === "close_project")).toHaveLength(0);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    expect(screen.getByRole("textbox", { name: field })).toHaveValue("   ");
+    expect(input).toBeEnabled();
+  });
+
   it("optionally synchronizes the project folder when saving a rename", async () => {
     const user = userEvent.setup();
     await renderApp();
@@ -1050,6 +1142,7 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke).toHaveBeenCalledWith("rename_project", {
       request: { sessionToken: "session-1", expectedRevision: "1", displayName: "Demo draft" },
     });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
     expect(mocks.invoke).toHaveBeenCalledWith("close_project", { request: { sessionToken: "session-1" } });
   });
 

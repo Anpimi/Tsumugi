@@ -350,6 +350,7 @@ function App() {
   const [openPanel, setOpenPanel] = useState(false);
   const [activeForm, setActiveForm] = useState<ActiveForm | null>(null);
   const [navigationIntent, setNavigationIntent] = useState<NavigationIntent | null>(null);
+  const currentNavigationIntent = useRef<NavigationIntent | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>(() => readRecentProjects());
   const [restoreCandidate, setRestoreCandidate] = useState<RecentProject | null>(() => readLastOpenProject());
   const [restorePromptOpen, setRestorePromptOpen] = useState(false);
@@ -392,6 +393,8 @@ function App() {
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
   const busy = operation !== "idle" || stopping || stopIntent !== null;
   const status = statusFor(t, operation, dirty || createDraftDirty);
+
+  useLayoutEffect(() => { currentNavigationIntent.current = navigationIntent; }, [navigationIntent]);
 
   useEffect(() => {
     document.documentElement.lang = resolvedLanguage;
@@ -487,7 +490,13 @@ function App() {
   function requestNavigation(intent: NavigationIntent) {
     const focused = document.activeElement;
     dialogReturnFocus.current = focused instanceof HTMLElement ? focused : null;
+    currentNavigationIntent.current = intent;
     setNavigationIntent(intent);
+  }
+
+  function clearNavigationIntent() {
+    currentNavigationIntent.current = null;
+    setNavigationIntent(null);
   }
 
   function beginEditor(kind: FormKind, metadata: ProjectMetadataView) {
@@ -880,10 +889,10 @@ function App() {
     if (nextMetadata) beginEditor(intent.formKind, nextMetadata);
   }
 
-  async function resolveNavigation(choice: "save" | "discard" | "cancel") {
+  async function resolveNavigation(choice: "discard" | "cancel") {
     if (!navigationIntent) return;
     if (choice === "cancel") {
-      setNavigationIntent(null);
+      clearNavigationIntent();
       return;
     }
     const intent = navigationIntent;
@@ -895,18 +904,17 @@ function App() {
         editorForm.reset(EDITOR_DEFAULT_VALUES);
         setActiveForm(null);
       }
-      setNavigationIntent(null);
+      clearNavigationIntent();
       await continueNavigation(intent);
-      return;
     }
-    if (!activeForm) {
-      setNavigationIntent(null);
-      await continueNavigation(intent);
-      return;
-    }
-    const result = await saveForm(activeForm, editorForm.getValues("value"));
+  }
+
+  async function saveAndContinueMetadata(intent: NavigationIntent, form: ActiveForm, sessionToken: string, value: string) {
+    if (currentSession.current !== sessionToken || currentNavigationIntent.current !== intent) return;
+    const result = await saveForm(form, value);
     if (!result.ok) return;
-    setNavigationIntent(null);
+    if (currentSession.current !== sessionToken || currentNavigationIntent.current !== intent) return;
+    clearNavigationIntent();
     setFeedback({ tone: "success", messageKey: "feedback.savedBeforeContinue" });
     await continueNavigation(intent, result.metadata);
   }
@@ -1054,17 +1062,31 @@ function App() {
   useLayoutEffect(() => {
     if (!project) return;
     return commandRegistry.register({
-      id: "project.metadata.save", nameKey: "editor.save", category: "project",
-      scope: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "overview" },
-      binding: "Mod+S", risk: "writes-project", confirmation: "none",
-      availability: () => !activeForm || area !== "overview"
+      id: "project.metadata.save", nameKey: navigationIntent ? "action.saveAndContinue" : "editor.save", category: "project",
+      scope: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: navigationIntent ? area : "overview" },
+      binding: navigationIntent ? null : "Mod+S", risk: "writes-project", confirmation: navigationIntent ? "required" : "none",
+      availability: () => !activeForm || (!navigationIntent && area !== "overview")
         ? { enabled: false, reason: "hidden" }
-        : busy || navigationIntent || restorePromptOpen || areaNavigation.current
+        : busy || restorePromptOpen || areaNavigation.current || (navigationIntent && createDraftDirty)
           ? { enabled: false, reason: "busy" }
-          : !dirty || operation !== "idle" || pendingSave.current
+        : !dirty || operation !== "idle" || pendingSave.current
             ? { enabled: false, reason: "no-changes" }
             : { enabled: true },
-      handler: () => { void editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)(); },
+      handler: () => {
+        const intent = navigationIntent;
+        const form = activeForm;
+        const sessionToken = project.sessionToken;
+        void editorForm.handleSubmit(({ value }) => {
+          if (currentSession.current !== sessionToken) return;
+          if (intent) {
+            if (form && currentNavigationIntent.current === intent) void saveAndContinueMetadata(intent, form, sessionToken, value);
+            return;
+          }
+          if (!currentNavigationIntent.current) handleSave(value);
+        }, () => {
+          if (currentSession.current === sessionToken && currentNavigationIntent.current === intent) handleEditorInvalid();
+        })();
+      },
     });
   });
 
@@ -1625,7 +1647,7 @@ function App() {
         <DialogRoot
           open={Boolean(navigationIntent)}
           onOpenChange={(open) => {
-            if (!open && !busy) setNavigationIntent(null);
+            if (!open && !busy) clearNavigationIntent();
           }}
         >
           <DialogPortal>
@@ -1678,10 +1700,14 @@ function App() {
               <div className="dialog-actions">
                 <button ref={cancelDialogButton} className="secondary-button" type="button" onClick={() => void resolveNavigation("cancel")} disabled={busy}>{createDraftDirty ? t("action.keepEditing") : t("action.cancel")}</button>
                 {activeForm || createDraftDirty ? <button className="danger-button" type="button" onClick={() => void resolveNavigation("discard")} disabled={busy}>{t("action.discard")}</button> : null}
-                {activeForm && !createDraftDirty ? <button className="primary-button" type="button" onClick={() => void resolveNavigation("save")} disabled={busy}>{t("action.saveAndContinue")}</button> : null}
+                {activeForm && !createDraftDirty ? <button className="primary-button" type="button" onClick={() => {
+                  if (project) commandRegistry.dispatch("project.metadata.save", {
+                    projectId: project.metadata.projectId, sessionToken: project.sessionToken, area,
+                  });
+                }} disabled={busy}>{t("action.saveAndContinue")}</button> : null}
                 {!activeForm && !createDraftDirty ? <button className="primary-button" type="button" disabled={busy} onClick={() => {
                   const intent = navigationIntent;
-                  setNavigationIntent(null);
+                  clearNavigationIntent();
                   if (intent) void continueNavigation(intent);
                 }}>{t("action.continue")}</button> : null}
               </div>
