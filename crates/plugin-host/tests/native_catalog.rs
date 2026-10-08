@@ -585,17 +585,36 @@ fn native_catalog_normal_core_requires_source_qa_human_and_artifact_proofs_and_k
             .unwrap();
         let target = store.review_target(project, unit, "zh-CN").unwrap();
         let prepared = store
-            .prepare_review_check(project, unit, "zh-CN", &target.basis, ExecutionId::new())
+            .prepare_review_check(
+                project,
+                unit,
+                "zh-CN",
+                &target.basis,
+                ExecutionId::new(),
+                &[],
+            )
             .unwrap();
-        let input = prepared.domain_execution_input(ExecutionId::new()).unwrap();
+        let inputs = prepared.execution_inputs();
+        assert_eq!(inputs.len(), 1, "format-only review has one checker input");
+        let input = inputs[0].clone();
+        prepared.validate_execution_input(&input).unwrap();
         grants.push(authorize(&runtime, &mut store, &input));
         let result = execute(&mut runtime, &mut store, &input);
+        let origin = tsumugi_core::ReviewCheckOrigin {
+            checker: prepared.plan().unwrap().checkers()[0].key.clone(),
+            attempt_id: input.envelope().attempt_id,
+            result_id: result.envelope().result_id,
+        };
+        assert_eq!(
+            store
+                .capture_review_check_execution(prepared.clone(), &[])
+                .unwrap_err()
+                .code,
+            ErrorCode::ResultMismatch,
+            "every selected checker requires its actual origin"
+        );
         let computed = store
-            .capture_review_check_execution(
-                prepared,
-                input.envelope().attempt_id,
-                result.envelope().result_id,
-            )
+            .capture_review_check_execution(prepared, &[origin])
             .unwrap()
             .compute(&Cancellation::default())
             .unwrap();
