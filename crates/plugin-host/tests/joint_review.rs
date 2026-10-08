@@ -42,6 +42,17 @@ impl Drop for OwnedDirectory {
 
 #[test]
 fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection() {
+    exercise_joint_review(false, false);
+}
+
+#[test]
+fn actual_same_rule_providers_keep_conflicting_suggestions_and_independent_origins() {
+    for reverse in [false, true] {
+        exercise_joint_review(true, reverse);
+    }
+}
+
+fn exercise_joint_review(multiple: bool, reverse: bool) {
     let temp = OwnedDirectory(tempfile::tempdir().unwrap());
     let root = temp.0.path();
     let format_root = root.join("format");
@@ -59,6 +70,22 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
         &knowledge_digest,
         "philosophy",
     );
+    let alternative = multiple.then(|| {
+        let path = root.join("alternative");
+        std::fs::create_dir(&path).unwrap();
+        let source = std::env::var_os("TSUMUGI_TEST_SECOND_KNOWLEDGE_PACKAGE")
+            .expect("explicit independent second knowledge package required");
+        let digest = std::env::var("TSUMUGI_TEST_SECOND_KNOWLEDGE_DIGEST")
+            .expect("exact second knowledge package digest required");
+        official::installed_from(&path, Path::new(&source), &digest, "philosophy-alternative")
+    });
+    let mut knowledge_images = vec![&knowledge];
+    if let Some(image) = &alternative {
+        knowledge_images.push(image);
+    }
+    if reverse {
+        knowledge_images.reverse();
+    }
     let source = format.source_import("source-profile").unwrap();
     let text = knowledge.text_review_declaration("text-review").unwrap();
     let staging = root.join("workers");
@@ -78,7 +105,6 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
     let extractor = proxy(&format, &source.declaration.extractor);
     let source_checker = proxy(&format, &source.declaration.checker);
     let format_checker = proxy(&format, &source.review.declaration.checker);
-    let text_checker = proxy(&knowledge, &text.declaration.checker);
     let rule = text
         .declaration
         .rules
@@ -87,18 +113,140 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
         .unwrap()
         .rule
         .clone();
-    let text_execution = text_checker
-        .execution_binding(Some(text.declaration.profile.clone()))
+    let mut text_checkers = Vec::new();
+    let mut choices = Vec::new();
+    let mut catalog = catalog::PackageCatalog::new();
+    for image in &knowledge_images {
+        let binding = image.text_review_declaration("text-review").unwrap();
+        assert!(binding.declaration.rules.iter().any(|r| r.rule == rule));
+        let runner = proxy(image, &binding.declaration.checker);
+        let execution = runner
+            .execution_binding(Some(binding.declaration.profile.clone()))
+            .unwrap();
+        choices.push(
+            AdvisoryReviewCheck::capture(
+                &binding,
+                &execution.environment,
+                "text-review",
+                image.text_review_resource_pins("text-review").unwrap(),
+                vec![rule.clone()],
+            )
+            .unwrap(),
+        );
+        text_checkers.push(runner);
+        let plugin = image.manifest().manifest().plugin.clone();
+        catalog
+            .register(
+                (*image).clone(),
+                catalog::PackageApproval {
+                    plugin: plugin.clone(),
+                    package_digest: image.package_digest().into(),
+                    origin: catalog::PackageOrigin {
+                        source_id: "explicit-official-test".into(),
+                        publisher_id: "reviewed-public-source".into(),
+                    },
+                },
+            )
+            .unwrap();
+        catalog.set_enabled(&plugin, true).unwrap();
+    }
+    let chosen: Vec<_> = choices
+        .iter()
+        .map(|choice| sdk::ProviderKey {
+            plugin: choice.binding.checker.provider.plugin.clone(),
+            contribution_id: choice.binding.checker.provider.contribution_id.clone(),
+        })
+        .collect();
+    if multiple {
+        assert_eq!(
+            catalog
+                .resolve(
+                    &text.checker.declaration.contract,
+                    Some(&text.declaration.profile),
+                    sdk::ProviderSelection::Single,
+                    &[],
+                )
+                .unwrap_err(),
+            catalog::CatalogError::AmbiguousProvider
+        );
+        assert_ne!(choices[0].resource_pins, choices[1].resource_pins);
+    }
+    for (choice, key) in choices.iter().zip(&chosen) {
+        let selected = catalog
+            .resolve(
+                &text.checker.declaration.contract,
+                Some(&text.declaration.profile),
+                sdk::ProviderSelection::Single,
+                std::slice::from_ref(key),
+            )
+            .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(
+            selected[0].binding().provider,
+            choice.binding.checker.provider
+        );
+    }
+    let collected = catalog
+        .resolve(
+            &text.checker.declaration.contract,
+            Some(&text.declaration.profile),
+            sdk::ProviderSelection::CollectIndependent,
+            &chosen,
+        )
         .unwrap();
-    let advisory = AdvisoryReviewCheck::capture(
-        &text,
-        &text_execution.environment,
-        "text-review",
-        knowledge.text_review_resource_pins("text-review").unwrap(),
-        vec![rule],
-    )
-    .unwrap();
-    let choices = vec![advisory.clone()];
+    assert_eq!(
+        collected
+            .iter()
+            .map(|provider| provider.binding().provider.clone())
+            .collect::<BTreeSet<_>>(),
+        choices
+            .iter()
+            .map(|choice| choice.binding.checker.provider.clone())
+            .collect()
+    );
+    assert_eq!(std::fs::read_dir(&staging).unwrap().count(), 0);
+    let checker_count = choices.len() + 1;
+    // Queries and advisory checks consume the same independently captured
+    // Resource. Conflicting editorial preferences are never ranked by loading.
+    let asynchronous = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    asynchronous.block_on(async {
+        for image in &knowledge_images {
+            let tool = image.capability_tool("agent-query-tool").unwrap();
+            let mut request = tool
+                .declaration
+                .query
+                .as_ref()
+                .unwrap()
+                .input_template
+                .clone();
+            request["queries"][0]["text"] = serde_json::json!("sound premises é 👩🏽‍💻");
+            request["queries"][0]["conceptIds"] = serde_json::json!(["soundness"]);
+            let mut session = official::launch(image, "query", &staging).await;
+            let payload = official::success_payload(
+                official::invoke(
+                    &mut session,
+                    &tool.capability,
+                    "explicit-reference-query",
+                    &request,
+                )
+                .await,
+            );
+            let output: serde_json::Value = serde_json::from_str(&payload.utf8).unwrap();
+            assert_eq!(output["results"][0]["entries"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                output["results"][0]["entries"][0]["preferredTarget"],
+                if image.manifest().manifest().plugin.id == "philosophy-alternative" {
+                    "健全性"
+                } else {
+                    "可靠性"
+                }
+            );
+            official::close_and_reap(&mut session).await;
+        }
+    });
     let path = root.join("project");
     let mut store = ProjectStore::create(
         &path,
@@ -107,7 +255,10 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
     .unwrap();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let mut runtime = ExecutionRuntime::new(&store).unwrap();
-    for runner in [&extractor, &source_checker, &format_checker, &text_checker] {
+    for runner in [&extractor, &source_checker, &format_checker]
+        .into_iter()
+        .chain(text_checkers.iter())
+    {
         runtime.register(runner.clone()).unwrap();
     }
     let producer = extractor
@@ -200,7 +351,7 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
             &choices,
         )
         .unwrap();
-    assert_eq!(prepared.execution_inputs().len(), 2);
+    assert_eq!(prepared.execution_inputs().len(), checker_count);
     assert_eq!(
         prepared
             .execution_inputs()
@@ -208,7 +359,7 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
             .map(|input| input.envelope().task_id)
             .collect::<BTreeSet<_>>()
             .len(),
-        2
+        checker_count
     );
     let mut origins = Vec::new();
     let mut grants = Vec::new();
@@ -237,13 +388,42 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
         .compute(&Cancellation::default())
         .unwrap();
     assert!(computed.coverage().complete);
-    assert_eq!(computed.diagnostics().len(), 1);
-    assert_eq!(computed.diagnostics()[0].code, "preferred-term-missing");
-    assert!(computed.diagnostics()[0].location.is_some());
+    assert_eq!(computed.diagnostics().len(), choices.len());
+    assert!(
+        computed
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code == "preferred-term-missing"
+                && diagnostic.location.is_some())
+    );
+    let suggestions = computed
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.suggestion.as_deref().unwrap())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        suggestions,
+        if multiple {
+            BTreeSet::from(["可靠性", "健全性"])
+        } else {
+            BTreeSet::from(["可靠性"])
+        }
+    );
     let run = store
         .commit_review_evidence(computed, &Cancellation::default())
         .unwrap();
-    assert_eq!(run.evidence.as_ref().unwrap().origins.len(), 2);
+    assert_eq!(run.evidence.as_ref().unwrap().origins.len(), checker_count);
+    assert_eq!(run.evidence.as_ref().unwrap().advisory_checks, choices);
+    if multiple {
+        let advisory: Vec<_> = run.rules.iter().filter(|rule| !rule.mandatory).collect();
+        assert_eq!(advisory.len(), 2);
+        assert_eq!(advisory[0].rule, advisory[1].rule);
+        assert_ne!(advisory[0].key, advisory[1].key);
+        assert_ne!(
+            advisory[0].findings[0].issue_id,
+            advisory[1].findings[0].issue_id
+        );
+    }
     assert!(
         run.rules
             .iter()
@@ -369,8 +549,8 @@ fn actual_format_and_advisory_workers_preserve_qa_history_and_atomic_selection()
             .unwrap(),
         Some(receipt)
     );
-    assert_eq!(grants.len(), 2);
-    assert_ne!(grants[0], grants[1]);
+    assert_eq!(grants.len(), checker_count);
+    assert_eq!(grants.iter().collect::<BTreeSet<_>>().len(), checker_count);
     assert_eq!(
         std::str::from_utf8(
             knowledge
