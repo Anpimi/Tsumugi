@@ -339,7 +339,7 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke.mock.calls.some(([command]) => command === "rename_project")).toBe(false);
   });
 
-  it("guards area navigation and restores the saved editor after returning from Tasks", async () => {
+  it("preserves an unsaved translation across area navigation and saves it after returning from Tasks", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     const target = reviewTargetFixture({ unitId: fixtureIdentity(501), nativeKey: "first", sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis" });
     let text: string | null = null;
@@ -379,11 +379,13 @@ describe("project lifecycle workbench", () => {
     const editor = await screen.findByRole("textbox", { name: "Your draft" });
     await user.type(editor, "Draft");
     await user.click(screen.getByRole("button", { name: "Tasks" }));
-    expect(await screen.findByRole("dialog")).toHaveTextContent("Leave with an unsaved translation?");
-    expect(screen.getByRole("button", { name: "Translations", hidden: true })).toHaveAttribute("aria-current", "page");
-    await user.click(screen.getByRole("button", { name: "Keep editing" }));
-    expect(editor).toHaveValue("Draft");
-    await user.click(editor); await user.keyboard("{Control>}s{/Control}");
+    await screen.findByText(/No tasks in this project/);
+    expect(screen.queryByRole("textbox", { name: "Your draft", hidden: true })).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    const restored = await screen.findByRole("textbox", { name: "Your draft" });
+    expect(restored).toHaveValue("Draft");
+    await user.click(restored); await user.keyboard("{Control>}s{/Control}");
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
     await user.click(screen.getByRole("button", { name: "Tasks" }));
     await screen.findByText(/No tasks in this project/);
@@ -457,21 +459,24 @@ describe("project lifecycle workbench", () => {
     expect(fixture.saves()).toHaveLength(0);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Leave with an unsaved translation?");
     await user.keyboard("{Control>}s{/Control}");
     expect(fixture.saves()).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    const restoredEditor = await screen.findByRole("textbox", { name: "Your draft" });
+    expect(restoredEditor).toHaveValue("A");
 
     fixture.setSave(async () => { throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true }; });
     await user.click(screen.getByRole("button", { name: "Save revision" }));
     await waitFor(() => expect(fixture.saves()).toHaveLength(1));
     await screen.findByRole("alert");
-    await user.click(editor);
+    await user.click(restoredEditor);
     await user.keyboard("{Control>}s{/Control}");
     expect(fixture.saves()).toHaveLength(1);
-    expect(editor).toHaveValue("A");
+    expect(restoredEditor).toHaveValue("A");
   });
   it("clears a rejected create result after explicitly discarding the draft", async () => {
     const user = userEvent.setup();
