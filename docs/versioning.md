@@ -1,5 +1,21 @@
 # Application versioning and changelog maintenance
 
+Desktop execution now retains exact package ownership through accepted capture,
+preparation IO and its session continuation, including abandoned IPC waiters.
+Internal cleanup fences only the selected identity/digest, retires dependent
+owners and actual query threads, and retains the session fence after runtime
+drain until the installation owner verifies its original Store result. Completed
+old controls cannot stop a new registration. Saved projections and release
+exports remain available. No project schema 30, IPC, settings format 2, Store
+receipt, SDK/process contract, dependency or version source changes. This stays
+in the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
+without an additional bump or migration; both Unreleased changelogs are updated.
+An additive Core consent precheck shares the original expiry rules and grants
+no authority. Review refuses invalid consent before retaining a dispatch action;
+actual authorization still checks it again, and uncertain committed grants keep
+their original recovery identities. Approval withdrawal and exact-install removal
+IPC/UI remain separate work.
+
 The experimental Core `ExecutionRuntime` adds package-scoped begin/finish
 quiescence. It binds one full plugin identity, package digest, original action
 and runtime generation, revokes only its grants, and retains original task

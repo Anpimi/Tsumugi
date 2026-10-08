@@ -72,7 +72,7 @@ struct Job {
 pub(super) struct Automation {
     attempts: BTreeMap<ExecutionId, Attempt>,
     jobs: Vec<Job>,
-    retired: Vec<JoinHandle<()>>,
+    retired: Vec<(ExecutionId, JoinHandle<()>)>,
     #[cfg(test)]
     pub(super) compute_probe: Option<review::ComputeProbe>,
 }
@@ -157,6 +157,85 @@ pub(in crate::commands::execution) fn commit_candidate(
     }
 }
 impl Automation {
+    fn depends_on(
+        attempt: &Attempt,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        package_lifecycle::matches_input(package, &attempt.input)
+            || attempt.consent.as_ref().is_some_and(|consent| {
+                consent
+                    .bindings
+                    .iter()
+                    .any(|checker| package_lifecycle::binding_package(&checker.binding) == *package)
+            })
+            || attempt.items.values().any(|item| {
+                item.checker.as_ref().is_some_and(|checker| {
+                    checker
+                        .channels
+                        .iter()
+                        .any(|channel| package_lifecycle::matches_input(package, &channel.input))
+                })
+            })
+    }
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        let ids: Vec<_> = self
+            .attempts
+            .iter()
+            .filter(|(_, attempt)| Self::depends_on(attempt, package))
+            .map(|(id, _)| *id)
+            .collect();
+        for job in self.jobs.iter().filter(|job| ids.contains(&job.attempt)) {
+            job.cancellation.request();
+        }
+        for id in ids {
+            for item in self
+                .attempts
+                .get_mut(&id)
+                .expect("captured attempt")
+                .items
+                .values_mut()
+            {
+                if let Some(checker) = &item.checker {
+                    checker.cancellation.request();
+                }
+                if matches!(
+                    item.view.phase,
+                    EffectPhase::Waiting | EffectPhase::SavingCandidate | EffectPhase::Checking
+                ) || (item.view.phase == EffectPhase::Failed
+                    && item.view.retryable
+                    && item.view.receipt.is_none())
+                {
+                    item.view.phase = EffectPhase::Cancelled;
+                    item.view.retryable = false;
+                }
+            }
+        }
+    }
+    pub(super) fn package_active(
+        &self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        let owns = |id: ExecutionId| {
+            self.attempts
+                .get(&id)
+                .is_some_and(|attempt| Self::depends_on(attempt, package))
+        };
+        self.jobs.iter().any(|job| owns(job.attempt))
+            || self.retired.iter().any(|(id, _)| owns(*id))
+            || self
+                .attempts
+                .values()
+                .filter(|attempt| Self::depends_on(attempt, package))
+                .any(|attempt| {
+                    attempt.items.values().any(|item| {
+                        item.view.phase == EffectPhase::Waiting
+                            || item.checker.as_ref().is_some_and(|checker| checker.pending)
+                    })
+                })
+    }
     pub(super) fn track(
         &mut self,
         store: &ProjectStore,
@@ -373,7 +452,15 @@ impl Automation {
         Ok(dispatch_consent)
     }
     pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
-        self.retired.retain(|thread| !thread.is_finished());
+        let mut remaining = Vec::new();
+        for (id, thread) in self.retired.drain(..) {
+            if thread.is_finished() {
+                let _ = thread.join();
+            } else {
+                remaining.push((id, thread));
+            }
+        }
+        self.retired = remaining;
         // Control is checked before accepting results or dispatching another checker.
         for (id, attempt) in &mut self.attempts {
             if let Err(error) = store.check_work_plan_input(&attempt.input) {
@@ -409,7 +496,7 @@ impl Automation {
                 continue;
             };
             let job = self.jobs.remove(index);
-            self.retired.push(job.thread);
+            self.retired.push((job.attempt, job.thread));
             let Some(attempt) = self.attempts.get_mut(&job.attempt) else {
                 continue;
             };

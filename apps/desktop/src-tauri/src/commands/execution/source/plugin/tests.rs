@@ -393,7 +393,16 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     assert!(call(&window, "run_review_checks", substituted).is_err());
     let mut expired = review_start.clone();
     expired["executions"][0]["expiresAtMs"] = json!("1");
-    assert!(call(&window, "run_review_checks", expired).is_err());
+    let expired_error = call(&window, "run_review_checks", expired).unwrap_err();
+    assert_eq!(expired_error["code"], "invalid-input");
+    assert_eq!(expired_error["reason"], "plugin-grant-expiry");
+    app.state::<AppState>().sessions.with(|sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        assert!(
+            !host.active(store).unwrap(),
+            "invalid consent must not retain active work"
+        );
+    });
     assert!(
         call(&window, "read_review_target", target_request.clone()).unwrap()["currentCheck"]
             .is_null()
@@ -638,10 +647,7 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     let prepared_plan = call(&window, "prepare_work_plan", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"config":config,"locale":"zh-CN","unitIds":[unit],"options":options,"advisoryChecks":[]})).unwrap();
     assert_eq!(prepared_plan["checkers"][0]["kind"], "ready");
     let checker_key = prepared_plan["checkers"][0]["checker"].clone();
-    assert_eq!(
-        checker_key,
-        review["view"]["checkers"][0]["checker"]
-    );
+    assert_eq!(checker_key, review["view"]["checkers"][0]["checker"]);
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -775,8 +781,10 @@ fn real_source_ipc_requires_two_grants_and_commits_only_checked_captured_bytes()
     };
     let disabled = set_enabled(
         false,
-        serde_json::from_value(replacement["checkers"][0]["plugin"]["plugin"]["settingsRevision"].clone())
-            .unwrap(),
+        serde_json::from_value(
+            replacement["checkers"][0]["plugin"]["plugin"]["settingsRevision"].clone(),
+        )
+        .unwrap(),
     );
     let unavailable = call(&window, "read_work_plan_status", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"planId":replacement["planId"]})).unwrap();
     assert_eq!(unavailable["plan"]["checkers"][0]["kind"], "unavailable");

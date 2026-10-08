@@ -14,6 +14,20 @@ pub(super) struct ToolSession {
     last_start: Option<PluginStartRequest>,
 }
 impl ToolSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        if self
+            .prepared
+            .as_ref()
+            .is_some_and(|prepared| prepared.request.tool.package == *package)
+        {
+            self.prepared = None;
+        }
+        // In-flight preparation keeps its PackageWork guard; its original
+        // continuation observes cancellation before publishing a new preflight.
+    }
     pub(super) fn active(&self) -> bool {
         self.pending.is_some()
     }
@@ -244,19 +258,22 @@ pub async fn prepare_plugin_tool(
                 .metadata()
                 .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRecover))?
                 .project_id();
-            Ok(Ok((host.tools.begin(initial.attempt_id)?, project)))
+            let work = host.begin_package_work(vec![initial.tool.package.clone()])?;
+            Ok(Ok((host.tools.begin(initial.attempt_id)?, project, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (ticket, project) = match admitted.await? {
+        let (ticket, project, work) = match admitted.await? {
             Ok(job) => job,
             Err(view) => return Ok(view),
         };
         let original = request.clone();
+        let accepted_work = work.clone();
         let captured = io
             .run(CommandStage::ExecutionRecover, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_tool(&original.tool)?;
                 capture(project, original, environment)
             })
@@ -268,6 +285,7 @@ pub async fn prepare_plugin_tool(
                 move |sessions| {
                     let active =
                         finish_job(sessions, &request.session_token, request.project_id, ticket)?;
+                    work.check()?;
                     let (host, _) = active.execution_parts()?;
                     let prepared = captured?;
                     let view = prepared.view.clone();
@@ -330,19 +348,26 @@ pub async fn start_plugin_tool(
             {
                 return Err(stale());
             }
-            Ok(Some((host.tools.begin(initial.attempt_id)?, prepared)))
+            let work = host.begin_package_work(vec![prepared.request.tool.package.clone()])?;
+            Ok(Some((
+                host.tools.begin(initial.attempt_id)?,
+                prepared,
+                work,
+            )))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let Some((ticket, prepared)) = admitted.await? else {
+        let Some((ticket, prepared, work)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         let fixed = prepared.clone();
         let current_plugins = plugins.clone();
+        let accepted_work = work.clone();
         let loaded = io
             .run(CommandStage::ExecutionRecover, move || {
+                accepted_work.check()?;
                 let environment = current_plugins.capture_tool(&fixed.request.tool)?;
                 if environment.view()? != fixed.view.tool
                     || fixed.input.envelope().plugin.as_ref() != Some(&binding(&environment))
@@ -367,6 +392,7 @@ pub async fn start_plugin_tool(
                 CommandStage::ExecutionRecover,
                 move |sessions| {
                     let active = finish(sessions, &request, ticket)?;
+                    work.check()?;
                     let (host, store) = active.execution_parts()?;
                     let (environment, proxy) = loaded?;
                     plugins.with_environment_revision(environment.settings_revision, || {

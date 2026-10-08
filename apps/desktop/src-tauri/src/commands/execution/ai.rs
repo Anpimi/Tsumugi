@@ -11,6 +11,18 @@ pub(super) struct AiSession {
     automation: automation::Automation,
 }
 impl AiSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        self.automation.stop_package(package);
+    }
+    pub(super) fn package_active(
+        &self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        self.automation.package_active(package)
+    }
     #[cfg(test)]
     pub(super) fn pause_check_computation(&mut self, probe: review::ComputeProbe) {
         self.automation.compute_probe = Some(probe);

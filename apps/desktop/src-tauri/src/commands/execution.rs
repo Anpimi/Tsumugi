@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tsumugi_core::{RecoveryPlan, TaskView, execution::*};
+mod package_lifecycle;
+use package_lifecycle::{PackageControl, PackageWork, PackageWorkState, RetiredQuery};
 
 macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
@@ -160,7 +162,9 @@ pub(super) struct ExecutionHost {
     runtime: ExecutionRuntime,
     handlers: BTreeMap<String, Arc<dyn AdoptionHandler>>,
     queries: Vec<QueryJob>,
-    retired_queries: Vec<JoinHandle<()>>,
+    retired_queries: Vec<RetiredQuery>,
+    package_controls: BTreeMap<ExecutionId, PackageControl>,
+    package_work: Vec<std::sync::Weak<PackageWorkState>>,
     quiescing: bool,
     last_error: Option<CommandError>,
     source: source::SourceSession,
@@ -187,6 +191,8 @@ impl ExecutionHost {
             handlers: BTreeMap::new(),
             queries: Vec::new(),
             retired_queries: Vec::new(),
+            package_controls: BTreeMap::new(),
+            package_work: Vec::new(),
             quiescing: false,
             last_error: None,
             source: source::SourceSession::default(),
@@ -272,6 +278,8 @@ impl ExecutionHost {
     }
     fn active(&self, store: &ProjectStore) -> Result<bool, CommandError> {
         Ok(self.quiescing
+            || self.package_lifecycle_active()
+            || self.package_work_active()
             || self.source.is_active()
             || self.release.is_active()
             || self.ai.active()
@@ -282,6 +290,18 @@ impl ExecutionHost {
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
     fn finish_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
+        if self.package_lifecycle_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-lifecycle-active",
+            ));
+        }
+        if self.package_work_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-work-draining",
+            ));
+        }
         if self.release.delivery_is_active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "delivery-active"));
         }
@@ -294,9 +314,13 @@ impl ExecutionHost {
         // Retiring a query revokes its reply path, not its runner/file lifetime.
         // Never rotate the runtime or permit project close while it still runs.
         if !self.retired_queries.is_empty() {
-            return Err(ExecutionError::new(ErrorCode::Busy, "outcome-query-draining"));
+            return Err(ExecutionError::new(
+                ErrorCode::Busy,
+                "outcome-query-draining",
+            ));
         }
         self.runtime.finish_quiesce(store)?;
+        self.package_controls.clear();
         self.quiescing = false;
         Ok(())
     }
@@ -331,13 +355,13 @@ impl ExecutionHost {
     }
     fn poll_queries(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
         let mut remaining = Vec::new();
-        for thread in self.retired_queries.drain(..) {
-            if thread.is_finished() {
+        for query in self.retired_queries.drain(..) {
+            if query.thread.is_finished() {
                 // Join completes the thread's cleanup; dropping a finished
                 // handle alone would detach its final lifetime boundary.
-                let _ = thread.join();
+                let _ = query.thread.join();
             } else {
-                remaining.push(thread);
+                remaining.push(query);
             }
         }
         self.retired_queries = remaining;
@@ -359,7 +383,7 @@ impl ExecutionHost {
                     }
                 }
                 let job = self.queries.remove(index);
-                self.retired_queries.push(job.thread);
+                self.retired_queries.push(RetiredQuery::new(job));
                 result.map_err(map_recover)?;
                 continue;
             }
@@ -371,17 +395,17 @@ impl ExecutionHost {
                 }
                 Ok(Err(error)) => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(map_recover(error));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(CommandError::unknown(CommandStage::ExecutionRecover));
                 }
                 Err(mpsc::TryRecvError::Empty) if expired => {
                     let job = self.queries.remove(index);
-                    self.retired_queries.push(job.thread);
+                    self.retired_queries.push(RetiredQuery::new(job));
                     return Err(CommandError::unknown(CommandStage::ExecutionRecover));
                 }
                 Err(mpsc::TryRecvError::Empty) => index += 1,
@@ -390,10 +414,23 @@ impl ExecutionHost {
         Ok(())
     }
     fn begin_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
+        if self.package_lifecycle_active() {
+            return Err(map_recover(ExecutionError::new(
+                ErrorCode::Busy,
+                "package-lifecycle-active",
+            )));
+        }
         // Persist already received evidence before revoking late callbacks.
         // Storage failure retains the session and pending evidence for retry.
         self.poll_queries(store)?;
         self.quiescing = true;
+        for work in self
+            .package_work
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+        {
+            work.stop();
+        }
         self.source.stop();
         self.tools.stop();
         self.review.stop();
@@ -405,7 +442,7 @@ impl ExecutionHost {
         self.review.prepare_runtime_tick(store, &mut self.runtime)?;
         self.ai.prepare_runtime_tick(store, &mut self.runtime)?;
         for job in self.queries.drain(..) {
-            self.retired_queries.push(job.thread);
+            self.retired_queries.push(RetiredQuery::new(job));
         }
         match self.runtime.begin_quiesce(store) {
             Ok(()) => Ok(()),
@@ -428,6 +465,7 @@ impl ExecutionHost {
         runner: Arc<tsumugi_plugin_host::core::RunnerProxy>,
         binding: PluginExecutionBinding,
     ) -> Result<(), ExecutionError> {
+        self.allow_package(&package_lifecycle::binding_package(&binding))?;
         // One capability/environment registration serves request profiles.
         // Core validates each fixed request's profile independently.
         if self.plugin_registrations.iter().any(|previous| {

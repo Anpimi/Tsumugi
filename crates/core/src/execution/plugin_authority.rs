@@ -20,6 +20,34 @@ pub struct PluginConsent {
     pub unsandboxed_execution: bool,
 }
 
+impl PluginConsent {
+    /// Validate a proposed consent before retaining a request for dispatch.
+    /// This neither creates authority nor proves that a grant was persisted.
+    pub fn validate(&self, input: &FixedInput, expires_at_ms: u64) -> Result<(), ExecutionError> {
+        if !self.allows(input) {
+            return Err(denied());
+        }
+        plugin_grant_deadline(expires_at_ms).map(|_| ())
+    }
+
+    pub(crate) fn allows(&self, input: &FixedInput) -> bool {
+        input.envelope().plugin.is_some()
+            && input.envelope().automation.is_none()
+            && self.unsandboxed_execution
+    }
+}
+
+pub(crate) fn plugin_grant_deadline(expires_at_ms: u64) -> Result<Instant, ExecutionError> {
+    let remaining = expires_at_ms
+        .checked_sub(plugin_now_ms()?)
+        .filter(|remaining| *remaining > 0 && *remaining <= MAX_PLUGIN_GRANT_LIFETIME_MS)
+        .filter(|_| expires_at_ms <= i64::MAX as u64)
+        .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-grant-expiry"))?;
+    Instant::now()
+        .checked_add(std::time::Duration::from_millis(remaining))
+        .ok_or_else(denied)
+}
+
 fn denied() -> ExecutionError {
     ExecutionError::new(ErrorCode::Unauthorized, "plugin-authority")
 }
@@ -268,11 +296,13 @@ impl PluginAuthority {
         deadline: Instant,
     ) -> Result<PluginPermit, ExecutionError> {
         let epoch = self.require_generation(generation)?;
-        let now = plugin_now_ms()?;
-        expires_at_ms
-            .checked_sub(now)
-            .filter(|remaining| *remaining > 0 && *remaining <= MAX_PLUGIN_GRANT_LIFETIME_MS)
-            .ok_or_else(denied)?;
+        plugin_grant_deadline(expires_at_ms).map_err(|error| {
+            if error.stage == "plugin-grant-expiry" {
+                denied()
+            } else {
+                error
+            }
+        })?;
         if Instant::now() >= deadline {
             return Err(denied());
         }

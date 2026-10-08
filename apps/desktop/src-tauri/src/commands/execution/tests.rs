@@ -1,4 +1,5 @@
 use super::*;
+mod package_lifecycle;
 use serde_json::{Value, json};
 use tauri::{
     Manager,

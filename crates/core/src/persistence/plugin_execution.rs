@@ -3,13 +3,10 @@
 use super::{ProjectStore, ledger};
 use crate::execution::{
     ErrorCode, ExecutionError, ExecutionId, FixedInput, PluginConsent, PluginPermit,
-    plugin_authority::{MAX_PLUGIN_GRANT_LIFETIME_MS, PluginAuthority, PluginEpoch, plugin_now_ms},
+    plugin_authority::{PluginAuthority, PluginEpoch, plugin_grant_deadline, plugin_now_ms},
 };
 use rusqlite::{Connection, OptionalExtension, params};
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
 // A grant may be recorded before its fixed input is enqueued. Association with
 // the eventual attempt is checked against the exact captured digest, not an FK
@@ -282,25 +279,14 @@ impl ProjectStore {
         expires_at_ms: u64,
         consent: PluginConsent,
     ) -> Result<(), ExecutionError> {
-        if input.envelope().plugin.is_none()
-            || input.envelope().automation.is_some()
-            || !consent.unsandboxed_execution
-        {
+        if !consent.allows(input) {
             return Err(denied());
         }
         let authority = Arc::clone(&self.plugin_authority);
         authority.require_generation(generation)?;
-        let now = plugin_now_ms()?;
-        let remaining = expires_at_ms
-            .checked_sub(now)
-            .filter(|remaining| *remaining > 0 && *remaining <= MAX_PLUGIN_GRANT_LIFETIME_MS)
-            .filter(|_| expires_at_ms <= i64::MAX as u64)
-            .ok_or_else(|| failure(ErrorCode::InvalidInput, "plugin-grant-expiry"))?;
         // Capture the monotonic limit before the transaction. A wall-clock
         // rollback during commit cannot extend the consent's original duration.
-        let deadline = Instant::now()
-            .checked_add(Duration::from_millis(remaining))
-            .ok_or_else(denied)?;
+        let deadline = plugin_grant_deadline(expires_at_ms)?;
         let tx = self.execution_write()?;
         check_project(&tx, input)?;
         not_cancelled(&tx, input.envelope().task_id)?;

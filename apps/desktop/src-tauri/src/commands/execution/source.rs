@@ -32,6 +32,17 @@ pub(super) struct SourceSession {
     )>,
 }
 impl SourceSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        if self.plugin.stop_package(package) | self.translation.stop_package(package) {
+            self.cancel.request();
+            self.job = None;
+            self.picker = None;
+            self.selection = None;
+        }
+    }
     pub fn is_active(&self) -> bool {
         self.job.is_some()
     }

@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Desktop execution retains package ownership through accepted capture and
+  preparation IO, so stopping a package prevents late results from publishing
+  even after its IPC waiter disappears. Internal package cleanup retires only
+  dependent work and query threads, retains its session fence through the
+  installation handoff, and preserves independent packages and saved data.
+  Invalid checker consent is refused before it can retain a Review action and
+  block its original valid request; uncertain committed grants stay recoverable.
+  The approval-removal and uninstall controls remain under development.
+
 - The experimental Core runtime can stop one exact package across its registered
   environments without rotating unrelated packages' execution authority. Original
   grants and cancellation requests stay revoked across retries; completion waits

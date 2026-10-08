@@ -5,7 +5,7 @@ use tsumugi_core::execution::TranslationValidationCapture;
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 
 pub(super) struct CheckReview {
-    request: TranslationCheckPrepareRequest,
+    pub(super) request: TranslationCheckPrepareRequest,
     producer: FixedInput,
     capture: TranslationValidationCapture,
     view: TranslationCheckReview,
@@ -201,20 +201,23 @@ async fn start(
                 return Err(stale());
             }
             current_input(store, &producer)?;
+            let work = host.begin_package_work(vec![choice.package.clone()])?;
             let id = plugin::begin_job(active)?;
-            Ok(Some((id, input, producer, choice)))
+            Ok(Some((id, input, producer, choice, work)))
         },
     )?;
     let plugins = state.plugins.clone();
     let io = state.io.clone();
     tauri::async_runtime::spawn(async move {
-        let Some((id, input, producer, choice)) = admitted.await? else {
+        let Some((id, input, producer, choice, work)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         let captured = producer.clone();
         let fixed = input.clone();
+        let accepted_work = work.clone();
         let loaded = io
             .run(CommandStage::ExecutionRecover, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_translation(&choice)?;
                 matches_producer(&captured, &environment)?;
                 if fixed.envelope().plugin.as_ref()
@@ -232,6 +235,7 @@ async fn start(
                 CommandStage::ExecutionRecover,
                 move |sessions| {
                     let active = finish(sessions, &request.session_token, request.project_id, id)?;
+                    work.check()?;
                     let (host, store) = active.execution_parts()?;
                     current_input(store, &producer)?;
                     let (environment, runners) = loaded?;
@@ -325,17 +329,20 @@ pub async fn prepare_translation_check(
                 Err(error) if error.code == ErrorCode::InvalidInput => None,
                 Err(error) => return Err(map_source(error)),
             };
+            let work = host.begin_package_work(vec![initial.translation.package.clone()])?;
             let id = plugin::begin_job(active)?;
-            Ok((id, captured, source, original, existing))
+            Ok((id, captured, source, original, existing, work))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (id, captured, source, original, existing) = admitted.await?;
+        let (id, captured, source, original, existing, work) = admitted.await?;
         let preparing = request.clone();
+        let accepted_work = work.clone();
         let prepared = io
             .run(CommandStage::ExecutionRead, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_translation(&preparing.translation)?;
                 matches_producer(captured.input(), &environment)?;
                 if let Some(review) = existing {
@@ -370,6 +377,7 @@ pub async fn prepare_translation_check(
                 CommandStage::ExecutionRead,
                 move |sessions| {
                     let active = finish(sessions, &request.session_token, request.project_id, id)?;
+                    work.check()?;
                     let (host, store) = active.execution_parts()?;
                     let review = prepared?;
                     current_input(store, &review.producer)?;

@@ -130,6 +130,15 @@ proof and per-entry adoption in temporary application/project directories. The
 interactive picker uses an owned native handle fixture; rendered workbench
 acceptance remains separate.
 
+The desktop read-only tool IPC test uses the independently prepared terminology
+package selected by `TSUMUGI_TEST_KNOWLEDGE_PACKAGE` and
+`TSUMUGI_TEST_KNOWLEDGE_DIGEST`. The source and joint-review tests independently
+select their format package with `TSUMUGI_TEST_PLUGIN_PACKAGE` and
+`TSUMUGI_TEST_PLUGIN_DIGEST`. Keep these selections separate when running the
+desktop execution group. Its actual component workflows require `bundled-runtime`
+and a prepared runtime matching the current process protocol; the
+`execution-test-host` group alone does not exercise those bundled workflows.
+
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
 validates declarations, content/execution frames and captured check coverage;

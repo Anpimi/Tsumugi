@@ -15,6 +15,33 @@ pub(super) struct PluginSourceSession {
     last_check_start: Option<PluginStartRequest>,
 }
 impl PluginSourceSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        let capture = self
+            .choice
+            .as_ref()
+            .is_some_and(|(_, choice)| choice.package == *package);
+        if capture {
+            self.choice = None;
+        }
+        if self
+            .review
+            .as_ref()
+            .is_some_and(|review| package_lifecycle::matches_input(package, &review.input))
+        {
+            self.review = None;
+        }
+        if self
+            .check
+            .as_ref()
+            .is_some_and(|review| review.request.source.package == *package)
+        {
+            self.check = None;
+        }
+        capture
+    }
     pub(super) fn discard_capture(&mut self) {
         self.choice = None;
         self.review = None;
@@ -188,20 +215,23 @@ pub async fn select_plugin_source<R: tauri::Runtime>(
             )?;
             let (host, _) = active.execution_parts()?;
             host.allow_mutation()?;
+            let work = host.begin_package_work(vec![initial.source.package.clone()])?;
             host.source.stop();
             host.source.picker = Some(picker);
-            Ok(())
+            Ok(work)
         },
     )?;
     let io = state.io.clone();
     let dialogs = state.dialogs.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        admitted.await?;
+        let work = admitted.await?;
         let source = request.source.clone();
+        let accepted_work = work.clone();
         let captured = async {
             let environment = io
                 .run(CommandStage::ExecutionRead, move || {
+                    accepted_work.check()?;
                     plugins.capture_source(&source)
                 })
                 .await?;
@@ -239,6 +269,7 @@ pub async fn select_plugin_source<R: tauri::Runtime>(
                         return Err(stale());
                     }
                     host.source.picker = None;
+                    work.check()?;
                     Ok(captured?.map(|(selection, source)| {
                         let selection_id = ExecutionId::new();
                         let folder_name = selection.label();
@@ -304,6 +335,7 @@ pub async fn preflight_plugin_source(
                 .metadata()
                 .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?
                 .project_id();
+            let work = host.begin_package_work(vec![choice.package.clone()])?;
             let job = begin(
                 sessions,
                 &initial.session_token,
@@ -311,20 +343,22 @@ pub async fn preflight_plugin_source(
                 initial.selection_id,
                 &initial.source_language,
             )?;
-            Ok(Ok((job, choice, project)))
+            Ok(Ok((job, choice, project, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (job, choice, project) = match admitted.await? {
+        let (job, choice, project, work) = match admitted.await? {
             Ok(job) => job,
             Err(view) => return Ok(view),
         };
         let id = job.id;
         let language = request.source_language.clone();
+        let accepted_work = work.clone();
         let captured = io
             .run(CommandStage::ExecutionRead, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_source(&choice)?;
                 let bundle = job
                     .selection
@@ -384,6 +418,7 @@ pub async fn preflight_plugin_source(
                 CommandStage::ExecutionRead,
                 move |sessions| {
                     let active = finish(sessions, &request.session_token, request.project_id, id)?;
+                    work.check()?;
                     let (host, _) = active.execution_parts()?;
                     let review = captured?;
                     let view = review.view.clone();
@@ -468,19 +503,22 @@ async fn start(
             {
                 return Err(stale());
             }
+            let work = host.begin_package_work(vec![choice.package.clone()])?;
             let id = begin_job(active)?;
-            Ok(Some((id, input, choice)))
+            Ok(Some((id, input, choice, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let Some((id, input, choice)) = admitted.await? else {
+        let Some((id, input, choice, work)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
         let fixed = input.clone();
+        let accepted_work = work.clone();
         let loaded = io
             .run(CommandStage::ExecutionRecover, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_source(&choice)?;
                 if checker {
                     if fixed.envelope().plugin.as_ref() != Some(&binding(&environment, true)) {
@@ -499,6 +537,7 @@ async fn start(
                 CommandStage::ExecutionRecover,
                 move |sessions| {
                     let active = finish(sessions, &request.session_token, request.project_id, id)?;
+                    work.check()?;
                     let (host, store) = active.execution_parts()?;
                     let (environment, runners) = loaded?;
                     register(host, runners, &environment)?;
@@ -585,21 +624,24 @@ pub async fn prepare_source_check(
             let captured = store
                 .capture_result_validation(initial.source_attempt_id, initial.source_result_id)
                 .map_err(map_source)?;
+            let work = host.begin_package_work(vec![initial.source.package.clone()])?;
             let id = begin_job(active)?;
-            Ok(Ok((id, captured)))
+            Ok(Ok((id, captured, work)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (id, captured) = match admitted.await? {
+        let (id, captured, work) = match admitted.await? {
             Ok(capture) => capture,
             Err(view) => return Ok(view),
         };
         let choice = request.source.clone();
         let preparing = request.clone();
+        let accepted_work = work.clone();
         let prepared = io
             .run(CommandStage::ExecutionRead, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_source(&choice)?;
                 matches_source(captured.input(), &environment)?;
                 let capture = captured
@@ -626,6 +668,7 @@ pub async fn prepare_source_check(
                 CommandStage::ExecutionRead,
                 move |sessions| {
                     let active = finish(sessions, &request.session_token, request.project_id, id)?;
+                    work.check()?;
                     let (host, _) = active.execution_parts()?;
                     let review = prepared?;
                     let view = review.view.clone();

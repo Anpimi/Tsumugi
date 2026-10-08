@@ -19,6 +19,34 @@ pub(super) struct PluginTranslationSession {
     projection: Option<Arc<execution::ProjectionReview>>,
 }
 impl PluginTranslationSession {
+    pub(super) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        let capture = self
+            .choice
+            .as_ref()
+            .is_some_and(|choice| choice.request.translation.package == *package);
+        if capture {
+            self.choice = None;
+        }
+        if self
+            .review
+            .as_ref()
+            .is_some_and(|review| package_lifecycle::matches_input(package, &review.input))
+        {
+            self.review = None;
+        }
+        if self
+            .check
+            .as_ref()
+            .is_some_and(|review| review.request.translation.package == *package)
+        {
+            self.check = None;
+        }
+        // Core projection of already validated data does not execute the package.
+        capture
+    }
     pub(super) fn discard_capture(&mut self) {
         self.choice = None;
         self.review = None;
@@ -207,21 +235,24 @@ pub async fn select_plugin_translation<R: tauri::Runtime>(
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
             let source = source_context(store, &initial)?;
+            let work = host.begin_package_work(vec![initial.translation.package.clone()])?;
             host.source.stop();
             host.source.picker = Some(picker);
-            Ok(source)
+            Ok((source, work))
         },
     )?;
     let io = state.io.clone();
     let dialogs = state.dialogs.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let source = admitted.await?;
+        let (source, work) = admitted.await?;
         let choice = request.translation.clone();
         let expected = source.clone();
+        let accepted_work = work.clone();
         let captured = async {
             let environment = io
                 .run(CommandStage::ExecutionRead, move || {
+                    accepted_work.check()?;
                     let environment = plugins.capture_translation(&choice)?;
                     environment_matches(&environment, &expected)?;
                     Ok(environment)
@@ -261,6 +292,7 @@ pub async fn select_plugin_translation<R: tauri::Runtime>(
                         return Err(stale());
                     }
                     host.source.picker = None;
+                    work.check()?;
                     if source_context(store, &request)? != source {
                         return Err(conflict("translation-source"));
                     }
@@ -392,19 +424,22 @@ pub async fn preflight_plugin_translation(
                 .metadata()
                 .map_err(|error| map_persistence_error(error, CommandStage::ExecutionRead))?
                 .project_id();
+            let work = host.begin_package_work(vec![choice.request.translation.package.clone()])?;
             let id = plugin::begin_job(active)?;
             let cancel = active.execution_parts()?.0.source.cancel.clone();
-            Ok((id, cancel, choice, selection, existing, project))
+            Ok((id, cancel, choice, selection, existing, project, work))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (id, cancel, choice, selection, existing, project) = admitted.await?;
+        let (id, cancel, choice, selection, existing, project, work) = admitted.await?;
         let selected = choice.clone();
         let capturing = request.clone();
+        let accepted_work = work.clone();
         let captured = io
             .run(CommandStage::ExecutionRead, move || {
+                accepted_work.check()?;
                 let environment = plugins.capture_translation(&selected.request.translation)?;
                 environment_matches(&environment, &selected.source)?;
                 let settings = PluginTranslationSettings {
@@ -474,6 +509,7 @@ pub async fn preflight_plugin_translation(
                 CommandStage::ExecutionRead,
                 move |sessions| {
                     let active = finish(sessions, &request.session_token, request.project_id, id)?;
+                    work.check()?;
                     let (host, store) = active.execution_parts()?;
                     current_choice(store, &choice)?;
                     if host

@@ -3,7 +3,28 @@ use super::*;
 use std::{
     future::Future,
     task::{Context, Poll, Waker},
+    time::Instant,
 };
+
+// Only fresh metadata loads may contend with the existing owner tick. Retry
+// the same complete intent; deliberate held-lock and recorded reads stay direct.
+fn prepare_with_store_retry(window: &Window, intent: &Value) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match call(window, "prepare_review_checks", Some(intent.clone())) {
+            Ok(preparation) => return preparation,
+            Err(error)
+                if error["code"] == "busy"
+                    && error["outcome"] == "rejected"
+                    && error["reason"] == "plugin-store-busy" =>
+            {
+                assert!(Instant::now() < deadline, "{error:?}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => panic!("{error:?}"),
+        }
+    }
+}
 
 pub(super) fn rejects_revoked_manual_computation(
     app: &tauri::App<tauri::test::MockRuntime>,
@@ -27,7 +48,7 @@ pub(super) fn rejects_revoked_manual_computation(
         let action = ExecutionId::new();
         let mut intent = recorded_intent.clone();
         intent["actionId"] = json!(action);
-        let preparation = call(window, "prepare_review_checks", Some(intent.clone())).unwrap();
+        let preparation = prepare_with_store_retry(window, &intent);
         let slots = preparation["view"]["checkers"].as_array().unwrap();
         assert_eq!(slots.len(), 2);
         let grants = slots
@@ -234,7 +255,7 @@ fn rejects_pre_dispatch_busy(
         let action = ExecutionId::new();
         let mut intent = recorded_intent.clone();
         intent["actionId"] = json!(action);
-        let preparation = call(window, "prepare_review_checks", Some(intent.clone())).unwrap();
+        let preparation = prepare_with_store_retry(window, &intent);
         let slots = preparation["view"]["checkers"].as_array().unwrap();
         let grants = slots
             .iter()
@@ -337,8 +358,7 @@ fn rejects_pre_dispatch_busy(
     let mut close_intent = recorded_intent.clone();
     let close_action = ExecutionId::new();
     close_intent["actionId"] = json!(close_action);
-    let close_preparation =
-        call(window, "prepare_review_checks", Some(close_intent.clone())).unwrap();
+    let close_preparation = prepare_with_store_retry(window, &close_intent);
     let close_grants = close_preparation["view"]["checkers"]
         .as_array()
         .unwrap()
@@ -471,7 +491,7 @@ fn partial_submission(
     let mut intent = recorded_intent.clone();
     let action = ExecutionId::new();
     intent["actionId"] = json!(action);
-    let preparation = call(window, "prepare_review_checks", Some(intent.clone())).unwrap();
+    let preparation = prepare_with_store_retry(window, &intent);
     let slots = preparation["view"]["checkers"].as_array().unwrap();
     let grants = slots
         .iter()
@@ -680,7 +700,7 @@ fn partial_submission(
         // A different preview cannot replace an accepted action's recovery IDs.
         let mut other = intent.clone();
         other["actionId"] = json!(ExecutionId::new());
-        call(window, "prepare_review_checks", Some(other)).unwrap();
+        prepare_with_store_retry(window, &other);
         assert_eq!(
             call(window, "prepare_review_checks", Some(intent.clone())).unwrap(),
             preparation

@@ -110,6 +110,42 @@ pub(in crate::commands::execution) struct ReviewSession {
     jobs: BTreeMap<ExecutionId, Job>,
 }
 impl ReviewSession {
+    pub(in crate::commands::execution) fn stop_package(
+        &mut self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) {
+        if self.preflight.as_ref().is_some_and(|preflight| {
+            preflight
+                .slots
+                .iter()
+                .any(|slot| package_lifecycle::matches_input(package, &slot.input))
+        }) {
+            self.preflight = None;
+        }
+        for job in self.jobs.values().filter(|job| {
+            job.slots
+                .iter()
+                .any(|slot| package_lifecycle::matches_input(package, &slot.input))
+        }) {
+            // A joint check is one dependent action. Its original channels keep
+            // their own cancellation receipts; independent actions stay live.
+            job.cancellation.request();
+        }
+    }
+    pub(in crate::commands::execution) fn package_active(
+        &self,
+        package: &crate::commands::plugins::PluginPackageRequest,
+    ) -> bool {
+        self.jobs.values().any(|job| {
+            job.slots
+                .iter()
+                .any(|slot| package_lifecycle::matches_input(package, &slot.input))
+                && (job.attached
+                    || ((job.authorization_attempted
+                        || job.slots.iter().any(|slot| slot.start.is_some()))
+                        && !job.terminal))
+        })
+    }
     pub(in crate::commands::execution) fn active(&self) -> bool {
         self.jobs.values().any(|job| {
             job.attached
@@ -429,14 +465,40 @@ pub async fn prepare_review_checks(
     }
     let plugins = state.plugins.clone();
     let selected = request.advisory_checks.clone();
+    let initial = request.clone();
+    let selected_work = lease
+        .run(
+            "prepare_review_checks.advisory_capture",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &initial.session_token,
+                    initial.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let (host, _) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.begin_package_work(
+                    initial
+                        .advisory_checks
+                        .iter()
+                        .map(|choice| choice.package.clone())
+                        .collect(),
+                )
+            },
+        )
+        .await?;
+    let accepted_work = selected_work.clone();
     let choices = state
         .io
         .run(CommandStage::ExecutionRead, move || {
+            accepted_work.check()?;
             capture_advisory(&plugins, &selected)
         })
         .await?;
     let initial = request.clone();
-    let prepared = lease
+    let (prepared, work) = lease
         .run(
             "prepare_review_checks.capture",
             CommandStage::ExecutionRead,
@@ -449,7 +511,16 @@ pub async fn prepare_review_checks(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
-                capture(store, &initial, &choices)
+                selected_work.check()?;
+                let prepared = capture(store, &initial, &choices)?;
+                let work = host.begin_package_work(
+                    prepared
+                        .execution_inputs()
+                        .iter()
+                        .filter_map(package_lifecycle::input_package)
+                        .collect(),
+                )?;
+                Ok((prepared, work))
             },
         )
         .await?;
@@ -459,9 +530,11 @@ pub async fn prepare_review_checks(
     let plan = prepared.plan().ok_or_else(stale)?.clone();
     let inputs = prepared.execution_inputs().to_vec();
     let plugins = state.plugins.clone();
+    let accepted_work = work.clone();
     let slots = state
         .io
         .run(CommandStage::ExecutionRead, move || {
+            accepted_work.check()?;
             plan.checkers()
                 .iter()
                 .zip(inputs)
@@ -494,6 +567,7 @@ pub async fn prepare_review_checks(
                 )?;
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
+                work.check()?;
                 let current = capture(
                     store,
                     &request,
@@ -588,17 +662,22 @@ pub async fn run_review_checks(
             if let Some(run) = recorded(store, &initial.check)? {
                 return Ok(Err(run));
             }
-            host.allow_mutation()?;
-            if token.is_requested() {
-                return Err(cancelled());
-            }
-            if host
+            if let Some(job) = host
                 .review
                 .jobs
                 .get(&initial.check.action_id)
-                .is_some_and(|job| job.attached)
+                .filter(|job| job.attached)
             {
+                if job.request != initial.check || job.executions != initial.executions {
+                    return Err(stale());
+                }
+                // Cancellation requests do not resolve an accepted action's
+                // result while its original continuation is still attached.
                 return Err(CommandError::unknown(CommandStage::ExecutionAdopt));
+            }
+            host.allow_mutation()?;
+            if token.is_requested() {
+                return Err(cancelled());
             }
             if !host.review.jobs.contains_key(&initial.check.action_id)
                 && host.review.jobs.len() >= 2
@@ -649,6 +728,13 @@ pub async fn run_review_checks(
                 current
                     .validate_execution_input(&slot.input)
                     .map_err(map_adopt)?;
+                if slot.start.is_none() {
+                    PluginConsent {
+                        unsandboxed_execution: execution.unsandboxed_execution,
+                    }
+                    .validate(&slot.input, execution.expires_at_ms.get())
+                    .map_err(map_adopt)?;
+                }
             }
             let settings_revision = slots
                 .first()
