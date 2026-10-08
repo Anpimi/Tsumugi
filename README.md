@@ -192,6 +192,32 @@ through export and reopen. The stable synthetic records profile preserves
 captured references and bytes; this test does not establish upgrade compatibility
 for an included real format or native GUI acceptance.
 
+
+An additional synthetic source test keeps an actual old-version invocation in
+flight while installing and independently enabling the new version through the
+registered package commands:
+
+```text
+cargo test -p tsumugi-desktop actual_live_version_update -- --ignored --test-threads=1
+```
+
+It checks the original channel, authorization and deadline while the new version
+starts independently. Exact old-version approval removal terminates and reaps
+only its worker without accepting a result; cooperative JavaScript cleanup is
+not required before termination. Repeating its original cleanup callbacks and
+registered request leaves the new instance and its independent grant intact.
+After owner drain and project reopen, a fresh new-version invocation is compared
+with the live-update result, while original source and translation history remain
+unchanged. The original two-version journey above also covers shared fixture
+helpers. These are temporary, complete synthetic packages and actual Node
+processes, separate from included-format upgrade and native GUI acceptance.
+
+The JavaScript Host lifecycle suite separately runs two actual channels. A
+cooperatively cancelled old callback resolves after cancellation, emits no
+result, and cannot register from its disposed facade while the new channel is
+still invoking. The new channel then returns its own exactly bound result.
+This protocol check is separate from Desktop grant and installation checks.
+
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
 validates declarations, content/execution frames and captured check coverage;

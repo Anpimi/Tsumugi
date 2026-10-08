@@ -894,6 +894,9 @@ mod missing_package;
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 mod upgrade;
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod lifecycle_update;
+
 #[cfg(all(
     feature = "bundled-plugins",
     target_os = "macos",

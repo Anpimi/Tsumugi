@@ -88,6 +88,68 @@ test('cancel followed by close suppresses a late result and waits for async clea
   assert.equal(await h.marker('cleaned'), 'yes');
 });
 
+test('cancelled old channel cannot publish a late result or register during a new channel invocation', { timeout: 5000 }, async t => {
+  const a = await harness(t, `${imports}
+    export default {activate(api) {
+      api.onDispose(async () => {
+        const refused = callback => { try { callback(); return null; } catch (error) { return error.message; } };
+        await writeFile('old-denied', JSON.stringify([
+          refused(() => api.register(() => ({kind:'succeeded',utf8:'obsolete'}))),
+          refused(() => api.onDispose(() => {}))
+        ]));
+        await delay(20); await writeFile('cleaned','yes');
+      });
+      api.register(async (input,meta) => {
+        await writeFile('entered','yes'); await delay(150);
+        if (!meta.signal.aborted || !api.signal.aborted) throw new Error('Missing original cancellation');
+        await writeFile('late','resolved'); return {kind:'succeeded',utf8:input.utf8};
+      });
+    }};`);
+  const b = await harness(t, `${imports}
+    export default {activate(api) {
+      api.onDispose(async () => { await writeFile('cleaned','yes'); });
+      api.register(async (input,meta) => {
+        await writeFile('entered','yes'); await delay(400);
+        if (meta.signal.aborted || api.signal.aborted) throw new Error('New channel was cancelled');
+        await writeFile('returned','yes'); return {kind:'succeeded',utf8:input.utf8};
+      });
+    }};`);
+  const next = structuredClone(fixture);
+  next.provider.plugin.version = '0.2.0';
+  next.provider.packageDigest = 'b'.repeat(64);
+  next.provider.instanceId += '-new';
+  next.context.dispatchId += '-new';
+  const nextActivation = { ...structuredClone(activation), provider: next.provider };
+  a.send({ kind: 'activate', data: activation });
+  b.send({ kind: 'activate', data: nextActivation });
+  await a.waitFor(() => a.frames.length === 1);
+  await b.waitFor(() => b.frames.length === 1);
+  a.send({ kind: 'invoke', data: fixture });
+  await a.waitFor(async () => await a.marker('entered') === 'yes');
+  b.send({ kind: 'invoke', data: next });
+  await b.waitFor(async () => await b.marker('entered') === 'yes');
+  a.send({ kind: 'cancel', data: { dispatchId: fixture.context.dispatchId } });
+  a.send({ kind: 'close', data: { provider: activation.provider } });
+  assert.deepEqual(await a.ended, [0, null]);
+  assert.deepEqual(a.frames.map(frame => frame.kind), ['ready', 'cancelled', 'closed']);
+  assert.equal(await a.marker('late'), 'resolved');
+  assert.equal(await a.marker('cleaned'), 'yes');
+  assert.deepEqual(JSON.parse(await a.marker('old-denied')), ['Inactive component', 'Inactive component']);
+  assert.deepEqual(b.frames.map(frame => frame.kind), ['ready']);
+  assert.equal(await b.marker('cleaned'), '');
+  await b.waitFor(() => b.frames.some(frame => frame.kind === 'result'));
+  const result = b.frames.find(frame => frame.kind === 'result').data;
+  assert.deepEqual(result.context, next.context);
+  assert.deepEqual(result.provider, next.provider);
+  assert.equal(result.outcome.kind, 'succeeded');
+  assert.equal(result.outcome.output.utf8, next.input.utf8);
+  b.send({ kind: 'close', data: { provider: next.provider } });
+  assert.deepEqual(await b.ended, [0, null]);
+  assert.equal(await b.marker('returned'), 'yes');
+  assert.equal(await b.marker('cleaned'), 'yes');
+  assert.deepEqual(b.frames.map(frame => frame.kind), ['ready', 'result', 'closed']);
+});
+
 test('channel refuses a different provider and emits no proposal', { timeout: 5000 }, async t => {
   const h = await harness(t, `export default {activate(api){api.register(() => ({kind:'succeeded',utf8:'unexpected'}));}};`);
   h.send({ kind: 'activate', data: activation });

@@ -25,7 +25,7 @@ use tsumugi_plugin_host::{
 };
 use tsumugi_plugin_sdk as sdk;
 
-mod runtime_fixture {
+pub(super) mod runtime_fixture {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../../crates/plugin-host/tests/support/runtime.rs"
@@ -46,6 +46,27 @@ fn profile() -> Value {
 }
 
 fn image(version: &str, behavior: u32) -> PackageImage {
+    let (manifest, files) = image_files(
+        version,
+        behavior,
+        include_bytes!("upgrade.mjs"),
+        BTreeMap::new(),
+    );
+    let digest = PackageImage::digest(&manifest, &files).unwrap();
+    let captured = PackageImage::capture(manifest, files, &digest).unwrap();
+    // Parse and bind complete original source/review/build contracts now; the
+    // runtime capture below independently repeats these owning-layer checks.
+    captured.source_import("source-profile").unwrap();
+    captured.build_declaration("build-profile").unwrap();
+    captured
+}
+
+pub(super) fn image_files(
+    version: &str,
+    behavior: u32,
+    program: &[u8],
+    extra_files: BTreeMap<String, PackageFile>,
+) -> (Vec<u8>, BTreeMap<String, PackageFile>) {
     assert!(matches!((version, behavior), ("0.1.0", 1) | ("0.2.0", 2)));
     let components = [
         "extract",
@@ -113,7 +134,7 @@ fn image(version: &str, behavior: u32) -> PackageImage {
             (
                 format!("{role}.mjs"),
                 PackageFile {
-                    bytes: include_bytes!("upgrade.mjs").to_vec(),
+                    bytes: program.to_vec(),
                     executable: false,
                 },
             )
@@ -145,14 +166,10 @@ fn image(version: &str, behavior: u32) -> PackageImage {
             },
         );
     }
-    let manifest = serde_json::to_vec(&manifest).unwrap();
-    let digest = PackageImage::digest(&manifest, &files).unwrap();
-    let captured = PackageImage::capture(manifest, files, &digest).unwrap();
-    // Parse and bind complete original source/review/build contracts now; the
-    // runtime capture below independently repeats these owning-layer checks.
-    captured.source_import("source-profile").unwrap();
-    captured.build_declaration("build-profile").unwrap();
-    captured
+    for (path, file) in extra_files {
+        assert!(files.insert(path, file).is_none(), "fixture file collision");
+    }
+    (serde_json::to_vec(&manifest).unwrap(), files)
 }
 
 fn approval(image: &PackageImage) -> PackageApproval {
@@ -165,7 +182,10 @@ fn approval(image: &PackageImage) -> PackageApproval {
         },
     }
 }
-fn source_choice(approval: &PackageApproval, runtime: &RuntimeApproval) -> PluginSourceRequest {
+pub(super) fn source_choice(
+    approval: &PackageApproval,
+    runtime: &RuntimeApproval,
+) -> PluginSourceRequest {
     PluginSourceRequest {
         package: PluginPackageRequest {
             plugin: approval.plugin.clone(),
@@ -182,7 +202,7 @@ fn build_choice(source: &PluginSourceRequest) -> PluginBuildRequest {
         environment_digest: source.environment_digest.clone(),
     }
 }
-fn application(
+pub(super) fn application(
     owned: &OwnedDirectory,
 ) -> (
     tauri::App<tauri::test::MockRuntime>,
@@ -204,10 +224,10 @@ fn application(
             .unwrap();
     (app, window, cleanup)
 }
-fn context(project: &Value) -> Value {
+pub(super) fn context(project: &Value) -> Value {
     json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]})
 }
-fn idle(window: &tauri::WebviewWindow<tauri::test::MockRuntime>, context: &Value) {
+pub(super) fn idle(window: &tauri::WebviewWindow<tauri::test::MockRuntime>, context: &Value) {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let status = call(window, "execution_status", context.clone()).unwrap();
@@ -296,14 +316,14 @@ fn unchanged_frames(store: &ProjectStore, saved: &[Frame], total: usize) {
     }
 }
 
-fn extract_checked(
+pub(super) fn preflight_source(
     app: &tauri::App<tauri::test::MockRuntime>,
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     context: &Value,
     materials: &Path,
     choice: &PluginSourceRequest,
-    grants: &mut Vec<Value>,
-) -> (Value, Value, Value) {
+    attempt: ExecutionId,
+) -> Value {
     let selection = ExecutionId::new();
     let selected = Arc::new(capture::Selection::authorize(materials.to_path_buf()).unwrap());
     let fixed_choice = choice.clone();
@@ -318,10 +338,30 @@ fn extract_checked(
         host.source.selection = Some((selection, selected));
         host.source.plugin.choice = Some((selection, fixed_choice));
     });
-    let review = call(window,"preflight_plugin_source",scoped(context,json!({"selectionId":selection,"sourceLanguage":"en-US","attemptId":ExecutionId::new()}))).unwrap();
+    let review = call(
+        window,
+        "preflight_plugin_source",
+        scoped(
+            context,
+            json!({"selectionId":selection,"sourceLanguage":"en-US","attemptId":attempt}),
+        ),
+    )
+    .unwrap();
     assert_eq!(review["files"].as_array().unwrap().len(), 1);
     assert_eq!(review["files"][0]["byteLength"], RAW.len());
     assert_eq!(review["files"][0]["sha256"], sdk::payload_digest(RAW));
+    review
+}
+
+fn extract_checked(
+    app: &tauri::App<tauri::test::MockRuntime>,
+    window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+    context: &Value,
+    materials: &Path,
+    choice: &PluginSourceRequest,
+    grants: &mut Vec<Value>,
+) -> (Value, Value, Value) {
+    let review = preflight_source(app, window, context, materials, choice, ExecutionId::new());
     let start = consent(context, &review);
     let attempt = call(window, "start_plugin_source", start.clone()).unwrap();
     let produced = result(window, context, &attempt);
@@ -353,7 +393,48 @@ fn extract_checked(
     .unwrap();
     (attempt, produced, preview)
 }
-fn adopt(
+
+pub(super) fn provision_original(
+    owned: &OwnedDirectory,
+    package: &tsumugi_plugin_host::catalog::RegisteredPackage,
+    approval: &PackageApproval,
+    runtime: &tsumugi_plugin_host::CapturedRuntime,
+    runtime_approval: &RuntimeApproval,
+    original_install_action: ExecutionId,
+) -> tsumugi_plugin_host::InstallReceipt {
+    assert_eq!(package.plugin(), &approval.plugin);
+    assert_eq!(package.package_digest(), approval.package_digest);
+    assert_eq!(package.origin(), &approval.origin);
+    let mut installation =
+        PackageStore::provision(owned.path(), &["application", "plugins"], || true).unwrap();
+    let original_install = installation
+        .install(&original_install_action.to_string(), package, || true)
+        .unwrap();
+    installation
+        .install_runtime(
+            &ExecutionId::new().to_string(),
+            runtime,
+            runtime_approval,
+            || true,
+        )
+        .unwrap();
+    installation
+        .update_settings(
+            0,
+            &ExecutionId::new().to_string(),
+            &PluginSettingsUpdate {
+                packages: vec![ApprovedPackageSetting {
+                    approval: approval.clone(),
+                    enabled: true,
+                }],
+                runtimes: vec![runtime_approval.clone()],
+            },
+            || true,
+        )
+        .unwrap();
+    original_install
+}
+pub(super) fn adopt(
     window: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     context: &Value,
     attempt: &Value,
@@ -392,38 +473,15 @@ fn actual_two_version_identity_upgrade_compares_before_adoption_and_preserves_or
         environment: runtime.descriptor().clone().into(),
         origin: crate::runtime_bundle::bundled_origin(),
     };
-    let mut installation =
-        PackageStore::provision(owned.path(), &["application", "plugins"], || true).unwrap();
     let original_install_action = ExecutionId::new();
-    let original_install = installation
-        .install(
-            &original_install_action.to_string(),
-            catalog.registered(&old_approval.plugin).unwrap(),
-            || true,
-        )
-        .unwrap();
-    installation
-        .install_runtime(
-            &ExecutionId::new().to_string(),
-            &runtime,
-            &runtime_approval,
-            || true,
-        )
-        .unwrap();
-    installation
-        .update_settings(
-            0,
-            &ExecutionId::new().to_string(),
-            &PluginSettingsUpdate {
-                packages: vec![ApprovedPackageSetting {
-                    approval: old_approval.clone(),
-                    enabled: true,
-                }],
-                runtimes: vec![runtime_approval.clone()],
-            },
-            || true,
-        )
-        .unwrap();
+    let original_install = provision_original(
+        &owned,
+        catalog.registered(&old_approval.plugin).unwrap(),
+        &old_approval,
+        &runtime,
+        &runtime_approval,
+        original_install_action,
+    );
     assert_eq!(
         original_install.action_id(),
         original_install_action.to_string()
@@ -434,7 +492,6 @@ fn actual_two_version_identity_upgrade_compares_before_adoption_and_preserves_or
         old_approval.package_digest
     );
     assert_eq!(original_install.origin(), &old_approval.origin);
-    drop(installation);
     drop(runtime);
     let old_choice = source_choice(&old_approval, &runtime_approval);
     let new_choice = source_choice(&new_approval, &runtime_approval);

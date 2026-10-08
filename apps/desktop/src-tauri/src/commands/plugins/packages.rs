@@ -266,6 +266,25 @@ impl ApplicationPlugins {
         Ok(())
     }
 
+    /// Supplies only a test-owned picker result to the original capture owner.
+    /// The caller still needs the returned ticket, exact settings CAS and the
+    /// registered installation command; this neither installs nor approves.
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(in crate::commands) fn capture_candidate_for_test(
+        &self,
+        directory: PathBuf,
+    ) -> Result<PluginCandidateView, CommandError> {
+        let picker = self.begin_picker()?;
+        self.finish_picker(picker.id, Some(directory))?
+            .ok_or_else(|| {
+                failure(
+                    CommandErrorCode::Cancelled,
+                    "plugin-selection-expired",
+                    CommandStage::Read,
+                )
+            })
+    }
+
     fn begin_picker(&self) -> Result<PickerLease, CommandError> {
         let mut manager = self.try_manager()?;
         if manager
