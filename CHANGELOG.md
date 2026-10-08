@@ -6,6 +6,22 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Experimental desktop IPC can independently withdraw approval and remove one
+  exact installation. Accepted continuations retain the original request after
+  a lost waiter, stop dependent work before removal, and keep project switching
+  fenced through Store confirmation. Original removal receipts are reconciled
+  before stopping a target, so an old completed request cannot remove or stop a
+  reinstall. Inventory exposes the original installation action and retained
+  removal observations; these observations alone do not confirm durability.
+  Frontend acknowledgements check the complete original identity and action.
+  The extension panel provides separate reviewed approval revocation, exact
+  installation removal and original-operation recovery in English and Chinese.
+  Busy continuations preserve their original request and recovery guidance;
+  closing or refreshing the panel does not replace it. Native acceptance remains
+  under development. A failed installation keeps its original recovery request
+  once approval is saved; a known settings rejection before that confirmation
+  permits reviewing current state without leaving an unusable pending action.
+
 - Desktop execution retains package ownership through accepted capture and
   preparation IO, so stopping a package prevents late results from publishing
   even after its IPC waiter disappears. Internal package cleanup retires only
@@ -13,14 +29,14 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   installation handoff, and preserves independent packages and saved data.
   Invalid checker consent is refused before it can retain a Review action and
   block its original valid request; uncertain committed grants stay recoverable.
-  The approval-removal and uninstall controls remain under development.
+  Full native lifecycle acceptance remains under development.
 
 - The experimental Core runtime can stop one exact package across its registered
   environments without rotating unrelated packages' execution authority. Original
   grants and cancellation requests stay revoked across retries; completion waits
   for its owned workers and active queries. Captured query callbacks remain closed,
   and a completed old control cannot unregister an explicitly reinstalled package.
-  Desktop removal controls and installation handoff remain under development.
+  Full native lifecycle acceptance remains under development.
 
 - Execution shutdown waits for owned producer and outcome-query threads to exit,
   including threads retired after cancellation or timeout. Revoked result

@@ -1,5 +1,22 @@
 # Application versioning and changelog maintenance
 
+Experimental Desktop approval-removal and exact-install uninstall IPC are
+additive within the same undistributed application `0.2.0-alpha.1` batch. The
+installation inventory now requires original installation actions and retained
+removal observations; regenerate the plugin IPC bindings and update its fixtures
+with the Rust owner. Earlier experimental inventory shapes are refused without
+conversion. Store receipt format 1, settings format 2, project schema 30 and the
+SDK `0.1.0-alpha.1` / process-2 boundary remain unchanged. No dependency or version
+source changes and no additional bump; both Unreleased changelogs are updated.
+The original accepted operation, runtime drain and Store durability remain
+separate confirmations. Reviewed, localized frontend revocation, removal and
+original-request recovery controls are included in this batch. Retained Busy
+continuations use existing recovery guidance without changing their outcome into
+an unknown Store commit. Ordinary partial installations also retain their original
+request after settings confirmation; a known settings rejection before that
+confirmation ends the proposed pending mutation. Native acceptance is still
+under development.
+
 Desktop execution now retains exact package ownership through accepted capture,
 preparation IO and its session continuation, including abandoned IPC waiters.
 Internal cleanup fences only the selected identity/digest, retires dependent
@@ -13,8 +30,8 @@ without an additional bump or migration; both Unreleased changelogs are updated.
 An additive Core consent precheck shares the original expiry rules and grants
 no authority. Review refuses invalid consent before retaining a dispatch action;
 actual authorization still checks it again, and uncertain committed grants keep
-their original recovery identities. Approval withdrawal and exact-install removal
-IPC/UI remain separate work.
+their original recovery identities. The separate application lifecycle handoff
+and its localized controls use these owners; full native acceptance remains.
 
 The experimental Core `ExecutionRuntime` adds package-scoped begin/finish
 quiescence. It binds one full plugin identity, package digest, original action
@@ -27,7 +44,7 @@ internal API changes no project schema 30, IPC, settings format 2, Store receipt
 SDK/process contract, dependency or version source. The same undistributed
 application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no additional bump
 or historical migration; both Unreleased changelogs are synchronized. Desktop
-still must drain its captured calls and perform the installation handoff.
+uses this API to drain captured calls before the installation handoff.
 
 Execution quiescence now waits for actual owned producer and outcome-query
 thread exit, including threads retired after cancellation or timeout. Revoking
@@ -38,7 +55,8 @@ than a successful unload claim. This lifecycle correction changes no project
 schema, IPC, Store/SDK/process contract, dependency or version source. The same
 undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch and bilingual
 Unreleased entries require no additional bump or historical migration. Desktop
-package removal and full component lifecycle acceptance remain separate work.
+package removal now uses this drain owner; full native component lifecycle
+acceptance remains separate work.
 
 The experimental Host Store adds explicit removal of an exact sealed package
 installation. Callers first remove its local approval through the existing
@@ -53,8 +71,9 @@ the original action is reconciled. Existing installation/runtime receipts,
 settings format 2, project schema 30, SDK/process profiles and dependencies are
 unchanged. The same undistributed application `0.2.0-alpha.1` / SDK
 `0.1.0-alpha.1` batch requires no additional version bump or historical migration;
-both Unreleased changelogs record the Host feature. Desktop removal controls,
-worker lifecycle integration and cache collection remain separate work.
+both Unreleased changelogs record the Host feature. Desktop removal controls
+and their lifecycle handoff use this Store owner. Full native lifecycle
+acceptance and cache collection remain separate work.
 
 The optional Core Host adapter now captures a service broker separately for
 each actual dispatch, permit and cancellation handle. This changes the

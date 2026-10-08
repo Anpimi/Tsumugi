@@ -33,6 +33,8 @@ struct PluginRequests {
     inventory: plugins::PluginInventoryRequest,
     install: plugins::PluginInstallRequest,
     enable: plugins::PluginEnableRequest,
+    approval_removal: plugins::PluginApprovalRemovalRequest,
+    uninstall: plugins::PluginUninstallRequest,
     package: plugins::PluginPackageRequest,
     lookup: plugins::PluginLookupRequest,
     runtime_install: plugins::PluginRuntimeInstallRequest,

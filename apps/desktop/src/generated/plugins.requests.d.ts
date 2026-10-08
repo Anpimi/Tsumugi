@@ -4,6 +4,7 @@ export type ExecutionId = string;
 export type UnsignedDecimal = string;
 
 export interface Requests {
+  approvalRemoval: PluginApprovalRemovalRequest;
   build: PluginBuildRequest;
   defaultsInstall: PluginDefaultsInstallRequest;
   enable: PluginEnableRequest;
@@ -18,11 +19,17 @@ export interface Requests {
   textReview: PluginTextReviewRequest;
   tool: PluginToolRequest;
   translation: PluginTranslationRequest;
+  uninstall: PluginUninstallRequest;
 }
-export interface PluginBuildRequest {
-  environmentDigest: string;
+export interface PluginApprovalRemovalRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  origin: PluginOriginView;
   package: PluginPackageRequest;
-  resourceId: string;
+}
+export interface PluginOriginView {
+  publisherId: string;
+  sourceId: string;
 }
 export interface PluginPackageRequest {
   packageDigest: string;
@@ -35,6 +42,11 @@ export interface PluginIdentity {
   id: string;
   publisher: string;
   version: string;
+}
+export interface PluginBuildRequest {
+  environmentDigest: string;
+  package: PluginPackageRequest;
+  resourceId: string;
 }
 export interface PluginDefaultsInstallRequest {
   actionId: ExecutionId;
@@ -105,4 +117,11 @@ export interface PluginTranslationRequest {
   environmentDigest: string;
   package: PluginPackageRequest;
   resourceId: string;
+}
+export interface PluginUninstallRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  origin: PluginOriginView;
+  originalInstallAction: string;
+  package: PluginPackageRequest;
 }

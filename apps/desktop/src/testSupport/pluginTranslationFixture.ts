@@ -17,9 +17,10 @@ export const translationProjection = checked(workflow.projectionReview, validate
 export const translationView = translationCapture.translation;
 const packageRequest = { plugin: translationView.extractor.provider.plugin, packageDigest: translationView.extractor.provider.packageDigest };
 export const translationInventory: PluginInventoryView = checked({
+  uninstallations: [],
   settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
-  packages: [{ ...packageRequest, origin: translationView.packageOrigin, state: "sealed" }],
+  packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", ...packageRequest, origin: translationView.packageOrigin, state: "sealed" }],
   packageDecisions: [{ ...packageRequest, origin: translationView.packageOrigin, enabled: true }],
   runtimes: [{ environment: translationView.environment, environmentDigest: translationView.environmentDigest, origin: translationView.runtimeOrigin, state: "sealed" }],
   runtimeDecisions: [{ environment: translationView.environment, environmentDigest: translationView.environmentDigest, origin: translationView.runtimeOrigin }],

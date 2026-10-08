@@ -223,8 +223,24 @@ A completed retry observes the original result even after a new install or
 settings revision, without altering that new installation. Recovery bytes remain
 immutable outside active inventory and loading, and package/runtime/removal
 action UUIDs cannot be reused. The journal retains at most 128 removals and
-performs no automatic cache collection. This Host API has no Desktop removal
-control yet and never modifies projects or restores execution permission.
+performs no automatic cache collection. It never modifies projects or restores
+execution permission.
+
+The experimental **Extensions** panel exposes **Revoke approval** separately
+from **Uninstall this installation**. Review the target and its effects, then
+explicitly confirm each action. Revocation stops new selection and dependent
+work while retaining installation files. Uninstall waits for the original
+installation's dependent work to exit before removing it; disabling a package
+alone does not remove approval. Saved project content, results, history and
+exports remain. An uncooperative worker prevents confirmed removal.
+
+Accepted cleanup retains its original request through a lost waiter or a Busy
+continuation. Closing or refreshing the panel preserves that request; use
+**Retry original operation** to continue it. **Previous installation removals**
+also offers explicit original-action confirmation. Those observations alone do
+not confirm filesystem durability; a completed original replay preserves a
+later installation and its work. Full native lifecycle acceptance is still in
+progress.
 
 The sidebar opens each working area in the main workspace. Returning to another area preserves its project-local position and drafts; leaving an unsaved translation first offers save, keep editing, or discard. The project overview shows import or continue-editing actions according to the current source. Translations opens the editor by default, with a searchable paged list alongside source text, translation and revision controls. Search covers native keys, source text and selected translations across the complete current source, including entries beyond the displayed page. Terms, context and history are available in a collapsible reference area.
 

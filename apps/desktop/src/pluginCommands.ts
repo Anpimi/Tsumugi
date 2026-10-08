@@ -1,18 +1,35 @@
 import { checkedInvoke } from "./ipc";
 import { validateResponseInventory, validateResponseCandidate, validateResponsePackage, validateResponseBinding, validateResponseRuntime, validateResponseSource, validateResponseBuild, validateResponseTranslation, validateResponseTool, validateResponseTextReview, validateResponseTextReviews } from "./generated/plugins.validators";
-import type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginTextReviewRequest } from "./generated/plugins.requests";
+import type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginTextReviewRequest } from "./generated/plugins.requests";
 import type { ReviewCheckRequest } from "./generated/review.requests";
 import type { PluginInventoryView, PluginPackageDetailsView } from "./generated/plugins.responses";
 export type PluginTextReviewSelection = ReviewCheckRequest["advisoryChecks"][number];
 export type { PluginTextReviewRequest } from "./generated/plugins.requests";
 export type { PluginTextReviewView, PluginTextReviewListView, PluginTextReviewListEntry } from "./generated/plugins.responses";
-export type { PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
+export type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest } from "./generated/plugins.requests";
 export type { PluginInventoryView, PluginCandidateView, PluginPackageDetailsView, PluginRuntimeOfferView, PermissionRequest, PluginSourceView, PluginBuildView, PluginTranslationView, PluginToolView } from "./generated/plugins.responses";
 
 export const pluginCommands = {
   inventory: () => checkedInvoke("read_plugin_inventory", {}, validateResponseInventory),
   select: () => checkedInvoke("select_plugin_package", {}, validateResponseCandidate),
   install: (request: PluginInstallRequest) => checkedInvoke("install_plugin_package", request, validateResponseInventory),
+  removeApproval: async (request: PluginApprovalRemovalRequest) => {
+    const view = await checkedInvoke("remove_plugin_approval", request, validateResponseInventory);
+    if (view.lastSettingsAction !== request.actionId || BigInt(view.settingsRevision) !== BigInt(request.expectedRevision) + 1n
+      || view.packageDecisions.some(item => samePackage(item, request.package) && sameOrigin(item.origin, request.origin))) {
+      throw new Error("Invalid IPC acknowledgement: approval removal");
+    }
+    return view;
+  },
+  uninstall: async (request: PluginUninstallRequest) => {
+    const view = await checkedInvoke("uninstall_plugin_package", request, validateResponseInventory);
+    if (!view.uninstallations.some(item => item.actionId === request.actionId && item.settingsRevision === request.expectedRevision
+      && item.state === "sealed" && item.installation.state === "sealed" && samePackage(item.installation, request.package)
+      && sameOrigin(item.installation.origin, request.origin) && item.installation.originalInstallAction === request.originalInstallAction)) {
+      throw new Error("Invalid IPC acknowledgement: uninstall");
+    }
+    return view;
+  },
   enable: (request: PluginEnableRequest) => checkedInvoke("set_plugin_enabled", request, validateResponseInventory),
   package: (request: PluginPackageRequest) => checkedInvoke("read_plugin_package", request, validateResponsePackage),
   lookup: (request: PluginLookupRequest) => checkedInvoke("lookup_plugin_capability", request, validateResponseBinding),
@@ -50,4 +67,12 @@ export async function readEnabledPluginPackages(inventory: PluginInventoryView, 
     if (details.enabled) packages.push(details);
   }
   return packages;
+}
+
+function samePackage(left: PluginPackageRequest, right: PluginPackageRequest): boolean {
+  return left.packageDigest === right.packageDigest && left.plugin.publisher === right.plugin.publisher
+    && left.plugin.id === right.plugin.id && left.plugin.version === right.plugin.version;
+}
+function sameOrigin(left: { sourceId: string; publisherId: string }, right: { sourceId: string; publisherId: string }): boolean {
+  return left.sourceId === right.sourceId && left.publisherId === right.publisherId;
 }

@@ -11,9 +11,10 @@ if (nodeEnvironment.profile !== "node-system-libraries-v1") throw new Error("Exp
 export const pluginBuildRequest = contract.request;
 export const pluginBuildWorkflow = workflow;
 export const pluginBuildInventory: PluginInventoryView = {
+  uninstallations: [],
   settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
-  packages: [{ ...contract.request.package, origin: contract.view.packageOrigin, state: "sealed" }],
+  packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", ...contract.request.package, origin: contract.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ ...contract.request.package, origin: contract.view.packageOrigin, enabled: true }],
   runtimes: [{ environment: nodeEnvironment, environmentDigest: contract.view.environmentDigest, origin: contract.view.runtimeOrigin, state: "sealed" }],
   runtimeDecisions: [{ environment: nodeEnvironment, environmentDigest: contract.view.environmentDigest, origin: contract.view.runtimeOrigin }],

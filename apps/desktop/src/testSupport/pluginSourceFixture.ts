@@ -10,9 +10,10 @@ if (nodeEnvironment.profile !== "node-system-libraries-v1") throw new Error("Exp
 export const pluginSourceRequest = source.request;
 export const pluginSourceWorkflow = workflow;
 export const pluginSourceInventory: PluginInventoryView = {
+  uninstallations: [],
   settingsRevision: "1", lastSettingsAction: null, runtimeOffers: [], defaultsOffer: null,
   nativeHostOffer: { availability: "unavailable", reason: "identity-unavailable" },
-  packages: [{ plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, state: "sealed" }],
+  packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, state: "sealed" }],
   packageDecisions: [{ plugin: source.request.package.plugin, packageDigest: source.request.package.packageDigest, origin: source.view.packageOrigin, enabled: true }],
   runtimes: [{ environment: nodeEnvironment, environmentDigest: source.view.environmentDigest, origin: source.view.runtimeOrigin, state: "sealed" }],
   runtimeDecisions: [{ environment: nodeEnvironment, environmentDigest: source.view.environmentDigest, origin: source.view.runtimeOrigin }],

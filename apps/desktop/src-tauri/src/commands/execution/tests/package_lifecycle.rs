@@ -488,3 +488,397 @@ fn storage_busy_keeps_original_action_fence_and_global_stop_waits_for_accepted_i
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn registered_uninstall_waits_for_original_target_query_without_stopping_independent_package() {
+    use crate::commands::plugins::{
+        PluginInventoryView, PluginObjectState, PluginUninstallRequest, packages::MutationRequest,
+    };
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+    use tsumugi_plugin_host::{
+        ApprovedPackageSetting, PackageFile, PackageImage, PackageStore, PluginSettingsUpdate,
+        catalog::{PackageApproval, PackageCatalog, PackageOrigin},
+    };
+
+    struct OwnedPackages(tempfile::TempDir);
+    impl Drop for OwnedPackages {
+        fn drop(&mut self) {
+            fn removable(path: &Path) {
+                if fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir()) {
+                    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+                    for entry in fs::read_dir(path).unwrap() {
+                        removable(&entry.unwrap().path());
+                    }
+                }
+            }
+            removable(self.0.path());
+        }
+    }
+
+    let owned = OwnedPackages(tempfile::tempdir().unwrap());
+    let application = owned.0.path().join("application");
+    let root = application.join("plugins");
+    let mut package_store =
+        PackageStore::provision(owned.0.path(), &["application", "plugins"], || true).unwrap();
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../test/fixtures/pluginPackage.contract.json"
+    ))
+    .unwrap();
+    let mut catalog = PackageCatalog::new();
+    let mut receipts = Vec::new();
+    let mut approvals = Vec::new();
+    for id in ["installed-target", "installed-independent"] {
+        let mut manifest: sdk::PluginManifest =
+            serde_json::from_value(fixture["manifest"].clone()).unwrap();
+        manifest.plugin.id = id.into();
+        manifest.contributions[0].id = "call".into();
+        let declaration = match &mut manifest.contributions[0].contribution {
+            sdk::ContributionKind::Capability { declaration } => {
+                declaration.contract.id = "example.call".into();
+                declaration.limits.max_input_bytes = 4096;
+                declaration.clone()
+            }
+            _ => panic!("fixture must declare the controlled query capability"),
+        };
+        // Installation never executes this JavaScript. The in-flight query
+        // below is a real, controlled Rust Runner, not a Node/native process.
+        let files = BTreeMap::from([(
+            "worker.mjs".into(),
+            PackageFile {
+                bytes: b"throw new Error('controlled installation must not execute');".to_vec(),
+                executable: false,
+            },
+        )]);
+        let bytes = serde_json::to_vec(&manifest).unwrap();
+        let digest = PackageImage::digest(&bytes, &files).unwrap();
+        let image = PackageImage::capture(bytes, files, &digest).unwrap();
+        let approval = PackageApproval {
+            plugin: manifest.plugin,
+            package_digest: digest,
+            origin: PackageOrigin {
+                source_id: "synthetic-approved-source".into(),
+                publisher_id: "synthetic-approved-key".into(),
+            },
+        };
+        catalog.register(image, approval.clone()).unwrap();
+        let receipt = package_store
+            .install(
+                &ExecutionId::new().to_string(),
+                catalog.registered(&approval.plugin).unwrap(),
+                || true,
+            )
+            .unwrap();
+        let actual = PluginPackageRequest {
+            plugin: receipt.plugin().clone(),
+            package_digest: receipt.package_digest().into(),
+        };
+        assert_eq!(binding(&actual).capability.declaration, declaration);
+        receipts.push(receipt);
+        approvals.push(approval);
+    }
+    package_store
+        .update_settings(
+            0,
+            &ExecutionId::new().to_string(),
+            &PluginSettingsUpdate {
+                packages: approvals
+                    .iter()
+                    .map(|approval| ApprovedPackageSetting {
+                        approval: approval.clone(),
+                        enabled: true,
+                    })
+                    .collect(),
+                runtimes: vec![],
+            },
+            || true,
+        )
+        .unwrap();
+    let a = PluginPackageRequest {
+        plugin: receipts[0].plugin().clone(),
+        package_digest: receipts[0].package_digest().into(),
+    };
+    let b = PluginPackageRequest {
+        plugin: receipts[1].plugin().clone(),
+        package_digest: receipts[1].package_digest().into(),
+    };
+    assert_ne!(a.package_digest, b.package_digest);
+    let a_object = root.join("objects").join(&a.package_digest);
+    let b_object = root.join("objects").join(&b.package_digest);
+    let independent_bytes = fs::read(b_object.join("package/worker.mjs")).unwrap();
+    let (_temp, app, webview, context) = setup();
+    let (calls_tx, calls) = mpsc::channel();
+    let ca = a.clone();
+    let cb = b.clone();
+    let (generation, attempts) = app.state::<AppState>().sessions.with(move |sessions| {
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        let mut attempts = Vec::new();
+        for package in [&ca, &cb] {
+            let binding = binding(package);
+            host.runtime
+                .register_read_only(Arc::new(QueryRunner {
+                    binding: binding.clone(),
+                    calls: calls_tx.clone(),
+                }))
+                .unwrap();
+            host.plugin_registrations.push(binding.clone());
+            let input = plugin_input(store, binding);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            host.runtime
+                .authorize_plugin(
+                    store,
+                    ExecutionId::new(),
+                    &input,
+                    now + 60_000,
+                    PluginConsent {
+                        unsandboxed_execution: true,
+                    },
+                )
+                .unwrap();
+            host.runtime.submit(store, &input).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while store
+                .execution_attempt(input.envelope().attempt_id, false)
+                .unwrap()
+                .progress
+                .unknown
+                != 1
+            {
+                host.runtime.tick(store).unwrap();
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            let query = loop {
+                match host.runtime.outcome_query(
+                    store,
+                    input.envelope().attempt_id,
+                    input.envelope().items[0].item_id,
+                ) {
+                    Ok(Some(query)) => break Arc::new(query),
+                    Err(error) if error.code == ErrorCode::Busy => {
+                        host.runtime.tick(store).unwrap();
+                        assert!(
+                            Instant::now() < deadline,
+                            "original producer did not release"
+                        );
+                        std::thread::yield_now();
+                    }
+                    Ok(None) => panic!("unknown result has no original query"),
+                    Err(error) => panic!("unexpected query capture error: {error:?}"),
+                }
+            };
+            let worker = query.clone();
+            let (sender, receiver) = mpsc::channel();
+            let thread = std::thread::spawn(move || {
+                let _ = sender.send(worker.run());
+            });
+            host.queries.push(QueryJob {
+                query,
+                receiver,
+                thread,
+                started: Instant::now(),
+                pending_outcome: None,
+            });
+            attempts.push(input.envelope().attempt_id);
+        }
+        (host.runtime.generation(), attempts)
+    });
+    let mut by_attempt: BTreeMap<_, _> = (0..2)
+        .map(|_| {
+            let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+            (call.request.input.envelope().attempt_id, call)
+        })
+        .collect();
+    let target = by_attempt.remove(&attempts[0]).unwrap();
+    let independent = by_attempt.remove(&attempts[1]).unwrap();
+    assert!(target.request.plugin_permit().unwrap().is_authorized());
+    assert!(independent.request.plugin_permit().unwrap().is_authorized());
+
+    // The separate trusted settings owner withdraws A after these original
+    // execution/query handles were captured. This test exercises uninstall's
+    // drain connection, not the approval-removal command's already tested flow.
+    let withdrawal = ExecutionId::new();
+    let withdrawn = package_store
+        .update_settings(
+            1,
+            &withdrawal.to_string(),
+            &PluginSettingsUpdate {
+                packages: vec![ApprovedPackageSetting {
+                    approval: approvals[1].clone(),
+                    enabled: true,
+                }],
+                runtimes: vec![],
+            },
+            || true,
+        )
+        .unwrap();
+    drop(package_store);
+    app.state::<AppState>()
+        .plugins
+        .configure(application)
+        .unwrap();
+    let before: PluginInventoryView =
+        serde_json::from_value(call(&webview, "read_plugin_inventory", json!({})).unwrap())
+            .unwrap();
+    assert_eq!(before.packages.len(), 2);
+    assert_eq!(before.settings_revision, withdrawn.revision().into());
+    assert_eq!(before.last_settings_action, Some(withdrawal.to_string()));
+    assert_eq!(before.package_decisions.len(), 1);
+    assert_eq!(before.package_decisions[0].plugin, b.plugin);
+    assert_eq!(before.package_decisions[0].package_digest, b.package_digest);
+    assert!(before.package_decisions[0].enabled);
+    let original_target = before
+        .packages
+        .iter()
+        .find(|package| package.package_digest == a.package_digest)
+        .unwrap()
+        .clone();
+    let original_independent = before
+        .packages
+        .iter()
+        .find(|package| package.package_digest == b.package_digest)
+        .unwrap()
+        .clone();
+    let request = PluginUninstallRequest {
+        package: a.clone(),
+        origin: receipts[0].origin().into(),
+        original_install_action: receipts[0].action_id().into(),
+        expected_revision: withdrawn.revision().into(),
+        action_id: ExecutionId::new(),
+    };
+    assert_ne!(request.action_id, withdrawal);
+    let original = MutationRequest::Uninstall(request.clone());
+    let held = call(&webview, "uninstall_plugin_package", json!(&request)).unwrap_err();
+    assert_eq!(held["code"], "busy");
+    assert_eq!(held["reason"], "package-lifecycle-active");
+    assert_eq!(held["recoveryRequired"], true);
+    assert_eq!(held["recoveryGuidance"], "reconcile-original");
+    assert!(a_object.exists());
+    assert!(
+        !root
+            .join("uninstalls")
+            .join(request.action_id.to_string())
+            .exists()
+    );
+    assert!(!target.request.plugin_permit().unwrap().is_authorized());
+    assert!(independent.request.plugin_permit().unwrap().is_authorized());
+    let ca = a.clone();
+    let cb = b.clone();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        assert!(sessions.package_operation.as_ref().unwrap().request == original);
+        let (host, _) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        assert_eq!(host.runtime.generation(), generation);
+        assert_eq!(host.retired_queries.len(), 1);
+        assert!(!host.retired_queries[0].thread.is_finished());
+        assert_eq!(host.queries.len(), 1);
+        assert!(super::super::package_lifecycle::matches_input(
+            &cb,
+            &host.queries[0].query.request.input
+        ));
+        assert!(host.allow_package(&ca).is_err());
+        assert!(host.allow_package(&cb).is_ok());
+    });
+    assert_eq!(
+        call(&webview, "quiesce_execution", context.clone()).unwrap_err()["code"],
+        "busy"
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "close_project",
+            json!({"sessionToken": context["sessionToken"]})
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    let still_installed: PluginInventoryView =
+        serde_json::from_value(call(&webview, "read_plugin_inventory", json!({})).unwrap())
+            .unwrap();
+    assert_eq!(still_installed, before);
+
+    target.release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let removed: PluginInventoryView = loop {
+        match call(&webview, "uninstall_plugin_package", json!(&request)) {
+            Ok(view) => break serde_json::from_value(view).unwrap(),
+            Err(error) if error["code"] == "busy" => {
+                assert!(
+                    Instant::now() < deadline,
+                    "original query owner did not drain"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("exact uninstall recovery failed: {error}"),
+        }
+    };
+    assert!(!a_object.exists());
+    assert!(b_object.exists());
+    assert_eq!(
+        fs::read(b_object.join("package/worker.mjs")).unwrap(),
+        independent_bytes
+    );
+    assert_eq!(removed.settings_revision, before.settings_revision);
+    assert_eq!(removed.last_settings_action, before.last_settings_action);
+    assert_eq!(removed.package_decisions, before.package_decisions);
+    assert_eq!(removed.packages.len(), 1);
+    assert_eq!(removed.packages[0], original_independent);
+    assert_eq!(
+        removed.packages[0].original_install_action,
+        receipts[1].action_id()
+    );
+    assert_eq!(removed.uninstallations.len(), 1);
+    assert_eq!(
+        removed.uninstallations[0].action_id,
+        request.action_id.to_string()
+    );
+    assert_eq!(
+        removed.uninstallations[0]
+            .installation
+            .original_install_action,
+        request.original_install_action
+    );
+    assert_eq!(removed.uninstallations[0].state, PluginObjectState::Sealed);
+    assert_eq!(removed.uninstallations[0].installation, original_target);
+    assert_eq!(
+        removed.uninstallations[0].settings_revision,
+        request.expected_revision
+    );
+    assert!(independent.request.plugin_permit().unwrap().is_authorized());
+    let cb = b.clone();
+    app.state::<AppState>().sessions.with(move |sessions| {
+        assert!(sessions.package_operation.is_none());
+        let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+        assert!(host.active(store).unwrap());
+        assert_eq!(host.runtime.generation(), generation);
+        assert!(host.retired_queries.is_empty());
+        assert_eq!(host.queries.len(), 1);
+        assert!(super::super::package_lifecycle::matches_input(
+            &cb,
+            &host.queries[0].query.request.input
+        ));
+        assert_eq!(host.plugin_registrations.len(), 1);
+        assert_eq!(
+            host.plugin_registrations[0].capability.provider.plugin,
+            cb.plugin
+        );
+        assert!(host.allow_package(&cb).is_ok());
+    });
+    independent.release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while call(&webview, "execution_status", context.clone()).unwrap()["active"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "independent query owner did not join"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    call(
+        &webview,
+        "close_project",
+        json!({"sessionToken": context["sessionToken"]}),
+    )
+    .unwrap();
+}

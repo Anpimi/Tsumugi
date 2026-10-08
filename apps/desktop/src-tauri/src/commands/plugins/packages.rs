@@ -1,5 +1,7 @@
 //! Exact local package decisions. No worker is launched by these operations.
 use super::*;
+pub(in crate::commands) mod cleanup;
+pub use cleanup::{PluginApprovalRemovalRequest, PluginUninstallRequest};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -85,12 +87,49 @@ impl Drop for PickerLease {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub(super) enum MutationRequest {
+pub(in crate::commands) enum MutationRequest {
     Install(PluginInstallRequest),
     Enable(PluginEnableRequest),
     Runtime(PluginRuntimeInstallRequest),
     NativeHost(PluginNativeHostApprovalRequest),
     Defaults(PluginDefaultsInstallRequest),
+    ApprovalRemoval(PluginApprovalRemovalRequest),
+    Uninstall(PluginUninstallRequest),
+}
+
+impl MutationRequest {
+    pub(in crate::commands) fn stage(&self) -> CommandStage {
+        match self {
+            Self::Install(_) | Self::Runtime(_) | Self::Defaults(_) | Self::Uninstall(_) => {
+                CommandStage::PluginInstall
+            }
+            Self::Enable(_) | Self::NativeHost(_) | Self::ApprovalRemoval(_) => {
+                CommandStage::PluginSettings
+            }
+        }
+    }
+    fn action_id(&self) -> ExecutionId {
+        match self {
+            Self::Install(r) => r.action_id,
+            Self::Enable(r) => r.action_id,
+            Self::Runtime(r) => r.action_id,
+            Self::NativeHost(r) => r.action_id,
+            Self::Defaults(r) => r.action_id,
+            Self::ApprovalRemoval(r) => r.action_id,
+            Self::Uninstall(r) => r.action_id,
+        }
+    }
+    fn expected_revision(&self) -> u64 {
+        match self {
+            Self::Install(r) => r.expected_revision.get(),
+            Self::Enable(r) => r.expected_revision.get(),
+            Self::Runtime(r) => r.expected_revision.get(),
+            Self::NativeHost(r) => r.expected_revision.get(),
+            Self::Defaults(r) => r.expected_revision.get(),
+            Self::ApprovalRemoval(r) => r.expected_revision.get(),
+            Self::Uninstall(r) => r.expected_revision.get(),
+        }
+    }
 }
 
 pub(super) struct PendingMutation {
@@ -101,6 +140,8 @@ pub(super) struct PendingMutation {
     settings_confirmed: bool,
     complete: bool,
     unknown: bool,
+    running: std::sync::Arc<AtomicBool>,
+    handoff_complete: bool,
 }
 struct PendingPackage {
     package: RegisteredPackage,
@@ -115,22 +156,10 @@ struct PendingRuntime {
 }
 impl PendingMutation {
     fn action(&self) -> String {
-        match &self.request {
-            MutationRequest::Install(request) => request.action_id.to_string(),
-            MutationRequest::Enable(request) => request.action_id.to_string(),
-            MutationRequest::Runtime(request) => request.action_id.to_string(),
-            MutationRequest::NativeHost(request) => request.action_id.to_string(),
-            MutationRequest::Defaults(request) => request.action_id.to_string(),
-        }
+        self.request.action_id().to_string()
     }
     fn revision(&self) -> u64 {
-        match &self.request {
-            MutationRequest::Install(request) => request.expected_revision.get(),
-            MutationRequest::Enable(request) => request.expected_revision.get(),
-            MutationRequest::Runtime(request) => request.expected_revision.get(),
-            MutationRequest::NativeHost(request) => request.expected_revision.get(),
-            MutationRequest::Defaults(request) => request.expected_revision.get(),
-        }
+        self.request.expected_revision()
     }
 }
 
@@ -210,10 +239,12 @@ impl ApplicationPlugins {
             manager.picker = None;
         }
         if manager.picker.is_some()
-            || manager
-                .pending
-                .as_ref()
-                .is_some_and(|pending| pending.unknown)
+            || manager.pending.as_ref().is_some_and(|pending| {
+                !pending.complete
+                    || !pending.handoff_complete
+                    || pending.unknown
+                    || pending.running.load(Ordering::Acquire)
+            })
         {
             return Err(failure(
                 CommandErrorCode::Busy,
@@ -295,15 +326,17 @@ impl ApplicationPlugins {
         &self,
         request: MutationRequest,
     ) -> Result<PluginInventoryView, CommandError> {
-        let stage = match &request {
-            MutationRequest::Install(_) => CommandStage::PluginInstall,
-            MutationRequest::Runtime(_) | MutationRequest::Defaults(_) => {
-                CommandStage::PluginInstall
-            }
-            MutationRequest::Enable(_) | MutationRequest::NativeHost(_) => {
-                CommandStage::PluginSettings
-            }
-        };
+        let stage = request.stage();
+        if matches!(
+            request,
+            MutationRequest::ApprovalRemoval(_) | MutationRequest::Uninstall(_)
+        ) {
+            return Err(failure(
+                CommandErrorCode::InvalidInput,
+                "plugin-lifecycle-coordinator",
+                stage,
+            ));
+        }
         let mut manager = self.try_manager().map_err(|mut error| {
             error.stage = stage;
             error
@@ -332,11 +365,12 @@ impl ApplicationPlugins {
             .as_ref()
             .is_some_and(|pending| pending.request == request);
         if !same {
-            if manager
-                .pending
-                .as_ref()
-                .is_some_and(|pending| pending.unknown)
-            {
+            if manager.pending.as_ref().is_some_and(|pending| {
+                !pending.complete
+                    || !pending.handoff_complete
+                    || pending.unknown
+                    || pending.running.load(Ordering::Acquire)
+            }) {
                 return Err(failure(
                     CommandErrorCode::Busy,
                     "plugin-operation-pending",
@@ -347,13 +381,7 @@ impl ApplicationPlugins {
             let settings = store
                 .settings(allowed)
                 .map_err(|error| at_stage(error, stage))?;
-            let expected = match &request {
-                MutationRequest::Install(request) => request.expected_revision.get(),
-                MutationRequest::Enable(request) => request.expected_revision.get(),
-                MutationRequest::Runtime(request) => request.expected_revision.get(),
-                MutationRequest::NativeHost(request) => request.expected_revision.get(),
-                MutationRequest::Defaults(request) => request.expected_revision.get(),
-            };
+            let expected = request.expected_revision();
             if expected != settings.revision() {
                 return Err(at_stage(InstallError::RevisionConflict, stage));
             }
@@ -497,6 +525,13 @@ impl ApplicationPlugins {
                     }
                     None
                 }
+                MutationRequest::ApprovalRemoval(_) | MutationRequest::Uninstall(_) => {
+                    return Err(failure(
+                        CommandErrorCode::InvalidInput,
+                        "plugin-lifecycle-coordinator",
+                        stage,
+                    ));
+                }
                 MutationRequest::Defaults(request) => {
                     let captured = defaults::capture_offer(&manager, request, allowed)?;
                     for package in &captured.0 {
@@ -538,13 +573,7 @@ impl ApplicationPlugins {
                 }
             };
             let is_defaults = matches!(&request, MutationRequest::Defaults(_));
-            let action = match &request {
-                MutationRequest::Install(r) => r.action_id.to_string(),
-                MutationRequest::Enable(r) => r.action_id.to_string(),
-                MutationRequest::Runtime(r) => r.action_id.to_string(),
-                MutationRequest::NativeHost(r) => r.action_id.to_string(),
-                MutationRequest::Defaults(r) => r.action_id.to_string(),
-            };
+            let action = request.action_id().to_string();
             let mut package_steps = Vec::new();
             if let Some(package) = package {
                 package_steps.push(PendingPackage {
@@ -576,6 +605,8 @@ impl ApplicationPlugins {
                 settings_confirmed: false,
                 complete: false,
                 unknown: false,
+                running: std::sync::Arc::new(AtomicBool::new(false)),
+                handoff_complete: true,
             });
         }
         let PluginManager { store, pending, .. } = &mut *manager;
@@ -622,7 +653,17 @@ impl ApplicationPlugins {
                         stage,
                     ));
                 }
-                return Err(at_stage(error, stage));
+                let failure = at_stage(error, stage);
+                if pending.settings_confirmed {
+                    // Installation follows the original confirmed approval.
+                    // Keep that accepted partial result and its frozen request.
+                    return Err(cleanup::original_required(failure));
+                }
+                // Store reports every uncertain settings promotion as Unknown.
+                // A known rejection before confirmation has no active settings
+                // or installation result owned by this proposed mutation.
+                manager.pending = None;
+                return Err(failure);
             }
             pending.complete = true;
             pending.unknown = false;

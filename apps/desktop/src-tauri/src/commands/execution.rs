@@ -16,6 +16,7 @@ macro_rules! handlers {
         super::plugins::read_plugin_inventory,
         super::plugins::defaults::install_plugin_defaults,
         super::plugins::packages::select_plugin_package, super::plugins::packages::install_plugin_package,
+        super::plugins::packages::cleanup::remove_plugin_approval, super::plugins::packages::cleanup::uninstall_plugin_package,
         super::plugins::packages::set_plugin_enabled, super::plugins::packages::read_plugin_package,
         super::plugins::packages::lookup_plugin_capability,
         super::plugins::sources::read_plugin_source, super::plugins::builds::read_plugin_build,
@@ -484,6 +485,44 @@ impl ExecutionHost {
         Ok(())
     }
 }
+impl SessionManager {
+    pub(super) fn begin_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+        package: plugins::PluginPackageRequest,
+    ) -> Result<(), CommandError> {
+        if let Some(active) = self.active.as_mut() {
+            let (host, store) = active.execution_parts()?;
+            host.begin_package_cleanup(store, action, package)?;
+        }
+        Ok(())
+    }
+    pub(super) fn finish_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+    ) -> Result<(), CommandError> {
+        if let Some(active) = self.active.as_mut() {
+            let (host, store) = active.execution_parts()?;
+            host.finish_package_cleanup(store, action)?;
+        }
+        Ok(())
+    }
+    pub(super) fn complete_plugin_cleanup(
+        &mut self,
+        action: ExecutionId,
+        package: &plugins::PluginPackageRequest,
+    ) -> Result<(), CommandError> {
+        if let Some(host) = self
+            .active
+            .as_mut()
+            .and_then(|active| active.execution.as_mut())
+        {
+            host.complete_package_cleanup_if_present(action, package)?;
+        }
+        Ok(())
+    }
+}
+
 impl ActiveSession {
     pub(super) fn execution_status_view(&mut self) -> Result<RuntimeStatus, CommandError> {
         let (host, store) = self.execution_parts()?;

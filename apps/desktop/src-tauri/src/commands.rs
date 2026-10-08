@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 mod changes;
 #[cfg(feature = "wire-schema")]
@@ -415,6 +415,12 @@ impl Drop for AppState {
 struct SessionManager {
     active: Option<ActiveSession>,
     directory_recovery: Option<DirectoryRecovery>,
+    package_operation: Option<SessionPackageOperation>,
+}
+
+struct SessionPackageOperation {
+    request: plugins::packages::MutationRequest,
+    running: Weak<()>,
 }
 
 // Keep the token, last known location and both snapshots even when no database
@@ -451,6 +457,88 @@ impl ActiveSession {
 }
 
 impl SessionManager {
+    /// Keep the application owner stable across receipt IO and its session
+    /// continuation, including when no project is open. This grants no authority.
+    /// Return whether this call installed the hold and its unique live claim.
+    fn begin_package_operation(
+        &mut self,
+        request: plugins::packages::MutationRequest,
+    ) -> Result<(bool, Arc<()>), CommandError> {
+        let stage = request.stage();
+        if let Some(current) = self.package_operation.as_mut() {
+            if current.request == request {
+                if current.running.strong_count() == 0 {
+                    let claim = Arc::new(());
+                    current.running = Arc::downgrade(&claim);
+                    return Ok((false, claim));
+                }
+                let mut error = CommandError::simple(CommandErrorCode::Busy, stage);
+                error.recovery_required = true;
+                error.recovery_guidance = Some(RecoveryGuidance::ReconcileOriginal);
+                return Err(error);
+            }
+        }
+        // Admission owns the claim before preflight IO. A failed first preflight
+        // cannot release a hold already used by another accepted continuation.
+        self.ensure_package_operation_idle(stage)?;
+        if let Some(active) = self.active.as_mut() {
+            if active.execution.is_some()
+                && active
+                    .execution_status_view()
+                    .map_err(|mut error| {
+                        error.stage = stage;
+                        error
+                    })?
+                    .quiescing
+            {
+                let mut error = CommandError::simple(CommandErrorCode::Busy, stage);
+                error.reason = Some("execution-quiescing".into());
+                return Err(error);
+            }
+        }
+        let claim = Arc::new(());
+        self.package_operation = Some(SessionPackageOperation {
+            request,
+            running: Arc::downgrade(&claim),
+        });
+        Ok((true, claim))
+    }
+
+    /// Release only after the installation owner reconciles this exact request.
+    /// An unknown or busy result keeps the original hold for its continuation.
+    fn finish_package_operation(
+        &mut self,
+        request: &plugins::packages::MutationRequest,
+    ) -> Result<(), CommandError> {
+        match &self.package_operation {
+            Some(current) if current.request == *request => {
+                self.package_operation = None;
+                Ok(())
+            }
+            Some(_) => {
+                let mut error =
+                    CommandError::simple(CommandErrorCode::ResultMismatch, request.stage());
+                error.reason = Some("plugin-operation-request".into());
+                Err(error)
+            }
+            None => {
+                let mut error =
+                    CommandError::simple(CommandErrorCode::DependencyConflict, request.stage());
+                error.reason = Some("plugin-operation-missing".into());
+                Err(error)
+            }
+        }
+    }
+
+    fn ensure_package_operation_idle(&self, stage: CommandStage) -> Result<(), CommandError> {
+        if self.package_operation.is_some() {
+            let mut error = CommandError::simple(CommandErrorCode::Busy, stage);
+            error.reason = Some("plugin-operation-pending".into());
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn create(&mut self, request: CreateProjectRequest) -> Result<ProjectView, CommandError> {
         self.ensure_switch_allowed(CommandStage::Create)?;
         let destination =
@@ -670,6 +758,7 @@ impl SessionManager {
             }
         }
 
+        self.ensure_package_operation_idle(CommandStage::Rename)?;
         let active = self.active.take().ok_or_else(|| {
             CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Rename)
         })?;
@@ -863,6 +952,7 @@ impl SessionManager {
     }
 
     fn close(&mut self, request: CloseProjectRequest) -> Result<CloseProjectView, CommandError> {
+        self.ensure_package_operation_idle(CommandStage::Close)?;
         self.ensure_recovery_allowed(&request.session_token, CommandStage::Close)?;
         let active = self.active.as_ref().ok_or_else(|| {
             CommandError::simple(CommandErrorCode::SessionInvalid, CommandStage::Close)
@@ -889,6 +979,7 @@ impl SessionManager {
     }
 
     fn ensure_switch_allowed(&self, stage: CommandStage) -> Result<(), CommandError> {
+        self.ensure_package_operation_idle(stage)?;
         if let Some(active) = &self.active {
             active.ensure_execution_idle(stage)?;
         }
@@ -923,6 +1014,9 @@ impl SessionManager {
         token: &str,
         stage: CommandStage,
     ) -> Result<&mut ActiveSession, CommandError> {
+        if stage == CommandStage::ExecutionQuiesce {
+            self.ensure_package_operation_idle(stage)?;
+        }
         self.ensure_recovery_allowed(token, stage)?;
         let active = self
             .active
@@ -1274,6 +1368,209 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    fn package_operation() -> plugins::packages::MutationRequest {
+        plugins::packages::MutationRequest::Install(plugins::PluginInstallRequest {
+            ticket: tsumugi_core::execution::ExecutionId::new(),
+            expected_revision: 1.into(),
+            action_id: tsumugi_core::execution::ExecutionId::new(),
+        })
+    }
+
+    #[test]
+    fn package_operation_without_project_keeps_the_exact_request_and_switch_fence() {
+        let parent = temporary_directory("package-operation-no-project");
+        let existing = parent.path().join("existing");
+        let destination = parent.path().join("new-project");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&existing)).unwrap();
+        manager
+            .close(CloseProjectRequest {
+                session_token: created.session_token,
+            })
+            .unwrap();
+        let original = package_operation();
+        let (new_hold, operation_claim) =
+            manager.begin_package_operation(original.clone()).unwrap();
+        assert!(new_hold);
+        let concurrent = manager
+            .begin_package_operation(original.clone())
+            .unwrap_err();
+        assert_eq!(concurrent.code, CommandErrorCode::Busy);
+        assert_eq!(concurrent.outcome, CommandOutcome::Rejected);
+        assert!(concurrent.recovery_required);
+        assert_eq!(
+            concurrent.recovery_guidance,
+            Some(RecoveryGuidance::ReconcileOriginal)
+        );
+        assert!(manager.active.is_none());
+        assert!(manager.package_operation.as_ref().unwrap().request == original);
+
+        let plugins::packages::MutationRequest::Install(request) = &original else {
+            unreachable!();
+        };
+        for changed in [
+            plugins::PluginInstallRequest {
+                ticket: tsumugi_core::execution::ExecutionId::new(),
+                ..request.clone()
+            },
+            plugins::PluginInstallRequest {
+                expected_revision: 2.into(),
+                ..request.clone()
+            },
+            plugins::PluginInstallRequest {
+                action_id: tsumugi_core::execution::ExecutionId::new(),
+                ..request.clone()
+            },
+        ] {
+            let changed = plugins::packages::MutationRequest::Install(changed);
+            let rejected = manager
+                .begin_package_operation(changed.clone())
+                .unwrap_err();
+            assert_eq!(rejected.code, CommandErrorCode::Busy);
+            assert!(!rejected.recovery_required);
+            assert_eq!(
+                manager.finish_package_operation(&changed).unwrap_err().code,
+                CommandErrorCode::ResultMismatch
+            );
+            assert!(manager.package_operation.as_ref().unwrap().request == original);
+        }
+        let create_error = manager.create(create_request(&destination)).unwrap_err();
+        assert_eq!(create_error.code, CommandErrorCode::Busy);
+        assert_eq!(create_error.stage, CommandStage::Create);
+        assert!(!destination.exists());
+        let open_error = manager
+            .open(OpenProjectRequest {
+                locator: existing.to_string_lossy().into_owned(),
+            })
+            .unwrap_err();
+        assert_eq!(open_error.code, CommandErrorCode::Busy);
+        assert_eq!(open_error.stage, CommandStage::Open);
+        assert_eq!(
+            manager
+                .close(CloseProjectRequest {
+                    session_token: "no-project".into(),
+                })
+                .unwrap_err()
+                .code,
+            CommandErrorCode::Busy
+        );
+        assert_eq!(
+            manager
+                .active_mut("no-project", CommandStage::ExecutionQuiesce)
+                .err()
+                .unwrap()
+                .code,
+            CommandErrorCode::Busy
+        );
+        assert!(manager.active.is_none());
+        drop(operation_claim);
+        // An ended continuation leaves the exact request hold in place. Only
+        // that original request may acquire the next preflight claim.
+        assert_eq!(
+            manager
+                .create(create_request(&destination))
+                .unwrap_err()
+                .code,
+            CommandErrorCode::Busy
+        );
+        let (new_hold, operation_claim) =
+            manager.begin_package_operation(original.clone()).unwrap();
+        assert!(!new_hold);
+        assert_eq!(
+            manager
+                .begin_package_operation(original.clone())
+                .unwrap_err()
+                .code,
+            CommandErrorCode::Busy
+        );
+        manager.finish_package_operation(&original).unwrap();
+        drop(operation_claim);
+        assert_eq!(
+            manager
+                .finish_package_operation(&original)
+                .unwrap_err()
+                .code,
+            CommandErrorCode::DependencyConflict
+        );
+        manager
+            .open(OpenProjectRequest {
+                locator: existing.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn package_operation_preserves_project_reads_and_metadata_but_blocks_owner_changes() {
+        let parent = temporary_directory("package-operation-active-project");
+        let path = parent.path().join("project");
+        let moved = parent.path().join("moved");
+        let mut manager = SessionManager::default();
+        let created = manager.create(create_request(&path)).unwrap();
+        let operation = package_operation();
+        let (new_hold, operation_claim) =
+            manager.begin_package_operation(operation.clone()).unwrap();
+        assert!(new_hold);
+        assert!(manager.active.as_ref().unwrap().execution.is_none());
+        let renamed = manager
+            .rename(RenameProjectRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: created.metadata.metadata_revision,
+                display_name: "Renamed during package IO".into(),
+                directory_name: None,
+            })
+            .unwrap();
+        assert_eq!(renamed.metadata.display_name, "Renamed during package IO");
+        let same_project = manager
+            .open(OpenProjectRequest {
+                locator: path.to_string_lossy().into_owned(),
+            })
+            .unwrap();
+        assert_eq!(same_project.session_token, created.session_token);
+        assert_eq!(same_project.metadata, renamed.metadata);
+        let read = manager
+            .read(ReadProjectRequest {
+                session_token: created.session_token.clone(),
+                expected_revision: None,
+            })
+            .unwrap();
+        assert_eq!(read.metadata, renamed.metadata);
+        let move_request = RenameProjectRequest {
+            session_token: created.session_token.clone(),
+            expected_revision: renamed.metadata.metadata_revision,
+            display_name: "Moved project".into(),
+            directory_name: Some("moved".into()),
+        };
+        let error = manager.rename(move_request.clone()).unwrap_err();
+        assert_eq!(error.code, CommandErrorCode::Busy);
+        assert_eq!(error.stage, CommandStage::Rename);
+        assert!(path.exists());
+        assert!(!moved.exists());
+        assert_eq!(
+            manager
+                .close(CloseProjectRequest {
+                    session_token: created.session_token.clone(),
+                })
+                .unwrap_err()
+                .code,
+            CommandErrorCode::Busy
+        );
+        assert_eq!(
+            manager
+                .active_mut(&created.session_token, CommandStage::ExecutionQuiesce)
+                .err()
+                .unwrap()
+                .code,
+            CommandErrorCode::Busy
+        );
+        assert!(manager.active.as_ref().unwrap().execution.is_none());
+        assert!(manager.package_operation.as_ref().unwrap().request == operation);
+        manager.finish_package_operation(&operation).unwrap();
+        drop(operation_claim);
+        assert!(manager.rename(move_request).unwrap().directory_changed);
+        assert!(!path.exists());
+        assert!(moved.exists());
+    }
 
     #[test]
     fn current_storage_profile_errors_keep_the_wire_reason_and_refusal_outcome() {

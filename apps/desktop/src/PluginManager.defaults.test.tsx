@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const onBusy = vi.fn();
 function bundled(availability = "available", installed = false, digest = defaults.selectionDigest) {
   const view = { ...inventory.empty, settingsRevision: installed ? "1" : "0", defaultsOffer: { ...defaults, availability, selectionDigest: digest }, runtimeOffers: [runtime],
-    packages: installed ? [{ plugin: defaults.packages[0].plugin, packageDigest: defaults.packages[0].packageDigest, origin: runtime.origin, state: "sealed" }] : [],
+    packages: installed ? [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: defaults.packages[0].plugin, packageDigest: defaults.packages[0].packageDigest, origin: runtime.origin, state: "sealed" }] : [],
     packageDecisions: installed ? [{ plugin: defaults.packages[0].plugin, packageDigest: defaults.packages[0].packageDigest, origin: runtime.origin, enabled: true }] : [],
     runtimes: installed ? [{ environment: runtime.environment, environmentDigest: runtime.environmentDigest, origin: runtime.origin, state: "sealed" }] : [],
     runtimeDecisions: installed ? [{ environment: runtime.environment, environmentDigest: runtime.environmentDigest, origin: runtime.origin }] : [],

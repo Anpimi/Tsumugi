@@ -14,7 +14,7 @@ const onBusy = vi.fn();
 const empty = { ...inventory.empty, runtimeOffers: [] };
 if (!validateResponseInventory(empty)) throw new Error("Invalid plugin inventory fixture");
 const installed: PluginInventoryView = { ...empty, settingsRevision: "1", lastSettingsAction: "00000000-0000-4000-8000-000000000020",
-  packages: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, state: "sealed" }],
+  packages: [{ originalInstallAction: "00000000-0000-4000-8000-000000000001", plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, state: "sealed" }],
   packageDecisions: [{ plugin: candidate.manifest.plugin, packageDigest: candidate.packageDigest, origin: { sourceId: "manual-local", publisherId: "manual-approval" }, enabled: false }],
 };
 beforeEach(async () => {

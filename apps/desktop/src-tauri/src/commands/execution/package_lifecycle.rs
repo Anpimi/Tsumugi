@@ -255,6 +255,22 @@ impl ExecutionHost {
         // verified the original Store result, including uncertain commit recovery.
         Ok(())
     }
+    pub(super) fn complete_package_cleanup_if_present(
+        &mut self,
+        action: ExecutionId,
+        package: &PluginPackageRequest,
+    ) -> Result<(), CommandError> {
+        if let Some(control) = self.package_controls.get(&action) {
+            if control.package != *package {
+                return Err(map_recover(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "package-cleanup-action",
+                )));
+            }
+            self.complete_package_cleanup(action)?;
+        }
+        Ok(())
+    }
     pub(super) fn complete_package_cleanup(
         &mut self,
         action: ExecutionId,

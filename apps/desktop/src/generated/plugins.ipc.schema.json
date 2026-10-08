@@ -5,6 +5,30 @@
       "ExecutionId": {
         "type": "string"
       },
+      "PluginApprovalRemovalRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "origin",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "PluginBuildRequest": {
         "additionalProperties": false,
         "properties": {
@@ -154,6 +178,22 @@
         ],
         "type": "object"
       },
+      "PluginOriginView": {
+        "additionalProperties": false,
+        "properties": {
+          "publisherId": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceId",
+          "publisherId"
+        ],
+        "type": "object"
+      },
       "PluginPackageRequest": {
         "additionalProperties": false,
         "properties": {
@@ -287,6 +327,34 @@
         ],
         "type": "object"
       },
+      "PluginUninstallRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "origin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "originalInstallAction": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          }
+        },
+        "required": [
+          "package",
+          "origin",
+          "originalInstallAction",
+          "expectedRevision",
+          "actionId"
+        ],
+        "type": "object"
+      },
       "ProviderSelectionBinding": {
         "additionalProperties": false,
         "description": "A fixed package/contribution choice, independent of any active instance.\nIts digest is supplied by the trusted package owner; this value neither\nauthenticates those bytes nor grants permission to load or call them.",
@@ -318,6 +386,9 @@
       }
     },
     "properties": {
+      "approvalRemoval": {
+        "$ref": "#/definitions/PluginApprovalRemovalRequest"
+      },
       "build": {
         "$ref": "#/definitions/PluginBuildRequest"
       },
@@ -359,12 +430,17 @@
       },
       "translation": {
         "$ref": "#/definitions/PluginTranslationRequest"
+      },
+      "uninstall": {
+        "$ref": "#/definitions/PluginUninstallRequest"
       }
     },
     "required": [
       "inventory",
       "install",
       "enable",
+      "approvalRemoval",
+      "uninstall",
       "package",
       "lookup",
       "runtimeInstall",
@@ -1779,6 +1855,13 @@
           },
           "settingsRevision": {
             "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "uninstallations": {
+            "items": {
+              "$ref": "#/definitions/PluginUninstallView"
+            },
+            "maxItems": 128,
+            "type": "array"
           }
         },
         "required": [
@@ -1786,6 +1869,7 @@
           "lastSettingsAction",
           "packages",
           "runtimes",
+          "uninstallations",
           "packageDecisions",
           "runtimeDecisions",
           "runtimeOffers",
@@ -1968,6 +2052,9 @@
           "origin": {
             "$ref": "#/definitions/PluginOriginView"
           },
+          "originalInstallAction": {
+            "type": "string"
+          },
           "packageDigest": {
             "type": "string"
           },
@@ -1979,6 +2066,7 @@
           }
         },
         "required": [
+          "originalInstallAction",
           "plugin",
           "packageDigest",
           "origin",
@@ -2333,6 +2421,31 @@
           "environment",
           "environmentDigest",
           "runtimeOrigin"
+        ],
+        "type": "object"
+      },
+      "PluginUninstallView": {
+        "additionalProperties": false,
+        "description": "An observation of the original retained removal journal. Sealed metadata is\nnot confirmation of an uncertain command's filesystem durability.",
+        "properties": {
+          "actionId": {
+            "type": "string"
+          },
+          "installation": {
+            "$ref": "#/definitions/PluginPackageView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "state": {
+            "$ref": "#/definitions/PluginObjectState"
+          }
+        },
+        "required": [
+          "actionId",
+          "settingsRevision",
+          "installation",
+          "state"
         ],
         "type": "object"
       },
