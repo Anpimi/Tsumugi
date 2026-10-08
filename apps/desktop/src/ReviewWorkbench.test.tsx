@@ -21,6 +21,9 @@ const makeTarget = (name: string): ReviewTarget => reviewTargetFixture({
   unitId: fixtureIdentity(name === "first" ? 601 : 611), nativeKey: name, basis: `basis-${name}`,
   sourceRevisionId: fixtureIdentity(name === "first" ? 602 : 612), selectionId: fixtureIdentity(name === "first" ? 603 : 613), revisionId: fixtureIdentity(name === "first" ? 604 : 614),
 });
+function withLocales(locales: string[], revision: string): ProjectView {
+  return { ...project, metadata: { ...project.metadata, targetLocales: locales, metadataRevision: revision } };
+}
 
 let targets: Record<string, ReviewTarget>;
 let nextIdentity: number;
@@ -46,6 +49,182 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("rebases a clean review to an available target language before reading it", async () => {
+  const user = userEvent.setup();
+  const initial = withLocales(["zh-CN", "ja"], "1");
+  const view = render(<ReviewWorkbench project={initial} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_review_summary_page")).toBe(true));
+  const readCount = invoke.mock.calls.length;
+
+  view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("ja"));
+  await waitFor(() => expect(invoke.mock.calls.slice(readCount).some(([command, args]) => command === "read_review_summary_page" && args.request.locale === "ja")).toBe(true));
+  expect(invoke.mock.calls.slice(readCount).filter(([command, args]) => command.startsWith("read_review_") && args.request.locale === "zh-CN")).toEqual([]);
+});
+
+it("keeps a reason draft recoverable when its language is removed and blocks a fresh review action", async () => {
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "1")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Keep this reason");
+  const readCount = invoke.mock.calls.length;
+
+  view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep this reason");
+  expect(screen.getByText(/zh-CN is no longer a project target/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Refresh current evidence" }));
+  expect(invoke.mock.calls.slice(readCount).filter(([command, args]) => command.startsWith("read_review_") && args.request.locale === "zh-CN")).toEqual([]);
+  expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(0);
+
+  view.rerender(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "3")} disabled={false} onOpenTranslation={() => true} />);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeEnabled());
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep this reason");
+});
+
+it("rechecks the target language after a review action identity resolves", async () => {
+  let finishIdentity!: (value: string) => void;
+  const identity = new Promise<string>(resolve => { finishIdentity = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "create_execution_identity" ? identity : original(command, args));
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Still editing");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "create_execution_identity")).toBe(true));
+
+  view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  await act(async () => finishIdentity(fixtureIdentity(630)));
+  expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(0);
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Still editing");
+  expect(screen.getByText(/zh-CN is no longer a project target/)).toBeVisible();
+});
+
+it("stops a batch before the next write if its target language is removed", async () => {
+  let finishFirst!: (value: unknown) => void;
+  const firstReply = new Promise(resolve => { finishFirst = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page") return Promise.resolve(args.request.afterOrdinal === 0
+      ? reviewSummaryPageFixture([reviewSummaryFor(targets.first)], { nextOrdinal: 1, total: 2 })
+      : reviewSummaryPageFixture([reviewSummaryFor(targets.second)], { total: 2 }));
+    if (command === "write_review_decision" && (args.request.decision as ReviewWrite).unitId === targets.first.unitId) return firstReply;
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.click(screen.getByRole("button", { name: "Next page" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: second" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.click(screen.getByRole("button", { name: "Approve selected entries (2)" }));
+  await user.click(screen.getByRole("button", { name: "Confirm approvals" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(1));
+
+  view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  const request = invoke.mock.calls.find(([command]) => command === "write_review_decision")![1].request.decision;
+  await act(async () => finishFirst(reviewDecisionFixture(request, targets.first)));
+  await waitFor(() => expect(screen.getByText(/1 recorded, 0 changed, 0 not confirmed/)).toBeInTheDocument());
+  expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(1);
+  expect(screen.getByText(/1 remaining entry was not started/)).toBeVisible();
+  expect(screen.getByText(/zh-CN is no longer a project target/)).toBeVisible();
+});
+
+it("accepts the original in-flight receipt without reading a removed language or clearing newer reason text", async () => {
+  let finish!: (value: unknown) => void;
+  const reply = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "write_review_decision" ? reply : original(command, args));
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "A");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision")).toHaveLength(1));
+  await user.type(reason, "B");
+
+  view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  const readCount = invoke.mock.calls.length;
+  const request = invoke.mock.calls.find(([command]) => command === "write_review_decision")![1].request.decision;
+  await act(async () => finish(reviewDecisionFixture(request, targets.first)));
+  await waitFor(() => expect(reason).toHaveValue("AB"));
+  expect(invoke.mock.calls.slice(readCount).filter(([command, args]) => command.startsWith("read_review_") && args.request.locale === "zh-CN")).toEqual([]);
+  expect(screen.getByText(/zh-CN is no longer a project target/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeDisabled();
+});
+
+it("allows the original uncertain action to check its receipt after the target language is removed", async () => {
+  const original = invoke.getMockImplementation()!;
+  let writes = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const response = await original(command, args);
+    return command === "write_review_decision" && ++writes === 1 ? { ...response, actionId: fixtureIdentity(629) } : response;
+  });
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Original reason");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  const retry = await screen.findByRole("button", { name: "Retry the same action" });
+  view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(retry);
+  await waitFor(() => expect(writes).toBe(2));
+  const requests = invoke.mock.calls.filter(([command]) => command === "write_review_decision").map(([, args]) => args.request);
+  expect(requests[1]).toEqual(requests[0]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+});
+
+it("keeps an uncertain action reserved after its language is restored until the same request is reconciled", async () => {
+  const original = invoke.getMockImplementation()!;
+  let writes = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const response = await original(command, args);
+    return command === "write_review_decision" && ++writes === 1 ? { ...response, actionId: fixtureIdentity(629) } : response;
+  });
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "A");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  const retry = await screen.findByRole("button", { name: "Retry the same action" });
+  const originalRequest = invoke.mock.calls.find(([command]) => command === "write_review_decision")![1].request;
+  await user.type(reason, "B");
+
+  view.rerender(<ReviewWorkbench project={withLocales(["ja"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  expect(screen.getByText(/zh-CN is no longer a project target/)).toBeVisible();
+  view.rerender(<ReviewWorkbench project={withLocales(["zh-CN"], "3")} disabled={false} onOpenTranslation={() => true} />);
+  await waitFor(() => expect(screen.queryByText(/zh-CN is no longer a project target/)).not.toBeInTheDocument());
+  await waitFor(() => expect(retry).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "write_review_decision" || command === "run_review_checks")).toHaveLength(1);
+  expect(retry).toBeVisible();
+  expect(reason).toHaveValue("AB");
+
+  await user.click(retry);
+  await waitFor(() => expect(writes).toBe(2));
+  const requests = invoke.mock.calls.filter(([command]) => command === "write_review_decision").map(([, args]) => args.request);
+  expect(requests).toEqual([originalRequest, originalRequest]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  expect(reason).toHaveValue("AB");
+});
 
 it("preserves a newer reason draft while an approval is being saved", async () => {
   let finish!: (value: unknown) => void;
