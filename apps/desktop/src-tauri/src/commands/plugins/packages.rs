@@ -229,6 +229,43 @@ fn install_package_pending(
 }
 
 impl ApplicationPlugins {
+    /// MockRuntime does not deliver the destruction event that releases Tauri's
+    /// managed application owner. After the test has closed its project and
+    /// joined its workers, dispose only this already closed owner's Store.
+    /// This fixture bridge does not verify native application exit behavior.
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(in crate::commands) fn dispose_closed_store_for_test(&self) -> Result<(), CommandError> {
+        if self.open.load(Ordering::Acquire) {
+            return Err(failure(
+                CommandErrorCode::Busy,
+                "plugin-owner-open",
+                CommandStage::Read,
+            ));
+        }
+        // try_manager intentionally rejects closed owners. This disposal stays
+        // inside the same owning layer and never reopens execution authority.
+        let mut manager = self.manager.try_lock().map_err(|error| match error {
+            TryLockError::WouldBlock => map_store_error(InstallError::Busy),
+            TryLockError::Poisoned(_) => map_store_error(InstallError::CorruptStore),
+        })?;
+        if manager.picker.is_some()
+            || manager.pending.as_ref().is_some_and(|pending| {
+                !pending.complete
+                    || !pending.handoff_complete
+                    || pending.unknown
+                    || pending.running.load(Ordering::Acquire)
+            })
+        {
+            return Err(failure(
+                CommandErrorCode::Busy,
+                "plugin-operation-pending",
+                CommandStage::Read,
+            ));
+        }
+        drop(manager.store.take());
+        Ok(())
+    }
+
     fn begin_picker(&self) -> Result<PickerLease, CommandError> {
         let mut manager = self.try_manager()?;
         if manager

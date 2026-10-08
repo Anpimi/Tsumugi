@@ -1,5 +1,7 @@
 use super::*;
 mod package_lifecycle;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod package_cleanup_process;
 use serde_json::{Value, json};
 use tauri::{
     Manager,

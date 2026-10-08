@@ -139,6 +139,24 @@ desktop execution group. Its actual component workflows require `bundled-runtime
 and a prepared runtime matching the current process protocol; the
 `execution-test-host` group alone does not exercise those bundled workflows.
 
+On macOS, the opt-in desktop package-cleanup process test selects the independently
+fingerprinted Node tool tree, current built Host tree and matching environment
+descriptor with `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST` and
+`TSUMUGI_TEST_RUNTIME_APPROVAL`. Prepare those artifacts using the
+[JavaScript Host build and checks](runtimes/javascript-host/README.md#build-and-checks).
+It uses temporary installations and projects and does not require the desktop
+runtime bundle or run a graphical application:
+
+```text
+cargo test -p tsumugi-desktop --features execution-test-host package_cleanup_process -- --ignored --test-threads=1
+```
+
+The test exercises actual Node component processes through the registered
+uninstall command. Target removal must preserve an independent in-flight process
+and its original Core authorization. After explicit reinstallation and project
+reopen, confirming a completed original removal must preserve the new instance.
+Native GUI and other platform acceptance remain separate checks.
+
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
 validates declarations, content/execution frames and captured check coverage;
