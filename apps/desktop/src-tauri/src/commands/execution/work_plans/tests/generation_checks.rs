@@ -23,6 +23,9 @@ mod shared_knowledge;
 #[path = "generation_deadline.rs"]
 mod deadline;
 
+#[path = "generation_settings.rs"]
+mod settings;
+
 fn ipc(window: &MockWebview, command: &str, fields: Option<Value>) -> Result<Value, Value> {
     call(
         window,
