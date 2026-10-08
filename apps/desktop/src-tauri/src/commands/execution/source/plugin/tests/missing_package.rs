@@ -32,20 +32,20 @@ mod runtime_fixture {
     ));
 }
 
-struct OwnedDirectory {
+pub(super) struct OwnedDirectory {
     directory: Option<tempfile::TempDir>,
     removable: Arc<AtomicBool>,
     retain_on_failure: bool,
 }
 impl OwnedDirectory {
-    fn new(retain_on_failure: bool) -> Self {
+    pub(super) fn new(retain_on_failure: bool) -> Self {
         Self {
             directory: Some(tempfile::tempdir().unwrap()),
             removable: Arc::new(AtomicBool::new(true)),
             retain_on_failure,
         }
     }
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         self.directory.as_ref().unwrap().path()
     }
 }
@@ -86,14 +86,14 @@ impl Drop for OwnedDirectory {
 
 /// Retains the original application through bounded cancellation, producer join
 /// and project close. Failed cleanup never removes a worker's captured files.
-struct ApplicationCleanup {
+pub(super) struct ApplicationCleanup {
     handle: tauri::AppHandle<tauri::test::MockRuntime>,
     removable: Arc<AtomicBool>,
     staging: PathBuf,
     parked_installation: Option<PathBuf>,
 }
 impl ApplicationCleanup {
-    fn new(
+    pub(super) fn new(
         app: &tauri::App<tauri::test::MockRuntime>,
         owned: &OwnedDirectory,
         staging: &Path,
@@ -106,7 +106,7 @@ impl ApplicationCleanup {
             parked_installation: None,
         }
     }
-    fn require_released_staging(&self) -> Result<(), String> {
+    pub(super) fn require_released_staging(&self) -> Result<(), String> {
         // A joined Rust producer can retain an instance namespace when child
         // reap or captured-file cleanup was not confirmed.
         for entry in fs::read_dir(&self.staging)

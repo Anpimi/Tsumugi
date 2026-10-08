@@ -175,6 +175,23 @@ and builds with the exact approval or missing-package error, and export the
 original saved release bytes. The missing-object cases verify physical fixture
 restoration; they do not implement application recovery.
 
+The same approved runtime variables also enable a two-version synthetic source
+upgrade journey on macOS arm64:
+
+```text
+cargo test -p tsumugi-desktop actual_two_version_identity_upgrade -- --ignored --test-threads=1
+```
+
+It installs two complete package versions whose separately versioned native-key
+policy changes from ASCII folding to exact case. Installation and reopen cannot
+adopt a new interpretation. The checked comparison shows the added and removed
+identities, refuses an incompatible continuation, and changes current content
+only after explicit adoption. Earlier translation and review histories remain
+readable, and the original independently checked release retains its exact bytes
+through export and reopen. The stable synthetic records profile preserves
+captured references and bytes; this test does not establish upgrade compatibility
+for an included real format or native GUI acceptance.
+
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
 validates declarations, content/execution frames and captured check coverage;
