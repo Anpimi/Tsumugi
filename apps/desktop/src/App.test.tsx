@@ -4,9 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourcePageFixture } from "./testSupport/sourceFixture";
+import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
+import { defaultAiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
+import { aiViewFixture } from "./testSupport/aiFixture";
+import type { SessionReads } from "./sessionReads";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -15,12 +18,15 @@ const mocks = vi.hoisted(() => ({
   onCloseRequested: vi.fn(),
   close: vi.fn(),
   destroy: vi.fn(),
+  reads: null as SessionReads | null,
 }));
 
 // Composition tests isolate native notifications; the bridge has its own race tests.
 vi.mock("./SessionReadProvider", async importOriginal => {
   const actual = await importOriginal<typeof import("./SessionReadProvider")>();
-  return { ...actual, SessionReadProvider: (props: React.ComponentProps<typeof actual.SessionReadProvider>) => <actual.SessionReadProvider {...props} bridge={false}/> };
+  function CaptureReads() { mocks.reads = actual.useSessionReads(); return null; }
+  return { ...actual, SessionReadProvider: (props: React.ComponentProps<typeof actual.SessionReadProvider>) =>
+    <actual.SessionReadProvider {...props} bridge={false}><CaptureReads />{props.children}</actual.SessionReadProvider> };
 });
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/path", () => ({ join: mocks.join }));
@@ -69,6 +75,19 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument());
 }
 
+async function prepareAiInApp(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "AI translation" }));
+  await user.type(screen.getByRole("textbox", { name: "Chat Completions URL" }), "http://127.0.0.1:4000/v1/chat/completions");
+  await user.type(screen.getByRole("textbox", { name: "Model" }), "test-model");
+  await user.clear(screen.getByRole("textbox", { name: "API key environment variable name" }));
+  await user.click(await screen.findByRole("checkbox", { name: "first: Hello" }));
+  await user.click(screen.getByRole("checkbox", { name: "Share applicable adopted terms" }));
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await screen.findByRole("heading", { name: "Data sharing preview" });
+  await user.click(screen.getByRole("checkbox", { name: /I confirm sending/ }));
+  expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeEnabled();
+}
+
 function installTranslationEditor() {
   const target = reviewTargetFixture({ unitId: fixtureIdentity(501), nativeKey: "first", sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis" });
   let text: string | null = null;
@@ -107,7 +126,149 @@ function installTranslationEditor() {
   return { setSave: (handler: typeof onSave) => { onSave = handler; }, saves: () => mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision") };
 }
 
+function installAiPreparation() {
+  const unitId = fixtureIdentity(501);
+  let sourceVersion = 0;
+  let resourceVersion = 0;
+  let lastConfig = { ...defaultAiConfig };
+  const item = (): AiItem => ({ unitId, sourceRevisionId: fixtureIdentity(502 + sourceVersion),
+    sourceSnapshotId: fixtureIdentity(500 + sourceVersion), nativeKey: "first", sourceLocale: "en-US",
+    sourceText: sourceVersion ? "Updated source" : "Hello", targetLocale: "zh-CN", terms: [], context: null,
+    omissions: [], resourceBaseline: String(resourceVersion) });
+  const originalInvoke = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope") return { revision: String(2 + sourceVersion), currentSnapshot: fixtureIdentity(500 + sourceVersion) };
+    if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(500 + sourceVersion),
+      scope: { revision: String(2 + sourceVersion), currentSnapshot: fixtureIdentity(500 + sourceVersion) },
+      rows: [sourceRowFixture({ unitId, sourceRevisionId: fixtureIdentity(502 + sourceVersion) },
+        { key: "first", text: sourceVersion ? "Updated source" : "Hello" })] });
+    if (command === "read_terms" || command === "list_resource_captures") return [];
+    if (command === "preview_ai_translation") {
+      lastConfig = args.request.config as typeof defaultAiConfig;
+      return { attemptId: fixtureIdentity(510 + sourceVersion + resourceVersion), preview: {
+        config: lastConfig, recipe: "direct-translation-1",
+        digest: `preview-${sourceVersion}-${resourceVersion}-${Number(lastConfig.shareTerms)}-${Number(lastConfig.shareContext)}`,
+        items: [item()],
+      } } satisfies AiPrepared;
+    }
+    if (command === "start_ai_translation") return args.request.attemptId;
+    if (command === "read_ai_translation") return aiViewFixture(item(), lastConfig);
+    return originalInvoke(command, args);
+  });
+  return {
+    changeSource: () => { sourceVersion++; },
+    changeResources: () => { resourceVersion++; },
+    view: (): AiView => aiViewFixture(item(), lastConfig),
+  };
+}
+
 describe("project lifecycle workbench", () => {
+  it("preserves AI configuration, scope, preview, and consent through registered resource navigation", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    installAiPreparation();
+    await prepareAiInApp(user);
+    expect(document.querySelector("section.ai-dialog")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+    await screen.findByRole("region", { name: "Glossary and context" });
+    expect(document.querySelector("section.ai-dialog")).toBeNull();
+    expect(screen.queryByRole("dialog", { name: /unsaved/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "AI translation" }));
+    expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("test-model");
+    expect(screen.getByRole("checkbox", { name: "first: Hello" })).toBeChecked();
+    expect(screen.getByRole("heading", { name: "Data sharing preview" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /I confirm sending/ })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeEnabled();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_ai_translation")).toHaveLength(0);
+  });
+
+  it.each(["source", "resources", "sharing"] as const)(
+    "keeps AI setup but requires fresh preview and consent after %s changes across areas", async change => {
+      const user = userEvent.setup(); await renderApp(); await createProject(user);
+      const facts = installAiPreparation();
+      await prepareAiInApp(user);
+      await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+      await screen.findByRole("region", { name: "Glossary and context" });
+      if (change !== "sharing") {
+        if (change === "source") facts.changeSource(); else facts.changeResources();
+        await act(async () => { mocks.reads!.invalidate([change]); });
+      }
+      await user.click(screen.getByRole("button", { name: "AI translation" }));
+      if (change === "sharing") await user.click(screen.getByRole("checkbox", { name: "Share applicable adopted terms" }));
+      expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("test-model");
+      expect(await screen.findByRole("checkbox", { name: change === "source" ? "first: Updated source" : "first: Hello" })).toBeChecked();
+      expect(screen.queryByRole("heading", { name: "Data sharing preview" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: /I confirm sending/ })).not.toBeInTheDocument();
+      expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_ai_translation")).toHaveLength(0);
+      await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+      await screen.findByRole("heading", { name: "Data sharing preview" });
+      expect(screen.getByRole("checkbox", { name: /I confirm sending/ })).not.toBeChecked();
+      expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
+      expect(mocks.invoke.mock.calls.filter(([command]) => command === "preview_ai_translation")).toHaveLength(2);
+    },
+  );
+
+  it("does not revive an in-flight AI preview after its resource basis changes", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const facts = installAiPreparation();
+    const original = mocks.invoke.getMockImplementation()!;
+    let finishOldPreview: (() => void) | undefined;
+    let previews = 0;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "preview_ai_translation" && previews++ === 0) {
+        const oldPreview = await original(command, args) as AiPrepared;
+        return new Promise<AiPrepared>(resolve => { finishOldPreview = () => resolve(oldPreview); });
+      }
+      return original(command, args);
+    });
+    await user.click(screen.getByRole("button", { name: "AI translation" }));
+    await user.type(screen.getByRole("textbox", { name: "Chat Completions URL" }), "http://127.0.0.1:4000/v1/chat/completions");
+    await user.type(screen.getByRole("textbox", { name: "Model" }), "test-model");
+    await user.click(await screen.findByRole("checkbox", { name: "first: Hello" }));
+    await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+    await waitFor(() => expect(finishOldPreview).toBeDefined());
+    facts.changeResources();
+    await act(async () => { mocks.reads!.invalidate(["resources"]); finishOldPreview!(); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview what will be sent" })).toBeEnabled());
+    expect(screen.queryByRole("heading", { name: "Data sharing preview" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("test-model");
+    await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+    await screen.findByRole("heading", { name: "Data sharing preview" });
+    expect(screen.getByRole("checkbox", { name: /I confirm sending/ })).not.toBeChecked();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_ai_translation")).toHaveLength(0);
+  });
+
+  it("keeps a late AI result from project A out of project B after an actual project switch", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const facts = installAiPreparation();
+    const originalInvoke = mocks.invoke.getMockImplementation()!;
+    const otherProject = { ...projectView("Other"), sessionToken: "session-2", locator: "C:\\Projects\\other",
+      metadata: { ...metadata("Other"), projectId: fixtureIdentity(900) } };
+    let finishOldRead!: (value: AiView) => void;
+    mocks.invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "read_ai_translation" && args.request.sessionToken === "session-1")
+        return new Promise<AiView>(resolve => { finishOldRead = resolve; });
+      if (command === "open_project") return Promise.resolve(otherProject);
+      return originalInvoke(command, args);
+    });
+
+    await prepareAiInApp(user);
+    await user.click(screen.getByRole("button", { name: "Send and generate candidates" }));
+    await waitFor(() => expect(finishOldRead).toBeDefined());
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), "C:\\Projects\\other");
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    await screen.findByRole("heading", { name: "Other" });
+    await act(async () => finishOldRead(facts.view()));
+    await user.click(screen.getByRole("button", { name: "AI translation" }));
+    expect(screen.getByRole("textbox", { name: "Model" })).toHaveValue("");
+    expect(screen.queryByRole("heading", { name: "Data sharing preview" })).not.toBeInTheDocument();
+    expect(screen.queryByText("test-model")).not.toBeInTheDocument();
+    expect(mocks.reads?.context.sessionToken).toBe("session-2");
+    expect(mocks.reads?.client.getQueryCache().getAll().every(query =>
+      query.queryKey[0] === otherProject.metadata.projectId && query.queryKey[1] === otherProject.sessionToken)).toBe(true);
+  });
+
   it("rebases a clean translation selection after the project's target language changes in the same session", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     const fixture = installTranslationEditor();
@@ -634,6 +795,7 @@ describe("project lifecycle workbench", () => {
 
   beforeEach(async () => {
     localStorage.clear();
+    mocks.reads = null;
     await i18n.changeLanguage("en-US");
     mocks.join.mockResolvedValue("C:\\Projects\\demo");
     mocks.open.mockResolvedValue(null);

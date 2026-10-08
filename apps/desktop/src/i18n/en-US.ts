@@ -119,6 +119,7 @@ ai: {
   "shareTerms": "Share applicable adopted terms",
   "shareContext": "Share saved context",
   "scope": "Selected original strings: {{count}}",
+  "clearSelectedRange": "Clear selected range",
   "first": "First page",
   "next": "Next page",
   "noSource": "Import original strings first.",

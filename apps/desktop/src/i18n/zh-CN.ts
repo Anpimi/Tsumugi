@@ -120,6 +120,7 @@ ai: {
   "shareTerms": "分享适用的已采纳术语",
   "shareContext": "分享已保存上下文",
   "scope": "已选原文：{{count}} 条",
+  "clearSelectedRange": "清空已选范围",
   "first": "第一页",
   "next": "下一页",
   "noSource": "请先导入原文。",

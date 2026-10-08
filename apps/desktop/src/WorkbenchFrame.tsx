@@ -2,6 +2,11 @@ import { createContext, useContext, useEffect, useRef, type ReactNode } from "re
 import { useTranslation } from "react-i18next";
 import { Folder, FileInput, Languages, BookOpen, CheckCheck, PackageCheck, Sparkles, Columns3, ListTodo } from "lucide-react";
 
+export interface AttemptWorkbenchHandle {
+  allowLeave: () => Promise<boolean>;
+  showAttempt: (id: string) => void;
+}
+
 export type WorkspaceArea = "overview" | "source" | "translation" | "resources" | "review" | "release" | "ai" | "arena" | "tasks";
 interface WorkspaceView {
   area: WorkspaceArea;

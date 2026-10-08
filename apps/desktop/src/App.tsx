@@ -1,6 +1,6 @@
 import { SessionReadProvider, SessionReadStatus } from "./SessionReadProvider";
 import { CommandFailureDetails } from "./CommandFailure";
-import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
+import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea, type AttemptWorkbenchHandle } from "./WorkbenchFrame";
 import { sourceCommands } from "./sourceCommands";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
@@ -41,6 +41,7 @@ import { ResourceWorkbench, type ResourceHandle } from "./ResourceWorkbench";
 import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
 import { AiWorkbench, type AiHandle } from "./AiWorkbench";
+import { AiPreparationSession } from "./AiPreparationSession";
 import { ArenaWorkbench } from "./ArenaWorkbench";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
@@ -357,7 +358,7 @@ function App() {
   const resourceWorkbench = useRef<ResourceHandle>(null);
   const reviewWorkbench = useRef<ReviewHandle>(null);
   const aiWorkbench = useRef<AiHandle>(null);
-  const arenaWorkbench = useRef<AiHandle>(null);
+  const arenaWorkbench = useRef<AttemptWorkbenchHandle>(null);
   const translationWorkbench = useRef<TranslationHandle>(null);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
@@ -1132,6 +1133,7 @@ function App() {
     areaNavigation.current = true;
     try {
       if (area === "source") { if (sourceWorkbench.current && !await sourceWorkbench.current.allowNavigate()) return; }
+      else if (area === "ai") { if (aiWorkbench.current && !await aiWorkbench.current.allowNavigate()) return; }
       else if (area !== "overview" && handles[area].current && !await handles[area].current!.allowLeave()) return;
       if (currentSession.current === session) setArea(next);
     } finally { areaNavigation.current = false; }
@@ -1594,7 +1596,7 @@ function App() {
               </section>
             )}
           </div>
-          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SessionReadProvider> : null}
+          {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)}><SessionReadStatus/><SourceWorkbench key={project.sessionToken} ref={sourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} onOpenWork={() => reviewWorkbench.current?.showWork()} /><TranslationWorkbench key={`translations:${project.sessionToken}`} ref={translationWorkbench} project={project} disabled={busy || stopping} /><ResourceWorkbench key={`resources:${project.sessionToken}`} ref={resourceWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale, suggestion) => translationWorkbench.current?.openUnit(target, locale, suggestion) ?? false} /><ReviewWorkbench key={`review:${project.sessionToken}`} ref={reviewWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ReleaseWorkbench ref={releaseWorkbench} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} key={`release:${project.sessionToken}`} project={project} disabled={busy || stopping} /><AiPreparationSession initialLocale={project.metadata.targetLocales[0] ?? ""} targetLocales={project.metadata.targetLocales}><AiWorkbench key={`ai:${project.sessionToken}`} ref={aiWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /></AiPreparationSession><ArenaWorkbench key={`arena:${project.sessionToken}`} ref={arenaWorkbench} project={project} disabled={busy || stopping} onOpenTranslation={(target, locale) => translationWorkbench.current?.openUnit(target, locale) ?? false} /><ExecutionTasks ref={tasksWorkbench} onArenaPreview={id => arenaWorkbench.current?.showAttempt(id)} onAiPreview={id => aiWorkbench.current?.showAttempt(id)} key={`tasks:${project.sessionToken}`} project={project} disabled={busy || stopping} onSourcePreview={id => sourceWorkbench.current?.showAttempt(id)} onTranslationPreview={id => translationWorkbench.current?.showAttempt(id)} /></SessionReadProvider> : null}
         </div>
 
         <DialogRoot
