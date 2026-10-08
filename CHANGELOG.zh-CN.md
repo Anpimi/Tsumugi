@@ -46,6 +46,8 @@
 
 ### Fixed
 
+- Ctrl+S 和 Command+S 可在译文列表或参考区保存当前草稿；组合输入、模态对话框、保存进行中及结果未知时阻止意外的快捷键写入。
+
 - 不受支持的 SQLite 存储设置现在明确拒绝，不再报告为项目损坏；原项目及其设置保留。穷尽匹配错误的 Core Rust 调用方须处理 `UnsupportedStorage`；桌面协议通过 `unsupported-schema` 与 `reason: "storage-mode"` 表示该分类。
 
 - IPC 校验同时保留整数原始类型边界与更窄的字段约束。

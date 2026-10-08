@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Ctrl+S and Command+S save the active translation draft from its list or reference panel. Composition, modal dialogs, pending saves and unknown outcomes prevent unintended shortcut mutations.
+
 - Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
 
 - IPC validation keeps both primitive integer bounds and narrower declared field constraints.

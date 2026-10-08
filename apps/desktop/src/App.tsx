@@ -333,6 +333,8 @@ function App() {
   const [area, setArea] = useState<WorkspaceArea>("overview");
   const [sourceState, setSourceState] = useState<"loading" | "empty" | "ready" | "failed">("loading");
   const areaNavigation = useRef(false);
+  const compositionActive = useRef(false);
+  const compositionRelease = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentSession = useRef<string | null>(null);
   currentSession.current = project?.sessionToken ?? null;
   const releaseWorkbench = useRef<ReleaseHandle>(null);
@@ -389,6 +391,25 @@ function App() {
   useEffect(() => {
     document.documentElement.lang = resolvedLanguage;
   }, [resolvedLanguage]);
+
+  useEffect(() => () => {
+    if (compositionRelease.current !== null) clearTimeout(compositionRelease.current);
+  }, []);
+
+  function beginComposition() {
+    if (compositionRelease.current !== null) clearTimeout(compositionRelease.current);
+    compositionRelease.current = null;
+    compositionActive.current = true;
+  }
+
+  function endComposition() {
+    if (compositionRelease.current !== null) clearTimeout(compositionRelease.current);
+    // A final keydown can arrive just after compositionend with isComposing=false.
+    compositionRelease.current = setTimeout(() => {
+      compositionActive.current = false;
+      compositionRelease.current = null;
+    }, 0);
+  }
 
   useEffect(() => {
     if (!project && restoreCandidate) setRestorePromptOpen(true);
@@ -1027,8 +1048,7 @@ function App() {
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
-      if (area !== "overview") return;
-      if (event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
+      if (area === "overview" && event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
         event.preventDefault();
         if (openPanel) {
           setOpenPanel(false);
@@ -1041,14 +1061,17 @@ function App() {
         }
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s" && activeForm && dirty && operation === "idle") {
-        event.preventDefault();
-        handleSave();
-      }
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "s") return;
+      event.preventDefault();
+      if (event.isComposing || compositionActive.current || navigationIntent || restorePromptOpen || busy || areaNavigation.current
+        || (event.target instanceof HTMLInputElement && event.target.type === "password")
+        || document.querySelector('[role="dialog"]')) return;
+      if (area === "translation") translationWorkbench.current?.saveCurrent();
+      else if (area === "overview" && activeForm && dirty && operation === "idle") handleSave();
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area]);
+  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area, busy]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1144,7 +1167,7 @@ function App() {
   ) : null;
 
   return (
-    <WorkspaceViewProvider value={viewOwner}><main className="shell">
+    <WorkspaceViewProvider value={viewOwner}><main className="shell" onCompositionStartCapture={beginComposition} onCompositionEndCapture={endComposition}>
       <DialogRoot open={stopIntent !== null} onOpenChange={open => { if (!open && !stopping) setStopIntent(null); }}>
         <DialogPortal><DialogOverlay className="dialog-backdrop lifecycle-confirm-backdrop" /><DialogContent className="confirm-dialog lifecycle-confirm-dialog" onEscapeKeyDown={event => { if (stopping) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <DialogTitle>{t("execution.stopTitle")}</DialogTitle><DialogDescription>{t("execution.stopHelp")}</DialogDescription>

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -67,6 +67,43 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/Project name/), "Demo");
   await user.click(screen.getByRole("button", { name: "Create and open" }));
   await waitFor(() => expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument());
+}
+
+function installTranslationEditor() {
+  const target = reviewTargetFixture({ unitId: fixtureIdentity(501), nativeKey: "first", sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis" });
+  let text: string | null = null;
+  let selection: { eventId: string; revisionId: string; unitId: string; locale: string; actionId: string; sequence: string; previousEventId: string | null } | null = null;
+  let onSave: (request: Record<string, unknown>, commit: () => unknown) => Promise<unknown> = async (_request, commit) => commit();
+  const commit = (request: Record<string, unknown>) => {
+    const sequence = (BigInt(selection?.sequence ?? "0") + 1n).toString();
+    const actionId = String(request.actionId), unitId = String(request.unitId), locale = String(request.locale);
+    const previousEventId = selection?.eventId ?? null;
+    selection = { eventId: fixtureIdentity(502 + Number(sequence)), revisionId: fixtureIdentity(503 + Number(sequence)), unitId, locale, actionId, sequence, previousEventId };
+    text = String(request.text);
+    return { projectId: request.projectId, actionId,
+      basis: { sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), selectionId: selection.eventId },
+      selection,
+      revision: { revisionId: selection.revisionId, unitId, locale, actionId, ordinal: sequence, text,
+        sourceSnapshotId: fixtureIdentity(500), sourceRevisionId: fixtureIdentity(502), originKind: "manual", contributors: [],
+        attemptId: null, resultId: null, itemId: null, artifactId: null, logicalPath: null, declaredLocale: null, nativeKey: null, fileDigest: null } };
+  };
+  mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(500) };
+    if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(500), scope: { revision: "2", currentSnapshot: fixtureIdentity(500) }, namespace: "Example.Mod", rows: [], total: 1 });
+    if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor({ ...target, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text })]);
+    if (command === "read_review_editor_snapshot") return {
+      target: { ...target, selectionId: selection?.eventId ?? null, revisionId: selection?.revisionId ?? null, translationText: text },
+      translations: { unitId: fixtureIdentity(501), locale: "zh-CN", total: selection?.sequence ?? "0", rows: [], nextOrdinal: null, currentText: text, current: selection },
+      terms: { unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502), entries: [] },
+      context: null, readVersion: "view",
+    };
+    if (command === "create_execution_identity") return fixtureIdentity(1 + mocks.invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length);
+    if (command === "save_translation_revision") return onSave(args.request, () => commit(args.request));
+    if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
+    if (command === "list_execution_tasks") return [];
+    return projectView();
+  });
+  return { setSave: (handler: typeof onSave) => { onSave = handler; }, saves: () => mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision") };
 }
 
 describe("project lifecycle workbench", () => {
@@ -158,6 +195,87 @@ describe("project lifecycle workbench", () => {
     expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Draft");
     expect(screen.getByRole("button", { name: "first" })).toHaveAttribute("aria-current", "true");
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision")).toHaveLength(1);
+  });
+
+  it("saves the visible translation from list and reference focus without replaying an in-flight save", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const fixture = installTranslationEditor();
+    let releaseFirst!: () => void;
+    let first = true;
+    fixture.setSave(async (_request, commit) => {
+      if (first) {
+        first = false;
+        await new Promise<void>(resolve => { releaseFirst = resolve; });
+      }
+      return commit();
+    });
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const editor = await screen.findByRole("textbox", { name: "Your draft" });
+    await user.type(editor, "A");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+
+    screen.getByRole("button", { name: "first" }).focus();
+    await user.keyboard("{Control>}s{/Control}");
+    await waitFor(() => expect(fixture.saves()).toHaveLength(1));
+    expect(fixture.saves()[0][1].request).toMatchObject({ text: "A", locale: "zh-CN", unitId: fixtureIdentity(501) });
+    await user.type(editor, "B");
+    await user.keyboard("{Control>}s{/Control}");
+    expect(fixture.saves()).toHaveLength(1);
+
+    await act(async () => releaseFirst());
+    expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+    expect(editor).toHaveValue("AB");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+    const references = screen.getByText("Terms, context and history");
+    await user.click(references);
+    references.focus();
+    await user.keyboard("{Meta>}s{/Meta}");
+    await waitFor(() => expect(fixture.saves()).toHaveLength(2));
+    expect(fixture.saves()[1][1].request).toMatchObject({ text: "AB", expectedSelectionId: fixtureIdentity(503) });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByText(/No tasks in this project/);
+    await user.keyboard("{Control>}s{/Control}");
+    expect(fixture.saves()).toHaveLength(2);
+  });
+
+  it("does not save during composition, a leave dialog, or unknown-outcome recovery", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const fixture = installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const editor = await screen.findByRole("textbox", { name: "Your draft" });
+    await user.type(editor, "A");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+
+    fireEvent.compositionStart(editor);
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true, isComposing: false });
+    await act(async () => {});
+    expect(fixture.saves()).toHaveLength(0);
+    fireEvent.compositionEnd(editor);
+    fireEvent.keyDown(editor, { key: "s", metaKey: true, isComposing: true });
+    fireEvent.keyDown(editor, { key: "s", ctrlKey: true, altKey: true });
+    await act(async () => {});
+    expect(fixture.saves()).toHaveLength(0);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Leave with an unsaved translation?");
+    await user.keyboard("{Control>}s{/Control}");
+    expect(fixture.saves()).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+
+    fixture.setSave(async () => { throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true }; });
+    await user.click(screen.getByRole("button", { name: "Save revision" }));
+    await waitFor(() => expect(fixture.saves()).toHaveLength(1));
+    await screen.findByRole("alert");
+    await user.click(editor);
+    await user.keyboard("{Control>}s{/Control}");
+    expect(fixture.saves()).toHaveLength(1);
+    expect(editor).toHaveValue("A");
   });
   it("clears a rejected create result after explicitly discarding the draft", async () => {
     const user = userEvent.setup();
