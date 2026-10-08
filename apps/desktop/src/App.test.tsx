@@ -395,6 +395,35 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision")).toHaveLength(1);
   });
 
+  it("keeps an unfinished review across area navigation and still confirms project leave", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const target = reviewTargetFixture({ unitId: fixtureIdentity(701), nativeKey: "first", sourceSnapshotId: fixtureIdentity(700),
+      sourceRevisionId: fixtureIdentity(702), sourceText: "Hello", selectionId: fixtureIdentity(703),
+      revisionId: fixtureIdentity(704), translationText: "你好", basis: "review-basis" });
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)]);
+      if (command === "read_review_target") return target;
+      if (command === "read_review_history") return { decisions: [], checks: [], waivers: [], fallbacks: [], nextOffset: null };
+      if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
+      if (command === "list_execution_tasks") return [];
+      return projectView();
+    });
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+    await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Keep for later");
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByText(/No tasks in this project/);
+    expect(screen.queryByRole("dialog", { name: "Leave with an unfinished review?" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+    expect(await screen.findByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep for later");
+    expect(screen.getByRole("textbox", { name: "Reviewer name" })).toHaveValue("Reviewer A");
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    expect(await screen.findByRole("dialog", { name: "Leave with an unfinished review?" })).toBeVisible();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === "close_project")).toBe(false);
+  });
+
   it("saves the visible translation from list and reference focus without replaying an in-flight save", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     const fixture = installTranslationEditor();

@@ -5,6 +5,7 @@ import { useState, useEffect, isValidElement, type ReactNode } from "react";
 import { render, act } from "@testing-library/react";
 import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "../WorkbenchFrame";
 import { TranslationDraftSession } from "../TranslationDraftSession";
+import { ReviewDraftSession } from "../ReviewDraftSession";
 
 let currentReads: ReturnType<typeof useSessionReads> | undefined;
 function ReadControl() {
@@ -20,7 +21,7 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
   return <WorkspaceViewProvider value={{ area, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
-    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}>{children}</TranslationDraftSession></SessionReadProvider> : children}
+    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ReviewDraftSession project={project}>{children}</ReviewDraftSession></TranslationDraftSession></SessionReadProvider> : children}
   </WorkspaceViewProvider>;
 }
 
