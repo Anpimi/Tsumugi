@@ -3,6 +3,7 @@ use crate::ProjectMetadata;
 use serde_json::json;
 use std::sync::mpsc;
 use tsumugi_plugin_sdk as sdk;
+mod package_quiesce;
 
 struct Call {
     request: DispatchRequest,

@@ -9,6 +9,10 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant},
 };
+mod package_quiesce;
+pub(crate) use package_quiesce::PackageKey;
+pub use package_quiesce::PackageQuiescence;
+use package_quiesce::{PackageControl, QueryGate, RetiredWorker, RunnerEntry};
 
 type RunnerKey = (String, String, Option<String>, Option<String>);
 fn runner_key(
@@ -99,13 +103,14 @@ struct Worker {
 pub struct ExecutionRuntime {
     generation: ExecutionId,
     initial_sequence: Revision,
-    runners: BTreeMap<RunnerKey, Arc<dyn Runner>>,
+    runners: BTreeMap<RunnerKey, RunnerEntry>,
     validators: BTreeMap<String, Arc<dyn ResultValidator>>,
     plugin_epoch: Arc<plugin_authority::PluginEpoch>,
     policies: BTreeMap<RunnerKey, RecoveryPolicy>,
     scheduling_cursor: Option<ExecutionId>,
     workers: Vec<Worker>,
-    retired: Vec<(ExecutionId, JoinHandle<Result<(), ExecutionError>>)>,
+    retired: Vec<RetiredWorker>,
+    package_controls: BTreeMap<ExecutionId, PackageControl>,
     accepting: bool,
 }
 impl ExecutionRuntime {
@@ -122,6 +127,7 @@ impl ExecutionRuntime {
             scheduling_cursor: None,
             workers: Vec::new(),
             retired: Vec::new(),
+            package_controls: BTreeMap::new(),
             accepting: true,
         })
     }
@@ -141,6 +147,9 @@ impl ExecutionRuntime {
         runner: Arc<dyn Runner>,
         policy: RecoveryPolicy,
     ) -> Result<(), ExecutionError> {
+        if self.package_stopped(runner.plugin_provider()) {
+            return Err(ExecutionError::new(ErrorCode::Busy, "package-quiescing"));
+        }
         let key = runner_key(
             runner.capability_id(),
             runner.capability_version(),
@@ -154,7 +163,7 @@ impl ExecutionRuntime {
             ));
         }
         self.policies.insert(key.clone(), policy);
-        self.runners.insert(key, runner);
+        self.runners.insert(key, RunnerEntry::new(runner));
         Ok(())
     }
     pub fn register_validator(
@@ -182,6 +191,7 @@ impl ExecutionRuntime {
     ) -> Result<(), ExecutionError> {
         if !self.accepting
             || !self.plugin_epoch.is_active()
+            || self.input_package_stopped(input)
             || !self.runners.contains_key(&input_key(input)?)
         {
             return Err(ExecutionError::new(
@@ -220,7 +230,7 @@ impl ExecutionRuntime {
         input: &FixedInput,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
-        if !self.accepting {
+        if !self.accepting || self.input_package_stopped(input) {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
         if input.envelope().plugin.is_some() && (!self.plugin_epoch.is_active() || parent.is_some())
@@ -265,7 +275,7 @@ impl ExecutionRuntime {
         attempt: ExecutionId,
         items: &[ExecutionId],
     ) -> Result<ExecutionId, ExecutionError> {
-        if self.is_active(attempt) || self.retired.iter().any(|(id, _)| *id == attempt) {
+        if self.is_active(attempt) || self.retired.iter().any(|worker| worker.attempt == attempt) {
             return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
         }
         let input = store.execution_retry_input(attempt, items)?;
@@ -284,7 +294,11 @@ impl ExecutionRuntime {
         query: &OutcomeQuery,
         outcome: QueryOutcome,
     ) -> Result<bool, ExecutionError> {
-        if !self.accepting || self.generation != query.generation {
+        if !self.accepting
+            || self.generation != query.generation
+            || query.queries.stopped()
+            || self.input_package_stopped(&query.request.input)
+        {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
                 "session-generation",
@@ -311,6 +325,11 @@ impl ExecutionRuntime {
     pub fn has_active_work(&self, store: &ProjectStore) -> Result<bool, ExecutionError> {
         Ok(!self.workers.is_empty()
             || !self.retired.is_empty()
+            || self
+                .package_controls
+                .values()
+                .any(|control| !control.complete)
+            || self.runners.values().any(|entry| entry.queries.active())
             || !store
                 .queued_execution_attempts(self.initial_sequence)?
                 .is_empty())
@@ -328,11 +347,11 @@ impl ExecutionRuntime {
     }
     fn tick_at(&mut self, store: &mut ProjectStore, now: Instant) -> Result<(), ExecutionError> {
         let mut remaining = Vec::new();
-        for (attempt, thread) in self.retired.drain(..) {
-            if thread.is_finished() {
-                let _ = thread.join();
+        for worker in self.retired.drain(..) {
+            if worker.thread.is_finished() {
+                let _ = worker.thread.join();
             } else {
-                remaining.push((attempt, thread));
+                remaining.push(worker);
             }
         }
         self.retired = remaining;
@@ -438,7 +457,7 @@ impl ExecutionRuntime {
                 store.note_execution_unknown(attempt, item, reason)?;
                 let worker = self.workers.remove(index);
                 // Dropping the receiver revokes the only path back to this store.
-                self.retired.push((attempt, worker.thread));
+                self.retired.push(RetiredWorker::new(worker));
                 continue;
             }
             if finished_before_drain && drained {
@@ -470,16 +489,20 @@ impl ExecutionRuntime {
             if self.workers.len() + self.retired.len() >= CONCURRENCY {
                 break;
             }
-            if self.retired.iter().any(|(id, _)| *id == attempt) {
+            if self.retired.iter().any(|worker| worker.attempt == attempt) {
                 continue;
             }
             let input = store.execution_input_cached(attempt)?;
+            if self.input_package_stopped(&input) {
+                continue;
+            }
             if input.envelope().plugin.is_some() && !self.plugin_epoch.is_active() {
                 continue;
             }
-            let Some(runner) = self.runners.get(&input_key(&input)?).cloned() else {
+            let Some(entry) = self.runners.get(&input_key(&input)?).cloned() else {
                 continue;
             };
+            let runner = entry.runner;
             if self
                 .workers
                 .iter()
@@ -591,6 +614,12 @@ impl ExecutionRuntime {
             ));
         }
         let request = store.execution_dispatch(attempt, item)?;
+        if self.input_package_stopped(&request.input) {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "package-quiescing",
+            ));
+        }
         if request.input.envelope().plugin.is_some() && !self.plugin_epoch.is_active() {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
@@ -602,7 +631,8 @@ impl ExecutionRuntime {
         };
         Ok(Some(OutcomeQuery {
             request,
-            runner: runner.clone(),
+            runner: runner.runner.clone(),
+            queries: runner.queries.clone(),
             generation: self.generation,
         }))
     }
@@ -610,6 +640,9 @@ impl ExecutionRuntime {
         store.check_plugin_epoch_owner(&self.plugin_epoch)?;
         self.plugin_epoch.revoke();
         self.accepting = false;
+        for entry in self.runners.values() {
+            entry.queries.stop();
+        }
         // Revoking the generation covers idle grants as well as queued/running
         // automation. Pausing never resets or refunds its original budget.
         store.pause_active_work_plans()?;
@@ -662,12 +695,19 @@ impl ExecutionRuntime {
         // Expiring cancellation revokes delivery, but does not stop a producer's
         // thread or release its captured runner. Keep the original generation
         // stopped until polling has joined every owned producer.
-        if !self.workers.is_empty() || !self.retired.is_empty() {
+        if !self.workers.is_empty()
+            || !self.retired.is_empty()
+            || self.runners.values().any(|entry| entry.queries.active())
+        {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
         let generation = ExecutionId::new();
         self.plugin_epoch = store.rotate_plugin_epoch(&self.plugin_epoch, generation)?;
         self.generation = generation;
+        self.package_controls.clear();
+        for entry in self.runners.values_mut() {
+            entry.queries = Arc::default();
+        }
         // The stop request is complete. New work still requires an explicit
         // operation; a failed project switch may leave this session open.
         self.accepting = true;
@@ -677,6 +717,9 @@ impl ExecutionRuntime {
 impl Drop for ExecutionRuntime {
     fn drop(&mut self) {
         self.plugin_epoch.revoke();
+        for entry in self.runners.values() {
+            entry.queries.stop();
+        }
         for worker in &self.workers {
             worker.cancellation.request();
         }
@@ -687,11 +730,7 @@ pub struct OutcomeQuery {
     pub request: DispatchRequest,
     pub generation: ExecutionId,
     runner: Arc<dyn Runner>,
-}
-impl OutcomeQuery {
-    pub fn run(&self) -> Result<QueryOutcome, ExecutionError> {
-        self.runner.query(&self.request)
-    }
+    queries: Arc<QueryGate>,
 }
 
 #[cfg(test)]

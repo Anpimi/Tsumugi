@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The experimental Core runtime can stop one exact package across its registered
+  environments without rotating unrelated packages' execution authority. Original
+  grants and cancellation requests stay revoked across retries; completion waits
+  for its owned workers and active queries. Captured query callbacks remain closed,
+  and a completed old control cannot unregister an explicitly reinstalled package.
+  Desktop removal controls and installation handoff remain under development.
+
 - Execution shutdown waits for owned producer and outcome-query threads to exit,
   including threads retired after cancellation or timeout. Revoked result
   delivery no longer permits early runtime rotation, project closure or directory

@@ -39,6 +39,7 @@ struct GrantState {
     attempt_id: ExecutionId,
     task_id: ExecutionId,
     input_digest: String,
+    package: super::runtime::PackageKey,
     generation: ExecutionId,
     expires_at_ms: u64,
     deadline: Instant,
@@ -115,6 +116,20 @@ pub(crate) struct PluginEpoch {
     grants: Mutex<BTreeMap<ExecutionId, Arc<GrantState>>>,
 }
 impl PluginEpoch {
+    pub(crate) fn revoke_package(
+        &self,
+        package: &super::runtime::PackageKey,
+    ) -> Result<Vec<ExecutionId>, ExecutionError> {
+        let grants = self.grants()?;
+        Ok(grants
+            .values()
+            .filter(|grant| &grant.package == package)
+            .map(|grant| {
+                grant.revoked.store(true, Ordering::Release);
+                grant.grant_id
+            })
+            .collect())
+    }
     pub(crate) fn generation(&self) -> ExecutionId {
         self.generation
     }
@@ -281,6 +296,15 @@ impl PluginAuthority {
             attempt_id: input.envelope().attempt_id,
             task_id: input.envelope().task_id,
             input_digest: input.digest().into(),
+            package: super::runtime::PackageKey::from_provider(
+                &input
+                    .envelope()
+                    .plugin
+                    .as_ref()
+                    .ok_or_else(denied)?
+                    .capability
+                    .provider,
+            ),
             generation,
             expires_at_ms,
             deadline,

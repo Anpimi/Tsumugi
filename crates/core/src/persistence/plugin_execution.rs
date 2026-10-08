@@ -366,24 +366,45 @@ impl ProjectStore {
         generation: ExecutionId,
         grant_id: ExecutionId,
     ) -> Result<(), ExecutionError> {
+        self.revoke_plugin_grants(generation, &[grant_id])
+    }
+    pub(crate) fn revoke_plugin_grants(
+        &mut self,
+        generation: ExecutionId,
+        grant_ids: &[ExecutionId],
+    ) -> Result<(), ExecutionError> {
         let authority = Arc::clone(&self.plugin_authority);
         authority.require_generation(generation)?;
+        if grant_ids.len() > 128 {
+            return Err(failure(ErrorCode::LimitExceeded, "plugin-grants"));
+        }
+        if grant_ids.is_empty() {
+            return Ok(());
+        }
         let tx = self.execution_write()?;
-        let record = for_grant(&tx, grant_id)?.ok_or_else(denied)?;
-        if record.generation != generation {
-            return Err(denied());
+        let mut already_revoked = true;
+        for grant_id in grant_ids {
+            let record = for_grant(&tx, *grant_id)?.ok_or_else(denied)?;
+            if record.generation != generation {
+                return Err(denied());
+            }
+            already_revoked &= record.revoked;
         }
         // Revocation is one-way even if COMMIT fails or its result is unknown.
         // Only an explicit new attempt can obtain another grant.
-        authority.revoke_grant(generation, grant_id)?;
-        if record.revoked {
+        for grant_id in grant_ids {
+            authority.revoke_grant(generation, *grant_id)?;
+        }
+        if already_revoked {
             return Ok(());
         }
-        tx.execute(
-            "UPDATE plugin_execution_grants SET revoked=1 WHERE grant_id=?1",
-            [grant_id.to_string()],
-        )
-        .map_err(sql)?;
+        for grant_id in grant_ids {
+            tx.execute(
+                "UPDATE plugin_execution_grants SET revoked=1 WHERE grant_id=?1 AND generation=?2",
+                [grant_id.to_string(), generation.to_string()],
+            )
+            .map_err(sql)?;
+        }
         ledger::commit(tx)
     }
 }

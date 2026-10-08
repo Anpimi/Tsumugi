@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+The experimental Core `ExecutionRuntime` adds package-scoped begin/finish
+quiescence. It binds one full plugin identity, package digest, original action
+and runtime generation, revokes only its grants, and retains original task
+cancellation receipts across storage failures. Other independent packages keep
+their generation and permits; descendants still obey existing parent controls.
+Completion waits for owned workers and active query calls, leaves captured query
+callbacks closed and cannot dispose later explicit registrations. This additive
+internal API changes no project schema 30, IPC, settings format 2, Store receipt,
+SDK/process contract, dependency or version source. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no additional bump
+or historical migration; both Unreleased changelogs are synchronized. Desktop
+still must drain its captured calls and perform the installation handoff.
+
 Execution quiescence now waits for actual owned producer and outcome-query
 thread exit, including threads retired after cancellation or timeout. Revoking
 the result channel no longer implies safe cleanup or allows an early runtime

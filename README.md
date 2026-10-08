@@ -190,6 +190,18 @@ The desktop shell supports creating, opening, renaming, closing, and reconciling
 
 The global **Extensions** panel reviews a locally selected plugin folder, its declared publisher, requested permissions and exact fingerprint. Explicit manual approval saves trust before installing fixed bytes; a new package starts disabled. Enablement is a separate action, and selected capabilities require exact current approval and verified installed bytes. If a change has an uncertain result, read current state and retry the original operation; this preserves its original action and request. Reopening the panel retains that request. Interrupted installation can also recover after explicitly reviewing and approving the matching package again. An [opt-in Apple silicon macOS build](runtimes/javascript-host/README.md#opt-into-the-desktop-runtime-bundle) includes a fixed Node and Host environment requiring macOS 13.5. Runtime approval and installation are separate from package approval and execution permission; exact installed files can be verified from the panel. Ordinary builds explicitly report that no runtime is bundled. These controls do not authenticate a publisher or start plugin code; production plugin execution remains under development.
 
+The experimental Rust `ExecutionRuntime::begin_package_quiesce` API stops one
+full plugin identity and package digest across its registered environments.
+Retain its original action ID and opaque `PackageQuiescence` token; retry the
+same action after a storage failure and poll `finish_package_quiesce` until the
+original workers and active query calls drain. Completion removes only the
+target registrations, preserves unrelated packages' generation and permits,
+and never renews permission. Descendants still obey existing parent controls.
+Captured old query callbacks stay closed; completed old controls cannot remove
+later explicit registrations. Hosts must additionally drain their own pending
+calls, query threads and lifecycle resources before changing installation bytes.
+These runtime controls do not revoke installed approval or uninstall a package.
+
 The experimental Rust `PackageStore::uninstall` API removes an exact installation
 after a separate settings decision has removed its approval. Disabled approval
 still blocks removal. The application must stop new dispatch and drain or legally
