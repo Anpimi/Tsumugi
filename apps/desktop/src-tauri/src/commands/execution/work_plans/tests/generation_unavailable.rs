@@ -4,6 +4,17 @@ use super::*;
 #[path = "generation_host_abort.rs"]
 mod host_abort;
 
+#[path = "generation_missing_artifacts.rs"]
+mod missing_artifacts;
+
+#[derive(Clone, Copy)]
+enum Unavailability {
+    Disabled,
+    HostAborted,
+    PackagesMissing,
+    RuntimeMissing,
+}
+
 fn ordinary_consent(preflight: &Value) -> Value {
     json!({
         "attemptId":preflight["attemptId"],"inputDigest":preflight["inputDigest"],
@@ -56,15 +67,26 @@ fn assert_manual_selection(fixture: &Fixture, target: &Value, saved: &Value, tex
 
 #[test]
 fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_history() {
-    unavailable_generation_manual_workflow(false);
+    unavailable_generation_manual_workflow(Unavailability::Disabled);
 }
 
 #[test]
 fn killed_generation_host_preserves_original_child_and_manual_workflows() {
-    unavailable_generation_manual_workflow(true);
+    unavailable_generation_manual_workflow(Unavailability::HostAborted);
 }
 
-fn unavailable_generation_manual_workflow(abrupt_host: bool) {
+#[test]
+fn missing_generation_and_required_format_packages_preserve_manual_work_and_stored_release() {
+    unavailable_generation_manual_workflow(Unavailability::PackagesMissing);
+}
+
+#[test]
+fn missing_installed_runtime_blocks_new_workers_but_preserves_manual_work_and_stored_release() {
+    unavailable_generation_manual_workflow(Unavailability::RuntimeMissing);
+}
+
+fn unavailable_generation_manual_workflow(scenario: Unavailability) {
+    let abrupt_host = matches!(scenario, Unavailability::HostAborted);
     let installation = OwnedDirectory(tempfile::tempdir().unwrap());
     let (format, format_approval) = selected_package(
         "TSUMUGI_TEST_PLUGIN_PACKAGE",
@@ -209,7 +231,20 @@ fn unavailable_generation_manual_workflow(abrupt_host: bool) {
         )
         .unwrap();
     assert_eq!(root["budget"]["dispatched"], 2);
-    disable(&fixture, &generation_package);
+    let mut withheld_artifacts = Vec::new();
+    let (unavailable_code, unavailable_reason) =
+        if matches!(scenario, Unavailability::PackagesMissing) {
+            withheld_artifacts.push(missing_artifacts::withhold(
+                &installation,
+                "objects",
+                &generation_approval.package_digest,
+                &fixture,
+            ));
+            ("dependency-conflict", "plugin-package-missing")
+        } else {
+            disable(&fixture, &generation_package);
+            ("permission-denied", "plugin-disabled")
+        };
     let before = fixture.bytes();
     let count = fixture.attempt_count();
     let unavailable = call(
@@ -218,8 +253,8 @@ fn unavailable_generation_manual_workflow(abrupt_host: bool) {
         component,
     )
     .unwrap_err();
-    assert_eq!(unavailable["code"], "permission-denied");
-    assert_eq!(unavailable["reason"], "plugin-disabled");
+    assert_eq!(unavailable["code"], unavailable_code);
+    assert_eq!(unavailable["reason"], unavailable_reason);
     assert_eq!(fixture.bytes(), before);
     assert_eq!(fixture.attempt_count(), count);
     fixture.reopen();
@@ -434,7 +469,7 @@ fn unavailable_generation_manual_workflow(abrupt_host: bool) {
     let checked = fixture
         .call(
             "run_review_checks",
-            json!({"check":request(&fixture.context,check),
+            json!({"check":request(&fixture.context,check.clone()),
         "executions":consents}),
         )
         .unwrap();
@@ -529,7 +564,30 @@ fn unavailable_generation_manual_workflow(abrupt_host: bool) {
         .unwrap();
 
     settled(&fixture);
-    disable(&fixture, &format_package);
+    let (build_code, build_reason) = match scenario {
+        Unavailability::PackagesMissing => {
+            withheld_artifacts.push(missing_artifacts::withhold(
+                &installation,
+                "objects",
+                &format_approval.package_digest,
+                &fixture,
+            ));
+            ("dependency-conflict", "plugin-package-missing")
+        }
+        Unavailability::RuntimeMissing => {
+            withheld_artifacts.push(missing_artifacts::withhold(
+                &installation,
+                "runtimes",
+                &environment,
+                &fixture,
+            ));
+            ("dependency-conflict", "plugin-runtime-missing")
+        }
+        _ => {
+            disable(&fixture, &format_package);
+            ("permission-denied", "plugin-disabled")
+        }
+    };
     let before = fixture.bytes();
     let count = fixture.attempt_count();
     let blocked = fixture
@@ -539,8 +597,28 @@ fn unavailable_generation_manual_workflow(abrupt_host: bool) {
         "build":build_choice,"expectedEligibilityBasis":eligibility["basis"],"choices":choices}),
         )
         .unwrap_err();
-    assert_eq!(blocked["code"], "permission-denied");
-    assert_eq!(blocked["reason"], "plugin-disabled");
+    assert_eq!(blocked["code"], build_code);
+    assert_eq!(blocked["reason"], build_reason);
+    if matches!(
+        scenario,
+        Unavailability::PackagesMissing | Unavailability::RuntimeMissing
+    ) {
+        let mut fresh_checks = check.clone();
+        fresh_checks["actionId"] = json!(ExecutionId::new());
+        fresh_checks["expectedBasis"] = target["basis"].clone();
+        let blocked_checks = fixture
+            .call("prepare_review_checks", fresh_checks)
+            .unwrap_err();
+        assert_eq!(blocked_checks["code"], build_code);
+        assert_eq!(blocked_checks["reason"], build_reason);
+        if matches!(scenario, Unavailability::RuntimeMissing) {
+            let blocked_query = fixture.call("prepare_plugin_tool", json!({"attemptId":ExecutionId::new(),
+                "tool":{"package":knowledge_package,"resourceId":"agent-query-tool","environmentDigest":environment},
+                "payloads":[payload]})).unwrap_err();
+            assert_eq!(blocked_query["code"], build_code);
+            assert_eq!(blocked_query["reason"], build_reason);
+        }
+    }
     assert_eq!(fixture.bytes(), before);
     assert_eq!(fixture.attempt_count(), count);
     fixture.reopen();
@@ -618,5 +696,6 @@ fn unavailable_generation_manual_workflow(abrupt_host: bool) {
         host_abort::assert_preserved(&fixture, &action, crashed);
     }
     drop(fixture);
+    drop(withheld_artifacts);
     drop(installation);
 }
