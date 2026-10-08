@@ -1,6 +1,6 @@
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { createRef, useLayoutEffect } from "react";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
@@ -36,6 +36,11 @@ function withLocales(locales: string[], revision: string): ProjectView {
 function workPage(target: ReviewTarget, nextOffset: number | null = null) {
   return { items: [{ unitId: target.unitId, locale: target.locale, nativeKey: target.nativeKey,
     basis: target.basis, reasons: [] }], total: nextOffset === null ? 1 : 2, nextOffset, coverage: "current" };
+}
+function historyPage(target: ReviewTarget, version: string, nextOffset: number | null = null) {
+  return { decisions: [], checks: [reviewCheckFixture(target, fixtureIdentity(650), "completed", {
+    runId: fixtureIdentity(651), validatorVersion: version,
+  })], waivers: [], fallbacks: [], nextOffset };
 }
 
 let targets: Record<string, ReviewTarget>;
@@ -922,6 +927,230 @@ it("shows historical check findings and exception reasons", async () => {
   expect(screen.getByText(/Reviewed original wording/)).toBeVisible();
   expect(screen.getByText(/Deterministic check run · smapi-prebuild-1 · Earlier evidence/)).toBeVisible();
   expect(screen.getByText(/Reviewed original wording/)).toHaveTextContent("Earlier evidence");
+});
+
+it("keeps the selected target and reason editable when its history read fails, then retries history alone", async () => {
+  const original = invoke.getMockImplementation()!;
+  let unavailable = true;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_history" && unavailable
+    ? Promise.reject(new Error("History read unavailable")) : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const reason = await screen.findByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "Keep the captured reason");
+  await user.click(screen.getByText("Decision and check history"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/history/i);
+  expect(reason).toHaveValue("Keep the captured reason");
+  expect(screen.getByText("Hello")).toBeVisible();
+  unavailable = false;
+  await user.click(screen.getByRole("button", { name: "Retry history" }));
+  expect(await screen.findByText("No earlier review or check evidence for this entry.")).toBeVisible();
+  expect(reason).toHaveValue("Keep the captured reason");
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_target")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_history")).toHaveLength(2);
+});
+
+it("lets a newer target and Work continue while an older history page is pending", async () => {
+  let releaseOld!: (value: unknown) => void;
+  const oldHistory = new Promise(resolve => { releaseOld = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(targets.first), reviewSummaryFor(targets.second)]);
+    if (command === "read_review_history") return args.request.unitId === targets.first.unitId
+      ? oldHistory : historyPage(targets.second, "B-current-history");
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([name, args]) => name === "read_review_history"
+    && args.request.unitId === targets.first.unitId)).toBe(true));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(screen.getByRole("button", { name: "Refresh current evidence" })).toBeEnabled();
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  await user.click(screen.getByRole("button", { name: "second" }));
+  await user.click(screen.getByText("Decision and check history"));
+  expect(await screen.findByText(/B-current-history/)).toBeVisible();
+  await act(async () => releaseOld(historyPage(targets.first, "A-old-history")));
+  expect(screen.getByText(/B-current-history/)).toBeVisible();
+  expect(screen.queryByText(/A-old-history/)).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("");
+});
+
+it("retries a failed history page at the same cursor and can return to page one without losing an unknown action", async () => {
+  const original = invoke.getMockImplementation()!;
+  let failSecondPage = true;
+  let writes = 0;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_history") {
+      if (args.request.offset === 20 && failSecondPage) throw new Error("Second history page unavailable");
+      return historyPage(targets.first, args.request.offset === 20 ? "history-page-two" : "history-page-one",
+        args.request.offset === 20 ? null : 20);
+    }
+    const response = await original(command, args);
+    return command === "write_review_decision" && ++writes === 1
+      ? { ...response, actionId: fixtureIdentity(629) } : response;
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "A");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  await screen.findByRole("button", { name: "Retry the same action" });
+  await user.type(reason, "B");
+  await user.click(screen.getByText("Decision and check history"));
+  const historyDetails = screen.getByText("Decision and check history").closest("details")!;
+  expect(await screen.findByText(/history-page-one/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "More history" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/history/i);
+  expect(within(historyDetails).getByRole("button", { name: "First page" })).toBeEnabled();
+  expect(reason).toHaveValue("AB");
+  expect(screen.getByRole("button", { name: "Retry the same action" })).toBeVisible();
+  failSecondPage = false;
+  await user.click(screen.getByRole("button", { name: "Retry history" }));
+  expect(await screen.findByText(/history-page-two/)).toBeVisible();
+  expect(invoke.mock.calls.filter(([name, args]) => name === "read_review_history" && args.request.offset === 20)).toHaveLength(2);
+  await user.click(within(historyDetails).getByRole("button", { name: "First page" }));
+  expect(await screen.findByText(/history-page-one/)).toBeVisible();
+  expect(reason).toHaveValue("AB");
+  expect(screen.getByRole("button", { name: "Retry the same action" })).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["review", "project"] as const)("returns to current history after a %s change without rebinding the chosen entry or reason", async (scope) => {
+  const original = invoke.getMockImplementation()!;
+  let currentHistory = false;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_history") return historyPage(targets.first,
+      args.request.offset === 20 ? "older-history-page" : currentHistory ? "latest-history" : "initial-history", args.request.offset === 20 ? null : 20);
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.click(screen.getByRole("checkbox", { name: "Approve selected entries: first" }));
+  const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "Keep original basis");
+  expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeEnabled();
+  await user.click(screen.getByText("Decision and check history"));
+  expect(await screen.findByText(/initial-history/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "More history" }));
+  expect(await screen.findByText(/older-history-page/)).toBeVisible();
+  currentHistory = true;
+  const beforeChange = invoke.mock.calls.length;
+  await refreshWorkbenchReads([scope]);
+  expect(await screen.findByText(/latest-history/)).toBeVisible();
+  expect(screen.queryByText(/older-history-page/)).not.toBeInTheDocument();
+  expect(invoke.mock.calls.slice(beforeChange).some(([name, args]) => name === "read_review_history"
+    && args.request.unitId === targets.first.unitId && args.request.locale === "zh-CN"
+    && args.request.offset === 0 && args.request.limit === 20)).toBe(true);
+  expect(screen.getByRole("checkbox", { name: "Approve selected entries: first" })).toBeChecked();
+  expect(reason).toHaveValue("Keep original basis");
+  expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeEnabled();
+});
+
+it("refreshes the selected target even if the accompanying history refresh fails", async () => {
+  const original = invoke.getMockImplementation()!;
+  let failHistory = false;
+  invoke.mockImplementation((command: string, args: unknown) => {
+    if (command === "read_review_history" && failHistory) return Promise.reject(new Error("History refresh unavailable"));
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_review_history")).toBe(true));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "Reason for old evidence");
+  expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeEnabled();
+  targets.first = reviewTargetFixture({ ...targets.first, basisEvidence: undefined, basis: "new-history-refresh-basis",
+    revisionId: fixtureIdentity(626), translationText: "New translation after refresh" });
+  failHistory = true;
+  await user.click(screen.getByRole("button", { name: "Refresh current evidence" }));
+  expect(await screen.findByText("New translation after refresh")).toBeVisible();
+  await user.click(screen.getByText("Decision and check history"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/history/i);
+  expect(screen.getByRole("button", { name: "Retry history" })).toBeEnabled();
+  expect(reason).toHaveValue("Reason for old evidence");
+  expect(screen.getByText("Earlier content")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeDisabled();
+});
+
+it("returns to current history after a check completes even if that history read fails", async () => {
+  const original = invoke.getMockImplementation()!;
+  let failAfterCheck = false;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_history") {
+      if (args.request.offset === 0 && failAfterCheck) return Promise.reject(new Error("Latest history unavailable"));
+      return historyPage(targets.first, args.request.offset === 20 ? "older-check-history" : "initial-check-history",
+        args.request.offset === 20 ? null : 20);
+    }
+    if (command === "run_review_checks") {
+      const check = reviewCheckFixture(targets.first, args.request.actionId as string);
+      targets.first = { ...targets.first, currentCheck: check };
+      return check;
+    }
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "Keep this check reason");
+  await user.click(screen.getByText("Decision and check history"));
+  expect(await screen.findByText(/initial-check-history/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "More history" }));
+  expect(await screen.findByText(/older-check-history/)).toBeVisible();
+  const beforeCheck = invoke.mock.calls.length;
+  failAfterCheck = true;
+  await user.click(screen.getByRole("button", { name: "Run current checks" }));
+  await waitFor(() => expect(invoke.mock.calls.slice(beforeCheck).some(([name, args]) => name === "read_review_history"
+    && args.request.offset === 0)).toBe(true));
+  expect(await screen.findByRole("alert")).toHaveTextContent(/history/i);
+  expect(screen.getByRole("button", { name: "Retry history" })).toBeEnabled();
+  expect(invoke.mock.calls.slice(beforeCheck).some(([name, args]) => name === "read_review_history"
+    && args.request.unitId === targets.first.unitId && args.request.locale === "zh-CN"
+    && args.request.offset === 0 && args.request.limit === 20)).toBe(true);
+  expect(reason).toHaveValue("Keep this check reason");
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+});
+
+it("does not display an old session's late history after the Review consumer reopens for another project", async () => {
+  let releaseOld!: (value: unknown) => void;
+  const oldHistory = new Promise(resolve => { releaseOld = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_review_history"
+    ? args.request.sessionToken === project.sessionToken ? oldHistory : historyPage(targets.first, "new-session-history")
+    : original(command, args));
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />, project);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([name, args]) => name === "read_review_history"
+    && args.request.sessionToken === project.sessionToken)).toBe(true));
+  const next = { ...project, sessionToken: "another-session", metadata: { ...project.metadata, projectId: fixtureIdentity(800) } };
+  view.rerender(null, next);
+  view.rerender(<ReviewWorkbench project={next} disabled={false} onOpenTranslation={() => true} />, next);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.click(screen.getByText("Decision and check history"));
+  expect(await screen.findByText(/new-session-history/)).toBeVisible();
+  await act(async () => releaseOld(historyPage(targets.first, "old-session-history")));
+  expect(screen.getByText(/new-session-history/)).toBeVisible();
+  expect(screen.queryByText(/old-session-history/)).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_history").map(([, args]) => args.request.sessionToken))
+    .toEqual(expect.arrayContaining([project.sessionToken, next.sessionToken]));
 });
 
 it("requests cancellation for the active check and reports its persisted outcome", async () => {

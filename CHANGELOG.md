@@ -47,6 +47,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 ### Fixed
 
 - Review work queues open without waiting for summaries, show loading separately from empty results, and refresh after relevant project changes. Leaving the queue releases its view wait; a failed page can be retried at its original cursor without replacing captured review work.
+- Review history loads independently of the selected entry and current evidence. Failed history pages have their own retry and first-page recovery, while new review results return to current history without replacing reasons, fixed selections or pending actions.
 
 - Save-and-next retains newer edits and original uncertain save requests, and stops late navigation after leaving the workspace or changing the target language.
 

@@ -11,7 +11,8 @@ import { reviewCommands as commands, type Eligibility, type EligibilityReason,
   type ReviewHistoryPage, type ReviewSummaryPage, type WorkPage } from "./reviewCommands";
 import { reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
 import { useWorkbenchCommands } from "./workbenchCommands";
-import { useSessionQuery } from "./SessionReadProvider";
+import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import type { ChangeScope } from "./sessionReads";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
@@ -19,6 +20,11 @@ export interface ReviewHandle { allowLeave: () => Promise<boolean>; allowNavigat
 
 const errorReason = commandFailure;
 const draftKey = reviewDraftKey;
+const HISTORY_FIRST_SCOPES: ChangeScope[] = ["source", "translation", "resources", "review"];
+// A review change moves a later history page back to zero before it is read.
+// Only the first-page query listens to review invalidation, so the old offset
+// cannot refetch while that cursor transition is committing.
+const HISTORY_LATER_SCOPES: ChangeScope[] = ["source", "translation", "resources"];
 
 export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean;
@@ -27,6 +33,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const { t } = useTranslation();
   const session = executionContext(project);
   const owner = useReviewDraftSession();
+  const reads = useSessionReads();
   const commandRegistry = useWorkbenchCommands();
   const { locale, actor, drafts, selected, projection, chosen, pending, notice, reasonValue,
     busyMutation, activeCheckId, batchRunning, batchStatus } = owner.state;
@@ -45,8 +52,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [tab, setTab] = useState<Tab>("review");
   const [page, setPage] = useState<ReviewSummaryPage | null>(null);
   const [pageAfter, setPageAfter] = useState(0);
-  const [history, setHistory] = useState<ReviewHistoryPage | null>(null);
-  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyCursor, setHistoryCursor] = useState({ unitId: "", locale: "", offset: 0 });
   const [workCursor, setWorkCursor] = useState({ locale, offset: 0 });
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [languages, setLanguages] = useState<string[]>(project.metadata.targetLocales);
@@ -85,6 +91,20 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const workLoading = workActive && workRead.isFetching && !work;
   const workFailure = workActive && workRead.error ? errorReason(workRead.error) : null;
   const workBusy = workActive && workRead.isFetching;
+  const historyOffset = historyCursor.unitId === selected?.unitId && historyCursor.locale === selected?.locale
+    ? historyCursor.offset : 0;
+  const historyActive = open && tab === "review" && !!selected && targetAvailable && selected.locale === locale;
+  const historyRead = useSessionQuery<ReviewHistoryPage>({
+    key: ["review-history", selected?.unitId ?? "", selected?.locale ?? "", historyOffset, 20],
+    scopes: historyOffset === 0 ? HISTORY_FIRST_SCOPES : HISTORY_LATER_SCOPES,
+    enabled: historyActive,
+    read: () => commands.history({ ...session, unitId: selected!.unitId, locale: selected!.locale,
+      offset: historyOffset, limit: 20 }),
+  });
+  const historyFailure = historyActive && historyRead.error ? errorReason(historyRead.error) : null;
+  const history = historyActive && !historyFailure ? historyRead.data ?? null : null;
+  const historyLoading = historyActive && historyRead.isFetching && !history;
+  const historyBusy = historyActive && historyRead.isFetching;
   const busy = readBusy || busyMutation;
   const chosenCount = Object.keys(chosen).length;
   const invalidChosenLocale = Object.values(chosen).find(value => !project.metadata.targetLocales.includes(value.locale))?.locale;
@@ -173,6 +193,13 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   useLayoutEffect(() => {
     setWorkCursor(current => current.locale === locale ? current : { locale, offset: 0 });
   }, [locale]);
+  useLayoutEffect(() => {
+    setHistoryCursor(current => current.unitId === selected?.unitId && current.locale === selected?.locale
+      ? current : { unitId: selected?.unitId ?? "", locale: selected?.locale ?? "", offset: 0 });
+  }, [selected?.unitId, selected?.locale]);
+  useEffect(() => reads.subscribeChanges(scopes => {
+    if (scopes.includes("review") || scopes.includes("project")) setHistoryCursor(current => current.offset === 0 ? current : { ...current, offset: 0 });
+  }), [reads]);
 
   useEffect(() => {
     alive.current = true;
@@ -187,7 +214,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const ticket = beginViewRead(false);
     const localeChanged = previousLocale.current !== locale;
     previousLocale.current = locale;
-    if (localeChanged) { setSelected(null); setHistory(null); setPage(null); setEligibility(null); setPageAfter(0); }
+    if (localeChanged) { setSelected(null); setPage(null); setEligibility(null); setPageAfter(0); }
     const after = localeChanged ? 0 : pageAfter;
     void commands.summaryPage({ ...session, locale, query: "", scopeId: null, afterOrdinal: after, limit: 50 })
       .then(async value => { if (alive.current && generation.current === ticket && currentLocale(locale)) {
@@ -201,17 +228,16 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     if (lastCompletion.current === owner.state.completionVersion) return;
     lastCompletion.current = owner.state.completionVersion;
     const target = owner.current().selected;
-    if (!open || !target || !localeAvailable(target.locale)) return;
+    if (!target || !localeAvailable(target.locale)) return;
+    refreshCurrentHistory();
+    if (!open) return;
     const capture = captureSelected();
     if (!capture) return;
     const ticket = beginViewRead(false);
-    void Promise.all([
-      commands.target({ ...session, unitId: target.unitId, locale: target.locale }),
-      commands.history({ ...session, unitId: target.unitId, locale: target.locale, offset: 0, limit: 20 }),
-    ]).then(([latest, previous]) => {
+    void commands.target({ ...session, unitId: target.unitId, locale: target.locale }).then(latest => {
       if (!alive.current || generation.current !== ticket || !currentLocale(target.locale)) return;
       owner.observeProjection(latest, capture);
-      setHistory(previous); setHistoryOffset(0); setEligibility(null);
+      setEligibility(null);
     }).catch(error => {
       if (alive.current && generation.current === ticket && currentLocale(target.locale)) setReason(errorReason(error));
     });
@@ -256,31 +282,29 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const ticket = beginViewRead(true);
     setNotice(null);
     try {
-      const [value, previous] = await Promise.all([
-        commands.target({ ...session, unitId, locale }),
-        commands.history({ ...session, unitId, locale, offset: 0, limit: 20 }),
-      ]);
+      const value = await commands.target({ ...session, unitId, locale });
       if (alive.current && generation.current === ticket && currentLocale(locale)) {
         const now = owner.current();
         if (capture?.unitId === unitId && capture.locale === locale
           && (observe || (now.editSeq[draftKey(capture)] ?? 0) !== capture.editSeq)) owner.observeProjection(value, capture);
         else setSelected(value);
-        setHistory(previous); setHistoryOffset(0); setTab("review");
+        setHistoryCursor({ unitId, locale, offset: 0 }); setTab("review");
       }
     } catch (error) {
       if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); }
     } finally { if (alive.current && generation.current === ticket) setReadBusy(false); }
   }
-  async function loadHistory(offset: number) {
-    if (!selected || !currentLocale(selected.locale)) return;
-    const ticket = beginViewRead(true);
-    setNotice(null);
-    try {
-      const value = await commands.history({ ...session, unitId: selected.unitId, locale: selected.locale, offset, limit: 20 });
-      if (alive.current && generation.current === ticket && currentLocale(selected.locale)) { setHistory(value); setHistoryOffset(offset); }
-    } catch (error) {
-      if (alive.current && generation.current === ticket && currentLocale(selected.locale)) { setNotice("error"); setReason(errorReason(error)); }
-    } finally { if (alive.current && generation.current === ticket) setReadBusy(false); }
+  function loadHistory(offset: number) {
+    if (selected && currentLocale(selected.locale)) setHistoryCursor({ unitId: selected.unitId, locale: selected.locale, offset });
+  }
+  function refreshCurrentHistory() {
+    if (!selected || !localeAvailable(selected.locale)) return;
+    if (historyActive && historyOffset === 0) { void historyRead.refetch(); return; }
+    // The cached first page may have staleTime Infinity. Mark it stale before
+    // changing the key or showing a hidden panel; its next observer must fetch.
+    void reads.client.invalidateQueries({ queryKey: reads.key(["review-history", selected.unitId, selected.locale, 0, 20]),
+      exact: true, refetchType: "none" });
+    if (historyOffset !== 0) setHistoryCursor({ unitId: selected.unitId, locale: selected.locale, offset: 0 });
   }
   async function refresh() {
     if (!currentLocale(locale)) return;
@@ -288,16 +312,16 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const capture = captureSelected();
     const ticket = beginViewRead(true);
     setNotice(null);
+    refreshCurrentHistory();
     try {
-      const [newPage, newSelected, newHistory] = await Promise.all([
+      const [newPage, newSelected] = await Promise.all([
         commands.summaryPage({ ...session, locale, query: "", scopeId: null, afterOrdinal: pageAfter, limit: 50 }),
         current ? commands.target({ ...session, unitId: current.unitId, locale }) : Promise.resolve(null),
-        current ? commands.history({ ...session, unitId: current.unitId, locale, offset: 0, limit: 20 }) : Promise.resolve(null),
       ]);
       if (alive.current && generation.current === ticket && currentLocale(locale)) {
         setPage(newPage);
         if (newSelected && capture) owner.observeProjection(newSelected, capture);
-        setHistory(newHistory); setHistoryOffset(0); setEligibility(null);
+        setEligibility(null);
       }
     } catch (error) {
       if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); }
@@ -403,7 +427,13 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                   {rule.findings.map(finding => <div key={finding.issueId}><p>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</p>
                     {displayTarget.currentWaivers.some(waiver => waiver.issueId === finding.issueId) ? <><p>{t("review.waived")}</p><button className="text-button" disabled={busy || !!pending || !targetAvailable || selectedStale || !actor.trim()} onClick={() => void waive(finding.issueId, false, displayTarget.currentWaivers.find(waiver => waiver.issueId === finding.issueId)!.waiverId)}>{t("review.revokeWaiver")}</button></> : finding.waivable ? <button className="text-button" disabled={busy || !!pending || !targetAvailable || selectedStale || !actor.trim()} onClick={() => void waive(finding.issueId, true, null)}>{t("review.waive")}</button> : null}</div>)}
                 </div>)}
-                <details><summary>{t("review.history")}</summary>{history && history.decisions.length + history.checks.length + history.waivers.length + history.fallbacks.length === 0 ? <p>{t("review.historyEmpty")}</p> : null}
+                <details><summary>{t("review.history")}</summary>
+                  {historyLoading ? <p role="status">{t("review.historyLoading")}</p> : null}
+                  {historyFailure && !historyRead.isFetching ? <div role="alert">{t("review.historyUnavailable")}
+                    <CommandFailureDetails failure={historyFailure} />
+                    <button className="secondary-button" disabled={historyBusy} onClick={() => void historyRead.refetch()}>{t("review.historyRetry")}</button>
+                  </div> : null}
+                  {history && !historyFailure && history.decisions.length + history.checks.length + history.waivers.length + history.fallbacks.length === 0 ? <p>{t("review.historyEmpty")}</p> : null}
                   {history?.decisions.map(item => <p key={item.decisionId}>{item.createdAt} · {item.actor} · {t(item.kind === "approve" ? "review.currentApproval" : "review.changesRequested")}{item.decisionId === displayTarget.currentDecision?.decisionId ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
                   {history?.checks.map(item => <div key={item.runId} className="review-history-check"><p>{item.createdAt} · {t("review.qaRun")} · {item.validatorVersion}{item.runId === displayTarget.currentCheck?.runId ? "" : ` · ${t("review.earlier")}`}</p>
                     <ul>{item.rules.map(rule => <li key={rule.rule}><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
@@ -413,7 +443,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                   </div>)}
                   {history?.waivers.map(item => <p key={item.waiverId}>{item.createdAt} · {item.actor} · {t(item.grant ? "review.waived" : "review.revokeWaiver")}{displayTarget.currentWaivers.some(waiver => waiver.waiverId === item.waiverId) ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
                   {history?.fallbacks.map(item => <p key={item.fallbackId}>{item.createdAt} · {item.actor} · {t(item.allow ? "review.fallbackActive" : "review.withdrawFallback")}{item.fallbackId === displayTarget.currentFallback?.fallbackId ? "" : ` · ${t("review.earlier")}`}{item.reason ? ` · ${item.reason}` : ""}</p>)}
-                  <div className="form-actions"><button className="secondary-button" disabled={busy || !targetAvailable || historyOffset === 0} onClick={() => void loadHistory(0)}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || !targetAvailable || !history || history.nextOffset === null} onClick={() => void loadHistory(history!.nextOffset!)}>{t("review.historyMore")}</button></div>
+                  <div className="form-actions"><button className="secondary-button" disabled={busy || historyBusy || !targetAvailable || historyOffset === 0} onClick={() => loadHistory(0)}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || historyBusy || !targetAvailable || !history || history.nextOffset === null} onClick={() => loadHistory(history!.nextOffset!)}>{t("review.historyMore")}</button></div>
                 </details>
               </>}
             </section>
