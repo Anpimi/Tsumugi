@@ -35,12 +35,14 @@ mod runtime_fixture {
 struct OwnedDirectory {
     directory: Option<tempfile::TempDir>,
     removable: Arc<AtomicBool>,
+    retain_on_failure: bool,
 }
 impl OwnedDirectory {
-    fn new() -> Self {
+    fn new(retain_on_failure: bool) -> Self {
         Self {
             directory: Some(tempfile::tempdir().unwrap()),
             removable: Arc::new(AtomicBool::new(true)),
+            retain_on_failure,
         }
     }
     fn path(&self) -> &Path {
@@ -60,7 +62,9 @@ impl Drop for OwnedDirectory {
             Ok(())
         }
         let directory = self.directory.take().unwrap();
-        let error = if self.removable.load(Ordering::Acquire) {
+        let error = if self.retain_on_failure && std::thread::panicking() {
+            Some("missing-installation fixture failed; original evidence retained".into())
+        } else if self.removable.load(Ordering::Acquire) {
             removable(directory.path())
                 .err()
                 .map(|error| error.to_string())
@@ -86,6 +90,7 @@ struct ApplicationCleanup {
     handle: tauri::AppHandle<tauri::test::MockRuntime>,
     removable: Arc<AtomicBool>,
     staging: PathBuf,
+    parked_installation: Option<PathBuf>,
 }
 impl ApplicationCleanup {
     fn new(
@@ -98,7 +103,29 @@ impl ApplicationCleanup {
             handle: app.handle().clone(),
             removable: owned.removable.clone(),
             staging: staging.to_path_buf(),
+            parked_installation: None,
         }
+    }
+    fn require_released_staging(&self) -> Result<(), String> {
+        // A joined Rust producer can retain an instance namespace when child
+        // reap or captured-file cleanup was not confirmed.
+        for entry in fs::read_dir(&self.staging)
+            .map_err(|error| format!("owned staging inspection: {error}"))?
+        {
+            let entry =
+                entry.map_err(|error| format!("owned staging entry inspection: {error}"))?;
+            if entry
+                .file_name()
+                .as_encoded_bytes()
+                .starts_with(b"plugin-instance-")
+            {
+                return Err(format!(
+                    "original worker instance namespace retained at {}",
+                    entry.path().display()
+                ));
+            }
+        }
+        Ok(())
     }
     fn reclaim(&self) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -198,23 +225,12 @@ impl ApplicationCleanup {
                     .plugins
                     .dispose_closed_store_for_test()
                     .map_err(|error| format!("teardown closed Store: {error:?}"))?;
-                // A joined Rust producer can retain an instance namespace when
-                // child reap or captured-file cleanup was not confirmed.
-                for entry in fs::read_dir(&self.staging)
-                    .map_err(|error| format!("owned staging inspection: {error}"))?
-                {
-                    let entry = entry
-                        .map_err(|error| format!("owned staging entry inspection: {error}"))?;
-                    if entry
-                        .file_name()
-                        .as_encoded_bytes()
-                        .starts_with(b"plugin-instance-")
-                    {
-                        return Err(format!(
-                            "original worker instance namespace retained at {}",
-                            entry.path().display()
-                        ));
-                    }
+                self.require_released_staging()?;
+                if let Some(parking) = &self.parked_installation {
+                    return Err(format!(
+                        "fixture installation restoration was not confirmed; original parking at {}",
+                        parking.display()
+                    ));
                 }
                 return Ok(());
             }
@@ -346,7 +362,56 @@ struct Materials {
     rules: [&'static str; 2],
 }
 
-fn journey(material: Materials) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackageLoss {
+    ExactUninstall,
+    MissingInstallation,
+}
+impl PackageLoss {
+    fn rejection(self) -> (&'static str, &'static str) {
+        match self {
+            Self::ExactUninstall => ("permission-denied", "plugin-approval-mismatch"),
+            Self::MissingInstallation => ("dependency-conflict", "plugin-package-missing"),
+        }
+    }
+}
+
+fn require_absent(path: &Path) {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        other => panic!(
+            "fixture rename target must be absent at {}: {other:?}",
+            path.display()
+        ),
+    }
+}
+
+fn move_fixture_installation(source: &Path, target: &Path, receipt_bytes: &[u8]) {
+    require_absent(target);
+    let metadata = fs::symlink_metadata(source).unwrap();
+    assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+    assert_eq!(metadata.permissions().mode() & 0o7777, 0o500);
+    assert_eq!(
+        fs::read(source.join("receipt.json")).unwrap().as_slice(),
+        receipt_bytes
+    );
+    // macOS requires this owned wrapper to be writable for a cross-parent
+    // rename. Only its envelope's mode changes; captured content is untouched.
+    fs::set_permissions(source, fs::Permissions::from_mode(0o700)).unwrap();
+    require_absent(target);
+    fs::rename(source, target).unwrap();
+    fs::set_permissions(target, fs::Permissions::from_mode(0o500)).unwrap();
+    require_absent(source);
+    let metadata = fs::symlink_metadata(target).unwrap();
+    assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+    assert_eq!(metadata.permissions().mode() & 0o7777, 0o500);
+    assert_eq!(
+        fs::read(target.join("receipt.json")).unwrap().as_slice(),
+        receipt_bytes
+    );
+}
+
+fn journey(material: Materials, loss: PackageLoss) {
     let locale = material.locale;
     let output_path = material.output_path;
     let source_text = material.source_text;
@@ -357,7 +422,7 @@ fn journey(material: Materials) {
         schema_version: 1,
         behavior_version: 1,
     };
-    let owned = OwnedDirectory::new();
+    let owned = OwnedDirectory::new(loss == PackageLoss::MissingInstallation);
     let pin = crate::plugin_bundle::selection()
         .unwrap()
         .packages
@@ -442,7 +507,7 @@ fn journey(material: Materials) {
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .unwrap();
     let application = owned.path().join("application");
-    let cleanup = ApplicationCleanup::new(&app, &owned, &application);
+    let mut cleanup = ApplicationCleanup::new(&app, &owned, &application);
     let state = app.state::<AppState>();
     state.plugins.configure(application).unwrap();
     let window =
@@ -796,67 +861,110 @@ fn journey(material: Materials) {
         .join("application/plugins/objects")
         .join(receipt.package_digest());
     assert!(object.is_dir());
-    let withdrawal = PluginApprovalRemovalRequest {
-        package: package.clone(),
-        origin: original.origin.clone(),
-        expected_revision: installed.settings_revision,
-        action_id: ExecutionId::new(),
-    };
-    let withdrawn: PluginInventoryView = serde_json::from_value(
-        call(&window, "remove_plugin_approval", json!(&withdrawal)).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(withdrawn.settings_revision.get(), 2);
-    assert_eq!(
-        withdrawn.last_settings_action,
-        Some(withdrawal.action_id.to_string())
-    );
-    assert!(withdrawn.package_decisions.is_empty());
-    assert_eq!(withdrawn.packages, installed.packages);
-    assert_eq!(withdrawn.runtime_decisions, installed.runtime_decisions);
-    assert!(
-        object.is_dir(),
-        "approval removal is separate from exact installation deletion"
-    );
-    let removal = PluginUninstallRequest {
-        package,
-        origin: original.origin.clone(),
-        original_install_action: receipt.action_id().into(),
-        expected_revision: withdrawn.settings_revision,
-        action_id: ExecutionId::new(),
-    };
-    assert_ne!(removal.action_id, withdrawal.action_id);
-    assert_ne!(removal.action_id, original_install_action);
-    let removed: PluginInventoryView =
-        serde_json::from_value(call(&window, "uninstall_plugin_package", json!(&removal)).unwrap())
+    let original_receipt_bytes = fs::read(object.join("receipt.json")).unwrap();
+    let parking = owned.path().join("parked-original-installation");
+    let unavailable = match loss {
+        PackageLoss::ExactUninstall => {
+            let withdrawal = PluginApprovalRemovalRequest {
+                package: package.clone(),
+                origin: original.origin.clone(),
+                expected_revision: installed.settings_revision,
+                action_id: ExecutionId::new(),
+            };
+            let withdrawn: PluginInventoryView = serde_json::from_value(
+                call(&window, "remove_plugin_approval", json!(&withdrawal)).unwrap(),
+            )
             .unwrap();
-    assert!(removed.packages.is_empty());
-    assert!(removed.package_decisions.is_empty());
-    assert_eq!(removed.settings_revision, withdrawn.settings_revision);
-    assert_eq!(removed.last_settings_action, withdrawn.last_settings_action);
-    assert_eq!(removed.runtimes, installed.runtimes);
-    assert_eq!(removed.runtime_decisions, installed.runtime_decisions);
-    assert_eq!(removed.uninstallations.len(), 1);
-    assert_eq!(removed.uninstallations[0].installation, original);
-    assert_eq!(
-        removed.uninstallations[0].action_id,
-        removal.action_id.to_string()
-    );
-    assert_eq!(
-        removed.uninstallations[0].settings_revision,
-        removal.expected_revision
-    );
-    assert_eq!(removed.uninstallations[0].state, PluginObjectState::Sealed);
-    assert!(!object.exists());
-    state
-        .sessions
-        .with(|sessions| assert!(sessions.package_operation.is_none()));
-    call(
-        &window,
-        "close_project",
-        json!({"sessionToken":context["sessionToken"]}),
-    )
-    .unwrap();
+            assert_eq!(withdrawn.settings_revision.get(), 2);
+            assert_eq!(
+                withdrawn.last_settings_action,
+                Some(withdrawal.action_id.to_string())
+            );
+            assert!(withdrawn.package_decisions.is_empty());
+            assert_eq!(withdrawn.packages, installed.packages);
+            assert_eq!(withdrawn.runtime_decisions, installed.runtime_decisions);
+            assert!(
+                object.is_dir(),
+                "approval removal is separate from exact installation deletion"
+            );
+            let removal = PluginUninstallRequest {
+                package,
+                origin: original.origin.clone(),
+                original_install_action: receipt.action_id().into(),
+                expected_revision: withdrawn.settings_revision,
+                action_id: ExecutionId::new(),
+            };
+            assert_ne!(removal.action_id, withdrawal.action_id);
+            assert_ne!(removal.action_id, original_install_action);
+            let removed: PluginInventoryView = serde_json::from_value(
+                call(&window, "uninstall_plugin_package", json!(&removal)).unwrap(),
+            )
+            .unwrap();
+            assert!(removed.packages.is_empty());
+            assert!(removed.package_decisions.is_empty());
+            assert_eq!(removed.settings_revision, withdrawn.settings_revision);
+            assert_eq!(removed.last_settings_action, withdrawn.last_settings_action);
+            assert_eq!(removed.runtimes, installed.runtimes);
+            assert_eq!(removed.runtime_decisions, installed.runtime_decisions);
+            assert_eq!(removed.uninstallations.len(), 1);
+            assert_eq!(removed.uninstallations[0].installation, original);
+            assert_eq!(
+                removed.uninstallations[0].action_id,
+                removal.action_id.to_string()
+            );
+            assert_eq!(
+                removed.uninstallations[0].settings_revision,
+                removal.expected_revision
+            );
+            assert_eq!(removed.uninstallations[0].state, PluginObjectState::Sealed);
+            assert!(!object.exists());
+            state
+                .sessions
+                .with(|sessions| assert!(sessions.package_operation.is_none()));
+            call(
+                &window,
+                "close_project",
+                json!({"sessionToken":context["sessionToken"]}),
+            )
+            .unwrap();
+            removed
+        }
+        PackageLoss::MissingInstallation => {
+            // This fixture changes only its owned installation leaf after the
+            // original complete Host and Session have released their work.
+            // Approval is deliberately retained; this is not an uninstall.
+            cleanup.parked_installation = Some(parking.clone());
+            call(&window, "quiesce_execution", context.clone()).unwrap();
+            idle(&window, &context);
+            call(
+                &window,
+                "close_project",
+                json!({"sessionToken":context["sessionToken"]}),
+            )
+            .unwrap();
+            state.sessions.with(|sessions| {
+                assert!(sessions.active.is_none());
+                assert!(sessions.package_operation.is_none());
+            });
+            cleanup.require_released_staging().unwrap();
+            move_fixture_installation(&object, &parking, &original_receipt_bytes);
+            let missing: PluginInventoryView =
+                serde_json::from_value(call(&window, "read_plugin_inventory", json!({})).unwrap())
+                    .unwrap();
+            assert!(missing.packages.is_empty());
+            assert!(missing.uninstallations.is_empty());
+            assert_eq!(missing.settings_revision, installed.settings_revision);
+            assert_eq!(missing.last_settings_action, installed.last_settings_action);
+            assert_eq!(missing.package_decisions, installed.package_decisions);
+            assert!(missing.package_decisions[0].enabled);
+            assert_eq!(missing.runtimes, installed.runtimes);
+            assert_eq!(missing.runtime_decisions, installed.runtime_decisions);
+            assert_eq!(missing.runtime_offers, installed.runtime_offers);
+            assert_eq!(missing.native_host_offer, installed.native_host_offer);
+            assert_eq!(missing.defaults_offer, installed.defaults_offer);
+            missing
+        }
+    };
     let reopened = call(&window, "open_project", json!({"locator":project_path})).unwrap();
     context = json!({"sessionToken":reopened["sessionToken"],"projectId":reopened["metadata"]["projectId"]});
     assert_eq!(context["projectId"], project["metadata"]["projectId"]);
@@ -973,14 +1081,15 @@ fn journey(material: Materials) {
     assert_ne!(not_ready["basis"], eligibility["basis"]);
     let refused_qa_action = ExecutionId::new();
     let refused_qa = call(&window, "prepare_review_checks", scoped(&context, json!({"unitId":unit,"locale":locale,"expectedBasis":new_target["basis"],"actionId":refused_qa_action,"advisoryChecks":[]}))).unwrap_err();
-    assert_eq!(refused_qa["code"], "permission-denied");
-    assert_eq!(refused_qa["reason"], "plugin-approval-mismatch");
+    let (expected_code, expected_reason) = loss.rejection();
+    assert_eq!(refused_qa["code"], expected_code);
+    assert_eq!(refused_qa["reason"], expected_reason);
     assert_eq!(refused_qa["outcome"], "rejected");
     assert_eq!(refused_qa["recoveryRequired"], false);
     let refused_build_attempt = ExecutionId::new();
     let refused_build = call(&window, "prepare_plugin_build", scoped(&context, json!({"attemptId":refused_build_attempt,"build":build_choice,"expectedEligibilityBasis":not_ready["basis"],"choices":[{"locale":locale,"outputPaths":[output_path],"configuration":[]}]}))).unwrap_err();
-    assert_eq!(refused_build["code"], "permission-denied");
-    assert_eq!(refused_build["reason"], "plugin-approval-mismatch");
+    assert_eq!(refused_build["code"], expected_code);
+    assert_eq!(refused_build["reason"], expected_reason);
     assert_eq!(refused_build["outcome"], "rejected");
     assert_eq!(refused_build["recoveryRequired"], false);
     let original_frames = frames.clone();
@@ -1006,7 +1115,7 @@ fn journey(material: Materials) {
         let host = active.execution.as_ref().unwrap();
         assert!(
             host.plugin_registrations.is_empty(),
-            "denied preparations cannot restore a removed provider"
+            "denied preparations cannot restore an unavailable provider"
         );
         assert!(!host.active(&active.store).unwrap());
     });
@@ -1104,7 +1213,7 @@ fn journey(material: Materials) {
         call(
             &window,
             "read_translation_history",
-            scoped(&context, translation_fields)
+            scoped(&context, translation_fields.clone())
         )
         .unwrap(),
         final_history
@@ -1113,7 +1222,7 @@ fn journey(material: Materials) {
         call(
             &window,
             "read_review_history",
-            scoped(&context, review_fields)
+            scoped(&context, review_fields.clone())
         )
         .unwrap(),
         review_history
@@ -1122,7 +1231,7 @@ fn journey(material: Materials) {
         call(
             &window,
             "read_review_target",
-            scoped(&context, target_fields)
+            scoped(&context, target_fields.clone())
         )
         .unwrap(),
         new_target
@@ -1145,36 +1254,39 @@ fn journey(material: Materials) {
             call(&window, "read_plugin_inventory", json!({})).unwrap()
         )
         .unwrap(),
-        removed
+        unavailable
     );
-    let original_frames = frames;
-    let original_bundle: SourceBundle = source_bundle;
-    let original_release = release_view;
-    let expected_bytes = expected.clone();
-    state.sessions.with(move |sessions| {
-        let active = sessions.active.as_ref().unwrap();
-        assert!(
-            active.execution.is_none(),
-            "reopened saved records do not create a Worker Host"
-        );
-        unchanged_frames(&active.store, &original_frames);
-        assert_eq!(
-            active.store.source_bundle(snapshot_id).unwrap(),
-            original_bundle
-        );
-        assert_eq!(
-            active.store.release_view(release_id).unwrap(),
-            original_release
-        );
-        assert_eq!(
-            active
-                .store
-                .release_artifact_by_path(release_id, locale, output_path)
-                .unwrap()
-                .1,
-            expected_bytes
-        );
-    });
+    let assert_saved_evidence = |state: &AppState| {
+        let original_frames = frames.clone();
+        let original_bundle: SourceBundle = source_bundle.clone();
+        let original_release = release_view.clone();
+        let expected_bytes = expected.clone();
+        state.sessions.with(move |sessions| {
+            let active = sessions.active.as_ref().unwrap();
+            assert!(
+                active.execution.is_none(),
+                "reopened saved records do not create a Worker Host"
+            );
+            unchanged_frames(&active.store, &original_frames);
+            assert_eq!(
+                active.store.source_bundle(snapshot_id).unwrap(),
+                original_bundle
+            );
+            assert_eq!(
+                active.store.release_view(release_id).unwrap(),
+                original_release
+            );
+            assert_eq!(
+                active
+                    .store
+                    .release_artifact_by_path(release_id, locale, output_path)
+                    .unwrap()
+                    .1,
+                expected_bytes
+            );
+        });
+    };
+    assert_saved_evidence(&state);
     assert_eq!(fs::read(destination.join(output_path)).unwrap(), expected);
     call(
         &window,
@@ -1182,16 +1294,99 @@ fn journey(material: Materials) {
         json!({"sessionToken":context["sessionToken"]}),
     )
     .unwrap();
+    if loss == PackageLoss::MissingInstallation {
+        state.sessions.with(|sessions| {
+            assert!(sessions.active.is_none());
+            assert!(sessions.package_operation.is_none());
+        });
+        cleanup.require_released_staging().unwrap();
+        // Only put this fixture's original object back. This is not an
+        // application recovery operation or a renewed installation/approval.
+        move_fixture_installation(&parking, &object, &original_receipt_bytes);
+        assert_eq!(
+            serde_json::from_value::<PluginInventoryView>(
+                call(&window, "read_plugin_inventory", json!({})).unwrap()
+            )
+            .unwrap(),
+            installed
+        );
+        assert_eq!(
+            call(&window, "read_plugin_source", json!(&source_choice)).unwrap(),
+            source_view
+        );
+        assert_eq!(
+            call(&window, "read_plugin_build", json!(&build_choice)).unwrap(),
+            build["build"]
+        );
+        state.sessions.with(|sessions| {
+            assert!(
+                sessions.active.is_none(),
+                "capturing restored declarations does not open a project or grant execution"
+            )
+        });
+        let restored = call(&window, "open_project", json!({"locator":project_path})).unwrap();
+        context = json!({"sessionToken":restored["sessionToken"],"projectId":restored["metadata"]["projectId"]});
+        for (command, fields, saved) in [
+            ("read_content_scope", json!({}), scope.clone()),
+            (
+                "read_source_content",
+                json!({"snapshotId":snapshot_id,"after":0,"limit":50}),
+                source_content.clone(),
+            ),
+            (
+                "read_source_history",
+                json!({"offset":0,"limit":50}),
+                source_history.clone(),
+            ),
+            (
+                "read_translation_history",
+                translation_fields.clone(),
+                final_history.clone(),
+            ),
+            (
+                "read_review_history",
+                review_fields.clone(),
+                review_history.clone(),
+            ),
+            (
+                "read_review_target",
+                target_fields.clone(),
+                new_target.clone(),
+            ),
+            (
+                "read_review_eligibility",
+                json!({"locales":[locale]}),
+                not_ready.clone(),
+            ),
+            ("list_releases", json!({}), releases.clone()),
+        ] {
+            assert_eq!(
+                call(&window, command, scoped(&context, fields)).unwrap(),
+                saved,
+                "fixture restoration changed saved {command}"
+            );
+        }
+        assert_saved_evidence(&state);
+        assert_eq!(fs::read(destination.join(output_path)).unwrap(), expected);
+        call(
+            &window,
+            "close_project",
+            json!({"sessionToken":context["sessionToken"]}),
+        )
+        .unwrap();
+        cleanup.require_released_staging().unwrap();
+        // All original bytes, decisions and generic history were verified
+        // after physical restoration; only now can normal teardown remove root.
+        cleanup.parked_installation = None;
+    }
     drop(state);
     drop(window);
     drop(cleanup);
     drop(app);
 }
 
-#[test]
-#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
-fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_workers() {
-    journey(Materials {
+fn smapi_materials() -> Materials {
+    Materials {
         plugin: "stardew-smapi",
         profile_id: "smapi-i18n-flat",
         files: &[
@@ -1214,13 +1409,11 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
             .into_bytes()
         },
         rules: ["plugin:smapi.placeholders", "plugin:smapi.format"],
-    });
+    }
 }
 
-#[test]
-#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
-fn actual_webvtt_uninstall_preserves_manual_history_and_original_release_without_workers() {
-    journey(Materials {
+fn webvtt_materials() -> Materials {
+    Materials {
         plugin: "webvtt",
         profile_id: "webvtt-captions",
         files: &[(
@@ -1237,5 +1430,31 @@ fn actual_webvtt_uninstall_preserves_manual_history_and_original_release_without
                 .into_bytes()
         },
         rules: ["plugin:webvtt.source-structure", "plugin:webvtt.payload"],
-    });
+    }
+}
+
+#[test]
+#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
+fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_workers() {
+    journey(smapi_materials(), PackageLoss::ExactUninstall);
+}
+
+#[test]
+#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
+fn actual_webvtt_uninstall_preserves_manual_history_and_original_release_without_workers() {
+    journey(webvtt_materials(), PackageLoss::ExactUninstall);
+}
+
+#[test]
+#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
+fn actual_smapi_missing_installation_preserves_manual_history_and_original_release_without_workers()
+{
+    journey(smapi_materials(), PackageLoss::MissingInstallation);
+}
+
+#[test]
+#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
+fn actual_webvtt_missing_installation_preserves_manual_history_and_original_release_without_workers()
+ {
+    journey(webvtt_materials(), PackageLoss::MissingInstallation);
 }

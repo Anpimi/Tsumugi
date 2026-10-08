@@ -166,10 +166,14 @@ translation QA, build and release:
 cargo test -p tsumugi-desktop missing_package -- --ignored --test-threads=1
 ```
 
-Each test then revokes approval and uninstalls that exact installation through
-the registered commands. Reopening the project must preserve stored source,
-translation history and execution provenance, allow manual revisions, reject
-new package-dependent QA and builds, and export the original saved release bytes.
+For each format, one case revokes approval and uninstalls that exact installation
+through the registered commands. A second case retains approval while moving
+only its temporary installation object after the original workers have drained.
+Reopening the project must preserve stored source, translation history and
+execution provenance, allow manual revisions, reject new package-dependent QA
+and builds with the exact approval or missing-package error, and export the
+original saved release bytes. The missing-object cases verify physical fixture
+restoration; they do not implement application recovery.
 
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
