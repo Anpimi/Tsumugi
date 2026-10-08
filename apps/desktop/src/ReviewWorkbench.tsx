@@ -11,6 +11,7 @@ import { reviewCommands as commands, type Eligibility, type EligibilityReason,
   type ReviewHistoryPage, type ReviewSummaryPage, type WorkPage } from "./reviewCommands";
 import { reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
 import { useWorkbenchCommands } from "./workbenchCommands";
+import { useSessionQuery } from "./SessionReadProvider";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
@@ -46,21 +47,18 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [pageAfter, setPageAfter] = useState(0);
   const [history, setHistory] = useState<ReviewHistoryPage | null>(null);
   const [historyOffset, setHistoryOffset] = useState(0);
-  const [work, setWork] = useState<WorkPage | null>(null);
-  const [workOffset, setWorkOffset] = useState(0);
+  const [workCursor, setWorkCursor] = useState({ locale, offset: 0 });
   const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [languages, setLanguages] = useState<string[]>(project.metadata.targetLocales);
   const reason = failureReason(reasonValue) ?? "";
   const [readBusy, setReadBusy] = useState(false);
   const [leavePrompt, setLeavePrompt] = useState(false);
   const [batchPrompt, setBatchPrompt] = useState(false);
-  const busy = readBusy || busyMutation;
   const alive = useRef(false);
   const generation = useRef(0);
   const leaveResolver = useRef<((allowed: boolean) => void) | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const hasDraft = Object.values(drafts).some(value => value.length > 0);
-  const requestedWork = useRef(false);
   const lastCompletion = useRef(owner.state.completionVersion);
   const previousLocale = useRef(locale);
   const targetScope = project.metadata.targetLocales.join("\u0000");
@@ -74,6 +72,20 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const currentLocale = (value: string) => selectedLocale.current === value && localeAvailable(value);
   const targetAvailable = locale !== "" && project.metadata.targetLocales.includes(locale);
   const targetRemoved = locale !== "" && !targetAvailable;
+  // The cursor belongs to a language. An owner-driven language rebase must use
+  // page zero even before the cursor reset effect commits.
+  const workOffset = workCursor.locale === locale ? workCursor.offset : 0;
+  const workActive = open && tab === "work" && targetAvailable;
+  const workRead = useSessionQuery<WorkPage>({
+    key: ["review-work", locale, workOffset, 50], scopes: ["source", "translation", "resources", "review"],
+    enabled: workActive,
+    read: () => commands.work({ ...session, locale, offset: workOffset, limit: 50 }),
+  });
+  const work = workActive ? workRead.data ?? null : null;
+  const workLoading = workActive && workRead.isFetching && !work;
+  const workFailure = workActive && workRead.error ? errorReason(workRead.error) : null;
+  const workBusy = workActive && workRead.isFetching;
+  const busy = readBusy || busyMutation;
   const chosenCount = Object.keys(chosen).length;
   const invalidChosenLocale = Object.values(chosen).find(value => !project.metadata.targetLocales.includes(value.locale))?.locale;
   const invalidDraftKey = Object.keys(drafts).find(key => drafts[key].length > 0
@@ -158,6 +170,9 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     setEligibility(null);
     setReadBusy(false);
   }, [targetScope]);
+  useLayoutEffect(() => {
+    setWorkCursor(current => current.locale === locale ? current : { locale, offset: 0 });
+  }, [locale]);
 
   useEffect(() => {
     alive.current = true;
@@ -172,13 +187,12 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const ticket = beginViewRead(false);
     const localeChanged = previousLocale.current !== locale;
     previousLocale.current = locale;
-    if (localeChanged) { setSelected(null); setHistory(null); setPage(null); setWork(null); setEligibility(null); setPageAfter(0); setWorkOffset(0); }
+    if (localeChanged) { setSelected(null); setHistory(null); setPage(null); setEligibility(null); setPageAfter(0); }
     const after = localeChanged ? 0 : pageAfter;
     void commands.summaryPage({ ...session, locale, query: "", scopeId: null, afterOrdinal: after, limit: 50 })
       .then(async value => { if (alive.current && generation.current === ticket && currentLocale(locale)) {
         setPage(value);
-        if (requestedWork.current || tab === "work") { requestedWork.current = false; await loadWork(localeChanged ? 0 : workOffset); }
-        else if (selected && !localeChanged) await selectUnit(selected.unitId, retainedReview);
+        if (selected && !localeChanged && tab !== "work") await selectUnit(selected.unitId, retainedReview);
       } })
       .catch(error => { if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); } });
     return () => { generation.current++; };
@@ -197,13 +211,13 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     ]).then(([latest, previous]) => {
       if (!alive.current || generation.current !== ticket || !currentLocale(target.locale)) return;
       owner.observeProjection(latest, capture);
-      setHistory(previous); setHistoryOffset(0); setWork(null); setEligibility(null);
+      setHistory(previous); setHistoryOffset(0); setEligibility(null);
     }).catch(error => {
       if (alive.current && generation.current === ticket && currentLocale(target.locale)) setReason(errorReason(error));
     });
   }, [owner.state.completionVersion]);
   useImperativeHandle(ref, () => ({
-    showWork() { requestedWork.current = true; setTab("work"); setOpen(true); if (open) { requestedWork.current = false; void loadWork(workOffset); } },
+    showWork() { setTab("work"); setOpen(true); if (open && tab === "work" && targetAvailable) void workRead.refetch(); },
     allowLeave() {
       if (owner.inFlight() || batchRunning || pending) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); }
       if (!hasDraft && Object.keys(chosen).length === 0) return Promise.resolve(true);
@@ -221,17 +235,6 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       const value = await commands.summaryPage({ ...session, locale, query: "",
         scopeId: after === 0 ? null : page?.scopeId ?? null, afterOrdinal: after, limit: 50 });
       if (alive.current && generation.current === ticket && currentLocale(locale)) { setPage(value); setPageAfter(after); }
-    } catch (error) {
-      if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); }
-    } finally { if (alive.current && generation.current === ticket) setReadBusy(false); }
-  }
-  async function loadWork(offset: number) {
-    if (!currentLocale(locale)) return;
-    const ticket = beginViewRead(true);
-    setNotice(null);
-    try {
-      const value = await commands.work({ ...session, locale, offset, limit: 50 });
-      if (alive.current && generation.current === ticket && currentLocale(locale)) { setWork(value); setWorkOffset(offset); }
     } catch (error) {
       if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); }
     } finally { if (alive.current && generation.current === ticket) setReadBusy(false); }
@@ -294,7 +297,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       if (alive.current && generation.current === ticket && currentLocale(locale)) {
         setPage(newPage);
         if (newSelected && capture) owner.observeProjection(newSelected, capture);
-        setHistory(newHistory); setHistoryOffset(0); setWork(null); setEligibility(null);
+        setHistory(newHistory); setHistoryOffset(0); setEligibility(null);
       }
     } catch (error) {
       if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); }
@@ -342,14 +345,14 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
         {project.metadata.targetLocales.length === 0 ? <p>{t("review.noLocale")}</p> : null}
         {project.metadata.targetLocales.length > 0 || retainedReview ? <>
           <div className="review-header-fields">
-            <label>{t("review.targetLocale")}<select value={locale} disabled={busy} onChange={event => { setLocale(event.target.value); setSelected(null); }}>
+            <label>{t("review.targetLocale")}<select value={locale} disabled={readBusy || busyMutation} onChange={event => { setLocale(event.target.value); setSelected(null); }}>
               {targetRemoved ? <option value={locale}>{locale}</option> : null}
               {project.metadata.targetLocales.map(value => <option key={value} value={value}>{value}</option>)}
             </select></label>
             <label>{t("review.reviewer")}<input value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
           </div>
           <div className="form-actions" role="tablist" aria-label={t("review.title")}>
-            {(["review", "work", "eligibility"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => { setTab(value); if (value === "work" && !work) void loadWork(0); }}>
+            {(["review", "work", "eligibility"] as const).map(value => <button key={value} role="tab" aria-selected={tab === value} className={tab === value ? "primary-button" : "secondary-button"} onClick={() => setTab(value)}>
               {t(value === "review" ? "review.reviewTab" : value === "work" ? "review.workTab" : "review.eligibilityTab")}
             </button>)}
           </div>
@@ -415,9 +418,11 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
               </>}
             </section>
           </div> : null}
-          {tab === "work" ? <section><div className="form-actions"><button className="secondary-button" disabled={busy || !targetAvailable} onClick={() => void loadWork(0)}>{t("review.refresh")}</button></div>
-            {!work ? <p>{t("review.selectEntry")}</p> : <><p>{t("review.workCount", { count: work.total })}</p>{work.items.length === 0 ? <p>{t("review.workEmpty")}</p> : work.items.map(item => <div key={item.unitId} className="review-work-item"><button className="text-button" disabled={!targetAvailable} onClick={() => void selectUnit(item.unitId)}>{item.nativeKey}</button><ul>{[...new Set(item.reasons.map(queueReason))].map(value => <li key={value}>{value}</li>)}</ul></div>)}
-              <div className="form-actions"><button className="secondary-button" disabled={busy || !targetAvailable || workOffset === 0} onClick={() => void loadWork(0)}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || !targetAvailable || work.nextOffset === null} onClick={() => void loadWork(work.nextOffset!)}>{t("review.nextPage")}</button></div></>}
+          {tab === "work" ? <section><div className="form-actions"><button className="secondary-button" disabled={busy || workBusy || !targetAvailable} onClick={() => void workRead.refetch()}>{t("review.refresh")}</button></div>
+            {workLoading ? <p role="status">{t("review.workLoading")}</p> : null}
+            {workFailure && !workRead.isFetching ? <div role="alert">{t("review.error", { reason: failureReason(workFailure) ?? "failed" })}<CommandFailureDetails failure={workFailure} /></div> : null}
+            {work ? <><p>{t("review.workCount", { count: work.total })}</p>{work.items.length === 0 ? <p>{t("review.workEmpty")}</p> : work.items.map(item => <div key={item.unitId} className="review-work-item"><button className="text-button" disabled={!targetAvailable} onClick={() => void selectUnit(item.unitId)}>{item.nativeKey}</button><ul>{[...new Set(item.reasons.map(queueReason))].map(value => <li key={value}>{value}</li>)}</ul></div>)}</> : targetAvailable && !workLoading && !workFailure ? <p>{t("review.selectEntry")}</p> : null}
+            {work || workOffset > 0 ? <div className="form-actions"><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || workOffset === 0} onClick={() => setWorkCursor({ locale, offset: 0 })}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || !work || work.nextOffset === null} onClick={() => { if (work?.nextOffset != null) setWorkCursor({ locale, offset: work.nextOffset }); }}>{t("review.nextPage")}</button></div> : null}
           </section> : null}
           {tab === "eligibility" ? <section><p>{t("review.policy")}</p><p>{t("review.buildWarning")}</p><fieldset><legend>{t("review.chooseLanguages")}</legend>{project.metadata.targetLocales.map(value => <label key={value}><input type="checkbox" checked={languages.includes(value)} onChange={event => { setEligibility(null); setLanguages(previous => event.target.checked ? [...previous, value] : previous.filter(item => item !== value)); }} />{value}</label>)}</fieldset>
             <button className="primary-button" disabled={busy || languages.length === 0 || languages.some(value => !project.metadata.targetLocales.includes(value))} onClick={() => void assess()}>{t("review.assess")}</button>

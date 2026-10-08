@@ -1,9 +1,9 @@
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import { useLayoutEffect } from "react";
+import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
+import { createRef, useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ReviewWorkbench } from "./ReviewWorkbench";
+import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import type { ProjectView } from "./projectCommands";
 import type { ReviewTarget } from "./reviewCommands";
 import type { ReviewWrite } from "./reviewCommands";
@@ -11,6 +11,7 @@ import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
+import type { ChangeScope } from "./sessionReads";
 
 function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
   const commands = useWorkbenchCommands();
@@ -31,6 +32,10 @@ const makeTarget = (name: string): ReviewTarget => reviewTargetFixture({
 });
 function withLocales(locales: string[], revision: string): ProjectView {
   return { ...project, metadata: { ...project.metadata, targetLocales: locales, metadataRevision: revision } };
+}
+function workPage(target: ReviewTarget, nextOffset: number | null = null) {
+  return { items: [{ unitId: target.unitId, locale: target.locale, nativeKey: target.nativeKey,
+    basis: target.basis, reasons: [] }], total: nextOffset === null ? 1 : 2, nextOffset, coverage: "current" };
 }
 
 let targets: Record<string, ReviewTarget>;
@@ -531,6 +536,154 @@ it("releases a pending work read when a check receipt starts a newer view query"
   await user.click(screen.getByRole("tab", { name: "Review" }));
   expect(screen.getByRole("button", { name: "Refresh current evidence" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Run current checks" })).toBeEnabled();
+});
+
+it("opens the work queue directly while the summary read is still pending", async () => {
+  let finishSummary!: (value: unknown) => void;
+  const summary = new Promise(resolve => { finishSummary = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_summary_page" ? summary
+    : command === "read_review_work" ? workPage(targets.first) : original(command, args));
+  const handle = createRef<ReviewHandle>();
+  render(<ReviewWorkbench ref={handle} project={project} disabled={false} onOpenTranslation={() => true} />);
+
+  await act(async () => { handle.current!.showWork(); });
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_review_work")).toBe(true));
+  expect(screen.getByRole("tab", { name: "Work queue" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByRole("button", { name: "first" })).toBeVisible();
+  await act(async () => finishSummary(reviewSummaryPageFixture([reviewSummaryFor(targets.first)])));
+});
+
+it("shows a loading state before an empty work queue result", async () => {
+  let finishWork!: (value: unknown) => void;
+  const work = new Promise(resolve => { finishWork = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_work" ? work : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_review_work")).toBe(true));
+  expect(screen.getByText("Loading work queue…")).toBeVisible();
+  expect(screen.queryByText("Choose an entry to review.")).not.toBeInTheDocument();
+  await act(async () => finishWork({ items: [], total: 0, nextOffset: null, coverage: "current" }));
+  expect(await screen.findByText("No current work items in this language.")).toBeVisible();
+  expect(screen.queryByText("Loading work queue…")).not.toBeInTheDocument();
+});
+
+it("releases a pending work read on tab change and ignores its late result after reopening", async () => {
+  let finishOldWork!: (value: unknown) => void;
+  const oldWork = new Promise(resolve => { finishOldWork = resolve; });
+  const original = invoke.getMockImplementation()!;
+  let workReads = 0;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_work"
+    ? ++workReads === 1 ? oldWork : Promise.resolve(workPage(targets.second)) : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  await waitFor(() => expect(workReads).toBe(1));
+
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  expect(screen.getByRole("button", { name: "Refresh current evidence" })).toBeEnabled();
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  await waitFor(() => expect(workReads).toBe(2));
+  expect(await screen.findByRole("button", { name: "second" })).toBeVisible();
+  await act(async () => finishOldWork(workPage(targets.first)));
+  expect(screen.getByRole("button", { name: "second" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "first" })).not.toBeInTheDocument();
+});
+
+it("does not show a late work result from another project session", async () => {
+  let finishOldWork!: (value: unknown) => void;
+  const oldWork = new Promise(resolve => { finishOldWork = resolve; });
+  const next = { ...project, sessionToken: "session-2", metadata: { ...project.metadata, projectId: fixtureIdentity(800) } };
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: { sessionToken?: string } }) => command === "read_review_work"
+    ? args.request.sessionToken === project.sessionToken ? oldWork : Promise.resolve(workPage(targets.second))
+    : original(command, args));
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />, project);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([command, args]) => command === "read_review_work"
+    && args.request.sessionToken === project.sessionToken)).toBe(true));
+  view.rerender(null, next);
+  view.rerender(<ReviewWorkbench project={next} disabled={false} onOpenTranslation={() => true} />, next);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(await screen.findByRole("button", { name: "second" })).toBeVisible();
+  await act(async () => finishOldWork(workPage(targets.first)));
+  expect(screen.getByRole("button", { name: "second" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "first" })).not.toBeInTheDocument();
+});
+
+it.each(["source", "translation", "review"] as ChangeScope[])("refreshes an active work query on %s changes without rebinding a captured reason", async scope => {
+  const original = invoke.getMockImplementation()!;
+  let workReads = 0;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_work"
+    ? Promise.resolve(workPage(++workReads === 1 ? targets.first : targets.second)) : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.click(screen.getByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Keep captured reason");
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(await screen.findByRole("button", { name: "first" })).toBeVisible();
+  await refreshWorkbenchReads([scope]);
+  await waitFor(() => expect(workReads).toBe(2));
+  expect(await screen.findByRole("button", { name: "second" })).toBeVisible();
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  expect(screen.getByRole("checkbox", { name: "Approve selected entries: first" })).toBeChecked();
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep captured reason");
+});
+
+it("retries the failed work page at its requested cursor and can return to the first page", async () => {
+  const original = invoke.getMockImplementation()!;
+  let secondAttempts = 0;
+  invoke.mockImplementation((command: string, args: { request: { offset?: number } }) => {
+    if (command !== "read_review_work") return original(command, args);
+    if (args.request.offset === 0) return Promise.resolve(workPage(targets.first, 1));
+    if (++secondAttempts === 1) return Promise.reject(new Error("queue unavailable"));
+    return Promise.resolve(workPage(targets.second));
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(await screen.findByRole("button", { name: "first" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Next page" }));
+  expect(await screen.findByText(/This action could not complete/)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Refresh current evidence" }));
+  await waitFor(() => expect(secondAttempts).toBe(2));
+  expect(await screen.findByRole("button", { name: "second" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "First page" }));
+  expect(await screen.findByRole("button", { name: "first" })).toBeVisible();
+});
+
+it("resets the work cursor before reading a newly selected target language", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: { locale?: string; offset?: number } }) => {
+    if (command === "read_review_work") return Promise.resolve(args.request.locale === "ja"
+      ? workPage({ ...targets.second, locale: "ja" })
+      : args.request.offset === 0 ? workPage(targets.first, 1) : workPage(targets.second));
+    if (command === "read_review_summary_page" && args.request.locale === "ja") return reviewSummaryPageFixture([]);
+    return original(command, args);
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "1")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(await screen.findByRole("button", { name: "first" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Next page" }));
+  expect(await screen.findByRole("button", { name: "second" })).toBeVisible();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Target language" }), "ja");
+  await waitFor(() => expect(invoke.mock.calls.some(([command, args]) => command === "read_review_work"
+    && args.request.locale === "ja" && args.request.offset === 0)).toBe(true));
+  expect(invoke.mock.calls.filter(([command, args]) => command === "read_review_work"
+    && args.request.locale === "ja" && args.request.offset !== 0)).toEqual([]);
+  expect(screen.getByRole("button", { name: "second" })).toBeVisible();
 });
 
 it("does not carry a late review receipt into another project session", async () => {

@@ -7,6 +7,7 @@ import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "
 import { TranslationDraftSession } from "../TranslationDraftSession";
 import { ReviewDraftSession } from "../ReviewDraftSession";
 import { WorkbenchCommands, WorkbenchCommandsProvider } from "../workbenchCommands";
+import type { ChangeScope } from "../sessionReads";
 
 let currentReads: ReturnType<typeof useSessionReads> | undefined;
 function ReadControl() {
@@ -15,7 +16,9 @@ function ReadControl() {
   return null;
 }
 /** Synthetic invalidation, independent of native registration and heartbeat timing. */
-export async function refreshWorkbenchReads() { await act(async () => { currentReads?.invalidate(["execution"]); }); }
+export async function refreshWorkbenchReads(scopes: ChangeScope[] = ["execution"]) {
+  await act(async () => { currentReads?.invalidate(scopes); });
+}
 
 function WorkbenchTestShell({ children, project: retainedProject }: { children: ReactNode; project?: ProjectView }) {
   const [area, setArea] = useState<WorkspaceArea>("overview");

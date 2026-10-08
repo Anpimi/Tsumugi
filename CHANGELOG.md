@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Review work queues open without waiting for summaries, show loading separately from empty results, and refresh after relevant project changes. Leaving the queue releases its view wait; a failed page can be retried at its original cursor without replacing captured review work.
+
 - Save-and-next retains newer edits and original uncertain save requests, and stops late navigation after leaving the workspace or changing the target language.
 
 - Validate project names and target languages before saving from the leave dialog, keeping invalid drafts available to edit.

@@ -332,6 +332,7 @@ ai: {
       selectEntry: "请选择要审阅的条目。",
       nextPage: "下一页",
       previousPage: "首页",
+      workLoading: "正在加载待处理队列……",
       workEmpty: "此语言没有当前待处理项。",
       workCount: "{{count}} 个待处理项",
       queueReasonTranslation: "选择译文或明确允许源文回退",

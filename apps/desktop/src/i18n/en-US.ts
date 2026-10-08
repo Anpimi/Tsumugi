@@ -331,6 +331,7 @@ ai: {
       selectEntry: "Choose an entry to review.",
       nextPage: "Next page",
       previousPage: "First page",
+      workLoading: "Loading work queue…",
       workEmpty: "No current work items in this language.",
       workCount: "{{count}} work items",
       queueReasonTranslation: "Select or explicitly allow a source fallback",
