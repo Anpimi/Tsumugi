@@ -10,6 +10,7 @@ import type { EditorTarget } from "./TranslationWorkbench";
 import { reviewCommands as commands, type Eligibility, type EligibilityReason,
   type ReviewHistoryPage, type ReviewSummaryPage, type WorkPage } from "./reviewCommands";
 import { reviewDraftKey, useReviewDraftSession } from "./ReviewDraftSession";
+import { useWorkbenchCommands } from "./workbenchCommands";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
@@ -25,6 +26,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const { t } = useTranslation();
   const session = executionContext(project);
   const owner = useReviewDraftSession();
+  const commandRegistry = useWorkbenchCommands();
   const { locale, actor, drafts, selected, projection, chosen, pending, notice, reasonValue,
     busyMutation, activeCheckId, batchRunning, batchStatus } = owner.state;
   const setLocale = owner.setLocale;
@@ -83,6 +85,63 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const displayTarget = selected && projection?.unitId === selected.unitId && projection.locale === selected.locale
     ? projection : selected;
   const selectedStale = !!selected && !!displayTarget && selected.basis !== displayTarget.basis;
+  const commandScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  function reviewActionAvailability(requireSelection: boolean) {
+    if (!open || tab !== "review" || leavePrompt || batchPrompt) return { enabled: false, reason: "hidden" as const };
+    if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
+    const current = owner.current();
+    if (current.pending) return { enabled: false, reason: "pending-action" as const };
+    const target = current.selected;
+    const projection = current.projection && current.projection.unitId === target?.unitId && current.projection.locale === target?.locale
+      ? current.projection : target;
+    if (!target || !targetAvailable || target.basis !== projection?.basis
+      || (requireSelection && (!target.selectionId || !current.actor.trim()))) {
+      return { enabled: false, reason: "unavailable" as const };
+    }
+    return { enabled: true };
+  }
+  const decisionAvailability = () => reviewActionAvailability(true);
+  const checkAvailability = () => reviewActionAvailability(false);
+  function cancelAvailability() {
+    if (!open || tab !== "review" || leavePrompt || batchPrompt) return { enabled: false, reason: "hidden" as const };
+    const current = owner.current();
+    if (!current.selected || !current.activeCheckId) return { enabled: false, reason: "unavailable" as const };
+    return { enabled: true };
+  }
+  function retryAvailability() {
+    if (!open || leavePrompt || batchPrompt) return { enabled: false, reason: "hidden" as const };
+    if (busy || owner.inFlight()) return { enabled: false, reason: "busy" as const };
+    if (!owner.current().pending) return { enabled: false, reason: "unavailable" as const };
+    return { enabled: true };
+  }
+  useLayoutEffect(() => {
+    const removeApprove = commandRegistry.register({
+      id: "review.approve", nameKey: "review.approve", category: "review", scope: commandScope,
+      binding: null, risk: "writes-review", confirmation: "none", availability: decisionAvailability,
+      handler: () => { void decide("approve"); },
+    });
+    const removeRequestChanges = commandRegistry.register({
+      id: "review.request-changes", nameKey: "review.requestChanges", category: "review", scope: commandScope,
+      binding: null, risk: "writes-review", confirmation: "none", availability: decisionAvailability,
+      handler: () => { void decide("request-changes"); },
+    });
+    const removeCheck = commandRegistry.register({
+      id: "review.run-checks", nameKey: "review.check", category: "review", scope: commandScope,
+      binding: null, risk: "runs-review-checks", confirmation: "none", availability: checkAvailability,
+      handler: () => { void check(); },
+    });
+    const removeCancel = commandRegistry.register({
+      id: "review.cancel-checks", nameKey: "review.cancelCheck", category: "review", scope: commandScope,
+      binding: null, risk: "cancels-review-checks", confirmation: "none", availability: cancelAvailability,
+      handler: () => { void cancelCheck(); },
+    });
+    const removeRetry = commandRegistry.register({
+      id: "review.retry-pending", nameKey: "review.retry", category: "review", scope: commandScope,
+      binding: null, risk: "retries-review-action", confirmation: "none", availability: retryAvailability,
+      handler: () => { void owner.retryPending(); },
+    });
+    return () => { removeRetry(); removeCancel(); removeCheck(); removeRequestChanges(); removeApprove(); };
+  });
   function beginViewRead(showBusy: boolean) {
     const ticket = ++generation.current;
     setReadBusy(showBusy);
@@ -298,7 +357,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
           {notice ? <div role="status" className="execution-feedback">{notice === "saved" ? t("review.saved") : notice === "unknown" ? t("review.unknown") : notice === "conflict" ? t("review.conflict") : notice === "checkFailed" ? t("review.checkFailedHelp") : notice === "checkCancelled" ? t("review.checkCancelledHelp") : notice === "cancelRequested" ? t("review.cancelRequested") : reason === "reviewer-required" ? t("review.reviewerRequired") : reason === "reason-required" ? t("review.reasonRequired") : reason === "editor-unavailable" ? t("review.editorUnavailable") : t("review.error", { reason })}</div> : null}
           {pending && !owner.inFlight() && notice !== "unknown" ? <p role="status">{t("review.unknown")}</p> : null}
           {notice ? <CommandFailureDetails failure={reasonValue} /> : null}
-          {pending ? <button className="secondary-button" disabled={busy} onClick={() => void owner.retryPending()}>{t("review.retry")}</button> : null}
+          {pending ? <button className="secondary-button" disabled={!retryAvailability().enabled} onClick={() => commandRegistry.dispatch("review.retry-pending", commandScope)}>{t("review.retry")}</button> : null}
           {batchStatus ? <p role="status">{t("review.batchResult", { ...batchStatus, defaultValue: "{{applied}} recorded, {{conflicted}} changed, {{failed}} failed." })}</p> : null}
           {batchStatus?.notStarted ? <p role="status">{t("review.batchRemaining", { count: batchStatus.notStarted })}</p> : null}
           {batchRunning ? <button className="secondary-button" onClick={owner.stopBatch}>{t("review.batchCancel")}</button> : null}
@@ -332,10 +391,10 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                     onClick={() => owner.adoptCurrent()}>{t("review.useCurrentKeepReason")}</button>
                 </div> : null}
                 <label>{t("review.reason")}<textarea value={drafts[draftKey(selected)] ?? ""} onChange={event => owner.editReason(selected, event.target.value)} maxLength={4096} /></label>
-                <div className="form-actions"><button className="primary-button" disabled={busy || !!pending || !targetAvailable || selectedStale || !selected.selectionId || !actor.trim()} onClick={() => void decide("approve")}>{t("review.approve")}</button>
-                  <button className="secondary-button" disabled={busy || !!pending || !targetAvailable || selectedStale || !selected.selectionId || !actor.trim()} onClick={() => void decide("request-changes")}>{t("review.requestChanges")}</button>
+                <div className="form-actions"><button className="primary-button" disabled={!decisionAvailability().enabled} onClick={() => commandRegistry.dispatch("review.approve", commandScope)}>{t("review.approve")}</button>
+                  <button className="secondary-button" disabled={!decisionAvailability().enabled} onClick={() => commandRegistry.dispatch("review.request-changes", commandScope)}>{t("review.requestChanges")}</button>
                   {!selected.selectionId ? <button className="secondary-button" disabled={busy || !!pending || !targetAvailable || selectedStale || !actor.trim()} onClick={() => void fallback(!selected.currentFallback)}>{t(selected.currentFallback ? "review.withdrawFallback" : "review.fallback")}</button> : null}</div>
-                <div className="form-actions"><button className="secondary-button" disabled={busy || !!pending || !targetAvailable || selectedStale} onClick={() => void check()}>{busy ? t("review.checking") : t("review.check")}</button>{activeCheckId ? <button className="secondary-button" onClick={() => void cancelCheck()}>{t("review.cancelCheck")}</button> : null}</div>
+                <div className="form-actions"><button className="secondary-button" disabled={!checkAvailability().enabled} onClick={() => commandRegistry.dispatch("review.run-checks", commandScope)}>{busy ? t("review.checking") : t("review.check")}</button>{activeCheckId ? <button className="secondary-button" disabled={!cancelAvailability().enabled} onClick={() => commandRegistry.dispatch("review.cancel-checks", commandScope)}>{t("review.cancelCheck")}</button> : null}</div>
                 <h4>{t("review.qaCurrent")}</h4>{!displayTarget.currentCheck || displayTarget.currentCheck.basis !== displayTarget.basis ? <p>{t("review.qaMissing")}</p> : displayTarget.currentCheck.rules.map(rule => <div key={rule.rule} className="review-rule"><strong>{ruleLabel(rule.rule)}</strong> — {ruleStatusLabel(rule.status)}
                   {rule.reason ? <p>{ruleReasonLabel(rule.status)}</p> : null}
                   {rule.findings.map(finding => <div key={finding.issueId}><p>{findingLabel(finding.rule, finding.code)}{finding.rule === "terminology" ? `: ${finding.detail}` : ""}</p>

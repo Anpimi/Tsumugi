@@ -3,7 +3,8 @@ import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
 
 export type WorkbenchCommandId = "project.metadata.save" | "translation.save"
-  | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save";
+  | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
+  | "review.approve" | "review.request-changes" | "review.run-checks" | "review.cancel-checks" | "review.retry-pending";
 export interface CommandScope {
   projectId: string;
   sessionToken: string;
@@ -16,10 +17,11 @@ export interface CommandAvailability {
 export interface WorkbenchCommand {
   id: WorkbenchCommandId;
   nameKey: TranslationKey;
-  category: "project" | "translation";
+  category: "project" | "translation" | "review";
   scope: CommandScope;
   binding: "Mod+S" | null;
-  risk: "writes-project" | "writes-translation";
+  risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
+    | "cancels-review-checks" | "retries-review-action";
   confirmation: "none" | "required";
   availability: () => CommandAvailability;
   handler: () => void;

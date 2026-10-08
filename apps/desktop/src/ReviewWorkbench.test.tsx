@@ -1,4 +1,5 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { useLayoutEffect } from "react";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -9,6 +10,13 @@ import type { ReviewWrite } from "./reviewCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
+import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
+
+function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
+  const commands = useWorkbenchCommands();
+  useLayoutEffect(() => { capture(commands); }, [commands, capture]);
+  return null;
+}
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -49,6 +57,138 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("registers scoped Review commands for the committed view and removes them on unmount", async () => {
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  const view = render(<><ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>, project);
+  const command = (id: string) => registry.list(scope).find(value => value.id === id);
+  expect(command("review.approve")).toMatchObject({ nameKey: "review.approve", category: "review", scope,
+    binding: null, risk: "writes-review", confirmation: "none", availability: { enabled: false, reason: "hidden" } });
+  expect(command("review.request-changes")).toMatchObject({ nameKey: "review.requestChanges", category: "review", binding: null, risk: "writes-review" });
+  expect(command("review.run-checks")).toMatchObject({ nameKey: "review.check", category: "review", binding: null, risk: "runs-review-checks" });
+  expect(command("review.cancel-checks")).toMatchObject({ nameKey: "review.cancelCheck", category: "review", binding: null, risk: "cancels-review-checks" });
+  expect(command("review.retry-pending")).toMatchObject({ nameKey: "review.retry", category: "review", binding: null, risk: "retries-review-action" });
+
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  expect(command("review.approve")?.availability.enabled).toBe(true);
+  expect(command("review.request-changes")?.availability.enabled).toBe(true);
+  expect(command("review.run-checks")?.availability.enabled).toBe(true);
+  expect(command("review.cancel-checks")?.availability.enabled).toBe(false);
+  expect(command("review.retry-pending")?.availability.enabled).toBe(false);
+  expect(registry.dispatch("review.approve", { ...scope, area: "translation" })).toBe(false);
+  expect(registry.dispatch("review.approve", { ...scope, sessionToken: "older-session" })).toBe(false);
+  expect(registry.dispatch("review.approve", { ...scope, projectId: fixtureIdentity(999) })).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity" || name === "write_review_decision")).toHaveLength(0);
+
+  await user.click(screen.getByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.click(screen.getByRole("button", { name: "Approve selected entries (1)" }));
+  expect(command("review.approve")?.availability).toMatchObject({ enabled: false, reason: "hidden" });
+  expect(registry.dispatch("review.approve", scope)).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Stay and keep work" }));
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(command("review.approve")?.availability).toMatchObject({ enabled: false, reason: "hidden" });
+  expect(registry.dispatch("review.approve", scope)).toBe(false);
+  expect(screen.queryByRole("button", { name: "Approve selected entries (1)" })).not.toBeInTheDocument();
+  view.unmount();
+  expect(registry.list(scope)).toHaveLength(0);
+});
+
+it("keeps request-changes validation in the owner and routes its button through the same command", async () => {
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  render(<><ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  expect(registry.list(scope).find(value => value.id === "review.request-changes")?.availability.enabled).toBe(true);
+  await act(async () => { expect(registry.dispatch("review.request-changes", scope)).toBe(true); });
+  expect(await screen.findByText("Enter a reason for this action.")).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity" || name === "write_review_decision")).toHaveLength(0);
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Needs a correction");
+  await user.click(screen.getByRole("button", { name: "Request changes" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(1));
+  expect(invoke.mock.calls.find(([name]) => name === "write_review_decision")![1].request.decision)
+    .toMatchObject({ kind: "request-changes", reason: "Needs a correction", actor: "Reviewer A", unitId: targets.first.unitId,
+      locale: "zh-CN", expectedBasis: targets.first.basis });
+});
+
+it("retains the original pending Review request across subtabs, remount, and removed language", async () => {
+  const original = invoke.getMockImplementation()!;
+  let writes = 0;
+  invoke.mockImplementation(async (name: string, args: { request: Record<string, unknown> }) => {
+    const response = await original(name, args);
+    return name === "write_review_decision" && ++writes === 1 ? { ...response, actionId: fixtureIdentity(629) } : response;
+  });
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  const consumer = (current: ProjectView) => <><ReviewWorkbench project={current} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>;
+  const view = render(consumer(project), project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Original reason");
+  await act(async () => { expect(registry.dispatch("review.approve", scope)).toBe(true); });
+  await screen.findByRole("button", { name: "Retry the same action" });
+  const originalRequest = invoke.mock.calls.find(([name]) => name === "write_review_decision")![1].request;
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(registry.list(scope).find(value => value.id === "review.retry-pending")?.availability.enabled).toBe(true);
+  expect(screen.getByRole("button", { name: "Retry the same action" })).toBeVisible();
+  expect(registry.dispatch("review.approve", scope)).toBe(false);
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  expect(registry.list(scope).find(value => value.id === "review.retry-pending")?.availability.enabled).toBe(true);
+  view.rerender(null, project);
+  expect(registry.list(scope)).toHaveLength(0);
+  const removed = withLocales(["ja"], "2");
+  view.rerender(consumer(removed), removed);
+  expect(await screen.findByRole("button", { name: "Retry the same action" })).toBeEnabled();
+  expect(registry.list(scope).find(value => value.id === "review.retry-pending")?.availability.enabled).toBe(true);
+  expect(registry.dispatch("review.approve", scope)).toBe(false);
+  await act(async () => { expect(registry.dispatch("review.retry-pending", scope)).toBe(true); });
+  await waitFor(() => expect(writes).toBe(2));
+  const requests = invoke.mock.calls.filter(([name]) => name === "write_review_decision").map(([, args]) => args.request);
+  expect(requests).toEqual([originalRequest, originalRequest]);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+});
+
+it("cancels only the active check ID through the command while the Review owner is busy", async () => {
+  let finish!: (value: unknown) => void;
+  const reply = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((name: string, args: unknown) => name === "run_review_checks" ? reply
+    : name === "cancel_review_checks" ? Promise.resolve(true) : original(name, args));
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  const consumer = (disabled: boolean) => <><ReviewWorkbench project={project} disabled={disabled} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>;
+  const view = render(consumer(false), project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await act(async () => { expect(registry.dispatch("review.run-checks", scope)).toBe(true); });
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "run_review_checks")).toBe(true));
+  const checkRequest = invoke.mock.calls.find(([name]) => name === "run_review_checks")![1].request;
+  view.rerender(null, project);
+  expect(registry.list(scope)).toHaveLength(0);
+  view.rerender(consumer(true), project);
+  expect(await screen.findByRole("button", { name: "Cancel current check" })).toBeEnabled();
+  expect(registry.list(scope).find(value => value.id === "review.cancel-checks")?.availability.enabled).toBe(true);
+  expect(registry.dispatch("review.run-checks", scope)).toBe(false);
+  await act(async () => { expect(registry.dispatch("review.cancel-checks", scope)).toBe(true); });
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "cancel_review_checks")).toBe(true));
+  expect(invoke.mock.calls.find(([name]) => name === "cancel_review_checks")![1].request)
+    .toMatchObject({ actionId: checkRequest.actionId, projectId: project.metadata.projectId, sessionToken: project.sessionToken });
+  await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.actionId, "cancelled")));
+  expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeVisible();
+});
 
 it("rebases a clean review to an available target language before reading it", async () => {
   const user = userEvent.setup();
