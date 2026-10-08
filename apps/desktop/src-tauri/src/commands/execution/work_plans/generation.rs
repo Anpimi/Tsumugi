@@ -85,13 +85,64 @@ struct ComponentStart {
     authorized: bool,
     enqueue_unknown: bool,
 }
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum CapturePhase {
+    Prepare,
+    Start,
+}
+#[cfg(test)]
+pub(super) struct CaptureProbe {
+    reached: std::sync::mpsc::Sender<UnsignedDecimal>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+#[cfg(test)]
+impl CaptureProbe {
+    pub(super) fn new(
+        reached: std::sync::mpsc::Sender<UnsignedDecimal>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) -> Self {
+        Self { reached, release }
+    }
+
+    async fn after_successful_capture(self, revision: UnsignedDecimal) {
+        let _ = self.reached.send(revision);
+        // Dropping the test's sender releases immediately. A forgotten sender
+        // cannot hold a project operation indefinitely or change its result.
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            let _ = self.release.recv_timeout(Duration::from_secs(10));
+        })
+        .await;
+    }
+}
 #[derive(Default)]
 pub(super) struct GenerationSession {
     pending: BTreeMap<ExecutionId, ExecutionId>,
     prepared: BTreeMap<ExecutionId, Arc<PreparedComponent>>,
     starts: BTreeMap<ExecutionId, ComponentStart>,
+    #[cfg(test)]
+    probes: BTreeMap<(CapturePhase, ExecutionId), CaptureProbe>,
 }
 impl GenerationSession {
+    #[cfg(test)]
+    pub(super) fn arm_capture_probe(
+        &mut self,
+        phase: CapturePhase,
+        attempt: ExecutionId,
+        probe: CaptureProbe,
+    ) {
+        assert!(self.probes.insert((phase, attempt), probe).is_none());
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_attempt_state(&self, attempt: ExecutionId) -> (bool, bool, bool) {
+        (
+            self.pending.contains_key(&attempt),
+            self.prepared.contains_key(&attempt),
+            self.starts.contains_key(&attempt),
+        )
+    }
+
     pub(super) fn active(&self) -> bool {
         !self.pending.is_empty()
     }
@@ -99,6 +150,8 @@ impl GenerationSession {
         self.pending.clear();
         self.prepared.clear();
         self.starts.clear();
+        #[cfg(test)]
+        self.probes.clear();
     }
     fn discard(&mut self, attempt: ExecutionId) -> bool {
         if self.starts.contains_key(&attempt) {
@@ -309,6 +362,14 @@ pub async fn prepare_work_plan_generation_component(
             }
             let ticket = ExecutionId::new();
             generation.pending.insert(initial.attempt_id, ticket);
+            #[cfg(test)]
+            {
+                let probe = generation
+                    .probes
+                    .remove(&(CapturePhase::Prepare, initial.attempt_id));
+                return Ok((Some((ticket, scope, probe)), None));
+            }
+            #[cfg(not(test))]
             Ok((Some((ticket, scope)), None))
         },
     )?;
@@ -319,6 +380,9 @@ pub async fn prepare_work_plan_generation_component(
         if let Some(view) = existing {
             return Ok(view);
         }
+        #[cfg(test)]
+        let (ticket, captured_scope, probe) = pending.ok_or_else(mismatch)?;
+        #[cfg(not(test))]
         let (ticket, captured_scope) = pending.ok_or_else(mismatch)?;
         let component = request.component.clone();
         let capture_plugins = plugins.clone();
@@ -327,6 +391,12 @@ pub async fn prepare_work_plan_generation_component(
                 capture_plugins.capture_generation_component(&component)
             })
             .await;
+        #[cfg(test)]
+        if let (Some(probe), Ok(environment)) = (probe, &loaded) {
+            probe
+                .after_successful_capture(environment.captured.settings_revision)
+                .await;
+        }
         lease
             .run(
                 "prepare_work_plan_generation_component.finish",
@@ -484,12 +554,27 @@ pub async fn start_work_plan_generation_component(
                 .generation
                 .pending
                 .insert(initial.attempt_id, ticket);
+            #[cfg(test)]
+            {
+                let probe = host
+                    .work_plans
+                    .generation
+                    .probes
+                    .remove(&(CapturePhase::Start, initial.attempt_id));
+                return Ok(Some((ticket, prepared, deadline, probe)));
+            }
+            #[cfg(not(test))]
             Ok(Some((ticket, prepared, deadline)))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
+        #[cfg(test)]
+        let Some((ticket, prepared, deadline, probe)) = admitted.await? else {
+            return Ok(request.attempt_id);
+        };
+        #[cfg(not(test))]
         let Some((ticket, prepared, deadline)) = admitted.await? else {
             return Ok(request.attempt_id);
         };
@@ -517,6 +602,12 @@ pub async fn start_work_plan_generation_component(
                 Ok((environment, runner))
             })
             .await;
+        #[cfg(test)]
+        if let (Some(probe), Ok((environment, _))) = (probe, &loaded) {
+            probe
+                .after_successful_capture(environment.captured.settings_revision)
+                .await;
+        }
         lease
             .run(
                 "start_work_plan_generation_component.finish",

@@ -30,6 +30,14 @@ mod checks;
     target_os = "macos",
     target_arch = "aarch64"
 ))]
+#[path = "generation_settings_race.rs"]
+mod settings_race;
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 struct ComponentAction {
     scope: Value,
     preparing: Value,
