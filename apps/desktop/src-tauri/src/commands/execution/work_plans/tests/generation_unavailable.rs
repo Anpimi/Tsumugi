@@ -23,7 +23,7 @@ fn ordinary_consent(preflight: &Value) -> Value {
     })
 }
 
-fn settled(fixture: &Fixture) {
+pub(super) fn settled(fixture: &Fixture) {
     let deadline = Instant::now() + Duration::from_secs(15);
     while fixture.call("execution_status", json!({})).unwrap()["active"] == true {
         assert!(Instant::now() < deadline, "owned workers did not settle");
@@ -31,7 +31,7 @@ fn settled(fixture: &Fixture) {
     }
 }
 
-fn disable(fixture: &Fixture, package: &Value) -> Value {
+pub(super) fn disable(fixture: &Fixture, package: &Value) -> Value {
     let plugins = fixture.app.state::<AppState>().plugins.clone();
     let revision = plugins.environment_settings_revision().unwrap();
     call(

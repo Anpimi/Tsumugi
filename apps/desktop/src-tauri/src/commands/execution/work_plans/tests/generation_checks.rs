@@ -17,6 +17,9 @@ use tsumugi_plugin_host::{
 #[path = "generation_unavailable.rs"]
 mod unavailable;
 
+#[path = "shared_knowledge.rs"]
+mod shared_knowledge;
+
 fn ipc(window: &MockWebview, command: &str, fields: Option<Value>) -> Result<Value, Value> {
     call(
         window,

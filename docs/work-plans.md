@@ -336,3 +336,44 @@ retain explicit manual candidate saving. Standalone automated checks, resource
 adoption and delivery remain unavailable. The API is not a stable plugin SDK. A model or plugin must not receive unrestricted access to human-authorization
 methods, `ProjectStore` or the raw runtime; its host must carry the issued lease
 and parent identity through the scoped application entry points.
+
+## Installed shared-query conformance
+
+On macOS/aarch64, the desktop test
+`installed_conflicting_knowledge_choices_share_manual_batch_and_agent_queries`
+uses registered Tauri commands, actual installed packages and captured
+JavaScript workers. It requires the explicit package/digest variables
+`TSUMUGI_TEST_PLUGIN_PACKAGE` / `TSUMUGI_TEST_PLUGIN_DIGEST` for WebVTT,
+`TSUMUGI_TEST_KNOWLEDGE_PACKAGE` / `TSUMUGI_TEST_KNOWLEDGE_DIGEST` for the public
+philosophy example, and `TSUMUGI_TEST_SECOND_KNOWLEDGE_PACKAGE` /
+`TSUMUGI_TEST_SECOND_KNOWLEDGE_DIGEST` for a controlled `philosophy-alternative`
+copy. Select a compatible public SDK and use the plugin repository's public
+preparation and packaging tools; inspect each resulting package before supplying
+its exact directory and digest.
+
+For the second copy, keep the original query/check engine and public contracts.
+Change the terminology revision to `independent-editorial-2` and the selected
+soundness preference from `可靠性` to `健全性`; regenerate Resource pins using
+the example's original preparer. Then change the generated plugin ID and its
+text checker's own-package guard to `philosophy-alternative`. Retain the full
+identity and Resource checks. Package this copy separately, without rerunning
+the original preparer after changing its plugin identity.
+
+Supply `TSUMUGI_TEST_RUNTIME_TOOL`, `TSUMUGI_TEST_RUNTIME_HOST` and
+`TSUMUGI_TEST_RUNTIME_APPROVAL` for the compatible captured runtime artifacts
+and descriptor, as described by the public Host conformance documentation. Run:
+
+```sh
+cargo test --locked -p tsumugi-desktop --features execution-test-host installed_conflicting_knowledge_choices_share_manual_batch_and_agent_queries -- --test-threads=1
+```
+
+The synthetic projects exercise both installation orders. Literal single-item
+and batch inputs use the original public query presentation; the scoped Agent
+derives the same payload from captured source. Conflicting results keep their
+own selected provider and Resource provenance, remain unadopted, and do not
+alter the model budget or current translation. The test also covers independent
+tool/model budget boundaries, duplicate-start reconciliation, disabling one package and reading
+the original results after reopening. Its only model response comes from a
+credential-free loopback fixture. The Tauri window is a mock; this establishes
+backend/process conformance, not rendered editor navigation, native GUI behavior,
+model quality or release readiness.
