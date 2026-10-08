@@ -20,6 +20,9 @@ mod unavailable;
 #[path = "shared_knowledge.rs"]
 mod shared_knowledge;
 
+#[path = "generation_deadline.rs"]
+mod deadline;
+
 fn ipc(window: &MockWebview, command: &str, fields: Option<Value>) -> Result<Value, Value> {
     call(
         window,
