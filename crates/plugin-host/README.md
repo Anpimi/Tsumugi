@@ -709,6 +709,42 @@ features `[]` can use this same test file to exclude legacy execution fixtures.
 This does not establish rendered editor/batch/Agent workflows, behavior-version
 upgrade compatibility or complete release acceptance.
 
+The `knowledge` test's `version_compatibility` module uses the original reviewed
+philosophy package as `TSUMUGI_TEST_PLUGIN_PACKAGE`/`TSUMUGI_TEST_PLUGIN_DIGEST`.
+Prepare three additional controlled copies in the same public example/SDK-cache
+layout described above. Each retains the original plugin ID `philosophy`; set
+its `package.json` version before running the original public preparer:
+
+| Fixture variables | Controlled package version | Independent change |
+| --- | --- | --- |
+| `TSUMUGI_TEST_BEHAVIOR_PACKAGE`/`TSUMUGI_TEST_BEHAVIOR_DIGEST` | `0.1.0-alpha.2` | Set only the query capability's `behaviorVersion` to 2. In the engine's **query** branch, use case-sensitive `row.text.includes(form)` instead of Unicode word-boundary occurrence; describe literal substring matching in that query's `basis.coverage`. Keep the check branch, query input/output schemas and Profile unchanged. |
+| `TSUMUGI_TEST_PROFILE_PACKAGE`/`TSUMUGI_TEST_PROFILE_DIGEST` | `0.1.0-alpha.3` | Set `PROFILE.behaviorVersion` to 2, retaining the original capability/data identities and engine. |
+| `TSUMUGI_TEST_SCHEMA_PACKAGE`/`TSUMUGI_TEST_SCHEMA_DIGEST` | `0.1.0-alpha.4` | Set `schemaVersion` to 2 on the query capability, its input/output schemas and `RESOURCE_SCHEMA`; retain behavior/Profile identities and original JSON field types and engine. |
+
+Make the declaration changes in the copy's `components/definition.mjs`; change
+the query implementation only in the behavior fixture. Regenerate each copy's
+manifest/tool/review Resources using `tooling/prepare.mjs`, materialize it with
+the public package recipe and independently inspect its exact directory/digest.
+These versions identify controlled conformance fixtures, not published releases.
+With all reviewed package and runtime variables set, run:
+
+```sh
+cargo test -p tsumugi-plugin-host --features javascript-conformance --test knowledge --locked -- --test-threads=1
+```
+
+Actual installed/reopened package bytes and real query channels distinguish
+`soundtrack` under the two behaviors despite identical payload field types.
+Old and new versions coexist; explicit contract/Profile selection follows exact
+identities in either registration order. Wrong contract, Profile or input/output
+data versions are refused on the original channel before dispatch, after which
+an exact request still succeeds. Resource schema versions are also exact.
+SDK identity and process protocol are checked separately on the actual captured
+runtime descriptor: a structurally valid unsupported SDK identity or retained
+process-1 identity is diagnosed and refused, without a package-version fallback.
+This proves the current bounded selection/dispatch policy, not execution of an
+arbitrary future SDK artifact, automatic project environment adoption or a
+permanent promise to freeze all future contracts.
+
 ```sh
 cargo test -p tsumugi-plugin-host --features conformance-worker --locked
 ```

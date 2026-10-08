@@ -92,12 +92,12 @@ pub async fn launch(
     .unwrap()
 }
 
-pub async fn invoke_received(
-    session: &mut ProcessSession,
+pub fn request_for(
+    session: &ProcessSession,
     binding: &CapabilityBinding,
     dispatch: &str,
     value: &Value,
-) -> ReceivedResult {
+) -> InvocationRequest {
     // Actual child identity comes from the Host, independently of request data.
     let channel = session.channel();
     assert_eq!(channel.provider.selection(), binding.provider);
@@ -106,7 +106,7 @@ pub async fn invoke_received(
     let input =
         EncodedPayload::capture(binding.declaration.input_schema.clone(), value.to_string())
             .unwrap();
-    let request = InvocationRequest {
+    InvocationRequest {
         context: InvocationContext {
             project_id: "synthetic-project".into(),
             scope_id: "synthetic-project".into(),
@@ -133,7 +133,17 @@ pub async fn invoke_received(
         output_schema: binding.declaration.output_schema.clone(),
         error_schema: binding.declaration.error_schema.clone(),
         max_result_bytes: MAX_EXCHANGE_BYTES as u32,
-    };
+    }
+}
+
+pub async fn invoke_received(
+    session: &mut ProcessSession,
+    binding: &CapabilityBinding,
+    dispatch: &str,
+    value: &Value,
+) -> ReceivedResult {
+    let channel = session.channel();
+    let request = request_for(session, binding, dispatch, value);
     let received = session.invoke(&request, || false, || true).await.unwrap();
     assert_eq!(received.channel().provider, channel.provider);
     assert_eq!(received.channel().child_pid, channel.child_pid);
