@@ -157,6 +157,19 @@ and its original Core authorization. After explicit reinstallation and project
 reopen, confirming a completed original removal must preserve the new instance.
 Native GUI and other platform acceptance remain separate checks.
 
+On macOS arm64, with the same three runtime variables, the opt-in missing-package
+workflow test installs the pinned SMAPI package in a temporary Store and runs its
+actual source extraction, independent checks, translation QA, build and release:
+
+```text
+cargo test -p tsumugi-desktop missing_package -- --ignored --test-threads=1
+```
+
+It then revokes approval and uninstalls that exact installation through the
+registered commands. Reopening the project must preserve stored source,
+translation history and execution provenance, allow manual revisions, reject
+new package-dependent QA and builds, and export the original saved release bytes.
+
 The experimental, standalone [plugin SDK](crates/plugin-sdk) provides
 data contracts and a schema/validation harness without depending on Core. It
 validates declarations, content/execution frames and captured check coverage;
