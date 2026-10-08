@@ -1,4 +1,4 @@
-//! Actual SMAPI execution followed by exact package removal and generic reuse.
+//! Actual included-package execution, exact removal and generic reuse.
 //! Only window transport and directory picker results are synthetic.
 use super::{
     native::{call, completed, consent, consents, scoped},
@@ -333,21 +333,36 @@ fn one_result(detail: &Value) -> Value {
     detail["items"][0]["resultId"].clone()
 }
 
-#[test]
-#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
-fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_workers() {
-    const SOURCE: &str = "Hello {{name}} 👩🏽‍💻";
-    const OLD_TEXT: &str = "你好 {{name}} 👩🏽‍💻";
-    const NEW_TEXT: &str = "手工更新 {{name}} 👩🏽‍💻 e\u{301}";
-    const MANIFEST: &str = r#"{"Name":"Synthetic mod","Author":"Synthetic","Version":"1.0.0","Description":"Synthetic acceptance input","UniqueID":"Synthetic.Included","EntryDll":"Synthetic.dll"}"#;
-    const SOURCE_JSON: &str = "{\"message\":\"Hello {{name}} 👩🏽‍💻\"}";
-    const OUTPUT: &str = "i18n/zh.json";
+struct Materials {
+    plugin: &'static str,
+    profile_id: &'static str,
+    files: &'static [(&'static str, &'static str)],
+    source_text: &'static str,
+    locale: &'static str,
+    old_text: &'static str,
+    new_text: &'static str,
+    output_path: &'static str,
+    output: fn(&str) -> Vec<u8>,
+    rules: [&'static str; 2],
+}
+
+fn journey(material: Materials) {
+    let locale = material.locale;
+    let output_path = material.output_path;
+    let source_text = material.source_text;
+    let old_text = material.old_text;
+    let new_text = material.new_text;
+    let expected_profile = tsumugi_plugin_sdk::ContractRef {
+        id: material.profile_id.into(),
+        schema_version: 1,
+        behavior_version: 1,
+    };
     let owned = OwnedDirectory::new();
     let pin = crate::plugin_bundle::selection()
         .unwrap()
         .packages
         .into_iter()
-        .find(|pin| pin.id == "stardew-smapi")
+        .find(|pin| pin.id == material.plugin)
         .unwrap();
     let package_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("resources/bundled-plugins")
@@ -440,14 +455,20 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         "review-profile"
     );
     assert_eq!(source_view["environmentDigest"], environment);
+    assert_eq!(
+        source_view["declaration"]["profile"],
+        json!(&expected_profile)
+    );
     let project_path = owned.path().join("project");
-    let project = call(&window, "create_project", json!({"destination":project_path,"displayName":"Missing package acceptance","sourceLocale":"en-US","targetLocales":["zh-CN"]})).unwrap();
+    let project = call(&window, "create_project", json!({"destination":project_path,"displayName":"Missing package acceptance","sourceLocale":"en-US","targetLocales":[locale]})).unwrap();
     let mut context = json!({"sessionToken":project["sessionToken"],"projectId":project["metadata"]["projectId"]});
     let directory = owned.path().join("materials");
     fs::create_dir(&directory).unwrap();
-    fs::create_dir(directory.join("i18n")).unwrap();
-    fs::write(directory.join("manifest.json"), MANIFEST).unwrap();
-    fs::write(directory.join("i18n/default.json"), SOURCE_JSON).unwrap();
+    for &(path, raw) in material.files {
+        let path = directory.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, raw).unwrap();
+    }
     let selection = ExecutionId::new();
     let fixed_choice = source_choice.clone();
     state.sessions.with(move |sessions| {
@@ -478,7 +499,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
     )
     .unwrap();
     assert_eq!(preview["rows"].as_array().unwrap().len(), 1);
-    assert_eq!(preview["rows"][0]["occurrence"]["text"], SOURCE);
+    assert_eq!(preview["rows"][0]["occurrence"]["text"], source_text);
     let source_adoption = ExecutionId::new();
     call(&window, "prepare_source_adoption", scoped(&context, json!({"attemptId":source_attempt,"resultId":source_result,"actionId":source_adoption,"confirmation":preview["confirmation"]}))).unwrap();
     let source_check = call(&window, "prepare_source_check", scoped(&context, json!({"sourceAttemptId":source_attempt,"sourceResultId":source_result,"attemptId":ExecutionId::new(),"source":source_choice}))).unwrap();
@@ -509,17 +530,17 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         "read_review_page",
         scoped(
             &context,
-            json!({"locale":"zh-CN","afterOrdinal":0,"limit":50}),
+            json!({"locale":locale,"afterOrdinal":0,"limit":50}),
         ),
     )
     .unwrap();
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     let unit = page["rows"][0]["unitId"].clone();
     let source_revision = page["rows"][0]["sourceRevisionId"].clone();
-    let first_manual = call(&window, "save_translation_revision", scoped(&context, json!({"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN","sourceRevisionId":source_revision,"expectedSelectionId":null,"text":OLD_TEXT}))).unwrap();
-    assert_eq!(first_manual["revision"]["text"], OLD_TEXT);
+    let first_manual = call(&window, "save_translation_revision", scoped(&context, json!({"actionId":ExecutionId::new(),"unitId":unit,"locale":locale,"sourceRevisionId":source_revision,"expectedSelectionId":null,"text":old_text}))).unwrap();
+    assert_eq!(first_manual["revision"]["text"], old_text);
     assert_eq!(first_manual["revision"]["originKind"], "manual");
-    let target_fields = json!({"unitId":unit,"locale":"zh-CN"});
+    let target_fields = json!({"unitId":unit,"locale":locale});
     let target = call(
         &window,
         "read_review_target",
@@ -528,7 +549,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
     .unwrap();
     let qa_intent = scoped(
         &context,
-        json!({"unitId":unit,"locale":"zh-CN","expectedBasis":target["basis"],"actionId":ExecutionId::new(),"advisoryChecks":[]}),
+        json!({"unitId":unit,"locale":locale,"expectedBasis":target["basis"],"actionId":ExecutionId::new(),"advisoryChecks":[]}),
     );
     let qa = call(&window, "prepare_review_checks", qa_intent.clone()).unwrap();
     assert_eq!(qa["kind"], "plugin");
@@ -567,21 +588,21 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         [
             "required-translation",
             "terminology",
-            "plugin:smapi.placeholders",
-            "plugin:smapi.format"
+            material.rules[0],
+            material.rules[1]
         ]
         .into_iter()
         .collect()
     );
-    let decision = call(&window, "write_review_decision", scoped(&context, json!({"decision":{"projectId":context["projectId"],"unitId":unit,"locale":"zh-CN","expectedBasis":checked_target["basis"],"expectedDecisionId":null,"actor":"Synthetic reviewer","kind":"approve","reason":"Checked exact selection","actionId":ExecutionId::new()}}))).unwrap();
+    let decision = call(&window, "write_review_decision", scoped(&context, json!({"decision":{"projectId":context["projectId"],"unitId":unit,"locale":locale,"expectedBasis":checked_target["basis"],"expectedDecisionId":null,"actor":"Synthetic reviewer","kind":"approve","reason":"Checked exact selection","actionId":ExecutionId::new()}}))).unwrap();
     let eligibility = call(
         &window,
         "read_review_eligibility",
-        scoped(&context, json!({"locales":["zh-CN"]})),
+        scoped(&context, json!({"locales":[locale]})),
     )
     .unwrap();
     assert_eq!(eligibility["ready"], true);
-    let build_fields = json!({"build":build_choice,"expectedEligibilityBasis":eligibility["basis"],"choices":[{"locale":"zh-CN","outputPaths":[OUTPUT],"configuration":[]}]});
+    let build_fields = json!({"build":build_choice,"expectedEligibilityBasis":eligibility["basis"],"choices":[{"locale":locale,"outputPaths":[output_path],"configuration":[]}]});
     let mut build_request = scoped(&context, build_fields.clone());
     build_request["attemptId"] = json!(ExecutionId::new());
     let build = call(&window, "prepare_plugin_build", build_request).unwrap();
@@ -639,11 +660,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
     let releases = call(&window, "list_releases", context.clone()).unwrap();
     assert_eq!(releases.as_array().unwrap().len(), 1);
     let release_id: ExecutionId = serde_json::from_value(releases[0]["releaseId"].clone()).unwrap();
-    let expected = format!(
-        "{{\n  \"message\": {}\n}}\n",
-        serde_json::to_string(OLD_TEXT).unwrap()
-    )
-    .into_bytes();
+    let expected = (material.output)(old_text);
     let expected_digest = tsumugi_core::content::artifact_digest(&expected);
     let frames = state
         .sessions
@@ -674,7 +691,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
             package.package_digest
         );
         assert_eq!(binding.environment, runtime_approval.environment);
-        assert!(binding.profile.is_some());
+        assert_eq!(binding.profile.as_ref(), Some(&expected_profile));
         assert_eq!(
             frame.input.digest(),
             tsumugi_plugin_sdk::payload_digest(std::str::from_utf8(frame.input.bytes()).unwrap())
@@ -708,18 +725,16 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         let release = store.release_view(release_id).unwrap();
         assert_eq!(
             store
-                .release_artifact_by_path(release_id, "zh-CN", OUTPUT)
+                .release_artifact_by_path(release_id, locale, output_path)
                 .unwrap()
                 .1,
             expected_bytes
         );
         (source, release)
     });
-    assert_eq!(source_bundle.files.len(), 2);
-    for (path, raw) in [
-        ("manifest.json", MANIFEST),
-        ("i18n/default.json", SOURCE_JSON),
-    ] {
+    assert_eq!(source_bundle.profile, expected_profile);
+    assert_eq!(source_bundle.files.len(), material.files.len());
+    for &(path, raw) in material.files {
         let file = source_bundle
             .files
             .iter()
@@ -743,7 +758,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         scoped(&context, json!({"offset":0,"limit":50})),
     )
     .unwrap();
-    let translation_fields = json!({"unitId":unit,"locale":"zh-CN","afterOrdinal":"0","limit":50});
+    let translation_fields = json!({"unitId":unit,"locale":locale,"afterOrdinal":"0","limit":50});
     let first_history = call(
         &window,
         "read_translation_history",
@@ -751,7 +766,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
     )
     .unwrap();
     assert_eq!(first_history["rows"], json!([first_manual["revision"]]));
-    let review_fields = json!({"unitId":unit,"locale":"zh-CN","offset":0,"limit":50});
+    let review_fields = json!({"unitId":unit,"locale":locale,"offset":0,"limit":50});
     let review_history = call(
         &window,
         "read_review_history",
@@ -905,19 +920,19 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         scoped(&context, target_fields.clone()),
     )
     .unwrap();
-    assert_eq!(old_target["translationText"], OLD_TEXT);
+    assert_eq!(old_target["translationText"], old_text);
     assert_eq!(old_target["currentCheck"], checked);
     assert_eq!(old_target["currentDecision"], decision);
     let manual_request = scoped(
         &context,
-        json!({"actionId":ExecutionId::new(),"unitId":unit,"locale":"zh-CN","sourceRevisionId":source_revision,"expectedSelectionId":old_target["selectionId"],"text":NEW_TEXT}),
+        json!({"actionId":ExecutionId::new(),"unitId":unit,"locale":locale,"sourceRevisionId":source_revision,"expectedSelectionId":old_target["selectionId"],"text":new_text}),
     );
     let manual = call(&window, "save_translation_revision", manual_request.clone()).unwrap();
     assert_eq!(
         call(&window, "save_translation_revision", manual_request).unwrap(),
         manual
     );
-    assert_eq!(manual["revision"]["text"], NEW_TEXT);
+    assert_eq!(manual["revision"]["text"], new_text);
     assert_eq!(manual["revision"]["originKind"], "manual");
     assert_ne!(
         manual["revision"]["revisionId"],
@@ -933,9 +948,9 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         scoped(&context, target_fields.clone()),
     )
     .unwrap();
-    assert_eq!(new_target["sourceText"], SOURCE);
+    assert_eq!(new_target["sourceText"], source_text);
     assert_eq!(new_target["sourceRevisionId"], source_revision);
-    assert_eq!(new_target["translationText"], NEW_TEXT);
+    assert_eq!(new_target["translationText"], new_text);
     assert_ne!(new_target["basis"], old_target["basis"]);
     assert!(new_target["currentCheck"].is_null());
     assert!(new_target["currentDecision"].is_null());
@@ -951,19 +966,19 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
     let not_ready = call(
         &window,
         "read_review_eligibility",
-        scoped(&context, json!({"locales":["zh-CN"]})),
+        scoped(&context, json!({"locales":[locale]})),
     )
     .unwrap();
     assert_eq!(not_ready["ready"], false);
     assert_ne!(not_ready["basis"], eligibility["basis"]);
     let refused_qa_action = ExecutionId::new();
-    let refused_qa = call(&window, "prepare_review_checks", scoped(&context, json!({"unitId":unit,"locale":"zh-CN","expectedBasis":new_target["basis"],"actionId":refused_qa_action,"advisoryChecks":[]}))).unwrap_err();
+    let refused_qa = call(&window, "prepare_review_checks", scoped(&context, json!({"unitId":unit,"locale":locale,"expectedBasis":new_target["basis"],"actionId":refused_qa_action,"advisoryChecks":[]}))).unwrap_err();
     assert_eq!(refused_qa["code"], "permission-denied");
     assert_eq!(refused_qa["reason"], "plugin-approval-mismatch");
     assert_eq!(refused_qa["outcome"], "rejected");
     assert_eq!(refused_qa["recoveryRequired"], false);
     let refused_build_attempt = ExecutionId::new();
-    let refused_build = call(&window, "prepare_plugin_build", scoped(&context, json!({"attemptId":refused_build_attempt,"build":build_choice,"expectedEligibilityBasis":not_ready["basis"],"choices":[{"locale":"zh-CN","outputPaths":[OUTPUT],"configuration":[]}]}))).unwrap_err();
+    let refused_build = call(&window, "prepare_plugin_build", scoped(&context, json!({"attemptId":refused_build_attempt,"build":build_choice,"expectedEligibilityBasis":not_ready["basis"],"choices":[{"locale":locale,"outputPaths":[output_path],"configuration":[]}]}))).unwrap_err();
     assert_eq!(refused_build["code"], "permission-denied");
     assert_eq!(refused_build["reason"], "plugin-approval-mismatch");
     assert_eq!(refused_build["outcome"], "rejected");
@@ -1038,7 +1053,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         call(&window, "export_release", export_request).unwrap(),
         delivery
     );
-    assert_eq!(fs::read(destination.join(OUTPUT)).unwrap(), expected);
+    assert_eq!(fs::read(destination.join(output_path)).unwrap(), expected);
     let final_history = call(
         &window,
         "read_translation_history",
@@ -1046,7 +1061,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
     )
     .unwrap();
     assert_eq!(final_history["total"], "2");
-    assert_eq!(final_history["currentText"], NEW_TEXT);
+    assert_eq!(final_history["currentText"], new_text);
     assert_eq!(
         final_history["rows"],
         json!([first_manual["revision"], manual["revision"]])
@@ -1116,7 +1131,7 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         call(
             &window,
             "read_review_eligibility",
-            scoped(&context, json!({"locales":["zh-CN"]}))
+            scoped(&context, json!({"locales":[locale]}))
         )
         .unwrap(),
         not_ready
@@ -1154,13 +1169,13 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
         assert_eq!(
             active
                 .store
-                .release_artifact_by_path(release_id, "zh-CN", OUTPUT)
+                .release_artifact_by_path(release_id, locale, output_path)
                 .unwrap()
                 .1,
             expected_bytes
         );
     });
-    assert_eq!(fs::read(destination.join(OUTPUT)).unwrap(), expected);
+    assert_eq!(fs::read(destination.join(output_path)).unwrap(), expected);
     call(
         &window,
         "close_project",
@@ -1171,4 +1186,56 @@ fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_
     drop(window);
     drop(cleanup);
     drop(app);
+}
+
+#[test]
+#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
+fn actual_smapi_uninstall_preserves_manual_history_and_original_release_without_workers() {
+    journey(Materials {
+        plugin: "stardew-smapi",
+        profile_id: "smapi-i18n-flat",
+        files: &[
+            (
+                "manifest.json",
+                r#"{"Name":"Synthetic mod","Author":"Synthetic","Version":"1.0.0","Description":"Synthetic acceptance input","UniqueID":"Synthetic.Included","EntryDll":"Synthetic.dll"}"#,
+            ),
+            ("i18n/default.json", "{\"message\":\"Hello {{name}} 👩🏽‍💻\"}"),
+        ],
+        source_text: "Hello {{name}} 👩🏽‍💻",
+        locale: "zh-CN",
+        old_text: "你好 {{name}} 👩🏽‍💻",
+        new_text: "手工更新 {{name}} 👩🏽‍💻 e\u{301}",
+        output_path: "i18n/zh.json",
+        output: |text| {
+            format!(
+                "{{\n  \"message\": {}\n}}\n",
+                serde_json::to_string(text).unwrap()
+            )
+            .into_bytes()
+        },
+        rules: ["plugin:smapi.placeholders", "plugin:smapi.format"],
+    });
+}
+
+#[test]
+#[ignore = "requires explicit independently approved macOS arm64 Node tool, Host and runtime approval trees"]
+fn actual_webvtt_uninstall_preserves_manual_history_and_original_release_without_workers() {
+    journey(Materials {
+        plugin: "webvtt",
+        profile_id: "webvtt-captions",
+        files: &[(
+            "source.vtt",
+            "WEBVTT\r\n\r\nCue\r\n00:00:01.000 --> 00:00:02.000\r\nHello 👩🏽‍💻\r\n\r\n",
+        )],
+        source_text: "Hello 👩🏽‍💻",
+        locale: "zh-CN",
+        old_text: "你好 👩🏽‍💻",
+        new_text: "手工更新 👩🏽‍💻 e\u{301}",
+        output_path: "zh-CN.vtt",
+        output: |text| {
+            format!("WEBVTT\r\n\r\nCue\r\n00:00:01.000 --> 00:00:02.000\r\n{text}\r\n\r\n")
+                .into_bytes()
+        },
+        rules: ["plugin:webvtt.source-structure", "plugin:webvtt.payload"],
+    });
 }
