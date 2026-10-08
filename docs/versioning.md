@@ -1,5 +1,16 @@
 # Application versioning and changelog maintenance
 
+Execution quiescence now waits for actual owned producer and outcome-query
+thread exit, including threads retired after cancellation or timeout. Revoking
+the result channel no longer implies safe cleanup or allows an early runtime
+generation rotation, project close or directory rename. New work stays blocked
+while quiescing; a producer that never exits requires application restart rather
+than a successful unload claim. This lifecycle correction changes no project
+schema, IPC, Store/SDK/process contract, dependency or version source. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch and bilingual
+Unreleased entries require no additional bump or historical migration. Desktop
+package removal and full component lifecycle acceptance remain separate work.
+
 The experimental Host Store adds explicit removal of an exact sealed package
 installation. Callers first remove its local approval through the existing
 revisioned settings decision and stop/drain its original instances. Disabled

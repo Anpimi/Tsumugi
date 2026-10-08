@@ -213,6 +213,142 @@ fn setup() -> (
     (temp, app, webview, context)
 }
 
+#[test]
+fn retired_query_blocks_session_close_and_generation_rotation_until_thread_exit() {
+    let (_directory, app, webview, context) = setup();
+    let (release, generation, attempt, before) =
+        app.state::<AppState>().sessions.with(|sessions| {
+            let active = sessions.active.as_mut().unwrap();
+            let (host, store) = active.execution_parts().unwrap();
+            let input =
+                test_support::input(store, test_support::FixtureMode::Unknown, 0, false).unwrap();
+            host.runtime.submit(store, &input).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while host.runtime.has_active_work(store).unwrap() {
+                host.runtime.tick(store).unwrap();
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            let attempt = input.envelope().attempt_id;
+            let query = Arc::new(
+                host.runtime
+                    .outcome_query(store, attempt, input.envelope().items[0].item_id)
+                    .unwrap()
+                    .unwrap(),
+            );
+            let (release, wait) = mpsc::sync_channel(1);
+            let (sender, receiver) = mpsc::channel();
+            let held = query.clone();
+            let thread = std::thread::spawn(move || {
+                if wait.recv().is_ok() {
+                    // The real query owns its original runner, never the project store.
+                    let _ = sender.send(held.run());
+                }
+            });
+            host.queries.push(QueryJob {
+                query,
+                receiver,
+                thread,
+                started: Instant::now() - Duration::from_secs(61),
+                pending_outcome: None,
+            });
+            assert_eq!(
+                host.poll_queries(store).unwrap_err().code,
+                CommandErrorCode::OutcomeUnknown
+            );
+            assert!(host.queries.is_empty());
+            assert_eq!(host.retired_queries.len(), 1);
+            (
+                release,
+                host.runtime.generation(),
+                attempt,
+                store.execution_attempt(attempt, false).unwrap(),
+            )
+        });
+    assert_eq!(
+        call(&webview, "execution_status", context.clone()).unwrap()["active"],
+        true
+    );
+    assert_eq!(
+        call(
+            &webview,
+            "close_project",
+            json!({"sessionToken":context["sessionToken"]})
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    assert_eq!(call(&webview, "rename_project", json!({"sessionToken":context["sessionToken"],"expectedRevision":"1","displayName":"Moved","directoryName":"moved"})).unwrap_err()["code"], "busy");
+    let status = call(&webview, "quiesce_execution", context.clone()).unwrap();
+    assert_eq!(status["active"], true);
+    assert_eq!(status["quiescing"], true);
+    assert_eq!(
+        call(
+            &webview,
+            "seed_execution_fixture",
+            request(
+                &context,
+                json!({"mode":"unknown","delayMs":0,"grouped":false})
+            )
+        )
+        .unwrap_err()["code"],
+        "busy"
+    );
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        assert_eq!(
+            active.execution.as_ref().unwrap().runtime.generation(),
+            generation
+        );
+        assert_eq!(
+            serde_json::to_value(active.store.execution_attempt(attempt, false).unwrap()).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+    });
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while call(&webview, "execution_status", context.clone()).unwrap()["active"] == true {
+        assert!(
+            Instant::now() < deadline,
+            "original query thread did not drain"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    app.state::<AppState>().sessions.with(move |sessions| {
+        let active = sessions.active.as_mut().unwrap();
+        let host = active.execution.as_ref().unwrap();
+        assert_ne!(host.runtime.generation(), generation);
+        assert!(host.retired_queries.is_empty());
+        assert!(!host.quiescing);
+        assert_eq!(
+            active
+                .store
+                .execution_attempt(attempt, false)
+                .unwrap()
+                .progress
+                .succeeded,
+            0
+        );
+    });
+    // New explicit work is admitted only after real cleanup; it gains no old result.
+    call(
+        &webview,
+        "seed_execution_fixture",
+        request(
+            &context,
+            json!({"mode":"unknown","delayMs":0,"grouped":false}),
+        ),
+    )
+    .unwrap();
+    settled(&webview, &context);
+    call(
+        &webview,
+        "close_project",
+        json!({"sessionToken":context["sessionToken"]}),
+    )
+    .unwrap();
+}
+
 fn call_when_ready(
     webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
     command: &str,
@@ -795,7 +931,7 @@ fn cancelled_review_and_accepted_translation_save_survive_close_and_reopen() {
     let mut poll_context = std::task::Context::from_waker(std::task::Waker::noop());
     let mut check = Box::pin(review::run_fixture_review_checks(app.state::<AppState>(),
         serde_json::from_value(request(&context, json!({
-            "actionId":action_id, "unitId":unit.unit_id, "locale":"zh-CN", "expectedBasis":target["basis"]
+            "actionId":action_id, "unitId":unit.unit_id, "locale":"zh-CN", "expectedBasis":target["basis"], "advisoryChecks":[]
         }))).unwrap()));
     assert!(matches!(
         std::future::Future::poll(check.as_mut(), &mut poll_context),
@@ -1257,7 +1393,7 @@ fn review_computation_allows_save_close_and_completion_after_waiter_loss() {
             serde_json::from_value(request(
                 &context,
                 json!({"unitId":unit.unit_id,"locale":"zh-CN",
-                "expectedBasis":target["basis"],"actionId":action_id}),
+                "expectedBasis":target["basis"],"actionId":action_id,"advisoryChecks":[]}),
             ))
             .unwrap(),
         ));

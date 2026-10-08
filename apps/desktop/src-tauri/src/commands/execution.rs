@@ -278,6 +278,7 @@ impl ExecutionHost {
             || self.review.active()
             || self.tools.active()
             || !self.queries.is_empty()
+            || !self.retired_queries.is_empty()
             || self.runtime.has_active_work(store).map_err(map_read)?)
     }
     fn finish_quiesce(&mut self, store: &mut ProjectStore) -> Result<(), ExecutionError> {
@@ -289,6 +290,11 @@ impl ExecutionHost {
         }
         if self.ai.active() {
             return Err(ExecutionError::new(ErrorCode::Busy, "work-effect-active"));
+        }
+        // Retiring a query revokes its reply path, not its runner/file lifetime.
+        // Never rotate the runtime or permit project close while it still runs.
+        if !self.retired_queries.is_empty() {
+            return Err(ExecutionError::new(ErrorCode::Busy, "outcome-query-draining"));
         }
         self.runtime.finish_quiesce(store)?;
         self.quiescing = false;
@@ -324,7 +330,17 @@ impl ExecutionHost {
         Ok(())
     }
     fn poll_queries(&mut self, store: &mut ProjectStore) -> Result<(), CommandError> {
-        self.retired_queries.retain(|thread| !thread.is_finished());
+        let mut remaining = Vec::new();
+        for thread in self.retired_queries.drain(..) {
+            if thread.is_finished() {
+                // Join completes the thread's cleanup; dropping a finished
+                // handle alone would detach its final lifetime boundary.
+                let _ = thread.join();
+            } else {
+                remaining.push(thread);
+            }
+        }
+        self.retired_queries = remaining;
         let mut index = 0;
         while index < self.queries.len() {
             if let Some(outcome) = self.queries[index].pending_outcome.as_ref() {

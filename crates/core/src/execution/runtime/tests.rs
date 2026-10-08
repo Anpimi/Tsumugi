@@ -253,10 +253,24 @@ fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
     assert_eq!(runtime.workers.len(), 2);
     let generation = runtime.generation();
     runtime.begin_quiesce(&mut store).unwrap();
-    runtime.finish_quiesce(&mut store).unwrap();
-    assert_ne!(generation, runtime.generation());
-    assert!(!runtime.has_active_work(&store).unwrap());
-    store.close().unwrap();
+    assert_eq!(
+        runtime.finish_quiesce(&mut store).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert_eq!(generation, runtime.generation());
+    assert_eq!(runtime.retired.len(), 2);
+    assert!(runtime.has_active_work(&store).unwrap());
+    let rejected = input(&store);
+    assert_eq!(
+        runtime.submit(&mut store, &rejected).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert!(
+        store
+            .execution_input_if_present(rejected.envelope().attempt_id)
+            .unwrap()
+            .is_none()
+    );
     first.release.send(ExecutionState::Succeeded).unwrap();
     second.release.send(ExecutionState::Succeeded).unwrap();
     assert!(!first.finished.recv_timeout(Duration::from_secs(5)).unwrap());
@@ -266,6 +280,22 @@ fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
             .recv_timeout(Duration::from_secs(5))
             .unwrap()
     );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match runtime.finish_quiesce(&mut store) {
+            Ok(()) => break,
+            Err(error) => {
+                assert_eq!(error.code, ErrorCode::Busy);
+                assert_eq!(generation, runtime.generation());
+                assert!(Instant::now() < deadline, "owned workers did not drain");
+                std::thread::yield_now();
+            }
+        }
+    }
+    assert_ne!(generation, runtime.generation());
+    assert!(runtime.retired.is_empty());
+    assert!(!runtime.has_active_work(&store).unwrap());
+    store.close().unwrap();
     let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
     let adopted: u32 = inputs
         .iter()
@@ -340,9 +370,19 @@ fn timed_out_producer_remains_unknown_and_holds_its_concurrency_slot() {
         .unwrap()
         .unwrap();
     assert!(matches!(query.run().unwrap(), QueryOutcome::Unavailable));
+    let generation = runtime.generation();
+    runtime.begin_quiesce(&mut store).unwrap();
+    assert_eq!(
+        runtime.finish_quiesce(&mut store).unwrap_err().code,
+        ErrorCode::Busy
+    );
+    assert_eq!(runtime.generation(), generation);
+    assert!(runtime.has_active_work(&store).unwrap());
     call.release.send(ExecutionState::Succeeded).unwrap();
     assert!(!call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
-    runtime.begin_quiesce(&mut store).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        runtime.retired.is_empty()
+    });
     runtime.finish_quiesce(&mut store).unwrap();
     assert_eq!(
         runtime

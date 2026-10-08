@@ -310,6 +310,7 @@ impl ExecutionRuntime {
     }
     pub fn has_active_work(&self, store: &ProjectStore) -> Result<bool, ExecutionError> {
         Ok(!self.workers.is_empty()
+            || !self.retired.is_empty()
             || !store
                 .queued_execution_attempts(self.initial_sequence)?
                 .is_empty())
@@ -658,7 +659,10 @@ impl ExecutionRuntime {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
         self.tick(store)?;
-        if !self.workers.is_empty() {
+        // Expiring cancellation revokes delivery, but does not stop a producer's
+        // thread or release its captured runner. Keep the original generation
+        // stopped until polling has joined every owned producer.
+        if !self.workers.is_empty() || !self.retired.is_empty() {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
         let generation = ExecutionId::new();

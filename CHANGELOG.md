@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Execution shutdown waits for owned producer and outcome-query threads to exit,
+  including threads retired after cancellation or timeout. Revoked result
+  delivery no longer permits early runtime rotation, project closure or directory
+  rename while the original runner is still held. New work stays blocked while
+  quiescing; uncooperative threads require application restart.
+
 - The experimental Host Store can explicitly remove one exact sealed package
   after its local approval has been removed. Disabled approval is still retained
   and blocks removal. A durable original-action journal keeps immutable recovery
