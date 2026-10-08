@@ -14,6 +14,9 @@ use tsumugi_plugin_host::{
     core::RunnerProxy,
 };
 
+#[path = "generation_unavailable.rs"]
+mod unavailable;
+
 fn ipc(window: &MockWebview, command: &str, fields: Option<Value>) -> Result<Value, Value> {
     call(
         window,
