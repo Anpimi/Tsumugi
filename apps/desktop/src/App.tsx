@@ -2,7 +2,7 @@ import { SessionReadProvider, SessionReadStatus } from "./SessionReadProvider";
 import { CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea, type AttemptWorkbenchHandle } from "./WorkbenchFrame";
 import { sourceCommands } from "./sourceCommands";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -44,6 +44,7 @@ import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
 import { AiWorkbench, type AiHandle } from "./AiWorkbench";
 import { AiPreparationSession } from "./AiPreparationSession";
+import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
 import { ArenaWorkbench } from "./ArenaWorkbench";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
@@ -329,6 +330,7 @@ function renderFeedbackMessage(t: TFunction, feedback: Feedback) {
 }
 
 function App() {
+  const [commandRegistry] = useState(() => new WorkbenchCommands());
   const { t, i18n: translation } = useTranslation();
   const resolvedLanguage = translation.resolvedLanguage ?? translation.language ?? "en-US";
   const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
@@ -1049,6 +1051,23 @@ function App() {
     setFeedback(localValidation(field));
   }
 
+  useLayoutEffect(() => {
+    if (!project) return;
+    return commandRegistry.register({
+      id: "project.metadata.save", nameKey: "editor.save", category: "project",
+      scope: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "overview" },
+      binding: "Mod+S", risk: "writes-project", confirmation: "none",
+      availability: () => !activeForm || area !== "overview"
+        ? { enabled: false, reason: "hidden" }
+        : busy || navigationIntent || restorePromptOpen || areaNavigation.current
+          ? { enabled: false, reason: "busy" }
+          : !dirty || operation !== "idle" || pendingSave.current
+            ? { enabled: false, reason: "no-changes" }
+            : { enabled: true },
+      handler: () => { void editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)(); },
+    });
+  });
+
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (area === "overview" && event.key === "Escape" && !event.defaultPrevented && !busy && !navigationIntent && !restorePromptOpen) {
@@ -1069,12 +1088,12 @@ function App() {
       if (event.isComposing || compositionActive.current || navigationIntent || restorePromptOpen || busy || areaNavigation.current
         || (event.target instanceof HTMLInputElement && event.target.type === "password")
         || document.querySelector('[role="dialog"]')) return;
-      if (area === "translation") translationWorkbench.current?.saveCurrent();
-      else if (area === "overview" && activeForm && dirty && operation === "idle") handleSave();
+      if (project) commandRegistry.dispatch(area === "translation" ? "translation.save" : "project.metadata.save",
+        { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area });
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area, busy]);
+  }, [activeForm, dirty, operation, navigationIntent, restorePromptOpen, closedPanel, createDraftDirty, openPanel, area, busy, project, commandRegistry]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1173,7 +1192,7 @@ function App() {
   ) : null;
 
   return (
-    <WorkspaceViewProvider value={viewOwner}><main className="shell" onCompositionStartCapture={beginComposition} onCompositionEndCapture={endComposition}>
+    <WorkbenchCommandsProvider commands={commandRegistry}><WorkspaceViewProvider value={viewOwner}><main className="shell" onCompositionStartCapture={beginComposition} onCompositionEndCapture={endComposition}>
       <DialogRoot open={stopIntent !== null} onOpenChange={open => { if (!open && !stopping) setStopIntent(null); }}>
         <DialogPortal><DialogOverlay className="dialog-backdrop lifecycle-confirm-backdrop" /><DialogContent className="confirm-dialog lifecycle-confirm-dialog" onEscapeKeyDown={event => { if (stopping) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <DialogTitle>{t("execution.stopTitle")}</DialogTitle><DialogDescription>{t("execution.stopHelp")}</DialogDescription>
@@ -1532,7 +1551,7 @@ function App() {
                 ) : null}
 
                 {activeForm ? (
-                  <form className="editor-card" onChange={clearEditorFeedback} onSubmit={editorForm.handleSubmit(({ value }) => handleSave(value), handleEditorInvalid)}>
+                  <form className="editor-card" onChange={clearEditorFeedback} onSubmit={event => { event.preventDefault(); if (project) commandRegistry.dispatch("project.metadata.save", { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area }); }}>
                     <fieldset className="editor-fields" disabled={busy}>
                     <div className="editor-heading">
                       <div>
@@ -1693,7 +1712,7 @@ function App() {
           </DialogPortal>
         </DialogRoot>
       </section>
-    </main></WorkspaceViewProvider>
+    </main></WorkspaceViewProvider></WorkbenchCommandsProvider>
   );
 }
 

@@ -124,6 +124,39 @@ it("keeps a newer draft when the entire translation consumer unmounts before sav
   expect(history.current!.eventId).not.toBe(acknowledgedSelection);
 });
 
+it("saves the captured dirty draft after consumer remount even when its reference snapshot read fails", async () => {
+  const selected = seedSelectedTranslation();
+  const user = userEvent.setup();
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, " with a retained edit");
+  expect(editor).toHaveValue("Saved base with a retained edit");
+  rerender(null);
+
+  const originalInvoke = invoke.getMockImplementation()!;
+  const readsBeforeRemount = invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot").length;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) =>
+    command === "read_review_editor_snapshot"
+      ? Promise.reject(new Error("reference snapshot temporarily unavailable"))
+      : originalInvoke(command, args));
+  rerender(<TranslationWorkbench project={project} disabled={false} />);
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(readsBeforeRemount + 1));
+  await screen.findByRole("alert");
+  const retained = screen.getByRole("textbox", { name: "Your draft" });
+  expect(retained).toHaveValue("Saved base with a retained edit");
+  expect(screen.getByText("Original", { selector: ".editor-source pre" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Save revision" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1));
+  expect(invoke.mock.calls.find(([name]) => name === "save_translation_revision")?.[1].request)
+    .toMatchObject({ unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205),
+      expectedSelectionId: selected.selection.eventId, text: "Saved base with a retained edit" });
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_target")).toHaveLength(0);
+  expect(retained).toHaveValue("Saved base with a retained edit");
+});
+
 it("keeps an unknown original action across translation consumer unmount and checks that exact request", async () => {
   seedSelectedTranslation();
   const originalInvoke = invoke.getMockImplementation()!;
@@ -688,11 +721,13 @@ it("retains the action when a committed save has a malformed acknowledgement", a
   await user.click(await screen.findByRole("button", { name: "first" }));
   await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Saved once");
   await user.click(screen.getByRole("button", { name: "Save revision" }));
+  const identitiesBeforeRetry = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
   await user.click(await screen.findByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
   const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
   expect(saves).toHaveLength(2);
   expect(saves[1][1].request).toEqual(saves[0][1].request);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeRetry);
 });
 
 it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 51 without manual paging, then reports the end (%s)", async mode => {

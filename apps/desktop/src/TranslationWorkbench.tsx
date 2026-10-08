@@ -13,6 +13,7 @@ import { translationCommands as commands, translationHistoryAfter, type Translat
 import type { TranslationDecision } from "./translationCommands";
 import { type ContextRevision, type TermResolution } from "./resourceCommands";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
+import { useWorkbenchCommands } from "./workbenchCommands";
 
 export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
 interface BatchOutcome { applied: number; conflicted: number; failed: number; unknown: number }
@@ -59,6 +60,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const { t } = useTranslation();
   const context = executionContext(project);
   const draftSession = useTranslationDraftSession();
+  const commandRegistry = useWorkbenchCommands();
   const editorDraft = draftSession.draft;
   const [open, setOpen] = useWorkbenchView("translation");
   const [tab, setTab] = useState<"import" | "edit">("edit");
@@ -223,11 +225,50 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   useEffect(() => {
     if (open && tab === "edit") draftField.current?.focus({ preventScroll: true });
   }, [open, tab, editorTarget?.unitId]);
+  const commandScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
+  function saveAvailability() {
+    if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
+    if (busy || running.current) return { enabled: false, reason: "busy" as const };
+    const capture = draftSession.current();
+    if (capture?.pending || capture?.saving || uncertain.length) return { enabled: false, reason: "pending-action" as const };
+    if (!targetAvailable || !capture || capture.locale !== targetLocale) return { enabled: false, reason: "unavailable" as const };
+    if (capture.text === (capture.baseText ?? "") && !capture.newerDraftSaved) return { enabled: false, reason: "no-changes" as const };
+    return { enabled: true };
+  }
+  function retryAvailability() {
+    if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
+    if (busy || running.current) return { enabled: false, reason: "busy" as const };
+    if (!pendingSave) return { enabled: false, reason: "unavailable" as const };
+    if (!targetAvailable) return { enabled: false, reason: "unavailable" as const };
+    return { enabled: true };
+  }
+  function reconcileAvailability() {
+    if (!open || tab !== "edit" || disabled || leaveIntent) return { enabled: false, reason: "hidden" as const };
+    if (busy || running.current) return { enabled: false, reason: "busy" as const };
+    if (!pendingSave) return { enabled: false, reason: "unavailable" as const };
+    return { enabled: true };
+  }
+  useLayoutEffect(() => {
+    const removeSave = commandRegistry.register({
+      id: "translation.save", nameKey: "translation.save", category: "translation", scope: commandScope,
+      binding: "Mod+S", risk: "writes-translation", confirmation: "none", availability: saveAvailability,
+      handler: () => { void perform(saveDraft); },
+    });
+    const removeRetry = commandRegistry.register({
+      id: "translation.retry-save", nameKey: "translation.retryAction", category: "translation", scope: commandScope,
+      binding: null, risk: "writes-translation", confirmation: "none", availability: retryAvailability,
+      handler: () => { void perform(saveDraft); },
+    });
+    const removeReconcile = commandRegistry.register({
+      id: "translation.reconcile-save", nameKey: "translation.checkSavedAction", category: "translation", scope: commandScope,
+      binding: null, risk: "writes-translation", confirmation: "none", availability: reconcileAvailability,
+      handler: () => { void perform(checkSavedAction); },
+    });
+    return () => { removeReconcile(); removeRetry(); removeSave(); };
+  });
   useImperativeHandle(ref, () => ({
     saveCurrent() {
-      if (!open || tab !== "edit" || disabled || busy || running.current || leaveIntent || pendingSave || uncertain.length
-        || !targetAvailable || !editorTarget || !editorDraft || !history || !dirty) return;
-      void perform(saveDraft);
+      commandRegistry.dispatch("translation.save", commandScope);
     },
     showAttempt(id) {
       if (running.current || draftSession.current()?.saving || dirty || pendingSave || pendingStart || uncertain.length) { setOpen(true); return; }
@@ -600,7 +641,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                   <section className="editor-source"><h3>{t("translation.sourceText")}</h3><pre>{displayedTarget.sourceText || t("translation.empty")}</pre></section>
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
                   <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onChange={event => draftSession.edit(event.target.value)} /></label>
-                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={busy || !targetAvailable || (!dirty && !pendingSave)} onClick={() => void perform(saveDraft)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={busy} onClick={() => void perform(checkSavedAction)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={busy || !targetAvailable || (!dirty && !pendingSave) || !list?.total} onClick={() => void perform(saveAndNext)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
+                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={busy || !targetAvailable || (!dirty && !pendingSave) || !list?.total} onClick={() => void perform(saveAndNext)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
                 </div>
                 {history ? <details className="editor-references"><summary>{t("workbench.references")}</summary>

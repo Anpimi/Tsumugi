@@ -502,9 +502,11 @@ describe("project lifecycle workbench", () => {
     await user.click(screen.getByRole("button", { name: "Save revision" }));
     await waitFor(() => expect(fixture.saves()).toHaveLength(1));
     await screen.findByRole("alert");
+    const identitiesAtUnknown = mocks.invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
     await user.click(restoredEditor);
     await user.keyboard("{Control>}s{/Control}");
     expect(fixture.saves()).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesAtUnknown);
     expect(restoredEditor).toHaveValue("A");
   });
   it("clears a rejected create result after explicitly discarding the draft", async () => {
@@ -795,6 +797,39 @@ describe("project lifecycle workbench", () => {
     expect(screen.queryByRole("textbox", { name: /Project name/ })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
     expect(mocks.invoke).not.toHaveBeenCalledWith("rename_project", expect.anything());
+  });
+
+  it("uses the rename form's required and trim validation for Ctrl+S", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const nameInput = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(nameInput);
+    await user.type(nameInput, "   ");
+    await user.keyboard("{Control>}s{/Control}");
+    const form = nameInput.closest("form")!;
+    expect(await within(form).findByText("Enter a project name.")).toBeVisible();
+    expect(nameInput).toHaveAttribute("aria-invalid", "true");
+    expect(nameInput).toHaveValue("   ");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(within(form).getByText("Enter a project name.")).toBeVisible();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(0);
+  });
+
+  it("does not send an empty project name through Meta+S", async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const nameInput = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(nameInput);
+    await user.keyboard("{Meta>}s{/Meta}");
+    expect(await within(nameInput.closest("form")!).findByText("Enter a project name.")).toBeVisible();
+    expect(nameInput).toHaveAttribute("aria-invalid", "true");
+    expect(nameInput).toHaveValue("");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(0);
   });
 
   it("optionally synchronizes the project folder when saving a rename", async () => {
