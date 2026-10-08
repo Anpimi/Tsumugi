@@ -1,5 +1,21 @@
 # Application versioning and changelog maintenance
 
+The experimental Host Store adds explicit removal of an exact sealed package
+installation. Callers first remove its local approval through the existing
+revisioned settings decision and stop/drain its original instances. Disabled
+packages still retain approval and cannot be removed by this API. A bounded
+`uninstalls/` journal records a format-1 removal receipt and retains original
+immutable installation bytes for uncertain-commit recovery; those objects are
+excluded from active inventory and loading. Package/runtime/removal action UUIDs
+remain reserved, and an old completed removal retry cannot remove a reinstall.
+Incomplete removal blocks new installation and reapproval of its target until
+the original action is reconciled. Existing installation/runtime receipts,
+settings format 2, project schema 30, SDK/process profiles and dependencies are
+unchanged. The same undistributed application `0.2.0-alpha.1` / SDK
+`0.1.0-alpha.1` batch requires no additional version bump or historical migration;
+both Unreleased changelogs record the Host feature. Desktop removal controls,
+worker lifecycle integration and cache collection remain separate work.
+
 The optional Core Host adapter now captures a service broker separately for
 each actual dispatch, permit and cancellation handle. This changes the
 experimental Rust adapter API without changing wire contracts, persistent

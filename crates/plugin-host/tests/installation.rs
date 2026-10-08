@@ -20,6 +20,9 @@ const OTHER_ACTION: &str = "00000000-0000-4000-8000-000000000002";
 const WORKER_BYTES: &[u8] = b"throw new Error('installation must not execute this component');";
 const HELPER_BYTES: &[u8] = b"synthetic executable bytes";
 
+#[path = "installation/uninstall.rs"]
+mod uninstall;
+
 struct OwnedRoot {
     directory: tempfile::TempDir,
     root: PathBuf,

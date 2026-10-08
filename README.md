@@ -190,6 +190,21 @@ The desktop shell supports creating, opening, renaming, closing, and reconciling
 
 The global **Extensions** panel reviews a locally selected plugin folder, its declared publisher, requested permissions and exact fingerprint. Explicit manual approval saves trust before installing fixed bytes; a new package starts disabled. Enablement is a separate action, and selected capabilities require exact current approval and verified installed bytes. If a change has an uncertain result, read current state and retry the original operation; this preserves its original action and request. Reopening the panel retains that request. Interrupted installation can also recover after explicitly reviewing and approving the matching package again. An [opt-in Apple silicon macOS build](runtimes/javascript-host/README.md#opt-into-the-desktop-runtime-bundle) includes a fixed Node and Host environment requiring macOS 13.5. Runtime approval and installation are separate from package approval and execution permission; exact installed files can be verified from the panel. Ordinary builds explicitly report that no runtime is bundled. These controls do not authenticate a publisher or start plugin code; production plugin execution remains under development.
 
+The experimental Rust `PackageStore::uninstall` API removes an exact installation
+after a separate settings decision has removed its approval. Disabled approval
+still blocks removal. The application must stop new dispatch and drain or legally
+cancel its original execution instances before calling it; the Store does not
+unload a worker. `uninstallations` observes original receipts and incomplete
+removals. Once an intent is recorded, any failure requires the exact original
+action, expected initial settings revision and approval for recovery. A resumed
+incomplete action checks current settings again and refuses an approved target.
+A completed retry observes the original result even after a new install or
+settings revision, without altering that new installation. Recovery bytes remain
+immutable outside active inventory and loading, and package/runtime/removal
+action UUIDs cannot be reused. The journal retains at most 128 removals and
+performs no automatic cache collection. This Host API has no Desktop removal
+control yet and never modifies projects or restores execution permission.
+
 The sidebar opens each working area in the main workspace. Returning to another area preserves its project-local position and drafts; leaving an unsaved translation first offers save, keep editing, or discard. The project overview shows import or continue-editing actions according to the current source. Translations opens the editor by default, with a searchable paged list alongside source text, translation and revision controls. Search covers native keys, source text and selected translations across the complete current source, including entries beyond the displayed page. Terms, context and history are available in a collapsible reference area.
 
 The experimental `read_plugin_source` command accepts an exact package identity/fingerprint, source Resource ID and environment digest. It reads the installed package's fixed material recipe, resolves its independent extractor/checker declarations and captures the independently approved installed Node environment under one current settings revision. Disabled packages, missing files or changed choices are refused. The generated IPC adapter preserves this read-only snapshot; native directory selection, fixed capture and per-attempt execution are separate operations. The Source content workbench now uses installed source Resources, explicitly consents to the extractor and independent checker separately, and records mandatory check validation before Core adoption. Normal builds do not register the former built-in source preflight/start commands. Child processes run with the OS user's permissions; they are not an OS sandbox. Translation/build migration, authenticated updates and default domain-package distribution remain incomplete.

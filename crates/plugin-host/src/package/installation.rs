@@ -130,6 +130,36 @@ pub struct InstalledPackage {
     receipt: InstallReceipt,
 }
 
+/// Durable local removal of one exact installation. Retained bytes are recovery
+/// cache, excluded from installation inventory and loading, not project data.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UninstallReceipt {
+    format_version: u32,
+    action_id: String,
+    settings_revision: u64,
+    installation: InstallReceipt,
+}
+
+impl UninstallReceipt {
+    pub fn action_id(&self) -> &str {
+        &self.action_id
+    }
+    pub fn settings_revision(&self) -> u64 {
+        self.settings_revision
+    }
+    pub fn installation(&self) -> &InstallReceipt {
+        &self.installation
+    }
+}
+
+/// Metadata observation does not authorize removal or restore any grant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UninstallRecord {
+    pub receipt: UninstallReceipt,
+    pub state: InstalledObjectState,
+}
+
 impl InstalledPackage {
     pub fn image(&self) -> &PackageImage {
         &self.image
@@ -255,7 +285,7 @@ impl InstalledRuntime {
 /// A single owner of an existing private application directory. Operations are
 /// synchronous bounded local IO and belong on an application blocking worker.
 /// The OS lock stays held until this value is dropped. No root provisioning,
-/// network, activation, replacement, uninstall or garbage collection occurs.
+/// network, activation, replacement or garbage collection occurs implicitly.
 /// A whole operation observes a 60-second deadline between guard checkpoints;
 /// it does not interrupt an individual blocking filesystem syscall.
 pub struct PackageStore {
@@ -270,6 +300,51 @@ impl fmt::Debug for PackageStore {
 }
 
 impl PackageStore {
+    /// Remove one sealed installation from the active namespace after a separate
+    /// settings decision has removed its approval (disabled is insufficient).
+    /// `Busy` means it is still approved; a stale initial revision is refused.
+    /// This does not unload a worker: the application must stop new dispatch and
+    /// drain/legally cancel its original instances before calling this method.
+    /// Exact immutable bytes and receipts remain in a bounded recovery cache.
+    /// After an uncertain outcome, retry the original action and approval.
+    /// A completed retry observes that removal and never removes a reinstall.
+    pub fn uninstall(
+        &mut self,
+        expected_revision: u64,
+        action_id: &str,
+        approval: &PackageApproval,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<UninstallReceipt> {
+        validate_action(action_id)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner
+                .uninstall(expected_revision, action_id, approval, &authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = (expected_revision, approval, authorized);
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
+    /// Observe retained original removal actions, including interrupted ones.
+    /// At most MAX_INSTALLED_PACKAGES actions are retained; no automatic GC.
+    pub fn uninstallations(
+        &self,
+        authorized: impl Fn() -> bool,
+    ) -> InstallResult<Vec<UninstallRecord>> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.inner.uninstallations(&authorized)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = authorized;
+            Err(InstallError::UnsupportedPlatform)
+        }
+    }
+
     /// Read local trusted application decisions without loading or activating
     /// code. Only a missing settings file produces empty revision-zero state;
     /// invalid settings are refused and preserved.
@@ -472,6 +547,7 @@ fn valid_digest(value: &str) -> bool {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod platform {
+    mod uninstall;
     use super::super::{MAX_DEPTH, MAX_DIRECTORIES};
     use super::*;
     use crate::{catalog::PackageCatalog, filesystem};
@@ -528,6 +604,9 @@ mod platform {
     #[cfg(test)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum CommitCheckpoint {
+        UninstallIntentSync,
+        UninstallMove,
+        UninstallJournalSync,
         Seal,
         ObjectsSync,
         RootSync,
@@ -936,6 +1015,7 @@ mod platform {
         ) -> InstallResult<PluginSettings> {
             self.check(authorized)?;
             let desired = PluginSettings::next(expected_revision, action, update)?;
+            self.check_uninstall_settings(update, authorized)?;
             let bytes = serde_json::to_vec(&desired).map_err(|_| InstallError::CorruptSettings)?;
             if bytes.len() > MAX_SETTINGS_BYTES {
                 return Err(InstallError::LimitExceeded);
@@ -1577,6 +1657,7 @@ mod platform {
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<InstalledPackage> {
             self.check(authorized)?;
+            self.check_uninstall_load(approval, authorized)?;
             if !valid_digest(&approval.package_digest) {
                 return Err(InstallError::ApprovalMismatch);
             }
@@ -1962,7 +2043,7 @@ mod platform {
             action: &str,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<BTreeSet<String>> {
-            let mut seen = BTreeSet::new();
+            let mut seen = self.uninstall_actions(action, authorized)?;
             let mut pending = false;
             for digest in self.names_in(&self.runtimes, MAX_INSTALLED_RUNTIMES, authorized)? {
                 let object = self.open_runtime_object(&digest, authorized)?;
@@ -1986,7 +2067,10 @@ mod platform {
             action: &str,
             authorized: &impl Fn() -> bool,
         ) -> InstallResult<BTreeSet<String>> {
-            let mut index = PackageReceiptIndex::default();
+            let mut index = PackageReceiptIndex {
+                actions: self.uninstall_actions(action, authorized)?,
+                ..PackageReceiptIndex::default()
+            };
             let mut pending = false;
             for digest in self.names(authorized)? {
                 let object = self.open_object(&digest, authorized)?;
@@ -2791,8 +2875,7 @@ mod platform {
             assert!(store.load_runtime(&approval, || true).is_err());
         }
 
-        #[test]
-        fn each_commit_checkpoint_preserves_object_and_requires_original_action_retry() {
+        fn package_fixture() -> (PackageCatalog, PackageApproval) {
             let manifest = sdk::PluginManifest {
                 protocol_version: sdk::MANIFEST_PROTOCOL,
                 plugin: sdk::PluginIdentity {
@@ -2845,6 +2928,137 @@ mod platform {
             };
             let mut catalog = PackageCatalog::new();
             catalog.register(image, approval.clone()).unwrap();
+            (catalog, approval)
+        }
+
+        #[test]
+        fn uninstall_checkpoints_keep_original_bytes_and_require_exact_recovery() {
+            let (catalog, approval) = package_fixture();
+            let install_action = "00000000-0000-4000-8000-000000000001";
+            let remove_action = "00000000-0000-4000-8000-000000000002";
+            let other_action = "00000000-0000-4000-8000-000000000003";
+            for checkpoint in [
+                CommitCheckpoint::UninstallIntentSync,
+                CommitCheckpoint::UninstallMove,
+                CommitCheckpoint::UninstallJournalSync,
+                CommitCheckpoint::Seal,
+                CommitCheckpoint::ObjectsSync,
+                CommitCheckpoint::RootSync,
+            ] {
+                let root = OwnedRoot(
+                    tempfile::Builder::new()
+                        .permissions(fs::Permissions::from_mode(0o700))
+                        .tempdir()
+                        .unwrap(),
+                );
+                let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                let installed = store
+                    .install(
+                        install_action,
+                        catalog.registered(&approval.plugin).unwrap(),
+                        || true,
+                    )
+                    .unwrap();
+                store.inner.fail_commit_checkpoint = Some(checkpoint);
+                assert_eq!(
+                    store
+                        .uninstall(0, remove_action, &approval, || true)
+                        .unwrap_err(),
+                    InstallError::UnknownCommit
+                );
+                let records = store.uninstallations(|| true).unwrap();
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].receipt.installation(), &installed);
+                assert_eq!(records[0].state, InstalledObjectState::RecoveryRequired);
+                assert_eq!(
+                    store.load(&approval, || true).unwrap_err(),
+                    InstallError::RecoveryRequired
+                );
+                assert_eq!(
+                    store
+                        .install(
+                            other_action,
+                            catalog.registered(&approval.plugin).unwrap(),
+                            || true
+                        )
+                        .unwrap_err(),
+                    InstallError::RecoveryRequired
+                );
+                assert_eq!(
+                    store
+                        .update_settings(
+                            0,
+                            other_action,
+                            &PluginSettingsUpdate {
+                                packages: vec![ApprovedPackageSetting {
+                                    approval: approval.clone(),
+                                    enabled: true
+                                }],
+                                runtimes: vec![]
+                            },
+                            || true
+                        )
+                        .unwrap_err(),
+                    InstallError::RecoveryRequired
+                );
+                let mut wrong = approval.clone();
+                wrong.origin.source_id = "another-source".into();
+                assert_eq!(
+                    store
+                        .uninstall(0, remove_action, &wrong, || true)
+                        .unwrap_err(),
+                    InstallError::ActionConflict
+                );
+                assert_eq!(
+                    store
+                        .uninstall(1, remove_action, &approval, || true)
+                        .unwrap_err(),
+                    InstallError::ActionConflict
+                );
+                drop(store);
+                let mut store = PackageStore::open_existing(root.0.path()).unwrap();
+                let receipt = store
+                    .uninstall(0, remove_action, &approval, || true)
+                    .unwrap();
+                assert_eq!(receipt.installation(), &installed);
+                assert_eq!(
+                    store.uninstallations(|| true).unwrap()[0].state,
+                    InstalledObjectState::Sealed
+                );
+                assert_eq!(
+                    store.load(&approval, || true).unwrap_err(),
+                    InstallError::MissingPackage
+                );
+                assert!(store.inventory(|| true).unwrap().packages.is_empty());
+                assert_eq!(
+                    store
+                        .uninstall(0, remove_action, &approval, || true)
+                        .unwrap(),
+                    receipt
+                );
+                let cached = root
+                    .0
+                    .path()
+                    .join("uninstalls")
+                    .join(remove_action)
+                    .join("object/package/resource.json");
+                assert_eq!(fs::read(cached).unwrap(), b"{}");
+                let (runtime, runtime_approval) = runtime_fixture(root.0.path());
+                for reserved in [install_action, remove_action] {
+                    assert_eq!(
+                        store
+                            .install_runtime(reserved, &runtime, &runtime_approval, || true)
+                            .unwrap_err(),
+                        InstallError::ActionConflict
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn each_commit_checkpoint_preserves_object_and_requires_original_action_retry() {
+            let (catalog, approval) = package_fixture();
+            let digest = approval.package_digest.clone();
             let package = catalog.registered(&approval.plugin).unwrap();
             let action = "00000000-0000-4000-8000-000000000001";
             for checkpoint in [

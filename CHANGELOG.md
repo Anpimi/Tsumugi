@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The experimental Host Store can explicitly remove one exact sealed package
+  after its local approval has been removed. Disabled approval is still retained
+  and blocks removal. A durable original-action journal keeps immutable recovery
+  bytes outside active inventory and loading; retries preserve uncertain outcomes
+  and cannot remove a later reinstall. Other packages, runtime installations,
+  settings and project data remain separate. Callers must first stop and drain
+  the original execution instances. Desktop removal controls and cache collection
+  remain under development.
+
 - Experimental Core Host adapters now select project-service brokers separately
   for every actual dispatch and grant, including when a capability proxy is
   cached. Unfinished selection is bounded; selection failure does not launch a
