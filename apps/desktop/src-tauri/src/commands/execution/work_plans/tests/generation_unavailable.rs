@@ -1,6 +1,9 @@
 //! Saved work and ordinary domain operations outlive generation availability.
 use super::*;
 
+#[path = "generation_host_abort.rs"]
+mod host_abort;
+
 fn ordinary_consent(preflight: &Value) -> Value {
     json!({
         "attemptId":preflight["attemptId"],"inputDigest":preflight["inputDigest"],
@@ -53,6 +56,15 @@ fn assert_manual_selection(fixture: &Fixture, target: &Value, saved: &Value, tex
 
 #[test]
 fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_history() {
+    unavailable_generation_manual_workflow(false);
+}
+
+#[test]
+fn killed_generation_host_preserves_original_child_and_manual_workflows() {
+    unavailable_generation_manual_workflow(true);
+}
+
+fn unavailable_generation_manual_workflow(abrupt_host: bool) {
     let installation = OwnedDirectory(tempfile::tempdir().unwrap());
     let (format, format_approval) = selected_package(
         "TSUMUGI_TEST_PLUGIN_PACKAGE",
@@ -76,7 +88,11 @@ fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_
         .clone();
     let tool_binding = knowledge.capability_tool("agent-query-tool").unwrap();
     let observer = installation.0.path().join("generation-disposal.txt");
-    let generation = generation_package_with_timeout(Some(&observer), 60_000);
+    let generation = if abrupt_host {
+        host_abort::package(&observer)
+    } else {
+        generation_package_with_timeout(Some(&observer), 60_000)
+    };
     let generation_approval = PackageApproval {
         plugin: generation.manifest().manifest().plugin.clone(),
         package_digest: generation.package_digest().into(),
@@ -123,14 +139,21 @@ fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_
     let knowledge_package = json!({"plugin":knowledge_approval.plugin,
         "packageDigest":knowledge_approval.package_digest});
 
-    let (config, provider) = local_provider_sequence_with_accept_timeout(
+    let (started, waiting) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    let (mut config, provider) = local_provider_sequence_at_request(
         vec!["👩🏽‍💻 é root candidate", "👩🏽‍💻 é component candidate"],
-        None,
+        abrupt_host.then_some((1, (started, held))),
         None,
         Duration::from_secs(90),
+        Duration::from_secs(15),
     );
+    if abrupt_host {
+        config.timeout_seconds = 20;
+    }
     let (plan, grant) = fixture.start_candidates(config);
     fixture.wait_saved(&plan["attemptId"]);
+    let channel = abrupt_host.then(|| host_abort::observe(&fixture));
     let action = start_component_for_units(&fixture, component.clone(), &grant, &[fixture.unit]);
     let child_id: ExecutionId =
         serde_json::from_value(action.generation["attemptId"].clone()).unwrap();
@@ -157,6 +180,18 @@ fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+    let crashed = channel.map(|channel| {
+        waiting.recv_timeout(Duration::from_secs(15)).unwrap();
+        let crashed = host_abort::kill(
+            &fixture,
+            &action,
+            &generation_binding.provider,
+            &observer,
+            channel,
+        );
+        release.send(()).unwrap();
+        crashed
+    });
     let child = fixture.wait_saved(&action.generation["attemptId"]);
     assert_eq!(
         child["rows"][0]["output"]["text"],
@@ -164,7 +199,9 @@ fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_
     );
     assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
     settled(&fixture);
-    assert_eq!(std::fs::read_to_string(&observer).unwrap(), "disposed");
+    if !abrupt_host {
+        assert_eq!(std::fs::read_to_string(&observer).unwrap(), "disposed");
+    }
     let root = fixture
         .call(
             "read_ai_translation",
@@ -186,6 +223,9 @@ fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_
     assert_eq!(fixture.bytes(), before);
     assert_eq!(fixture.attempt_count(), count);
     fixture.reopen();
+    if let Some(crashed) = &crashed {
+        host_abort::assert_preserved(&fixture, &action, crashed);
+    }
     assert_saved(&fixture, &plan["attemptId"], &root);
     assert_saved(&fixture, &action.generation["attemptId"], &child);
 
@@ -574,6 +614,9 @@ fn unavailable_generation_preserves_manual_queries_checks_releases_and_reopened_
     assert_eq!(fixture.call("list_releases", json!({})).unwrap(), releases);
     assert_saved(&fixture, &plan["attemptId"], &root);
     assert_saved(&fixture, &action.generation["attemptId"], &child);
+    if let Some(crashed) = &crashed {
+        host_abort::assert_preserved(&fixture, &action, crashed);
+    }
     drop(fixture);
     drop(installation);
 }
