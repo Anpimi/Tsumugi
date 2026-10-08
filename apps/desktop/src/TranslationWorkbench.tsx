@@ -102,6 +102,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const leaveResolver = useRef<((value: boolean) => void) | null>(null);
   const mounted = useRef(false);
   const generation = useRef(0);
+  const saveNextViewEpoch = useRef(0);
   const sourceLoad = useRef(0);
   const running = useRef(false);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -128,6 +129,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const currentLocale = (locale: string) => selectedLocale.current === locale && localeAvailable(locale);
   const targetAvailable = targetLocale !== "" && project.metadata.targetLocales.includes(targetLocale);
   const targetUnavailable = targetLocale !== "" && !targetAvailable;
+  useLayoutEffect(() => { saveNextViewEpoch.current++; }, [open, tab, targetLocale, targetAvailable]);
   const canRebaseTarget = !dirty && !busy && !pendingSave && !pendingStart && !attempt
     && uncertain.length === 0 && !rowAction && batchProgress === null;
 
@@ -248,11 +250,27 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (!pendingSave) return { enabled: false, reason: "unavailable" as const };
     return { enabled: true };
   }
+  function saveAndNextAvailability() {
+    const capture = draftSession.current();
+    const available = capture?.pending ? retryAvailability() : saveAvailability();
+    if (!available.enabled) return available;
+    const scope = listScope.current;
+    if (!capture || capture.locale !== targetLocale || !editorTarget || editorTarget.unitId !== capture.unitId || !list?.total || !scope
+      || scope.id !== list.scopeId || scope.locale !== capture.locale || scope.query !== appliedQuery) {
+      return { enabled: false, reason: "unavailable" as const };
+    }
+    return available;
+  }
   useLayoutEffect(() => {
     const removeSave = commandRegistry.register({
       id: "translation.save", nameKey: "translation.save", category: "translation", scope: commandScope,
       binding: "Mod+S", risk: "writes-translation", confirmation: "none", availability: saveAvailability,
       handler: () => { void perform(saveDraft); },
+    });
+    const removeSaveNext = commandRegistry.register({
+      id: "translation.save-and-next", nameKey: "workbench.saveAndNext", category: "translation", scope: commandScope,
+      binding: null, risk: "writes-translation", confirmation: "none", availability: saveAndNextAvailability,
+      handler: () => { void perform(saveAndNext); },
     });
     const removeRetry = commandRegistry.register({
       id: "translation.retry-save", nameKey: "translation.retryAction", category: "translation", scope: commandScope,
@@ -264,7 +282,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       binding: null, risk: "writes-translation", confirmation: "none", availability: reconcileAvailability,
       handler: () => { void perform(checkSavedAction); },
     });
-    return () => { removeReconcile(); removeRetry(); removeSave(); };
+    return () => { removeReconcile(); removeRetry(); removeSaveNext(); removeSave(); };
   });
   useImperativeHandle(ref, () => ({
     saveCurrent() {
@@ -509,9 +527,12 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }
   async function saveAndNext(current: () => boolean) {
     if (!targetAvailable) return;
-    const result = await saveDraft(current);
-    if (result.savedCurrent && current() && currentLocale(targetLocale)
-      && draftSession.unchanged(result.submittedSeq, result.submittedText)) await navigateEntry(1, current, true);
+    const epoch = saveNextViewEpoch.current;
+    // The owner settles the original save; leaving this view only cancels its navigation.
+    const currentView = () => current() && saveNextViewEpoch.current === epoch;
+    const result = await saveDraft(currentView);
+    if (result.savedCurrent && currentView() && currentLocale(targetLocale)
+      && draftSession.unchanged(result.submittedSeq, result.submittedText)) await navigateEntry(1, currentView, true);
   }
   async function selectRevision(revisionId: string, current: () => boolean) {
     const locale = targetLocale;
@@ -641,7 +662,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                   <section className="editor-source"><h3>{t("translation.sourceText")}</h3><pre>{displayedTarget.sourceText || t("translation.empty")}</pre></section>
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
                   <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onChange={event => draftSession.edit(event.target.value)} /></label>
-                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={busy || !targetAvailable || (!dirty && !pendingSave) || !list?.total} onClick={() => void perform(saveAndNext)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
+                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
                 </div>
                 {history ? <details className="editor-references"><summary>{t("workbench.references")}</summary>

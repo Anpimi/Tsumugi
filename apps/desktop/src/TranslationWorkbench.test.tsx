@@ -1,6 +1,6 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import { createRef } from "react";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { createRef, useLayoutEffect } from "react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TranslationWorkbench, type TranslationHandle } from "./TranslationWorkbench";
@@ -12,6 +12,13 @@ import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from 
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
+import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
+
+function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
+  const commands = useWorkbenchCommands();
+  useLayoutEffect(() => { capture(commands); }, [commands, capture]);
+  return null;
+}
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -728,6 +735,223 @@ it("retains the action when a committed save has a malformed acknowledgement", a
   expect(saves).toHaveLength(2);
   expect(saves[1][1].request).toEqual(saves[0][1].request);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identitiesBeforeRetry);
+});
+
+it("registers scoped save-and-next without a shortcut and dispatches the live command once", async () => {
+  let commands!: WorkbenchCommands;
+  const view = render(<><TranslationWorkbench project={project} disabled={false} />
+    <CommandsProbe capture={value => { commands = value; }} /></>, project);
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
+  const command = () => commands.list(scope).find(value => value.id === "translation.save-and-next");
+  expect(command()).toMatchObject({ id: "translation.save-and-next", nameKey: "workbench.saveAndNext",
+    category: "translation", scope, binding: null, risk: "writes-translation", confirmation: "none",
+    availability: { enabled: false, reason: "hidden" } });
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  expect(command()?.availability).toMatchObject({ enabled: false, reason: "no-changes" });
+  await user.type(editor, "A");
+  expect(command()?.availability.enabled).toBe(true);
+  fireEvent.compositionStart(editor);
+  fireEvent.keyDown(editor, { key: "Enter", ctrlKey: true, isComposing: true });
+  fireEvent.compositionEnd(editor);
+  fireEvent.keyDown(editor, { key: "Enter", isComposing: false });
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision" || name === "read_review_neighbor")).toHaveLength(0);
+  expect(commands.dispatch("translation.save-and-next", { ...scope, area: "tasks" })).toBe(false);
+  expect(commands.dispatch("translation.save-and-next", { ...scope, projectId: fixtureIdentity(901) })).toBe(false);
+  expect(commands.dispatch("translation.save-and-next", { ...scope, sessionToken: "old-session" })).toBe(false);
+  await act(async () => {
+    expect(commands.dispatch("translation.save-and-next", scope)).toBe(true);
+    expect(commands.dispatch("translation.save-and-next", scope)).toBe(false);
+  });
+  expect(await screen.findByRole("heading", { name: "second" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Project overview" }));
+  expect(command()?.availability).toMatchObject({ enabled: false, reason: "hidden" });
+  expect(commands.dispatch("translation.save-and-next", scope)).toBe(false);
+  view.unmount();
+  expect(commands.list(scope)).toHaveLength(0);
+});
+
+it.each([
+  { acknowledgement: "unknown", newer: false },
+  { acknowledgement: "unknown", newer: true },
+  { acknowledgement: "malformed", newer: false },
+  { acknowledgement: "malformed", newer: true },
+])("retries the original save-and-next request before moving ($acknowledgement, newer=$newer)", async ({ acknowledgement, newer }) => {
+  const original = invoke.getMockImplementation()!;
+  let first = true;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    const value = await original(command, args);
+    if (command === "save_translation_revision" && first) {
+      first = false;
+      if (acknowledgement === "unknown") throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true };
+      return { ...value, actionId: fixtureIdentity(999) };
+    }
+    return value;
+  });
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "A");
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
+  const originalRequest = invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1].request;
+  const identities = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
+  if (newer) await user.type(editor, "B");
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  await waitFor(() => {
+    if (newer) expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    else expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled();
+  });
+  const saves = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
+  expect(saves).toHaveLength(2);
+  expect(saves[1][1].request).toEqual(originalRequest);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identities);
+  if (newer) {
+    expect(editor).toHaveValue("AB");
+    expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
+    expect(screen.getByText(/Your newer draft is still here/)).toBeInTheDocument();
+    expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
+  } else {
+    expect(await screen.findByRole("heading", { name: "second" })).toBeInTheDocument();
+    expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(1);
+  }
+});
+
+it.each(["editor", "list"])("keeps save-and-next unavailable without a %s navigation basis while ordinary save remains available", async failedRead => {
+  const user = userEvent.setup();
+  let commands!: WorkbenchCommands;
+  const consumer = () => <><TranslationWorkbench project={project} disabled={false} />
+    <CommandsProbe capture={value => { commands = value; }} /></>;
+  const { rerender } = render(consumer(), project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Retained draft");
+  rerender(null);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) =>
+    command === (failedRead === "editor" ? "read_review_editor_snapshot" : "read_review_summary_page")
+      ? Promise.reject(new Error("Navigation reference temporarily unavailable")) : original(command, args));
+  rerender(consumer());
+  await screen.findByRole("alert");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Retained draft");
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
+  expect(commands.list(scope).find(value => value.id === "translation.save-and-next")?.availability)
+    .toMatchObject({ enabled: false, reason: "unavailable" });
+  expect(commands.dispatch("translation.save-and-next", scope)).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
+});
+
+it.each(["leave", "leave-and-return", "remove-and-restore", "import", "import-and-return"])("settles the original save without advancing after the committed view changes (%s)", async change => {
+  const original = invoke.getMockImplementation()!;
+  let releaseSave!: () => Promise<void>;
+  let delayed = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision" && delayed) {
+      delayed = false;
+      return new Promise(resolve => { releaseSave = async () => { resolve(await original(command, args)); }; });
+    }
+    return original(command, args);
+  });
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "A");
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  await waitFor(() => expect(releaseSave).toBeDefined());
+  if (change === "remove-and-restore") {
+    rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: [], metadataRevision: "2" } }} disabled={false} />);
+    await screen.findByText(i18n.t("translation.removedTargetDraft", { locale: "zh-CN" }));
+    rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, metadataRevision: "3" } }} disabled={false} />);
+  } else if (change === "import" || change === "import-and-return") {
+    await user.click(screen.getByRole("button", { name: "Import file" }));
+    expect(screen.getByRole("button", { name: "Import file" })).toHaveAttribute("aria-current", "page");
+    if (change === "import-and-return") await user.click(screen.getByRole("button", { name: "Edit translations" }));
+  } else {
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    if (change === "leave-and-return") await user.click(screen.getByRole("button", { name: "Translations" }));
+  }
+  await act(async () => {});
+  const summaries = invoke.mock.calls.filter(([name]) => name === "read_review_summary_page").length;
+  const editorReads = invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot").length;
+  await act(async () => releaseSave());
+  await waitFor(() => expect(history.currentText).toBe("A"));
+  expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_summary_page")).toHaveLength(summaries);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(editorReads);
+  if (change === "leave") await user.click(screen.getByRole("button", { name: "Translations" }));
+  if (change === "import") {
+    expect(screen.getByRole("button", { name: "Import file" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("textbox", { name: "Your draft" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit translations" }));
+  }
+  expect(await screen.findByRole("heading", { name: "first" })).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("A");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeDisabled());
+});
+
+it("keeps save-and-next on the original entry when newer input returns to the submitted text", async () => {
+  const original = invoke.getMockImplementation()!;
+  let releaseSave!: () => Promise<void>;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "save_translation_revision"
+    ? new Promise(resolve => { releaseSave = async () => { resolve(await original(command, args)); }; }) : original(command, args));
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "A");
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  await waitFor(() => expect(releaseSave).toBeDefined());
+  await user.type(editor, "B{Backspace}");
+  await act(async () => releaseSave());
+  expect(await screen.findByText(/Your newer draft is still here/)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
+  expect(editor).toHaveValue("A");
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
+});
+
+it("does not advance a replacement session from an old save-and-next acknowledgement", async () => {
+  const original = invoke.getMockImplementation()!;
+  let releaseSave!: () => Promise<void>;
+  let delayed = true;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "save_translation_revision" && delayed) {
+      delayed = false;
+      return new Promise(resolve => { releaseSave = async () => { resolve(await original(command, args)); }; });
+    }
+    return original(command, args);
+  });
+  const { rerender } = render(<TranslationWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "A");
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  await waitFor(() => expect(releaseSave).toBeDefined());
+  const replacement = { ...project, sessionToken: "replacement-session", metadata: { ...project.metadata, projectId: fixtureIdentity(901) } };
+  rerender(<TranslationWorkbench project={replacement} disabled={false} />);
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  await user.type(editor, "B");
+  await act(async () => releaseSave());
+  expect(editor).toHaveValue("B");
+  expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(0);
+  expect(invoke.mock.calls.find(([name]) => name === "save_translation_revision")![1].request)
+    .toMatchObject({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, text: "A" });
 });
 
 it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 51 without manual paging, then reports the end (%s)", async mode => {

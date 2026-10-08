@@ -3,7 +3,7 @@ import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
 
 export type WorkbenchCommandId = "project.metadata.save" | "translation.save"
-  | "translation.retry-save" | "translation.reconcile-save";
+  | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save";
 export interface CommandScope {
   projectId: string;
   sessionToken: string;
