@@ -394,6 +394,197 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
 }
 
 #[test]
+fn committed_cancellation_projection_failure_reconciles_the_original_request() {
+    let (temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    let task = fixed.envelope().task_id;
+    let attempt = fixed.envelope().attempt_id;
+    let request = ExecutionId::new();
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let first = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(runtime.workers.len(), 1);
+    let database = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    let mut corrupt_digest = fixed.digest().to_owned();
+    let replacement = if corrupt_digest.starts_with('0') {
+        "1"
+    } else {
+        "0"
+    };
+    corrupt_digest.replace_range(..1, replacement);
+    assert_eq!(corrupt_digest.len(), 64);
+    assert_ne!(corrupt_digest, fixed.digest());
+    assert_eq!(
+        database
+            .execute(
+                "UPDATE execution_attempts SET digest=?1 WHERE attempt_id=?2",
+                rusqlite::params![corrupt_digest, attempt.to_string()],
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store.execution_attempt(attempt, true).unwrap_err(),
+        ExecutionError::new(ErrorCode::CorruptLedger, "input-digest")
+    );
+    assert_eq!(
+        runtime.cancel(&mut store, task, request).unwrap_err(),
+        ExecutionError::new(ErrorCode::OutcomeUnknown, "input-digest")
+    );
+    let cancellation_record = || {
+        database
+            .query_row(
+                "SELECT task_id,revision,(SELECT COUNT(*) FROM execution_cancellations WHERE task_id=?1) FROM execution_cancellations WHERE request_id=?2",
+                rusqlite::params![task.to_string(), request.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        u64::try_from(row.get::<_, i64>(1)?).unwrap(),
+                        row.get::<_, u32>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+    };
+    let recorded = cancellation_record();
+    assert_eq!(recorded, (task.to_string(), 1, 1));
+    for item in &fixed.envelope().items {
+        let state: (String, Option<String>) = database
+            .query_row(
+                "SELECT execution,dispatch_token FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                rusqlite::params![attempt.to_string(), item.item_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        if item.item_id == first.request.item_id {
+            assert_eq!(
+                state,
+                (
+                    "dispatched".into(),
+                    Some(first.request.dispatch_token.to_string())
+                )
+            );
+        } else {
+            assert_eq!(state, ("cancelled-before-dispatch".into(), None));
+        }
+    }
+    assert!(!store.is_reconciling());
+    assert_eq!(runtime.workers.len(), 1);
+    assert!(runtime.is_active(attempt));
+    assert!(!runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_none());
+    assert!(calls.try_recv().is_err());
+    assert_eq!(
+        database
+            .execute(
+                "UPDATE execution_attempts SET digest=?1 WHERE attempt_id=?2",
+                rusqlite::params![fixed.digest(), attempt.to_string()],
+            )
+            .unwrap(),
+        1
+    );
+    let revision = runtime.cancel(&mut store, task, request).unwrap();
+    assert_eq!(revision.get(), recorded.1);
+    assert_eq!(cancellation_record(), recorded);
+    assert!(runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_some());
+    first.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(first.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.is_active(attempt)
+    });
+    let view = runtime.attempt(&store, attempt).unwrap();
+    assert_eq!((view.progress.succeeded, view.progress.cancelled), (1, 2));
+    assert_eq!(view.progress.adopted, 0);
+    assert!(view.items.iter().all(|item| item.cancellation_requested));
+    assert!(calls.try_recv().is_err());
+    let selected = view
+        .items
+        .iter()
+        .find(|item| item.execution == ExecutionState::CancelledBeforeDispatch)
+        .unwrap()
+        .item_id;
+    let resumed = runtime.resume(&mut store, attempt, &[selected]).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let second = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_ne!(resumed, attempt);
+    assert_eq!(second.request.input.envelope().attempt_id, resumed);
+    assert_eq!(second.request.item_id, selected);
+    assert_eq!(runtime.workers.len(), 1);
+    assert_eq!(runtime.cancel(&mut store, task, request).unwrap(), revision);
+    assert_eq!(cancellation_record(), recorded);
+    assert!(!runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_none());
+    assert!(
+        runtime
+            .attempt(&store, resumed)
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| !item.cancellation_requested)
+    );
+    second.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(second.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.is_active(resumed)
+    });
+    let resumed_view = runtime.attempt(&store, resumed).unwrap();
+    assert_eq!(resumed_view.progress.succeeded, 1);
+    assert_eq!(resumed_view.progress.adopted, 0);
+    assert_eq!(cancellation_record(), recorded);
+    assert!(calls.try_recv().is_err());
+}
+
+#[test]
+fn cancellation_write_lock_rejects_without_recording_or_signalling_workers() {
+    let (temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    let task = fixed.envelope().task_id;
+    let attempt = fixed.envelope().attempt_id;
+    let request = ExecutionId::new();
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let first = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    let before = serde_json::to_value(runtime.attempt(&store, attempt).unwrap()).unwrap();
+    let blocker = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    assert_eq!(
+        runtime.cancel(&mut store, task, request).unwrap_err(),
+        ExecutionError::new(ErrorCode::Busy, "execution-storage")
+    );
+    assert_eq!(
+        blocker
+            .query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| {
+                row.get::<_, u32>(0)
+            })
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        serde_json::to_value(runtime.attempt(&store, attempt).unwrap()).unwrap(),
+        before
+    );
+    assert!(!store.is_reconciling());
+    assert_eq!(runtime.workers.len(), 1);
+    assert!(runtime.is_active(attempt));
+    assert!(!runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_none());
+    assert!(calls.try_recv().is_err());
+    blocker.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(runtime.cancel(&mut store, task, request).unwrap().get(), 1);
+    assert!(runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_some());
+    first.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(first.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.is_active(attempt)
+    });
+    let view = runtime.attempt(&store, attempt).unwrap();
+    assert_eq!((view.progress.succeeded, view.progress.cancelled), (1, 2));
+    assert!(calls.try_recv().is_err());
+}
+
+#[test]
 fn received_output_survives_a_temporary_database_write_lock() {
     let (temp, mut store, mut runtime, calls) = setup();
     let fixed = input(&store);

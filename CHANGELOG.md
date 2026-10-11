@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- A recorded task cancellation remains unconfirmed if reading a running worker's state fails. Rechecking the original request preserves its cancellation revision and does not cancel explicitly resumed work.
+
 - Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
 
 - IPC validation keeps both primitive integer bounds and narrower declared field constraints.

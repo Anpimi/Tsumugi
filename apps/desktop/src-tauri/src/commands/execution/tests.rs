@@ -48,6 +48,55 @@ fn command_error_wire_fixture_preserves_conflicts_guidance_and_diagnostics() {
 }
 
 #[test]
+fn cancellation_error_wire_distinguishes_unknown_projection_from_rejected_write() {
+    let unknown = map_execution(
+        ExecutionError::new(ErrorCode::OutcomeUnknown, "input-digest"),
+        CommandStage::ExecutionCancel,
+    );
+    assert_eq!(unknown.code, CommandErrorCode::OutcomeUnknown);
+    assert_eq!(unknown.stage, CommandStage::ExecutionCancel);
+    assert_eq!(unknown.outcome, CommandOutcome::Unknown);
+    assert!(unknown.recovery_required);
+    assert_eq!(
+        unknown.recovery_guidance,
+        Some(RecoveryGuidance::ReconcileOriginal)
+    );
+    assert_eq!(unknown.reason.as_deref(), Some("input-digest"));
+    assert!(unknown.item_ids.is_empty());
+    assert!(unknown.conflict.is_none());
+    assert!(unknown.diagnostic_id.is_some());
+    let value = serde_json::to_value(&unknown).unwrap();
+    assert_eq!(value["code"], json!("outcome-unknown"));
+    assert_eq!(value["stage"], json!("execution-cancel"));
+    assert_eq!(value["outcome"], json!("unknown"));
+    assert_eq!(value["recoveryRequired"], json!(true));
+    assert_eq!(value["recoveryGuidance"], json!("reconcile-original"));
+    assert_eq!(value["reason"], json!("input-digest"));
+    assert_eq!(serde_json::from_value::<CommandError>(value).unwrap(), unknown);
+
+    let rejected = map_execution(
+        ExecutionError::new(ErrorCode::Busy, "execution-storage"),
+        CommandStage::ExecutionCancel,
+    );
+    assert_eq!(rejected.code, CommandErrorCode::Busy);
+    assert_eq!(rejected.stage, CommandStage::ExecutionCancel);
+    assert_eq!(rejected.outcome, CommandOutcome::Rejected);
+    assert!(!rejected.recovery_required);
+    assert!(rejected.recovery_guidance.is_none());
+    assert_eq!(rejected.reason.as_deref(), Some("execution-storage"));
+    let value = serde_json::to_value(&rejected).unwrap();
+    assert_eq!(value["code"], json!("busy"));
+    assert_eq!(value["stage"], json!("execution-cancel"));
+    assert_eq!(value["outcome"], json!("rejected"));
+    assert_eq!(value["recoveryRequired"], json!(false));
+    assert!(value.get("recoveryGuidance").is_none());
+    assert_eq!(
+        serde_json::from_value::<CommandError>(value).unwrap(),
+        rejected
+    );
+}
+
+#[test]
 fn execution_wire_fixture_matches_rust_types() {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../test/fixtures/executionCommands.contract.json"

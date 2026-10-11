@@ -419,7 +419,13 @@ impl ExecutionRuntime {
         let revision = store.cancel_execution(task, request)?;
         for worker in &mut self.workers {
             if store
-                .execution_attempt(worker.request.input.envelope().attempt_id, true)?
+                .execution_attempt(worker.request.input.envelope().attempt_id, true)
+                .map_err(|mut error| {
+                    // Cancellation is already durable; a failed projection cannot
+                    // reject it or confirm that running workers received a signal.
+                    error.code = ErrorCode::OutcomeUnknown;
+                    error
+                })?
                 .items
                 .iter()
                 .any(|item| item.cancellation_requested)
