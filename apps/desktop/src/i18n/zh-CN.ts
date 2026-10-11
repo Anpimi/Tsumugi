@@ -405,6 +405,9 @@ ai: {
       captureSaved: "当前输入已捕获，已保存的依据和遗漏仍可查看。",
       actionFailed: "操作未能完成，草稿和已捕获依据均已保留。",
       readFailed: "当前资源信息读取失败（{{reason}}），草稿与原待核对操作仍可使用。",
+      loading: "正在读取当前资源信息…",
+      retryRead: "重试这次读取",
+      previewChanged: "当前源内容或术语信息已与这份比较不同。作出新决定前，请重新读取这份已捕获文件。",
       pickerUnknown: "文件选择的结果尚不确定，请先检查此前捕获的文件，再决定是否重新选择。重新选择文件是新操作，不是原选择器的重试。",
       previewUnavailable: "已捕获的文件仍保留，但未能读取其当前比较结果。",
       retryPreview: "重新读取此已捕获文件",
@@ -473,6 +476,7 @@ ai: {
       loadImpact: "打开此页以计算当前影响。",
       error: "操作未能完成（{{reason}}）。已保存的项目工作仍保留；重试前请刷新并比较。",
       errors: {
+        "resource-basis": "操作准备期间，当前源内容或术语信息已变化。开始新操作前，请重新读取",
         "resource-current": "已采纳术语发生变化，请重新打开预览并比较当前值",
         "resource-revision": "同一资源修订已有不同内容，请核对文件和修订号",
         "resource-override": "项目覆盖仍在生效，请保留或明确替换它",

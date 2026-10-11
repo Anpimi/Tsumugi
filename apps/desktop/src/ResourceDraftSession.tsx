@@ -4,7 +4,8 @@ import { executionCommands, executionContext, type SessionRequest } from "./exec
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { resourceCommands, type CaptureContext, type ContextCapture, type ContextRevision, type GlossaryCapture,
   type ResourceDecision, type ResourceDecisionResult, type ResourcePreview, type SaveContext, type SaveTerm, type TermRevision } from "./resourceCommands";
-import type { ContentRow } from "./sourceCommands";
+import { sourceCommands, type ContentRow, type ContentScope } from "./sourceCommands";
+import { useSessionReads } from "./SessionReadProvider";
 
 export type ResourceTermDraft = Pick<SaveTerm, "source" | "aliases" | "target" | "protected" | "scopeUnitId" | "reason">;
 export const resourceTermDraftFor = (term: ResourceTermDraft | null): ResourceTermDraft => term
@@ -17,6 +18,7 @@ export type ResourcePending =
   | (PendingBase & { kind: "decision"; request: ResourceDecision; locale: string })
   | (PendingBase & { kind: "capture"; request: CaptureContext });
 export type ResourceNotice = "saved" | "savedNewer" | "decisionSaved" | "previewReady" | "captureSaved" | "unknown" | "pickerUnknown" | "error" | null;
+export interface ResourceSourceBasis { revision: string; snapshotId: string }
 export interface ResourceDraftState {
   locale: string;
   selectedTerm: TermRevision | null;
@@ -33,6 +35,7 @@ export interface ResourceDraftState {
   /** Explicitly captured evidence, never a mirror of the mutable resource lists. */
   previewCapture: GlossaryCapture | null;
   preview: ResourcePreview | null;
+  previewSourceBasis: ResourceSourceBasis | null;
   previewNeedsRefresh: boolean;
   fixedContext: ContextCapture | null;
   pending: ResourcePending | null;
@@ -57,10 +60,10 @@ interface ResourceSession {
   editContextReason: (reason: string) => void;
   discardContext: () => void;
   discard: () => void;
-  saveTerm: () => Promise<void>;
-  saveContext: () => Promise<void>;
-  decide: (entryId: string, expectedRevisionId: string | null, decision: ResourceDecision["decision"]) => Promise<void>;
-  captureContext: () => Promise<void>;
+  saveTerm: (isScopeCurrent?: () => boolean) => Promise<void>;
+  saveContext: (isScopeCurrent?: () => boolean) => Promise<void>;
+  decide: (entryId: string, expectedRevisionId: string | null, decision: ResourceDecision["decision"], isScopeCurrent?: () => boolean) => Promise<void>;
+  captureContext: (isScopeCurrent?: () => boolean) => Promise<void>;
   retryPending: () => Promise<void>;
   chooseFile: (isCurrent?: () => boolean) => Promise<void>;
   openPreview: (capture: GlossaryCapture, isCurrent?: () => boolean) => Promise<void>;
@@ -77,10 +80,11 @@ function nullable(value: string | null | undefined) { return value ?? null; }
 function invalidReceipt() { throw new Error("Invalid resource action acknowledgement"); }
 
 export function ResourceDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
+  const reads = useSessionReads();
   const [state, setState] = useState<ResourceDraftState>(() => ({ locale: project.metadata.targetLocales[0] ?? "",
     selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: 0, newerTerm: false,
     selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: 0, newerContext: false,
-    previewCapture: null, preview: null, previewNeedsRefresh: false, fixedContext: null, pending: null, busyMutation: false, notice: null, failure: null, completionVersion: 0 }));
+    previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, busyMutation: false, notice: null, failure: null, completionVersion: 0 }));
   const currentState = useRef(state), projectRef = useRef(project);
   const [session] = useState(() => executionContext(project));
   const mounted = useRef(false), running = useRef(false);
@@ -100,7 +104,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   function resetLocale(before: ResourceDraftState, locale: string): ResourceDraftState {
     return { ...before, locale, selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: before.termSeq + 1, newerTerm: false,
       selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: before.contextSeq + 1, newerContext: false,
-      previewCapture: null, preview: null, previewNeedsRefresh: false, fixedContext: null, notice: null, failure: null };
+      previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, notice: null, failure: null };
   }
   useEffect(() => {
     const next = projectRef.current.metadata.targetLocales[0] ?? "";
@@ -174,11 +178,24 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   async function readPreview(capture: GlossaryCapture, isCurrent: () => boolean = live) {
     if (!live() || !isCurrent() || !localeAvailable(capture.targetLocale)) return;
+    // The user explicitly accepts a comparison against this source scope. Keep
+    // this small immutable basis separate from the current Query projection.
+    const sourceKey = reads.key(["resource-source-scope"]);
+    const source = await reads.client.fetchQuery<ContentScope>({ queryKey: sourceKey, meta: { scopes: ["source"] }, queryFn: () => sourceCommands.scope(session) });
+    if (!live() || !isCurrent()) return;
+    if (!source.currentSnapshot) throw { reason: "resource-source" };
+    const basis: ResourceSourceBasis = { revision: source.revision, snapshotId: source.currentSnapshot };
     const result = await resourceCommands.preview({ ...session, captureId: capture.captureId });
     if (!live() || !isCurrent()) return;
     if (result.capture.captureId !== capture.captureId || result.capture.digest !== capture.digest || result.capture.targetLocale !== capture.targetLocale) invalidReceipt();
+    const currentSource = reads.client.getQueryData<ContentScope>(sourceKey), sourceState = reads.client.getQueryState(sourceKey);
+    if (sourceState?.status !== "success" || sourceState.fetchStatus !== "idle" || sourceState.isInvalidated
+      || !currentSource || currentSource.revision !== basis.revision || currentSource.currentSnapshot !== basis.snapshotId) throw { reason: "resource-basis" };
+    // An explicit read may establish a new comparison baseline. Seed only its
+    // current projection; automatic Query reads never adopt an owner baseline.
+    reads.client.setQueryData(reads.key(["resource-preview-current", capture.captureId]), result);
     update(before => before.previewCapture === capture && localeAvailable(capture.targetLocale)
-      ? { ...before, preview: result, previewNeedsRefresh: false, notice: "previewReady", failure: null } : before);
+      ? { ...before, preview: result, previewSourceBasis: basis, previewNeedsRefresh: false, notice: "previewReady", failure: null } : before);
   }
   async function dispatch(action: ResourcePending) {
     if (!live()) return;
@@ -197,15 +214,19 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
         notice: hasUnknownOutcome(error) ? "unknown" : "error", failure: commandFailure(error) });
     }
   }
-  async function fresh(kind: ResourcePending["kind"], entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }) {
+  async function fresh(kind: ResourcePending["kind"], entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }, isScopeCurrent: () => boolean = () => true) {
     const start = current(), locale = kind === "decision" ? start.previewCapture?.targetLocale ?? "" : start.locale;
     if (!localeAvailable(locale) || (kind === "term" && (!start.termDraft.source.trim() || !start.termDraft.target.trim() || !start.termDraft.reason.trim()))
       || ((kind === "context" || kind === "capture") && (!start.selectedUnit?.unitId || !start.selectedUnit.sourceRevisionId))
       || (kind === "context" && !start.contextReason.trim()) || (kind === "decision" && (!entry || !start.preview || start.previewNeedsRefresh || !matchingEntry(start.preview, entry)))) return;
+    if (!isScopeCurrent()) { fail({ reason: "resource-basis" }); return; }
     if (!reserve()) return;
     try {
       const actionId = await executionCommands.identity(session);
       const latest = current();
+      // Identity allocation is asynchronous. Recheck read evidence without the
+      // mutation's own busy reservation, before dispatching a fresh request.
+      if (live() && !isScopeCurrent()) { fail({ reason: "resource-basis" }); return; }
       if (!live() || !localeAvailable(locale) || latest.pending
         || (kind === "term" && !sameTermTarget(latest, start))
         || ((kind === "context" || kind === "capture") && !sameContextTarget(latest, start))
@@ -232,7 +253,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   async function openPreview(capture: GlossaryCapture, isCurrent: () => boolean = live) {
     if (!isCurrent() || !localeAvailable(capture.targetLocale) || !reserve()) return;
-    update(before => ({ ...before, previewCapture: capture, preview: null, previewNeedsRefresh: true }));
+    update(before => ({ ...before, previewCapture: capture, preview: null, previewSourceBasis: null, previewNeedsRefresh: true }));
     try { await readPreview(capture, isCurrent); } catch (error) { if (isCurrent()) fail(error); } finally { release(); }
   }
   async function retryPreview(isCurrent?: () => boolean) { const capture = current().previewCapture; if (capture) await openPreview(capture, isCurrent); }
@@ -245,13 +266,13 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
       if (!live() || !capture) return;
       captured = true;
       // The picker has already captured input. Keep its identity even if the following read fails.
-      update(before => ({ ...before, previewCapture: capture, preview: null, previewNeedsRefresh: true, completionVersion: before.completionVersion + 1 }));
+      update(before => ({ ...before, previewCapture: capture, preview: null, previewSourceBasis: null, previewNeedsRefresh: true, completionVersion: before.completionVersion + 1 }));
       if (isCurrent() && localeAvailable(capture.targetLocale) && current().locale === locale) await readPreview(capture, isCurrent);
     } catch (error) { if (!captured || isCurrent()) fail(error, hasUnknownOutcome(error) && !captured ? "pickerUnknown" : "error"); }
     finally { release(); }
   }
   return <ResourceContext.Provider value={{ state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
     setLocale, beginTerm, editTerm, discardTerm, beginContext, editContext, editContextReason, discardContext, discard,
-    saveTerm: () => fresh("term"), saveContext: () => fresh("context"), captureContext: () => fresh("capture"),
-    decide: (entryId, expectedRevisionId, decision) => fresh("decision", { entryId, expectedRevisionId, decision }), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;
+    saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
+    decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;
 }

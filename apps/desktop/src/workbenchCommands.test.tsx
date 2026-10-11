@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { WorkbenchCommands, type ReviewWaiverCommandPayload } from "./workbenchCommands";
+import { WorkbenchCommands, type ReviewWaiverCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
 
@@ -91,5 +91,37 @@ describe("WorkbenchCommands", () => {
     expect(commands.dispatch("review.withdraw-fallback", currentScope, payload)).toBe(false);
     expect(fallback).toHaveBeenCalledTimes(1);
     expect(fallback).toHaveBeenCalledWith(payload);
+  });
+});
+
+
+describe("resource command payloads", () => {
+  const resourceScope = { ...scope, area: "resources" as const };
+  const metadata = { nameKey: "resource.save" as const, category: "resources" as const, scope: resourceScope,
+    binding: null, risk: "writes-resources" as const, confirmation: "none" as const };
+  it.each([
+    ["resource.save-term", { kind: "resource-term", locale: "zh-CN", termId: null, expectedRevisionId: null, editSeq: 0 }, [{ editSeq: -1 }, { editSeq: 1.5 }, { termId: undefined }, { expectedRevisionId: "" }]],
+    ["resource.save-context", { kind: "resource-context", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, editSeq: 1 }, [{ sourceRevisionId: 7 }, { unitId: "" }, { expectedRevisionId: undefined }]],
+    ["resource.capture-context", { kind: "resource-context", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, editSeq: 1 }, [{ editSeq: NaN }, { locale: "" }]],
+    ["resource.choose-file", { kind: "resource-locale", locale: "zh-CN" }, [{ locale: [] }]],
+    ["resource.open-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ captureId: "" }, { digest: null }]],
+    ["resource.refresh-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ locale: false }]],
+    ["resource.decide-entry", { kind: "resource-decision", captureId: "capture", digest: "digest", locale: "zh-CN", entryId: "entry", expectedRevisionId: null, decision: "keep", rowKind: "added", scopeUnitId: null }, [{ decision: "delete" }, { rowKind: "missing" }, { expectedRevisionId: undefined }, { scopeUnitId: undefined }]],
+    ["resource.retry-pending", { kind: "resource-pending", pendingKind: "term", actionId: "action" }, [{ pendingKind: "picker" }, { actionId: "" }]],
+    ["resource.open-translation", { kind: "resource-translation", locale: "zh-CN", target: { unitId: "unit", sourceRevisionId: "source", key: "key", sourceText: "" }, evidenceKind: "tm", evidenceId: "revision", selectionId: null }, [{ target: null }, { target: { unitId: "unit" } }, { evidenceKind: "impact", selectionId: null }, { evidenceKind: "tm", selectionId: "selection" }]],
+  ] as const)("validates %s before invoking its live handler", (id, payload, malformed) => {
+    const commands = new WorkbenchCommands(), handler = vi.fn();
+    let enabled = true;
+    const remove = commands.register({ ...metadata, id, payloadKind: payload.kind,
+      availability: () => ({ enabled }), handler } as WorkbenchCommand);
+    const dispatch = (value?: unknown, target = resourceScope) => Reflect.apply(commands.dispatch, commands, [id, target, value]);
+    expect(dispatch()).toBe(false); expect(dispatch(null)).toBe(false); expect(dispatch({ ...payload, kind: "unknown" })).toBe(false);
+    malformed.forEach(change => expect(dispatch({ ...payload, ...change })).toBe(false));
+    expect(dispatch(payload, { ...resourceScope, projectId: "other" })).toBe(false);
+    expect(dispatch(payload, { ...resourceScope, sessionToken: "other" })).toBe(false);
+    expect(Reflect.apply(commands.dispatch, commands, [id, { ...resourceScope, area: "review" }, payload])).toBe(false);
+    expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledWith(payload);
+    enabled = false; expect(dispatch(payload)).toBe(false); expect(handler).toHaveBeenCalledTimes(1);
+    remove(); expect(dispatch(payload)).toBe(false);
   });
 });

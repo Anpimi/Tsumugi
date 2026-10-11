@@ -404,6 +404,9 @@ ai: {
       captureSaved: "The current input was captured. Its saved evidence and omissions remain available.",
       actionFailed: "The action could not complete. Your drafts and captured evidence are retained.",
       readFailed: "Current resource information could not be read ({{reason}}). Your drafts and original pending action are still available.",
+      loading: "Reading current resource information…",
+      retryRead: "Retry this read",
+      previewChanged: "Current source or glossary information differs from this comparison. Read this captured file again before making new decisions.",
       pickerUnknown: "The file selection result is uncertain. Check previously captured files before choosing again. A new file selection is a new action, not a retry of the original picker.",
       previewUnavailable: "The captured file is retained, but its current comparison could not be loaded.",
       retryPreview: "Read this captured file again",
@@ -472,6 +475,7 @@ ai: {
       loadImpact: "Open this tab to calculate current impact.",
       error: "This action could not complete ({{reason}}). Saved project work is retained; refresh and compare before retrying.",
       errors: {
+        "resource-basis": "The current source or glossary information changed while the action was being prepared. Read it again before starting a new action",
         "resource-current": "The adopted term changed. Reopen its preview and compare the new value",
         "resource-revision": "This resource revision already exists with different content. Check the file and its revision",
         "resource-override": "A project override is active. Keep it or explicitly replace it",
