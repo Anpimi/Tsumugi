@@ -6,11 +6,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReviewWorkbench, type ReviewHandle } from "./ReviewWorkbench";
 import type { ProjectView } from "./projectCommands";
 import type { ReviewTarget } from "./reviewCommands";
-import type { ReviewWrite } from "./reviewCommands";
+import type { ReviewWrite, WaiverWrite, Waiver, FallbackWrite, FallbackDecision } from "./reviewCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
-import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
+import { useWorkbenchCommands, type WorkbenchCommands, type ReviewWaiverCommandPayload, type ReviewFallbackCommandPayload } from "./workbenchCommands";
+import { useReviewDraftSession } from "./ReviewDraftSession";
 import type { ChangeScope } from "./sessionReads";
 import type { Eligibility } from "./reviewCommands";
 
@@ -18,6 +19,26 @@ function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => 
   const commands = useWorkbenchCommands();
   useLayoutEffect(() => { capture(commands); }, [commands, capture]);
   return null;
+}
+function ReviewOwnerProbe({ capture }: { capture: (owner: ReturnType<typeof useReviewDraftSession>) => void }) {
+  const owner = useReviewDraftSession();
+  useLayoutEffect(() => { capture(owner); });
+  return null;
+}
+function waiverReceipt(request: WaiverWrite, waiverId = fixtureIdentity(625)): Waiver {
+  return { waiverId, actionId: request.actionId, unitId: request.unitId, locale: request.locale, basis: request.expectedBasis,
+    issueId: request.issueId, grant: request.grant, previousWaiverId: request.expectedWaiverId ?? null,
+    policyVersion: "balanced-1", actor: request.actor, reason: request.reason, createdAt: "2026-10-03T00:00:00Z" };
+}
+function fallbackReceipt(request: FallbackWrite): FallbackDecision {
+  return { fallbackId: fixtureIdentity(626), actionId: request.actionId, unitId: request.unitId, locale: request.locale,
+    sourceRevisionId: targets.first.sourceRevisionId, allow: request.allow, previousFallbackId: request.expectedFallbackId ?? null,
+    policyVersion: "balanced-1", actor: request.actor, reason: request.reason, createdAt: "2026-10-03T00:00:00Z" };
+}
+function waiverFindings(target: ReviewTarget) {
+  return reviewCheckFixture(target, fixtureIdentity(621), "completed", { rules: [{ rule: "terminology", status: "findings", reason: null,
+    findings: ["first-term", "second-term"].map(issueId => ({ issueId, rule: "terminology", code: "missing", detail: issueId, severity: "warning", waivable: true })) },
+    { rule: "placeholders", status: "findings", reason: null, findings: [{ issueId: "blocked-issue", rule: "placeholders", code: "missing", detail: "blocked", severity: "error", waivable: false }] }] });
 }
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -205,6 +226,304 @@ it("cancels only the active check ID through the command while the Review owner 
     .toMatchObject({ actionId: checkRequest.actionId, projectId: project.metadata.projectId, sessionToken: project.sessionToken });
   await act(async () => finish(reviewCheckFixture(targets.first, checkRequest.actionId, "cancelled")));
   expect(await screen.findByText("The check was cancelled before completion. Run it again for current coverage.")).toBeVisible();
+});
+
+it("routes fallback commands to the exact entry and preserves owner reason validation", async () => {
+  targets.first = reviewTargetFixture({ ...targets.first, selectionId: null, revisionId: null, translationText: null, basisEvidence: undefined });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (name: string, args: { request: Record<string, unknown> }) => {
+    if (name === "allow_source_fallback") {
+      const request = args.request.fallback as FallbackWrite, receipt = fallbackReceipt(request);
+      targets.first = { ...targets.first, currentFallback: request.allow ? receipt : null };
+      return receipt;
+    }
+    return original(name, args);
+  });
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  const consumer = (current: ProjectView) => <><ReviewWorkbench project={current} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>;
+  const view = render(consumer(project), project), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  const payload: ReviewFallbackCommandPayload = { kind: "review-fallback", unitId: targets.first.unitId,
+    locale: "zh-CN", basis: targets.first.basis, expectedFallbackId: null };
+  expect(registry.list(scope).find(value => value.id === "review.allow-fallback")).toMatchObject({ nameKey: "review.fallback",
+    payloadKind: "review-fallback", binding: null, risk: "writes-review", availability: { enabled: false, reason: "unavailable" } });
+  expect(registry.describe("review.allow-fallback", scope, payload)?.availability.enabled).toBe(true);
+  await act(async () => { expect(registry.dispatch("review.allow-fallback", scope, payload)).toBe(true); });
+  expect(await screen.findByText("Enter a reason for this action.")).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity" || name === "allow_source_fallback")).toHaveLength(0);
+  expect(registry.dispatch("review.allow-fallback", scope, { ...payload, basis: "older-basis" })).toBe(false);
+  expect(registry.dispatch("review.allow-fallback", scope, { ...payload, unitId: targets.second.unitId })).toBe(false);
+  expect(registry.dispatch("review.withdraw-fallback", scope, payload)).toBe(false);
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Use original wording");
+  await user.click(screen.getByRole("button", { name: "Allow source text for this entry" }));
+  await screen.findByRole("button", { name: "Withdraw source fallback" });
+  const withdraw = { ...payload, expectedFallbackId: fixtureIdentity(626) };
+  expect(registry.dispatch("review.allow-fallback", scope, payload)).toBe(false);
+  expect(registry.dispatch("review.withdraw-fallback", scope, { ...withdraw, expectedFallbackId: fixtureIdentity(627) })).toBe(false);
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Translation will follow");
+  await act(async () => { expect(registry.dispatch("review.withdraw-fallback", scope, withdraw)).toBe(true); });
+  await screen.findByRole("button", { name: "Allow source text for this entry" });
+  const writes = invoke.mock.calls.filter(([name]) => name === "allow_source_fallback").map(([, args]) => args.request);
+  expect(writes).toEqual([expect.objectContaining({ projectId: scope.projectId, sessionToken: scope.sessionToken,
+    fallback: expect.objectContaining({ allow: true, unitId: payload.unitId, locale: payload.locale, expectedBasis: payload.basis,
+      expectedFallbackId: null, actor: "Reviewer A", reason: "Use original wording" }) }), expect.objectContaining({
+    fallback: expect.objectContaining({ allow: false, expectedFallbackId: withdraw.expectedFallbackId, reason: "Translation will follow" }) })]);
+  const removed = withLocales(["ja"], "2");
+  view.rerender(consumer(removed), removed);
+  expect(registry.describe("review.allow-fallback", scope, payload)?.availability.enabled).toBe(false);
+  expect(registry.dispatch("review.allow-fallback", scope, payload)).toBe(false);
+  view.unmount();
+  expect(registry.list(scope)).toHaveLength(0);
+});
+
+it("requires explicit adoption of changed fallback evidence and keeps the reason for the exact new identity", async () => {
+  targets.first = reviewTargetFixture({ ...targets.first, selectionId: null, revisionId: null, translationText: null, basisEvidence: undefined });
+  targets.first.currentFallback = fallbackReceipt({ projectId: project.metadata.projectId, actionId: fixtureIdentity(622),
+    unitId: targets.first.unitId, locale: "zh-CN", expectedBasis: targets.first.basis, allow: true,
+    expectedFallbackId: null, actor: "Reviewer A", reason: "Earlier exception" });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (name: string, args: { request: Record<string, unknown> }) => {
+    if (name === "allow_source_fallback") {
+      const request = args.request.fallback as FallbackWrite;
+      targets.first = { ...targets.first, currentFallback: null };
+      return fallbackReceipt(request);
+    }
+    return original(name, args);
+  });
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  render(<><ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Keep this withdrawal reason");
+  const payload: ReviewFallbackCommandPayload = { kind: "review-fallback", unitId: targets.first.unitId,
+    locale: "zh-CN", basis: targets.first.basis, expectedFallbackId: fixtureIdentity(626) };
+  targets.first = { ...targets.first, currentFallback: { ...targets.first.currentFallback!, fallbackId: fixtureIdentity(629) } };
+  await user.click(screen.getByRole("button", { name: "Refresh current evidence" }));
+  await screen.findByRole("button", { name: "Use current content and keep reason" });
+  expect(screen.getByRole("button", { name: "Withdraw source fallback" })).toBeDisabled();
+  expect(registry.dispatch("review.withdraw-fallback", scope, payload)).toBe(false);
+  const currentPayload = { ...payload, expectedFallbackId: fixtureIdentity(629) };
+  expect(registry.dispatch("review.withdraw-fallback", scope, currentPayload)).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity" || name === "allow_source_fallback")).toHaveLength(0);
+  await user.click(screen.getByRole("button", { name: "Use current content and keep reason" }));
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep this withdrawal reason");
+  expect(registry.describe("review.withdraw-fallback", scope, currentPayload)?.availability.enabled).toBe(true);
+  expect(registry.dispatch("review.withdraw-fallback", scope, payload)).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Withdraw source fallback" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "allow_source_fallback")).toHaveLength(1));
+  expect(invoke.mock.calls.find(([name]) => name === "allow_source_fallback")![1].request.fallback).toMatchObject({
+    expectedBasis: payload.basis, expectedFallbackId: currentPayload.expectedFallbackId, allow: false, reason: "Keep this withdrawal reason" });
+});
+
+it("matches each waiver issue and observed waiver identity instead of switching to another current issue", async () => {
+  targets.first.currentCheck = waiverFindings(targets.first);
+  targets.first.currentWaivers = [waiverReceipt({ projectId: project.metadata.projectId, actionId: fixtureIdentity(622),
+    unitId: targets.first.unitId, locale: "zh-CN", expectedBasis: targets.first.basis, issueId: "first-term", grant: true,
+    expectedWaiverId: null, actor: "Reviewer A", reason: "Earlier exception" }, fixtureIdentity(624))];
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (name: string, args: { request: Record<string, unknown> }) => {
+    if (name === "waive_review_issue") {
+      const request = args.request.waiver as WaiverWrite, receipt = waiverReceipt(request);
+      targets.first = { ...targets.first, currentWaivers: request.grant ? [...targets.first.currentWaivers, receipt]
+        : targets.first.currentWaivers.filter(value => value.waiverId !== request.expectedWaiverId) };
+      return receipt;
+    }
+    return original(name, args);
+  });
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  render(<><ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  const grant: ReviewWaiverCommandPayload = { kind: "review-waiver", unitId: targets.first.unitId, locale: "zh-CN",
+    basis: targets.first.basis, issueId: "second-term", expectedWaiverId: null };
+  const revoke = { ...grant, issueId: "first-term", expectedWaiverId: fixtureIdentity(624) };
+  expect(registry.list(scope).find(value => value.id === "review.grant-waiver")).toMatchObject({ payloadKind: "review-waiver",
+    nameKey: "review.waive", binding: null, availability: { enabled: false, reason: "unavailable" } });
+  expect(registry.describe("review.grant-waiver", scope, grant)?.availability.enabled).toBe(true);
+  expect(registry.describe("review.revoke-waiver", scope, revoke)?.availability.enabled).toBe(true);
+  expect(registry.dispatch("review.grant-waiver", scope, { ...grant, issueId: "missing-issue" })).toBe(false);
+  expect(registry.dispatch("review.grant-waiver", scope, { ...grant, issueId: "blocked-issue" })).toBe(false);
+  expect(registry.dispatch("review.grant-waiver", scope, { ...grant, issueId: "first-term" })).toBe(false);
+  expect(registry.dispatch("review.grant-waiver", scope, { ...grant, basis: "earlier-basis" })).toBe(false);
+  expect(registry.dispatch("review.grant-waiver", scope, { ...grant, locale: "ja" })).toBe(false);
+  expect(registry.dispatch("review.revoke-waiver", scope, { ...revoke, issueId: "second-term" })).toBe(false);
+  expect(registry.dispatch("review.revoke-waiver", scope, { ...revoke, expectedWaiverId: fixtureIdentity(629) })).toBe(false);
+  expect(registry.dispatch("review.grant-waiver", { ...scope, projectId: fixtureIdentity(999) }, grant)).toBe(false);
+  expect(registry.dispatch("review.grant-waiver", { ...scope, sessionToken: "old-session" }, grant)).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Waive this warning" }));
+  expect(await screen.findByText("Enter a reason for this action.")).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(0);
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Second issue exception");
+  await user.click(screen.getByRole("button", { name: "Waive this warning" }));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Withdraw this waiver" })).toHaveLength(2));
+  expect(registry.dispatch("review.grant-waiver", scope, grant)).toBe(false);
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Keep this reason");
+  targets.first = { ...targets.first, currentWaivers: targets.first.currentWaivers.map(value => value.issueId === "first-term"
+    ? { ...value, waiverId: fixtureIdentity(629) } : value) };
+  await user.click(screen.getByRole("button", { name: "Refresh current evidence" }));
+  await waitFor(() => expect(registry.describe("review.revoke-waiver", scope, revoke)?.availability.enabled).toBe(false));
+  expect(registry.dispatch("review.revoke-waiver", scope, revoke)).toBe(false);
+  const firstFinding = screen.getByText("Protected term needs review: first-term").parentElement!;
+  await user.click(within(firstFinding).getByRole("button", { name: "Withdraw this waiver" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "waive_review_issue")).toHaveLength(2));
+  const writes = invoke.mock.calls.filter(([name]) => name === "waive_review_issue").map(([, args]) => args.request.waiver);
+  expect(writes).toEqual([expect.objectContaining({ issueId: "second-term", grant: true, expectedWaiverId: null,
+    unitId: grant.unitId, locale: grant.locale, expectedBasis: grant.basis, reason: "Second issue exception" }),
+  expect.objectContaining({ issueId: "first-term", grant: false, expectedWaiverId: fixtureIdentity(629), reason: "Keep this reason" })]);
+});
+
+it("keeps an uncertain waiver payload and newer reason across remount and removed language", async () => {
+  targets.first.currentCheck = waiverFindings(targets.first);
+  let finish!: (value: unknown) => void;
+  const reply = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  let writes = 0;
+  invoke.mockImplementation((name: string, args: { request: Record<string, unknown> }) => name === "waive_review_issue"
+    ? ++writes === 1 ? reply : Promise.resolve(waiverReceipt(args.request.waiver as WaiverWrite)) : original(name, args));
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  const consumer = (current: ProjectView) => <><ReviewWorkbench project={current} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>;
+  const view = render(consumer(project), project), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Reason A");
+  const payload: ReviewWaiverCommandPayload = { kind: "review-waiver", unitId: targets.first.unitId, locale: "zh-CN",
+    basis: targets.first.basis, issueId: "second-term", expectedWaiverId: null };
+  await act(async () => { expect(registry.dispatch("review.grant-waiver", scope, payload)).toBe(true); });
+  await waitFor(() => expect(writes).toBe(1));
+  const request = invoke.mock.calls.find(([name]) => name === "waive_review_issue")![1].request;
+  expect(registry.describe("review.grant-waiver", scope, payload)?.availability).toMatchObject({ enabled: false, reason: "busy" });
+  await user.clear(screen.getByRole("textbox", { name: "Reason or evidence" }));
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Reason B");
+  await act(async () => finish({ ...waiverReceipt(request.waiver), issueId: "first-term" }));
+  await screen.findByRole("button", { name: "Retry the same action" });
+  view.rerender(null, project);
+  expect(registry.list(scope)).toHaveLength(0);
+  const removed = withLocales(["ja"], "2");
+  view.rerender(consumer(removed), removed);
+  expect(await screen.findByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Reason B");
+  expect(registry.dispatch("review.grant-waiver", scope, payload)).toBe(false);
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  await act(async () => { expect(registry.dispatch("review.retry-pending", scope)).toBe(true); });
+  await waitFor(() => expect(writes).toBe(2));
+  expect(invoke.mock.calls.filter(([name]) => name === "waive_review_issue").map(([, args]) => args.request)).toEqual([request, request]);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Reason B");
+  expect(screen.queryByRole("button", { name: "Retry the same action" })).not.toBeInTheDocument();
+});
+
+it("does not apply a late fallback receipt or old command scope to a newer project session", async () => {
+  targets.first = reviewTargetFixture({ ...targets.first, selectionId: null, revisionId: null, translationText: null, basisEvidence: undefined });
+  let finish!: (value: unknown) => void;
+  const reply = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((name: string, args: unknown) => name === "allow_source_fallback" ? reply : original(name, args));
+  let registry!: WorkbenchCommands;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  const consumer = (current: ProjectView) => <><ReviewWorkbench project={current} disabled={false} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /></>;
+  const view = render(consumer(project), project), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Old session reason");
+  const payload: ReviewFallbackCommandPayload = { kind: "review-fallback", unitId: targets.first.unitId,
+    locale: "zh-CN", basis: targets.first.basis, expectedFallbackId: null };
+  await act(async () => { expect(registry.dispatch("review.allow-fallback", scope, payload)).toBe(true); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "allow_source_fallback")).toHaveLength(1));
+  const request = invoke.mock.calls.find(([name]) => name === "allow_source_fallback")![1].request.fallback;
+  const next = { ...project, sessionToken: "next-session", metadata: { ...project.metadata, projectId: fixtureIdentity(800) } };
+  view.rerender(consumer(next), next);
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer B");
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "New session reason");
+  expect(registry.list(scope)).toHaveLength(0);
+  expect(registry.dispatch("review.allow-fallback", scope, payload)).toBe(false);
+  await act(async () => finish(fallbackReceipt(request)));
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("New session reason");
+  expect(screen.getByRole("textbox", { name: "Reviewer name" })).toHaveValue("Reviewer B");
+  expect(screen.getByRole("button", { name: "Allow source text for this entry" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Withdraw source fallback" })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "allow_source_fallback")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+});
+
+it("requires the original batch confirmation and keeps scoped stop available while busy across subtabs and remount", async () => {
+  let finish!: (value: unknown) => void;
+  const reply = new Promise(resolve => { finish = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((name: string, args: unknown) => name === "read_review_summary_page"
+    ? Promise.resolve(reviewSummaryPageFixture([reviewSummaryFor(targets.first), reviewSummaryFor(targets.second)]))
+    : name === "write_review_decision" ? reply : original(name, args));
+  let registry!: WorkbenchCommands, owner!: ReturnType<typeof useReviewDraftSession>;
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "review" as const };
+  const consumer = (current = project, disabled = false) => <><ReviewWorkbench project={current} disabled={disabled} onOpenTranslation={() => true} />
+    <CommandsProbe capture={commands => { registry = commands; }} /><ReviewOwnerProbe capture={value => { owner = value; }} /></>;
+  const view = render(consumer(), project), user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.click(screen.getByRole("checkbox", { name: "Approve selected entries: second" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  expect(registry.describe("review.approve-batch", scope)).toMatchObject({ nameKey: "review.batch", binding: null,
+    confirmation: "required", risk: "writes-review", availability: { enabled: true } });
+  await act(async () => {
+    expect(registry.dispatch("review.approve-batch", scope)).toBe(true);
+    expect(registry.dispatch("review.approve-batch", scope)).toBe(false);
+  });
+  const dialog = screen.getByRole("dialog", { name: "Approve these fixed entries?" });
+  expect(within(dialog).getAllByRole("listitem").map(item => item.textContent)).toEqual(["zh-CN: first", "zh-CN: second"]);
+  expect(registry.describe("review.approve-batch", scope)?.availability).toMatchObject({ enabled: false, reason: "hidden" });
+  expect(registry.dispatch("review.run-checks", scope)).toBe(false);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity" || name === "write_review_decision")).toHaveLength(0);
+  const removed = withLocales(["ja"], "2");
+  view.rerender(consumer(removed), removed);
+  expect(within(dialog).getByRole("button", { name: "Confirm approvals" })).toBeDisabled();
+  expect(within(dialog).getByText(/zh-CN is no longer a project target/)).toBeVisible();
+  view.rerender(consumer(), project);
+  await act(async () => owner.setActor(""));
+  expect(within(dialog).getByRole("button", { name: "Confirm approvals" })).toBeDisabled();
+  await act(async () => { owner.setActor("Reviewer A"); owner.toggleChosen(reviewSummaryFor(targets.second), false); });
+  expect(within(dialog).getAllByRole("listitem")).toHaveLength(2);
+  expect(within(dialog).getByRole("button", { name: "Confirm approvals" })).toBeDisabled();
+  await user.click(within(dialog).getByRole("button", { name: "Stay and keep work" }));
+  await user.click(screen.getByRole("checkbox", { name: "Approve selected entries: second" }));
+  await user.click(screen.getByRole("button", { name: "Approve selected entries (2)" }));
+  await user.click(screen.getByRole("button", { name: "Confirm approvals" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(1));
+  const request = invoke.mock.calls.find(([name]) => name === "write_review_decision")![1].request.decision;
+  expect(registry.describe("review.stop-batch", scope)).toMatchObject({ nameKey: "review.batchCancel", binding: null,
+    confirmation: "none", risk: "stops-review-batch", availability: { enabled: true } });
+  expect(registry.dispatch("review.approve-batch", scope)).toBe(false);
+  view.rerender(null, project);
+  expect(registry.list(scope)).toHaveLength(0);
+  view.rerender(consumer(project, true), project);
+  await user.click(screen.getByRole("tab", { name: "Work queue" }));
+  expect(screen.getByRole("button", { name: "Stop after the current entry" })).toBeEnabled();
+  expect(registry.dispatch("review.stop-batch", { ...scope, sessionToken: "old-session" })).toBe(false);
+  expect(registry.dispatch("review.stop-batch", { ...scope, projectId: fixtureIdentity(999) })).toBe(false);
+  expect(registry.dispatch("review.stop-batch", { ...scope, area: "translation" })).toBe(false);
+  await act(async () => { expect(registry.dispatch("review.stop-batch", scope)).toBe(true); });
+  await act(async () => finish(reviewDecisionFixture(request, targets.first)));
+  expect(await screen.findByText(/1 remaining entry was not started/)).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(1);
+  expect(registry.dispatch("review.stop-batch", scope)).toBe(false);
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  expect(screen.getByRole("checkbox", { name: "Approve selected entries: second" })).toBeChecked();
 });
 
 it("rebases a clean review to an available target language before reading it", async () => {
