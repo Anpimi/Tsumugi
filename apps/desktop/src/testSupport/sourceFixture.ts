@@ -1,15 +1,17 @@
 import fixture from "../../test/fixtures/sourceCommands.contract.json";
 import executionFixture from "../../test/fixtures/executionCommands.contract.json";
-import type { ContentPage, ContentRow, IntegrationDescriptor, SourceAdoptRequest, SourceOccurrence } from "../sourceCommands";
+import type { ContentPage, ContentRow, ContentScope, IntegrationDescriptor, SourceAdoptRequest, SourceOccurrence, SourceHistory, SourceImpactPage, SourceImpactRow } from "../sourceCommands";
 import type { AdoptionAction, AttemptDetail, Receipt } from "../executionCommands";
 import { fixtureIdentity } from "./executionFixture";
 
 /** Complete synthetic wire data shared with Rust; override identities explicitly. */
+function sourceOccurrenceFixture(occurrence: typeof fixture.page.rows[0]["occurrence"]): SourceOccurrence {
+  return { ...occurrence, keyByteRange: [occurrence.keyByteRange[0], occurrence.keyByteRange[1]],
+    valueByteRange: [occurrence.valueByteRange[0], occurrence.valueByteRange[1]] };
+}
 export function sourceRowFixture(row: Partial<ContentRow> = {}, occurrence: Partial<SourceOccurrence> = {}): ContentRow {
   const base = fixture.page.rows[0];
-  return { ...base, ...row, occurrence: { ...base.occurrence,
-    keyByteRange: [base.occurrence.keyByteRange[0], base.occurrence.keyByteRange[1]],
-    valueByteRange: [base.occurrence.valueByteRange[0], base.occurrence.valueByteRange[1]],
+  return { ...base, ...row, occurrence: { ...sourceOccurrenceFixture(base.occurrence),
     ...occurrence } };
 }
 
@@ -21,6 +23,18 @@ export const sourceIntegrationFixture: IntegrationDescriptor = fixture.integrati
 export const captionIntegrationFixture: IntegrationDescriptor = { ...fixture.integration,
   id: "webvtt", capabilityId: "webvtt.extract", formatProfiles: ["webvtt-captions"],
   requiredFiles: ["source.vtt"], permissions: ["captured-input-only"] };
+
+export function sourceContentFixture(snapshotId = fixture.content.snapshotId, scope: ContentScope = { revision: fixture.page.scope.revision, currentSnapshot: snapshotId }): ContentPage {
+  return sourcePageFixture({ snapshotId, scope, confirmation: { ...fixture.page.confirmation,
+    expectedContentRevision: scope.revision, expectedCurrentSnapshot: scope.currentSnapshot }, rows: [sourceRowFixture({
+      occurrenceId: fixtureIdentity(8), unitId: fixtureIdentity(9), sourceRevisionId: fixtureIdentity(10) })] });
+}
+export function sourceHistoryFixture(overrides: Partial<SourceHistory> = {}): SourceHistory { return { ...fixture.history, ...overrides }; }
+export function sourceImpactFixture(overrides: Partial<SourceImpactPage> = {}): SourceImpactPage {
+  return { ...fixture.impact, rows: fixture.impact.rows.map<SourceImpactRow>(row => ({ ...row, status: "unresolved",
+    current: { ...row.current, occurrence: sourceOccurrenceFixture(row.current.occurrence) },
+    lineage: row.lineage.map(evidence => ({ ...evidence, old: { ...evidence.old, occurrence: sourceOccurrenceFixture(evidence.old.occurrence) } })) })), ...overrides };
+}
 
 export function sourceAttemptFixture(attemptId = fixture.start.attemptId, resultId = fixture.preview.resultId): AttemptDetail {
   const item = executionFixture.detail.items[0], unit = executionFixture.detail.recovery.units[0];

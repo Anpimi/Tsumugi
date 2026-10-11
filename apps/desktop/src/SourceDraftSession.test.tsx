@@ -395,3 +395,30 @@ it("keeps a replaced Host selection recoverable without rebinding its preflight 
   expect(owner.current().preflight).toBeNull(); expect(owner.current().declared).toBe(false);
   expect(invoke.mock.calls.filter(([name]) => name === "start_source_import")).toHaveLength(1);
 });
+
+it("keeps page and historical search intent separate from the fixed comparison and all decisions", async () => {
+  const view = render(<Probe/>, project); await ready(true); editDecision(0, "First reason"); editDecision(70, "Later reason");
+  const fixed = owner.current().comparison;
+  act(() => { owner.edit("manualOrdinal", 70); owner.edit("historicalQuery", "Typing B"); owner.pageIntent(50, "Applied A"); owner.historyIntent("Historical A", 1); });
+  expect(owner.current().comparison).toBe(fixed); expect(owner.current().comparisonAfter).toBe(50); expect(owner.current().appliedFilter).toBe("Applied A");
+  expect(owner.current().historicalSearch).toEqual({ snapshotId: fixed!.previousSnapshotId, query: "Historical A", after: 1, newOrdinal: 70 });
+  view.rerender(null); view.rerender(<Probe/>);
+  expect(owner.current().historicalQuery).toBe("Typing B"); expect(owner.current().actor).toBe("Reviewer");
+  expect(screen.getByLabelText("Source decisions")).toHaveTextContent("0: First reason; 70: Later reason");
+  await refreshWorkbenchReads(["source"]);
+  expect(owner.current().comparison).toBe(fixed); expect(owner.current().comparisonAfter).toBe(50); expect(owner.current().historicalSearch?.after).toBe(1);
+});
+
+it.each(["start", "apply", "cancel"] as const)("does not dispatch fresh %s when its view/query proof changes during identity preparation", async kind => {
+  render(<Probe/>, project);
+  if (kind === "start") await act(async () => { await owner.select(); owner.declare(true); await owner.preflight(); });
+  else await ready();
+  const original = invoke.getMockImplementation()!; let finish!: (value: unknown) => void, fresh = true;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "create_execution_identity" ? new Promise(resolve => { finish = resolve; }) : original(command, payload));
+  let pending!: Promise<void>;
+  act(() => { pending = kind === "start" ? owner.start(() => fresh) : kind === "apply" ? owner.apply(() => fresh) : owner.cancelTask(fixtureIdentity(90), () => fresh); });
+  await waitFor(() => expect(finish).toBeTypeOf("function")); fresh = false;
+  await act(async () => { finish(fixtureIdentity(95)); await pending; });
+  expect(invoke.mock.calls.filter(([command]) => ["start_source_import", "prepare_source_adoption", "adopt_execution", "cancel_execution_task"].includes(command))).toHaveLength(0);
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingApply).toBeNull(); expect(owner.inFlight()).toBe(false);
+});

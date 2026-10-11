@@ -22,6 +22,9 @@ export interface SourceDraftState {
   appliedFilter: string;
   manualOrdinal: number | null;
   historicalQuery: string;
+  previewAfter: number;
+  comparisonAfter: number;
+  historicalSearch: { snapshotId: string; query: string; after: number; newOrdinal: number } | null;
   estimate: SourceImpactSummary[] | null;
   confirmed: boolean;
   stale: boolean;
@@ -47,9 +50,9 @@ interface SourceSession {
   confirm: (confirmed: boolean) => void;
   select: () => Promise<void>;
   preflight: () => Promise<void>;
-  start: () => Promise<void>;
+  start: (proof?: () => boolean) => Promise<void>;
   retryStart: () => Promise<void>;
-  apply: () => Promise<void>;
+  apply: (proof?: () => boolean) => Promise<void>;
   checkReceipt: () => Promise<void>;
   retryApply: () => Promise<void>;
   keepOutput: () => void;
@@ -59,8 +62,10 @@ interface SourceSession {
   beginUpdate: () => void;
   ready: (page: ContentPage | SourceChangePage, detail: AttemptDetail) => void;
   page: (page: ContentPage | SourceChangePage, query?: string, refresh?: boolean) => void;
+  pageIntent: (after: number, query?: string) => void;
+  historyIntent: (query: string, after: number) => void;
   showCurrent: () => void;
-  cancelTask: (taskId: string) => Promise<void>;
+  cancelTask: (taskId: string, proof?: () => boolean) => Promise<void>;
 }
 const SourceContext = createContext<SourceSession | null>(null);
 export function useSourceDraftSession() {
@@ -83,7 +88,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
   const [state, setState] = useState<SourceDraftState>(() => ({ domain: "stardew-smapi", selection: null,
     sourceLanguage: project.metadata.sourceLocale, declared: false, preflight: null, attempt: null, preview: null,
     comparison: null, updating: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null,
-    historicalQuery: "", estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null,
+    historicalQuery: "", previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null,
     pendingApply: null, preparedAction: null, receiptChecked: false, busyMutation: false, failure: null, receipt: null, completionVersion: 0 }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useRef(false), flight = useRef(0);
   const captureFlight = useRef(0), pendingReceipt = useRef<{ request: SourceAdoptRequest; receipt: Receipt } | null>(null);
@@ -200,17 +205,17 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       throw error;
     }
   }
-  async function start() {
+  async function start(proof: () => boolean = live) {
     const before = current(), version = basisVersion.current, meta = metadataKey(projectRef.current);
-    if (!before.selection || !before.declared || !before.preflight || before.sourceLanguage !== projectRef.current.metadata.sourceLocale) return;
+    if (!proof() || !before.selection || !before.declared || !before.preflight || before.sourceLanguage !== projectRef.current.metadata.sourceLocale) return;
     const request = { ...session, selectionId: before.selection.selectionId, sourceLanguage: before.sourceLanguage };
     await run(async () => {
       const scope = await sourceCommands.scope(session);
-      if (!freshCurrent(before, version, meta)) return;
+      if (!proof() || !freshCurrent(before, version, meta)) return;
       const attemptId = await executionCommands.identity(session);
-      if (!freshCurrent(before, version, meta)) return;
+      if (!proof() || !freshCurrent(before, version, meta)) return;
       const latest = await sourceCommands.scope(session);
-      if (!freshCurrent(before, version, meta) || !sameScope(scope, latest)) { revoke(); return; }
+      if (!proof() || !freshCurrent(before, version, meta) || !sameScope(scope, latest)) { revoke(); return; }
       submittedSeq.current = before.editSeq;
       await dispatchStart({ ...request, attemptId });
     });
@@ -256,16 +261,16 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     return { ...session, attemptId: basis.attemptId, resultId: basis.resultId, confirmation: structuredClone({ ...basis.confirmation,
       ...(before.comparison ? { lineage: Object.values(before.lineage), actor: before.actor.trim() || null } : {}) }) };
   }
-  async function apply() {
+  async function apply(proof: () => boolean = live) {
     const before = current(), version = basisVersion.current, meta = metadataKey(projectRef.current), request = adoptionRequest(before), unitId = identity.current?.unitId;
-    if (!request || !unitId || request.confirmation.sourceLanguage !== projectRef.current.metadata.sourceLocale || before.receipt || before.stale || !before.confirmed || (before.comparison && (!before.estimate || (Object.keys(before.lineage).length > 0
+    if (!proof() || !request || !unitId || request.confirmation.sourceLanguage !== projectRef.current.metadata.sourceLocale || before.receipt || before.stale || !before.confirmed || (before.comparison && (!before.estimate || (Object.keys(before.lineage).length > 0
       && (!before.actor.trim() || Object.values(before.lineage).some(choice => !choice.reason.trim())))))) return;
     await run(async () => {
       const actionId = await executionCommands.identity(session);
-      if (!freshCurrent(before, version, meta)) return;
+      if (!proof() || !freshCurrent(before, version, meta)) return;
       const scope = await sourceCommands.scope(session);
       const basis = before.comparison ?? before.preview!;
-      if (!freshCurrent(before, version, meta) || !sameScope(scope, basis.scope)) { revoke(); return; }
+      if (!proof() || !freshCurrent(before, version, meta) || !sameScope(scope, basis.scope)) { revoke(); return; }
       submittedSeq.current = before.editSeq;
       await dispatchApply({ ...request, actionId }, unitId);
     });
@@ -322,7 +327,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
       if (!live()) return false;
       identity.current = null;
       update(before => ({ ...before, selection: null, preflight: null, declared: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null, historicalQuery: "", comparison: null, preview: null,
-        estimate: null, confirmed: false, stale: false, editSeq: before.editSeq + 1 }));
+        previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: before.editSeq + 1 }));
       return true;
     } catch (error) { if (live()) fail(error); return false; }
     finally { release(ticket); }
@@ -331,7 +336,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     if (reserved()) return false;
     basisVersion.current++; identity.current = null;
     update(before => ({ ...before, attempt, preview: null, comparison: null, lineage: {}, estimate: null, filter: "", appliedFilter: "",
-      manualOrdinal: null, confirmed: false, stale: false, failure: null, receipt: null, editSeq: before.editSeq + 1 })); return true;
+      manualOrdinal: null, previewAfter: 0, comparisonAfter: 0, historicalSearch: null, confirmed: false, stale: false, failure: null, receipt: null, editSeq: before.editSeq + 1 })); return true;
   }
   function beginUpdate() {
     if (reserved()) return;
@@ -355,7 +360,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     }
     identity.current = { attemptId: page.attemptId, resultId: page.resultId, unitId: unit.unitId };
     update(before => ({ ...before, ...( "previousSnapshotId" in page ? { comparison: page, preview: null, updating: true } : { preview: page, comparison: null }),
-      stale: page.confirmation.sourceLanguage !== projectRef.current.metadata.sourceLocale, confirmed: false, estimate: null, failure: null }));
+      previewAfter: 0, comparisonAfter: 0, historicalSearch: null, stale: page.confirmation.sourceLanguage !== projectRef.current.metadata.sourceLocale, confirmed: false, estimate: null, failure: null }));
   }
   function page(next: ContentPage | SourceChangePage, query = current().appliedFilter, refresh = false) {
     const before = current(), old = before.comparison ?? before.preview;
@@ -367,17 +372,28 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     }
     basisVersion.current++;
     update(value => ({ ...value, ...( "previousSnapshotId" in next ? { comparison: next, appliedFilter: query } : { preview: next }),
-      stale: refresh ? next.confirmation.sourceLanguage !== projectRef.current.metadata.sourceLocale : value.stale, estimate: changed || refresh ? null : value.estimate,
+      ...(refresh ? { previewAfter: 0, comparisonAfter: 0, historicalSearch: null } : {}), stale: refresh ? next.confirmation.sourceLanguage !== projectRef.current.metadata.sourceLocale : value.stale, estimate: changed || refresh ? null : value.estimate,
       confirmed: changed || refresh ? false : value.confirmed }));
+  }
+  function pageIntent(after: number, query = current().appliedFilter) {
+    if (reserved() || !Number.isSafeInteger(after) || after < 0) return;
+    update(before => before.comparison ? { ...before, comparisonAfter: after, appliedFilter: query }
+      : before.preview ? { ...before, previewAfter: after } : before);
+  }
+  function historyIntent(query: string, after: number) {
+    const before = current();
+    if (reserved() || !before.comparison || before.manualOrdinal === null || !Number.isSafeInteger(after) || after < 0) return;
+    update(value => ({ ...value, historicalSearch: { snapshotId: before.comparison!.previousSnapshotId, newOrdinal: before.manualOrdinal!, query, after } }));
   }
   function showCurrent() {
     if (reserved() || Object.keys(current().lineage).length) return;
     update(before => ({ ...before, preview: null, comparison: null, updating: false, confirmed: false, attempt: null, selection: null, preflight: null }));
   }
-  async function cancelTask(taskId: string) {
-    await run(async () => { const requestId = await executionCommands.identity(session); if (live()) await executionCommands.cancel({ ...session, taskId, requestId }); });
+  async function cancelTask(taskId: string, proof: () => boolean = live) {
+    if (!proof()) return;
+    await run(async () => { const requestId = await executionCommands.identity(session); if (live() && proof()) await executionCommands.cancel({ ...session, taskId, requestId }); });
   }
   return <SourceContext.Provider value={{ state, current, inFlight: () => !!flight.current, setDomain, declare, edit, confirm,
     select, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request) await run(() => dispatchStart(request), true); },
-    apply, checkReceipt, retryApply, keepOutput, estimate, discard, showAttempt, beginUpdate, ready, page, showCurrent, cancelTask }}>{children}</SourceContext.Provider>;
+    apply, checkReceipt, retryApply, keepOutput, estimate, discard, showAttempt, beginUpdate, ready, page, pageIntent, historyIntent, showCurrent, cancelTask }}>{children}</SourceContext.Provider>;
 }

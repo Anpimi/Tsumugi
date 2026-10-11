@@ -1,132 +1,285 @@
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import type { QueryKey } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import type { ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import type { UiMessages } from "./i18n/types";
-import { useSessionQuery } from "./SessionReadProvider";
+import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useSourceDraftSession } from "./SourceDraftSession";
-import { SourceHistoryPanel, SourceImpactPanel } from "./SourceMaintenance";
-import { executionCommands as execution, executionContext, type AttemptDetail } from "./executionCommands";
-import { sourceCommands as commands, type ContentPage, type LineageChoice, type IntegrationDescriptor, type SourceHistory } from "./sourceCommands";
+import { SourceHistoryPanel, SourceImpactPanel, SourceReadFeedback } from "./SourceMaintenance";
+import { sourceReads } from "./sourceQueries";
+import { useWorkbenchCommands, type CommandAvailability, type SourceSelectionCommandPayload, type SourceCaptureCommandPayload,
+  type SourceBasisCommandPayload, type SourceComparisonCommandPayload, type SourcePendingCommandPayload,
+  type SourceTaskCommandPayload, type SourcePageCommandPayload, type SourceHistoryContentCommandPayload } from "./workbenchCommands";
+import { executionCommands as execution, executionContext } from "./executionCommands";
+import { sourceCommands as commands, type ContentPage, type LineageChoice } from "./sourceCommands";
 
 function cueTiming(basis: string): string | null {
   if (!basis.startsWith("{")) return null;
   try { const value = JSON.parse(basis) as { policy?: unknown; timing?: unknown }; return value.policy === "webvtt-cue/1" && typeof value.timing === "string" ? value.timing : null; } catch { return null; }
 }
+const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
 export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean; ref?: Ref<SourceHandle> }) {
-  const { t } = useTranslation();
-  const context = executionContext(project);
+  const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
+  const context = executionContext(project), commandScope = { ...context, area: "source" as const };
   const [open, setOpen] = useWorkbenchView("source");
-  const [integration, setIntegration] = useState<IntegrationDescriptor | null>(null);
   const owner = useSourceDraftSession();
-  const { domain, selection, declared, preflight, attempt, comparison, updating, lineage, actor, filter, appliedFilter,
+  const { domain, selection, declared, preflight, attempt, comparison: fixedComparison, updating, lineage, actor, filter, appliedFilter,
     manualOrdinal, historicalQuery, estimate, confirmed, pendingStart, pendingApply, receiptChecked, busyMutation } = owner.state;
-  const [currentPage, setCurrentPage] = useState<ContentPage | null>(null);
-  const page = owner.state.preview ?? currentPage;
-  const [history, setHistory] = useState<SourceHistory | null>(null);
-  const [historicalMatches, setHistoricalMatches] = useState<ContentPage | null>(null);
-  const [readBusy, setReadBusy] = useState(false);
-  const [readFailure, setReadFailure] = useState<CommandFailure | null>(null);
-  const busy = readBusy || busyMutation;
-  const failureValue = owner.state.failure ?? readFailure;
+  const fixedPreview = owner.state.preview;
+  const [readIntent, setReadIntent] = useState<"auto" | "current" | "applied">(() => owner.current().receipt ? "applied" : "auto");
+  const [contentCursor, setContentCursor] = useState<{ snapshotId: string; revision: string; after: number } | null>(null);
+  const [historyOffset, setHistoryOffset] = useState<number | null>(null);
+  const [captureBusy, setCaptureBusy] = useState(false), [captureFailure, setCaptureFailure] = useState<CommandFailure | null>(null);
+  const [captureVersion, setCaptureVersion] = useState(0);
+  const [leave, setLeave] = useState(false);
+  const mounted = useRef(false), sequence = useRef(0), captureRunning = useRef(false);
+  const committed = useRef({ open, disabled, leave, project });
+  const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
+  const first = useRef<HTMLHeadingElement>(null), errorRegion = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
+  useLayoutEffect(() => { committed.current = { open, disabled, leave, project }; });
+  useLayoutEffect(() => { sequence.current++; captureRunning.current = false; setCaptureBusy(false); }, [open, project.sessionToken]);
+  const integrationOptions = sourceReads.integration(context, domain);
+  const integrationRead = useSessionQuery({ ...integrationOptions, enabled: open });
+  const integration = !integrationRead.error ? integrationRead.data : undefined;
+  const scopeOptions = sourceReads.scope(context), scopeRead = useSessionQuery({ ...scopeOptions, enabled: open });
+  const scope = !scopeRead.error ? scopeRead.data : undefined;
+  const snapshotId = readIntent === "applied" ? owner.state.receipt?.changes[0]?.id ?? null : scope?.currentSnapshot ?? null;
+  const contentRevision = readIntent !== "applied" ? scope?.revision ?? "" : "";
+  const contentAfter = contentCursor?.snapshotId === snapshotId && contentCursor.revision === contentRevision ? contentCursor.after : 0;
+  const contentOptions = sourceReads.content(context, snapshotId ?? "", contentAfter, readIntent !== "applied" ? scope : undefined);
+  const browsing = !attempt && !fixedPreview && !fixedComparison && !selection && !updating;
+  // Explicit content reads coexist with newer fixed decisions retained after a delayed ACK.
+  const contentVisible = browsing || readIntent !== "auto";
+  const contentRead = useSessionQuery({ ...contentOptions, enabled: open && contentVisible && !!snapshotId && (readIntent === "applied" || !!scope) });
+  const previewOptions = sourceReads.preview(context, fixedPreview, owner.state.previewAfter);
+  const previewRead = useSessionQuery({ ...previewOptions, enabled: open && !!fixedPreview && owner.state.previewAfter > 0 });
+  const comparisonOptions = sourceReads.comparison(context, fixedComparison, appliedFilter, owner.state.comparisonAfter);
+  const comparisonRead = useSessionQuery({ ...comparisonOptions, enabled: open && !!fixedComparison });
+  const comparison = fixedComparison;
+  // A failed new filter/cursor must not impersonate the captured first page.
+  const comparisonPage = comparisonRead.data ?? (owner.state.comparisonAfter === 0 && appliedFilter === "" ? fixedComparison : null);
+  const previewPage = fixedPreview ? owner.state.previewAfter === 0 ? fixedPreview : previewRead.data ?? null : null;
+  const contentPage = contentVisible && !contentRead.error ? contentRead.data ?? null : null;
+  const page = previewPage ?? contentPage;
+  const historyOptions = sourceReads.history(context, historyOffset ?? 0);
+  const historyRead = useSessionQuery({ ...historyOptions, enabled: open && !!fixedComparison && historyOffset !== null });
+  const history = !historyRead.error ? historyRead.data : undefined;
+  const search = owner.state.historicalSearch;
+  const matchesOptions = sourceReads.historyContent(context, search?.snapshotId ?? "", search?.query ?? "", search?.after ?? 0);
+  const matchesEnabled = !!fixedComparison && !!search && search.snapshotId === fixedComparison.previousSnapshotId && search.newOrdinal === manualOrdinal;
+  const matchesRead = useSessionQuery({ ...matchesOptions, enabled: open && matchesEnabled });
+  const historicalMatches = matchesEnabled && !matchesRead.error ? matchesRead.data : undefined;
+  const detailKey = ["source-attempt", attempt, 0, 100];
+  const detailRead = useSessionQuery({ key: detailKey, scopes: ["execution"], enabled: open && !!attempt && !fixedPreview && !fixedComparison && !pendingStart,
+    read: () => execution.attempt({ ...context, attemptId: attempt!, offset: 0, limit: 100 }) });
+  const detail = detailRead.data ?? null;
+  const busy = captureBusy || busyMutation;
+  const failureValue = owner.state.failure ?? captureFailure ?? (open ? commandFailureOrNull(detailRead.error) : null);
   const failure = failureReason(failureValue);
+  function commandFailureOrNull(error: unknown) { return error ? commandFailure(error) : null; }
   const setLineage = (value: Record<number, LineageChoice> | ((before: Record<number, LineageChoice>) => Record<number, LineageChoice>)) => owner.edit("lineage", value);
   const setActor = (value: string) => owner.edit("actor", value);
   const setFilter = (value: string) => owner.edit("filter", value);
   const setManualOrdinal = (value: number | null) => owner.edit("manualOrdinal", value);
   const setHistoricalQuery = (value: string) => owner.edit("historicalQuery", value);
   const setConfirmed = owner.confirm;
-  const [leave, setLeave] = useState(false);
-  const detailRead = useSessionQuery<AttemptDetail | null>({ key: ["source-attempt", attempt, 0, 100], scopes: ["execution"], enabled: open && !busy && !!attempt && !page && !comparison,
-    read: () => execution.attempt({ ...context, attemptId: attempt!, offset: 0, limit: 100 }) });
-  const detail = detailRead.data ?? null, setDetail = detailRead.setData;
-
-  const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
-  const mounted = useRef(true);
-  const sequence = useRef(0);
-  const readRunning = useRef(false);
-  useLayoutEffect(() => { sequence.current++; readRunning.current = false; setReadBusy(false); }, [open, project.sessionToken]);
-  const first = useRef<HTMLHeadingElement>(null);
-  const errorRegion = useRef<HTMLDivElement>(null);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
-  useEffect(() => {
-    if (!open) return;
-    let stale = false;
-    void commands.integration(context, domain).then(value => { if (!stale) { setIntegration(value); } }, error => { if (!stale) showError(error); });
-    return () => { stale = true; };
-  }, [open, project.sessionToken, domain]);
-  useImperativeHandle(ref, () => ({
-    showAttempt(id) { if (owner.showAttempt(id)) { sequence.current++; setCurrentPage(null); setHistory(null); setHistoricalMatches(null); setDetail(null); setReadFailure(null); } setOpen(true); },
-    allowNavigate() { return Promise.resolve(!busy && !owner.inFlight() && !owner.current().pendingApply && !owner.current().pendingStart); },
-    allowLeave() { const value = owner.current(); if (value.pendingApply || value.pendingStart) { setOpen(true); return Promise.resolve(false); } if (!value.selection && Object.keys(value.lineage).length === 0 && !value.actor.trim() && !busy && !owner.inFlight()) return Promise.resolve(true); setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
-  }));
-  function showError(error: unknown) { setReadFailure(commandFailure(error)); }
-  async function perform(work: (current: () => boolean) => Promise<void>) {
-    if (readRunning.current || owner.inFlight()) return;
-    readRunning.current = true;
-    const ticket = ++sequence.current;
-    const current = () => mounted.current && sequence.current === ticket;
-    setReadBusy(true); setReadFailure(null);
-    try { await work(current); } catch (error) { if (current()) showError(error); }
-    finally { if (current()) { readRunning.current = false; setReadBusy(false); } }
+  function ready(key: QueryKey) { const state = reads.client.getQueryState(reads.key(key)); return state?.status === "success" && state.fetchStatus === "idle" && !state.isInvalidated; }
+  function viewCurrent() { const value = committed.current; return mounted.current && value.open && !value.leave && !value.disabled
+    && value.project.sessionToken === context.sessionToken && value.project.metadata.projectId === context.projectId; }
+  // Render uses reactive inputs; dispatched commands retain the committed-view guard.
+  function common(pending = false, rendering = false): CommandAvailability {
+    if (rendering ? !open || leave || disabled : !viewCurrent()) return { enabled: false, reason: "hidden" };
+    if (captureRunning.current || owner.inFlight()) return { enabled: false, reason: "busy" };
+    if (!pending && (owner.current().pendingApply || owner.current().pendingStart)) return { enabled: false, reason: "pending-action" };
+    return { enabled: true };
   }
-  // A ready preview becomes the user's fixed adoption basis, separate from task progress.
+  // This proof excludes the command's own synchronous reservation.
+  function proof(keys: QueryKey[]) {
+    const ticket = sequence.current, locale = project.metadata.sourceLocale;
+    const values = keys.map(key => reads.client.getQueryData(reads.key(key)));
+    return () => viewCurrent() && sequence.current === ticket && committed.current.project.metadata.sourceLocale === locale
+      && keys.every((key, index) => ready(key) && reads.client.getQueryData(reads.key(key)) === values[index]);
+  }
+  function selectionPayload(): SourceSelectionCommandPayload { return { kind: "source-selection", domain, integrationId: integration?.id ?? "", version: integration?.version ?? "" }; }
+  function selectionAvailability(input?: SourceSelectionCommandPayload, rendering = false) {
+    const allowed = common(false, rendering); return allowed.enabled && input && ready(scopeOptions.key) && (owner.current().updating || scope?.currentSnapshot === null)
+      && ready(integrationOptions.key) && reads.client.getQueryData(reads.key(integrationOptions.key)) === integration && integration?.available && input.domain === owner.current().domain
+      && input.integrationId === integration.id && input.version === integration.version && !attempt && !fixedPreview && !fixedComparison ? allowed : allowed.enabled ? unavailable : allowed;
+  }
+  function capturePayload(): SourceCaptureCommandPayload { return { kind: "source-capture", selectionId: selection?.selectionId ?? "", sourceLanguage: project.metadata.sourceLocale }; }
+  function captureAvailability(input?: SourceCaptureCommandPayload, start = false, rendering = false) {
+    const allowed = common(false, rendering), value = owner.current(), currentProject = rendering ? project : committed.current.project;
+    return allowed.enabled && input && ready(integrationOptions.key) && integration?.available && value.selection?.selectionId === input.selectionId && value.declared && value.sourceLanguage === input.sourceLanguage
+      && currentProject.metadata.sourceLocale === input.sourceLanguage && (!start || (value.preflight && ready(scopeOptions.key))) ? allowed : allowed.enabled ? unavailable : allowed;
+  }
+  function basisPayload(): SourceBasisCommandPayload { const value = owner.current(), basis = value.comparison ?? value.preview;
+    return { kind: "source-basis", attemptId: basis?.attemptId ?? "", resultId: basis?.resultId ?? "", revision: basis?.scope.revision ?? "",
+      currentSnapshot: basis?.scope.currentSnapshot ?? null, base: value.comparison?.previousSnapshotId ?? null, editSeq: value.editSeq }; }
+  function matchingBasis(input?: SourceBasisCommandPayload) { const expected = basisPayload(); return !!input && input.attemptId === expected.attemptId && input.resultId === expected.resultId
+    && input.revision === expected.revision && input.currentSnapshot === expected.currentSnapshot && input.base === expected.base && input.editSeq === expected.editSeq; }
+  function basisAvailability(input?: SourceBasisCommandPayload, apply = false, rendering = false) {
+    const allowed = common(false, rendering), value = owner.current(), basis = value.comparison ?? value.preview;
+    const currentScope = reads.client.getQueryData<typeof scope>(reads.key(scopeOptions.key));
+    return allowed.enabled && matchingBasis(input) && basis && !value.stale && !value.receipt && ready(scopeOptions.key)
+      && currentScope?.revision === basis.scope.revision && currentScope?.currentSnapshot === basis.scope.currentSnapshot
+      && (!value.comparison || ready(comparisonOptions.key)) && (!apply || (value.confirmed && (!value.comparison || (value.estimate
+        && (!Object.keys(value.lineage).length || (value.actor.trim() && Object.values(value.lineage).every(choice => choice.reason.trim())))))))
+      ? allowed : allowed.enabled ? unavailable : allowed;
+  }
+  function comparisonPayload(after = owner.state.comparisonAfter, query = appliedFilter, base: string | null = fixedComparison?.previousSnapshotId ?? null): SourceComparisonCommandPayload {
+    const value = basisPayload(); return { ...value, kind: "source-comparison", originalBase: fixedComparison?.previousSnapshotId ?? "", base, filter: query, after };
+  }
+  function comparisonAvailability(input?: SourceComparisonCommandPayload, refresh = false, rendering = false) {
+    const allowed = common(false, rendering);
+    if (!allowed.enabled) return allowed;
+    if (!fixedComparison || !input || !matchingBasis({ ...input, kind: "source-basis", base: input.originalBase }) || comparisonRead.isFetching || input.originalBase !== fixedComparison.previousSnapshotId) return unavailable;
+    if (refresh) return input.after === 0 && ready(scopeOptions.key) && (input.base === null || input.base === fixedComparison.previousSnapshotId
+      || (ready(historyOptions.key) && history?.snapshots.some(entry => entry.snapshotId === input.base))) ? allowed : unavailable;
+    return input.base === fixedComparison.previousSnapshotId && (input.after === 0 || (input.filter === appliedFilter
+      && (input.after === owner.current().comparisonAfter || (ready(comparisonOptions.key) && input.after === comparisonPage?.nextOrdinal)))) ? allowed : unavailable;
+  }
+  function pendingPayload(kind: "start" | "apply"): SourcePendingCommandPayload { const value = owner.current();
+    return { kind: "source-pending", pendingKind: kind, attemptId: (kind === "start" ? value.pendingStart : value.pendingApply)?.attemptId ?? "",
+      actionId: kind === "apply" ? value.pendingApply?.actionId ?? null : null }; }
+  function pendingAvailability(input?: SourcePendingCommandPayload, checked = false, rendering = false) {
+    const allowed = common(true, rendering); if (!allowed.enabled) return allowed;
+    if (!input) return unavailable; const expected = pendingPayload(input.pendingKind);
+    return expected.attemptId && input.attemptId === expected.attemptId && input.actionId === expected.actionId && (!checked || owner.current().receiptChecked) ? allowed : unavailable;
+  }
+  function taskPayload(): SourceTaskCommandPayload { return { kind: "source-task", attemptId: attempt ?? "", taskId: detail?.taskId ?? "" }; }
+  function taskAvailability(input?: SourceTaskCommandPayload, rendering = false) { const allowed = common(false, rendering); return allowed.enabled && input && ready(detailKey)
+    && input.attemptId === owner.current().attempt && input.taskId === detail?.taskId && !fixedPreview && !fixedComparison ? allowed : allowed.enabled ? unavailable : allowed; }
+  function pagePayload(page: ContentPage, after: number): SourcePageCommandPayload { return { kind: "source-page", snapshotId: page.snapshotId, attemptId: page.attemptId,
+    resultId: page.resultId, after }; }
+  function pageAvailability(input?: SourcePageCommandPayload, rendering = false) {
+    const allowed = common(false, rendering); if (!allowed.enabled) return allowed;
+    const preview = input?.snapshotId === null, basis = preview ? fixedPreview : contentVisible ? contentRead.data : null;
+    if (!input || !basis || input.snapshotId !== basis.snapshotId || input.attemptId !== basis.attemptId || input.resultId !== basis.resultId
+      || (!preview && input.snapshotId !== snapshotId) || (preview ? previewRead.isFetching : contentRead.isFetching)) return unavailable;
+    const cursor = preview ? owner.current().previewAfter : contentAfter;
+    const key = preview ? previewOptions.key : contentOptions.key, displayed = preview ? previewPage : contentPage;
+    return input.after === 0 || input.after === cursor || (ready(key) && input.after === displayed?.nextOrdinal)
+      || (preview && cursor === 0 && input.after === fixedPreview?.nextOrdinal) ? allowed : unavailable;
+  }
+  function historyPayload(after = 0, query = historicalQuery): SourceHistoryContentCommandPayload { return { kind: "source-history-content",
+    snapshotId: fixedComparison?.previousSnapshotId ?? "", query, after, newOrdinal: manualOrdinal }; }
+  function historyAvailability(input?: SourceHistoryContentCommandPayload, rendering = false) {
+    const allowed = common(false, rendering); if (!allowed.enabled) return allowed;
+    if (!fixedComparison || !input || input.snapshotId !== fixedComparison.previousSnapshotId || input.newOrdinal !== owner.current().manualOrdinal || input.newOrdinal === null || matchesRead.isFetching) return unavailable;
+    return input.after === 0 || (search && input.query === search.query && (input.after === search.after || (ready(matchesOptions.key) && input.after === historicalMatches?.nextOrdinal))) ? allowed : unavailable;
+  }
+  async function perform(work: (current: () => boolean) => Promise<void>) {
+    if (!common().enabled) return;
+    captureRunning.current = true;
+    const ticket = ++sequence.current, current = () => viewCurrent() && sequence.current === ticket;
+    setCaptureBusy(true); setCaptureFailure(null);
+    try { await work(current); } catch (error) { if (current()) setCaptureFailure(commandFailure(error)); }
+    finally { if (mounted.current && sequence.current === ticket) { captureRunning.current = false; setCaptureBusy(false); } }
+  }
+  function readCurrent(intent: "current" | "applied") {
+    setReadIntent(intent); setContentCursor(null);
+    if (readIntent === intent && snapshotId && contentAfter === 0) void contentRead.refetch();
+    if (intent === "current") void scopeRead.refetch();
+  }
+  function setComparisonIntent(input: SourceComparisonCommandPayload) {
+    if (owner.current().comparisonAfter === input.after && owner.current().appliedFilter === input.filter) void comparisonRead.refetch();
+    else owner.pageIntent(input.after, input.filter);
+  }
+  async function refreshComparison(input: SourceComparisonCommandPayload) {
+    const before = owner.current();
+    await perform(async current => {
+      const result = await scopeRead.refetch();
+      if (result.error) throw result.error;
+      const currentScope = result.data;
+      if (!current() || owner.current().comparison !== before.comparison || owner.current().editSeq !== before.editSeq || !currentScope) return;
+      const check = proof([scopeOptions.key]);
+      const next = await commands.compare({ ...context, attemptId: input.attemptId, resultId: input.resultId, base: input.base, filter: input.filter, after: 0, limit: 50 });
+      if (current() && check() && owner.current().comparison === before.comparison && owner.current().editSeq === before.editSeq
+        && next.scope.revision === currentScope?.revision && next.scope.currentSnapshot === currentScope?.currentSnapshot) owner.page(next, input.filter, true);
+    });
+  }
+  useLayoutEffect(() => {
+    const meta = { category: "source" as const, binding: null, risk: "reads-source" as const, confirmation: "none" as const, scope: commandScope };
+    const removals = [
+      registry.register({ ...meta, id: "source.select", nameKey: "source.select", risk: "captures-source", payloadKind: "source-selection", availability: selectionAvailability, handler: () => { setReadIntent("auto"); setCaptureFailure(null); void owner.select(); } }),
+      registry.register({ ...meta, id: "source.preflight", nameKey: "source.preflight", risk: "captures-source", payloadKind: "source-capture", availability: input => captureAvailability(input), handler: () => void owner.preflight() }),
+      registry.register({ ...meta, id: "source.start", nameKey: "source.start", risk: "captures-source", payloadKind: "source-capture", availability: input => captureAvailability(input, true), handler: () => void owner.start(proof([scopeOptions.key, integrationOptions.key])) }),
+      registry.register({ ...meta, id: "source.apply", nameKey: fixedComparison ? "source.applyUpdate" : "source.apply", risk: "writes-source", confirmation: "required", payloadKind: "source-basis", availability: input => basisAvailability(input, true), handler: () => void owner.apply(proof(fixedComparison ? [scopeOptions.key, comparisonOptions.key] : [scopeOptions.key])) }),
+      registry.register({ ...meta, id: "source.estimate", nameKey: "source.reviewImpact", payloadKind: "source-basis", availability: input => fixedComparison ? basisAvailability(input) : unavailable, handler: () => void owner.estimate(proof([scopeOptions.key, comparisonOptions.key])) }),
+      registry.register({ ...meta, id: "source.search-comparison", nameKey: "source.search", payloadKind: "source-comparison", availability: input => comparisonAvailability(input), handler: setComparisonIntent }),
+      registry.register({ ...meta, id: "source.refresh-comparison", nameKey: "source.refreshComparison", payloadKind: "source-comparison", availability: input => comparisonAvailability(input, true), handler: input => void refreshComparison(input) }),
+      registry.register({ ...meta, id: "source.retry-start", nameKey: "source.checkStart", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "start" ? pendingAvailability(input) : unavailable, handler: () => void owner.retryStart() }),
+      registry.register({ ...meta, id: "source.check-receipt", nameKey: "execution.checkReceipt", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkReceipt() }),
+      registry.register({ ...meta, id: "source.retry-apply", nameKey: "execution.retryAdoption", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: () => void owner.retryApply() }),
+      registry.register({ ...meta, id: "source.keep-output", nameKey: "execution.keepOutput", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: owner.keepOutput }),
+      registry.register({ ...meta, id: "source.cancel-task", nameKey: "execution.cancel", risk: "cancels-source-task", payloadKind: "source-task", availability: taskAvailability, handler: input => void owner.cancelTask(input.taskId, proof([detailKey])) }),
+      registry.register({ ...meta, id: "source.read-page", nameKey: "execution.nextPage", payloadKind: "source-page", availability: pageAvailability, handler: input => {
+        if (input.snapshotId === null) { if (input.after === owner.current().previewAfter) void previewRead.refetch(); else owner.pageIntent(input.after); }
+        else if (input.after === contentAfter) void contentRead.refetch(); else setContentCursor({ snapshotId: input.snapshotId!, revision: contentRevision, after: input.after });
+      } }),
+      registry.register({ ...meta, id: "source.find-lineage-candidates", nameKey: "source.search", payloadKind: "source-history-content", availability: historyAvailability, handler: input => {
+        if (search?.after === input.after && search.query === input.query && search.newOrdinal === input.newOrdinal) void matchesRead.refetch(); else owner.historyIntent(input.query, input.after);
+      } }),
+      registry.register({ ...meta, id: "source.discard", nameKey: "source.discard", availability: common, handler: () => void owner.discard() }),
+      registry.register({ ...meta, id: "source.begin-update", nameKey: "source.update", availability: () => {
+        const allowed = common(); return allowed.enabled && browsing && contentPage?.snapshotId && contentPage.snapshotId === scope?.currentSnapshot && ready(contentOptions.key) && ready(integrationOptions.key) && integration?.available ? allowed : unavailable;
+      }, handler: () => { sequence.current++; setReadIntent("auto"); owner.beginUpdate(); setCaptureFailure(null); } }),
+      registry.register({ ...meta, id: "source.show-current", nameKey: "source.viewCurrent", availability: () => common().enabled && !Object.keys(owner.current().lineage).length ? common() : unavailable,
+        handler: () => { owner.showCurrent(); readCurrent("current"); } }),
+      registry.register({ ...meta, id: "source.read-current", nameKey: "source.viewCurrent", availability: common, handler: () => readCurrent("current") }),
+      registry.register({ ...meta, id: "source.read-applied", nameKey: "source.readSaved", availability: () => common().enabled && owner.current().receipt ? common() : unavailable, handler: () => readCurrent("applied") }),
+      registry.register({ ...meta, id: "source.refresh-attempt", nameKey: "execution.refresh", availability: () => common().enabled && !!attempt && !fixedPreview && !fixedComparison ? common() : unavailable, handler: () => { setCaptureFailure(null); void detailRead.refetch(); } }),
+    ];
+    return () => removals.forEach(remove => remove());
+  });
+  useImperativeHandle(ref, () => ({
+    showAttempt(id) { if (owner.showAttempt(id)) { sequence.current++; captureRunning.current = false; setCaptureBusy(false); setReadIntent("auto"); setContentCursor(null); setCaptureFailure(null); } setOpen(true); },
+    allowNavigate() { return Promise.resolve(!busy && !owner.inFlight() && !owner.current().pendingApply && !owner.current().pendingStart); },
+    allowLeave() { const value = owner.current(); if (value.pendingApply || value.pendingStart) { setOpen(true); return Promise.resolve(false); }
+      if (!value.selection && !Object.keys(value.lineage).length && !value.actor.trim() && !busy && !owner.inFlight()) return Promise.resolve(true);
+      setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
+  }));
+  // Initial preparation is a deliberate fixed capture, never a query refresh.
   useEffect(() => {
-    if (!open || busy || !attempt || page || comparison || !detail) return;
+    if (!open || busyMutation || !attempt || fixedPreview || fixedComparison || !detail || !ready(detailKey) || captureRunning.current) return;
     const ticket = ++sequence.current;
     let stopped = false;
-    const current = () => !stopped && mounted.current && ticket === sequence.current;
+    const current = () => !stopped && viewCurrent() && ticket === sequence.current && owner.current().attempt === attempt;
     const result = detail.items[0];
     if (result?.resultId && result.status.validation === "valid" && result.status.execution === "succeeded") {
+      captureRunning.current = true; setCaptureBusy(true);
       void (async () => {
         try {
-          const scope = await commands.scope(context);
-          if (!current()) return;
-          if (scope.currentSnapshot) {
-            const changes = await commands.compare({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
-            if (current()) { owner.ready(changes, detail); setCurrentPage(null); setReadFailure(null); }
-          } else {
-            const preview = await commands.preview({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
-            if (current()) { owner.ready(preview, detail); setCurrentPage(null); setReadFailure(null); }
-          }
-        } catch (error) { if (current()) showError(error); }
+          const scopeResult = await scopeRead.refetch(); if (scopeResult.error) throw scopeResult.error;
+          const currentScope = scopeResult.data; if (!current() || !currentScope) return;
+          const next = currentScope.currentSnapshot
+            ? await commands.compare({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 })
+            : await commands.preview({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
+          if (current()) { owner.ready(next, detail); setCaptureFailure(null); }
+        } catch (error) { if (current()) setCaptureFailure(commandFailure(error)); }
+        finally { if (mounted.current && ticket === sequence.current) {
+          captureRunning.current = false; setCaptureBusy(false);
+          // A newer attempt read can supersede preparation without losing its continuation.
+          const value = owner.current();
+          if (stopped && viewCurrent() && value.attempt === attempt && !value.preview && !value.comparison) setCaptureVersion(version => version + 1);
+        } }
       })();
-    } else if (result?.status.execution === "failed" || result?.status.validation === "invalid") setReadFailure(result.status.diagnostic ?? "output-invalid");
-    else if (result?.status.execution === "unknown" || result?.status.execution === "cancelled-before-dispatch") setReadFailure(result.status.execution);
+    } else if (result?.status.execution === "failed" || result?.status.validation === "invalid") setCaptureFailure(result.status.diagnostic ?? "output-invalid");
+    else if (result?.status.execution === "unknown" || result?.status.execution === "cancelled-before-dispatch") setCaptureFailure(result.status.execution);
     return () => { stopped = true; };
-  }, [open, busy, attempt, page, comparison, detail, project.sessionToken]);
-  useEffect(() => { if (detailRead.error) showError(detailRead.error); }, [detailRead.error]);
-  useEffect(() => { if (page || comparison) first.current?.focus(); }, [page, comparison]);
+  }, [open, busyMutation, attempt, fixedPreview, fixedComparison, detail, detailRead.fetchStatus, detailRead.error, captureVersion, project.sessionToken]);
+  useEffect(() => {
+    if (owner.state.receipt) { setReadIntent("applied"); setContentCursor(null); }
+  }, [owner.state.completionVersion]);
+  useEffect(() => { if (fixedPreview || fixedComparison) first.current?.focus(); }, [fixedPreview, fixedComparison]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
-  async function loadCurrent(current: () => boolean, recordedSnapshot?: string) {
-    const before = owner.current();
-    const scope = await commands.scope(context);
-    const snapshotId = recordedSnapshot ?? scope.currentSnapshot;
-    const next = snapshotId ? await commands.content({ ...context, snapshotId, after: 0, limit: 50 }) : null;
-    const latest = owner.current();
-    if (current() && latest.selection === before.selection && latest.attempt === before.attempt && latest.preview === before.preview
-      && latest.comparison === before.comparison && latest.editSeq === before.editSeq && latest.receipt === before.receipt) setCurrentPage(next);
-  }
-  async function compare(after: number, current: () => boolean, base: string | null = comparison?.previousSnapshotId ?? null, query = appliedFilter, refresh = false) {
-    if (!comparison) return;
-    const next = await commands.compare({ ...context, attemptId: comparison.attemptId, resultId: comparison.resultId, base, filter: query, after, limit: 50 });
-    if (current()) { owner.page(next, query, refresh); setHistoricalMatches(null); }
-  }
-  useEffect(() => {
-    if (open && !busyMutation && owner.state.receipt && !owner.state.preview && !comparison) {
-      setCurrentPage(null); setHistory(null); void perform(current => loadCurrent(current, owner.state.receipt!.changes[0].id));
-    }
-  }, [open, owner.state.completionVersion, busyMutation]);
-  useEffect(() => {
-    if (open && !attempt && !page && !selection && !updating) void perform(loadCurrent);
-  }, [open, project.sessionToken]);
-  function requestBack() {
-    if (!readRunning.current && !owner.inFlight() && !pendingApply && !pendingStart) setOpen(false);
-  }
+  function requestBack() { if (!captureRunning.current && !owner.inFlight() && !owner.current().pendingApply && !owner.current().pendingStart) setOpen(false); }
   const knownErrors: Record<string, keyof UiMessages["source"]["errors"]> = {
     "unsupported-encoding": "encoding", "source-changed": "changed", "duplicate-native-key": "duplicate", "empty-source": "empty", "capture-timeout": "timeout", "extract-timeout": "unknown", "source-corrupt": "invalid", "stale-preview": "conflict", "language-required": "language",
     "vtt-header": "webvtt", "vtt-timing": "webvtt", "vtt-setting": "webvtt", "vtt-region": "webvtt", "vtt-block": "webvtt", "vtt-cue-id": "webvtt", "vtt-order": "webvtt", "vtt-payload": "webvtt", "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", "invalid-json": "invalid", "source-value-not-string": "stringValue", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
@@ -139,62 +292,65 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
           {integration ? <><p>{t("source.profile", { version: integration.version, name: integration.id === "webvtt" ? "WebVTT" : "Stardew SMAPI", profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
-          {owner.state.receipt ? <p role="status">{t(owner.state.stale ? "source.adoptionSavedNewer" : "source.adoptionSaved")} <button className="text-button" disabled={busy} onClick={() => void perform(current => loadCurrent(current, owner.state.receipt!.changes[0].id))}>{t("source.readSaved")}</button></p> : null}
+          <SourceReadFeedback error={open ? integrationRead.error || scopeRead.error : null} fetching={open && (integrationRead.isFetching || scopeRead.isFetching)} messageKey="source.readFailed" retry={() => {
+            if (integrationRead.error) void integrationRead.refetch(); if (scopeRead.error) void scopeRead.refetch();
+          }} />
+          <SourceReadFeedback error={contentVisible ? contentRead.error : null} fetching={open && contentVisible && contentRead.isFetching} messageKey="source.readFailed" retry={() => void contentRead.refetch()} />
+          {contentVisible && contentAfter > 0 && !contentPage ? <button className="secondary-button" disabled={!common(false, true).enabled || contentRead.isFetching} onClick={() => registry.dispatch(readIntent === "applied" ? "source.read-applied" : "source.read-current", commandScope)}>{t("execution.firstPage")}</button> : null}
+          {fixedPreview && owner.state.previewAfter > 0 ? <SourceReadFeedback error={previewRead.error} fetching={open && previewRead.isFetching} messageKey="source.readFailed" retry={() => void previewRead.refetch()} /> : null}
+          {fixedPreview && owner.state.previewAfter > 0 && !previewPage ? <button className="secondary-button" disabled={!pageAvailability({ kind: "source-page", snapshotId: null, attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId, after: 0 }, true).enabled} onClick={() => registry.dispatch("source.read-page", commandScope, { kind: "source-page", snapshotId: null, attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId, after: 0 })}>{t("execution.firstPage")}</button> : null}
+          {fixedComparison ? <SourceReadFeedback error={comparisonRead.error} fetching={open && comparisonRead.isFetching} messageKey="source.readFailed" retry={() => void comparisonRead.refetch()} /> : null}
+          {owner.state.receipt ? <p role="status">{t(owner.state.stale ? "source.adoptionSavedNewer" : "source.adoptionSaved")} <button className="text-button" disabled={busy} onClick={() => registry.dispatch("source.read-applied", commandScope)}>{t("source.readSaved")}</button></p> : null}
           {owner.state.stale && (comparison || owner.state.preview) ? <p role="alert">{t("source.comparisonChanged")}</p> : null}
           {warnings.includes("source-template") ? <p role="status">{t("source.templateWarning")}</p> : null}
           {!page && !comparison && !attempt ? <section aria-label={t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}>
-            <label className="source-field">{t("source.integration")}<select disabled={locked || updating} value={domain} onChange={event => { sequence.current++; owner.setDomain(event.target.value); setIntegration(null); setReadFailure(null); }}><option value="stardew-smapi">Stardew SMAPI</option><option value="webvtt">WebVTT</option></select></label>
+            <label className="source-field">{t("source.integration")}<select disabled={locked || updating} value={domain} onChange={event => { sequence.current++; owner.setDomain(event.target.value); setCaptureFailure(null); }}><option value="stardew-smapi">Stardew SMAPI</option><option value="webvtt">WebVTT</option></select></label>
             {updating ? <p role="status">{t("source.updateIntro")}</p> : null}
             <p>{t(domain === "webvtt" ? "source.webvttSupport" : "source.support")}</p>
-            <button className="secondary-button" disabled={locked || !integration?.available} onClick={() => { setCurrentPage(null); setReadFailure(null); void owner.select(); }}>{t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}</button>
+            <button className="secondary-button" disabled={!selectionAvailability(selectionPayload(), true).enabled} onClick={() => registry.dispatch("source.select", commandScope, selectionPayload())}>{t(domain === "webvtt" ? "source.webvttSelect" : "source.select")}</button>
             {selection ? <>
               <p>{selection.folderName}</p>
               <label className="source-check"><input type="checkbox" checked={declared} disabled={locked} onChange={event => { owner.declare(event.target.checked); }} />{t("source.language", { language: project.metadata.sourceLocale })}</label>
               <p>{t("source.languageHelp", { file: domain === "webvtt" ? "source.vtt" : "default.json" })}</p>
-              <button className="secondary-button" disabled={locked || !declared} onClick={() => void owner.preflight()}>{t("source.preflight")}</button>
+              <button className="secondary-button" disabled={!captureAvailability(capturePayload(), false, true).enabled} onClick={() => registry.dispatch("source.preflight", commandScope, capturePayload())}>{t("source.preflight")}</button>
               {preflight ? <><p>{t("source.preflightResult", { namespace: preflight.namespace, count: preflight.count })}</p>
-                <button className="primary-button" disabled={locked} onClick={() => void owner.start()}>{t("source.start")}</button></> : null}
-              <button className="text-button" disabled={locked} onClick={() => void owner.discard()}>{t("source.discard")}</button>
+                <button className="primary-button" disabled={!captureAvailability(capturePayload(), true, true).enabled} onClick={() => registry.dispatch("source.start", commandScope, capturePayload())}>{t("source.start")}</button></> : null}
+              <button className="text-button" disabled={!common(false, true).enabled} onClick={() => registry.dispatch("source.discard", commandScope)}>{t("source.discard")}</button>
             </> : null}
           </section> : null}
-          {pendingStart && !busy ? <section><p>{t("source.startUnknown")}</p><button className="secondary-button" disabled={busy} onClick={() => void owner.retryStart()}>{t("source.checkStart")}</button></section> : null}
+          {pendingStart && !busy ? <section><p>{t("source.startUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("start"), false, true).enabled} onClick={() => registry.dispatch("source.retry-start", commandScope, pendingPayload("start"))}>{t("source.checkStart")}</button></section> : null}
           {attempt && !page && !comparison ? <section><p role="status">{t("source.savedTask")}</p><p>{t("source.taskHelp")}</p>
-            {detail ? <button className="secondary-button" disabled={locked} onClick={() => void owner.cancelTask(detail.taskId)}>{t("execution.cancel")}</button> : null}
-            <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { if (current()) setDetail(null); })}>{t("execution.refresh")}</button>
+            {detail ? <button className="secondary-button" disabled={!taskAvailability(taskPayload(), true).enabled} onClick={() => registry.dispatch("source.cancel-task", commandScope, taskPayload())}>{t("execution.cancel")}</button> : null}
+            <button className="secondary-button" disabled={!common(false, true).enabled || detailRead.isFetching} onClick={() => registry.dispatch("source.refresh-attempt", commandScope)}>{t("execution.refresh")}</button>
           </section> : null}
-          {page ? <section>
-            <h3 ref={first} tabIndex={-1}>{t(page.snapshotId ? "source.imported" : "source.preview")}</h3>
+          {[previewPage, contentPage].map(page => page ? <section key={page.snapshotId ?? "preview"}>
+            <h3 ref={!page.snapshotId || !previewPage ? first : undefined} tabIndex={-1}>{t(page.snapshotId ? "source.imported" : "source.preview")}</h3>
             <p role="status">{t("source.range", { namespace: page.namespace, count: page.total, language: page.confirmation.sourceLanguage })}</p>
             <ul>{page.coverage.map(file => <li key={file.artifactId}>{file.logicalPath}<details><summary>{t("source.fingerprint")}</summary><code>{file.sha256}</code></details></li>)}</ul>
             <p>{t("source.identityHelp")}</p>
             <div className="source-table-scroll"><table className="source-table"><caption>{t("source.pageRange", { first: String((page.rows[0]?.occurrence.ordinal ?? 0) + 1), last: String((page.rows.at(-1)?.occurrence.ordinal ?? -1) + 1), total: String(page.total) })}</caption><thead><tr><th scope="col">{t("source.key")}</th><th scope="col">{t("source.text")}</th></tr></thead><tbody>{page.rows.map(row => <tr key={row.occurrence.ordinal}><th scope="row">{row.occurrence.key}{cueTiming(row.occurrence.identityBasis) ? <p>{cueTiming(row.occurrence.identityBasis)}</p> : null}<details><summary>{t("source.origin")}</summary><p>{row.occurrence.namespace}</p><p>{t("source.bytes", { start: String(row.occurrence.valueByteRange[0]), end: String(row.occurrence.valueByteRange[1]) })}</p>{row.unitId ? <code>{row.unitId}</code> : null}</details></th><td><pre>{row.occurrence.text || t("source.emptyText")}</pre></td></tr>)}</tbody></table></div>
-            <div className="execution-actions">{[0, page.nextOrdinal].map((after, index) => after !== null ? <button className="secondary-button" key={index} disabled={locked || (index === 0 && page.rows[0]?.occurrence.ordinal === 0)} onClick={() => void perform(async current => {
-              const next = page.snapshotId ? await commands.content({ ...context, snapshotId: page.snapshotId, after, limit: 50 }) : await commands.preview({ ...context, attemptId: page.attemptId, resultId: page.resultId, after, limit: 50 });
-              if (current()) { if (next.snapshotId) setCurrentPage(next); else owner.page(next); }
-            })}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
+            <div className="execution-actions">{[0, page.nextOrdinal].map((after, index) => after !== null ? <button className="secondary-button" key={index} disabled={!pageAvailability(pagePayload(page, after), true).enabled || (index === 0 && (page.snapshotId === null ? owner.state.previewAfter : contentAfter) === 0)} onClick={() => registry.dispatch("source.read-page", commandScope, pagePayload(page, after))}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
             {!page.snapshotId ? <>
-              <label className="source-check"><input type="checkbox" disabled={locked || owner.state.stale || !!owner.state.receipt || page.scope.currentSnapshot !== null} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.confirm", { count: page.total, language: page.confirmation.sourceLanguage })}</label>
+              <label className="source-check"><input type="checkbox" disabled={!basisAvailability(basisPayload(), false, true).enabled || page.scope.currentSnapshot !== null} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.confirm", { count: page.total, language: page.confirmation.sourceLanguage })}</label>
               <p>{t("source.applyHelp")}</p>
               {page.scope.currentSnapshot ? <p>{t("source.errors.conflict")}</p> : null}
-              <button className="primary-button" disabled={locked || owner.state.stale || !!owner.state.receipt || !confirmed || page.scope.currentSnapshot !== null} onClick={() => void owner.apply()}>{t("source.apply")}</button>
+              <button className="primary-button" disabled={!basisAvailability(basisPayload(), true, true).enabled || page.scope.currentSnapshot !== null} onClick={() => registry.dispatch("source.apply", commandScope, basisPayload())}>{t("source.apply")}</button>
             </> : null}
-            {page.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <button className="primary-button" disabled={locked || !integration?.available} onClick={() => {
-              sequence.current++; owner.beginUpdate(); setCurrentPage(null); setReadFailure(null);
-            }}>{t("source.update")}</button> : null}
-          </section> : null}
+            {page.snapshotId && browsing && page.snapshotId === page.scope.currentSnapshot ? <button className="primary-button" disabled={!common(false, true).enabled || !ready(contentOptions.key) || !ready(integrationOptions.key) || !integration?.available || page.snapshotId !== scope?.currentSnapshot} onClick={() => registry.dispatch("source.begin-update", commandScope)}>{t("source.update")}</button> : null}
+          </section> : null)}
           {comparison ? <section>
             <h3 ref={first} tabIndex={-1}>{t("source.compareTitle")}</h3>
             <p role="status">{t("source.compareSummary", { unchanged: String(comparison.unchanged), moved: String(comparison.moved), changed: String(comparison.changed), added: String(comparison.added), ambiguous: String(comparison.ambiguous), removed: String(comparison.removed) })}</p>
             <p>{t(domain === "webvtt" ? "source.webvttCompareHelp" : "source.compareHelp")}</p>
             <label className="source-field">{t("source.mappingActor")}<input disabled={locked} value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
             <label className="source-field">{t("source.comparisonFilter")}<input disabled={locked} value={filter} maxLength={256} onChange={event => setFilter(event.target.value)} /></label>
-            <button className="secondary-button" disabled={locked} onClick={() => void perform(current => compare(0, current, comparison.previousSnapshotId, filter))}>{t("source.search")}</button>
-            <button className="secondary-button" disabled={locked} onClick={() => void perform(current => compare(0, current, Object.keys(lineage).length ? comparison.previousSnapshotId : null, filter, true))}>{t("source.refreshComparison")}</button>
-            <p>{t("source.filteredRange", { count: comparison.filteredTotal, total: String(comparison.total) })}</p>
-            {history ? <label className="source-field">{t("source.comparisonBase")}<select disabled={locked} value={comparison.previousSnapshotId} onChange={event => void perform(current => compare(0, current, event.target.value, filter, true))}>
+            <button className="secondary-button" disabled={!comparisonAvailability(comparisonPayload(0, filter), false, true).enabled} onClick={() => registry.dispatch("source.search-comparison", commandScope, comparisonPayload(0, filter))}>{t("source.search")}</button>
+            <button className="secondary-button" disabled={!comparisonAvailability(comparisonPayload(0, filter, Object.keys(lineage).length ? fixedComparison!.previousSnapshotId : null), true, true).enabled} onClick={() => registry.dispatch("source.refresh-comparison", commandScope, comparisonPayload(0, filter, Object.keys(lineage).length ? fixedComparison!.previousSnapshotId : null))}>{t("source.refreshComparison")}</button>
+            {comparisonPage ? <p>{t("source.filteredRange", { count: comparisonPage.filteredTotal, total: String(comparison.total) })}</p> : null}
+            {history ? <label className="source-field">{t("source.comparisonBase")}<select disabled={locked} value={comparison.previousSnapshotId} onChange={event => registry.dispatch("source.refresh-comparison", commandScope, comparisonPayload(0, filter, event.target.value))}>
               {history.snapshots.map(entry => <option key={entry.snapshotId} value={entry.snapshotId}>{t("source.snapshotLabel", { revision: String(entry.revision) })} · {t(entry.current ? "source.currentSnapshot" : "source.historicalSnapshot")}</option>)}
             </select></label> : null}
-            <div className="source-table-scroll"><table className="source-table source-comparison-table"><caption>{t("source.changePage", { count: comparison.rows.length, total: String(comparison.total) })}</caption><thead><tr><th scope="col">{t("source.changeKind")}</th><th scope="col">{t("source.previous")}</th><th scope="col">{t("source.next")}</th><th scope="col">{t("source.mapping")}</th></tr></thead><tbody>{comparison.rows.map((row,index) => {
+            {comparisonPage ? <div className="source-table-scroll"><table className="source-table source-comparison-table"><caption>{t("source.changePage", { count: comparisonPage.rows.length, total: String(comparison.total) })}</caption><thead><tr><th scope="col">{t("source.changeKind")}</th><th scope="col">{t("source.previous")}</th><th scope="col">{t("source.next")}</th><th scope="col">{t("source.mapping")}</th></tr></thead><tbody>{comparisonPage.rows.map((row,index) => {
               const ordinal = row.new?.ordinal;
               const selected = ordinal === undefined ? undefined : lineage[ordinal];
               const defaultChoice = row.kind === "unchanged" || row.kind === "moved" ? "automatic" : "unresolved";
@@ -219,29 +375,29 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
                     ] : [])}
                     {selected && !row.candidates.some(candidate => candidate.occurrenceId === selected.oldOccurrenceId) ? <option value={`${selected.decision}:${selected.oldOccurrenceId}`}>{t(`source.mappingChoice.${selected.decision}`)} · {historicalMatches?.rows.find(item => item.occurrenceId === selected.oldOccurrenceId)?.occurrence.key ?? t("source.historicalSnapshot")}</option> : null}
                   </select></label>{selected ? <label className="source-field">{t("source.mappingReason")}<textarea disabled={locked} value={selected.reason} maxLength={4096} onChange={event => { setLineage(current => ({ ...current, [ordinal]: { ...current[ordinal], reason: event.target.value } })); setConfirmed(false); }} /></label> : null}
-                  <button className="text-button" disabled={locked} onClick={() => { setManualOrdinal(ordinal); setHistoricalMatches(null); }}>{t("source.chooseHistorical")}</button>
+                  <button className="text-button" disabled={locked} onClick={() => { setManualOrdinal(ordinal); }}>{t("source.chooseHistorical")}</button>
                 </> : t("source.noMapping")}</td></tr>;
-            })}</tbody></table></div>
-            <div className="execution-actions">{[0,comparison.nextOrdinal].map((after,index) => after !== null ? <button className="secondary-button" key={index} disabled={locked || (index === 0 && comparison.rows[0]?.new?.ordinal === 0)} onClick={() => void perform(async current => {
-              await compare(after, current);
-            })}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
-            {manualOrdinal !== null ? <section className="source-maintenance-panel"><h4>{t("source.manualTarget", { key: comparison.rows.find(row => row.new?.ordinal === manualOrdinal)?.new?.key ?? String(manualOrdinal + 1) })}</h4>
+            })}</tbody></table></div> : null}
+            <div className="execution-actions">{[0,comparisonPage?.nextOrdinal ?? null].map((after,index) => after !== null ? <button className="secondary-button" key={index} disabled={!comparisonAvailability(comparisonPayload(after), false, true).enabled || (index === 0 && owner.state.comparisonAfter === 0)} onClick={() => registry.dispatch("source.search-comparison", commandScope, comparisonPayload(after))}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
+            {manualOrdinal !== null ? <section className="source-maintenance-panel"><h4>{t("source.manualTarget", { key: comparisonPage?.rows.find(row => row.new?.ordinal === manualOrdinal)?.new?.key ?? String(manualOrdinal + 1) })}</h4>
               <label className="source-field">{t("source.searchHistory")}<input disabled={locked} maxLength={256} value={historicalQuery} onChange={event => setHistoricalQuery(event.target.value)} /></label>
-              <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { const next = await commands.historyContent({ ...context, snapshotId: comparison.previousSnapshotId, query: historicalQuery, after: 0, limit: 20 }); if (current()) setHistoricalMatches(next); })}>{t("source.search")}</button>
-              {historicalMatches ? <><p>{t("source.historyMatches", { count: historicalMatches.total })}</p><ul>{historicalMatches.rows.map(row => <li key={row.occurrenceId}><strong>{row.occurrence.key}</strong><pre>{row.occurrence.text}</pre>{(["continue", "reject"] as const).map(decision => <button className="text-button" key={decision} disabled={locked} onClick={() => { setLineage(current => ({ ...current, [manualOrdinal]: { newOrdinal: manualOrdinal, oldOccurrenceId: row.occurrenceId!, decision, reason: "" } })); setConfirmed(false); }}>{t(`source.mappingChoice.${decision}`)}</button>)}</li>)}</ul>{historicalMatches.nextOrdinal !== null ? <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { const next = await commands.historyContent({ ...context, snapshotId: comparison.previousSnapshotId, query: historicalQuery, after: historicalMatches.nextOrdinal!, limit: 20 }); if (current()) setHistoricalMatches(next); })}>{t("execution.nextPage")}</button> : null}</> : null}
+              <button className="secondary-button" disabled={!historyAvailability(historyPayload(), true).enabled} onClick={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload())}>{t("source.search")}</button>
+              {matchesEnabled ? <SourceReadFeedback error={matchesRead.error} fetching={open && matchesRead.isFetching} retry={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload(search!.after, search!.query))} /> : null}
+              {matchesEnabled && search!.after > 0 ? <button className="secondary-button" disabled={!historyAvailability(historyPayload(0, search!.query), true).enabled} onClick={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload(0, search!.query))}>{t("execution.firstPage")}</button> : null}
+              {historicalMatches ? <><p>{t("source.historyMatches", { count: historicalMatches.total })}</p><ul>{historicalMatches.rows.map(row => <li key={row.occurrenceId}><strong>{row.occurrence.key}</strong><pre>{row.occurrence.text}</pre>{(["continue", "reject"] as const).map(decision => <button className="text-button" key={decision} disabled={locked} onClick={() => { setLineage(current => ({ ...current, [manualOrdinal]: { newOrdinal: manualOrdinal, oldOccurrenceId: row.occurrenceId!, decision, reason: "" } })); setConfirmed(false); }}>{t(`source.mappingChoice.${decision}`)}</button>)}</li>)}</ul>{historicalMatches.nextOrdinal !== null ? <button className="secondary-button" disabled={!historyAvailability(historyPayload(historicalMatches.nextOrdinal!, search!.query), true).enabled} onClick={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload(historicalMatches.nextOrdinal!, search!.query))}>{t("execution.nextPage")}</button> : null}</> : null}
             </section> : null}
-            <button className="secondary-button" disabled={locked} onClick={() => { const ticket = sequence.current; void owner.estimate(() => mounted.current && open && sequence.current === ticket); }}>{t("source.reviewImpact")}</button>
+            <button className="secondary-button" disabled={!basisAvailability(basisPayload(), false, true).enabled} onClick={() => registry.dispatch("source.estimate", commandScope, basisPayload())}>{t("source.reviewImpact")}</button>
             <p>{t("source.estimateHelp")}</p>{estimate?.map(summary => <p key={summary.locale}>{t("source.impactSummary", { locale: summary.locale, preserved: String(summary.preserved), reassess: String(summary.reassess), unresolved: String(summary.unresolved), total: String(summary.total) })}</p>)}
-            <label className="source-check"><input type="checkbox" disabled={locked || owner.state.stale || !!owner.state.receipt || !estimate} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.updateConfirm", { count: comparison.total })}</label>
+            <label className="source-check"><input type="checkbox" disabled={!basisAvailability(basisPayload(), false, true).enabled || !estimate} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.updateConfirm", { count: comparison.total })}</label>
             <p>{t("source.updateImpact")}</p>
-            <button className="primary-button" disabled={locked || owner.state.stale || !!owner.state.receipt || !confirmed || (Object.keys(lineage).length > 0 && (!actor.trim() || Object.values(lineage).some(choice => !choice.reason.trim())))} onClick={() => void owner.apply()}>{t("source.applyUpdate")}</button>
+            <button className="primary-button" disabled={!basisAvailability(basisPayload(), true, true).enabled} onClick={() => registry.dispatch("source.apply", commandScope, basisPayload())}>{t("source.applyUpdate")}</button>
           </section> : null}
-          {pendingApply && !busy ? <section><p>{t("source.applyUnknown")}</p><button className="secondary-button" disabled={busy} onClick={() => void owner.checkReceipt()}>{t("execution.checkReceipt")}</button>{receiptChecked ? <button className="secondary-button" disabled={busy} onClick={() => void owner.retryApply()}>{t("execution.retryAdoption")}</button> : null}
-            <button className="text-button" disabled={busy || !receiptChecked} onClick={owner.keepOutput}>{t("execution.keepOutput")}</button>
+          {pendingApply && !busy ? <section><p>{t("source.applyUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), false, true).enabled} onClick={() => registry.dispatch("source.check-receipt", commandScope, pendingPayload("apply"))}>{t("execution.checkReceipt")}</button>{receiptChecked ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.retry-apply", commandScope, pendingPayload("apply"))}>{t("execution.retryAdoption")}</button> : null}
+            <button className="text-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.keep-output", commandScope, pendingPayload("apply"))}>{t("execution.keepOutput")}</button>
           </section> : null}
-          <button className="text-button" disabled={locked} onClick={() => { owner.showCurrent(); void perform(loadCurrent); }}>{t("source.viewCurrent")}</button>
-          {page?.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <SourceImpactPanel key={page.snapshotId} project={project} snapshotId={page.snapshotId} active={open} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork ? () => { setOpen(false); onOpenWork(); } : undefined} /> : null}
-          <p>{t("source.correctionHelp")}</p><SourceHistoryPanel key={page?.scope.revision ?? comparison?.scope.revision ?? "selection"} project={project} disabled={locked} onHistory={setHistory} />
+          <button className="text-button" disabled={!common(false, true).enabled || !!Object.keys(lineage).length} onClick={() => registry.dispatch("source.show-current", commandScope)}>{t("source.viewCurrent")}</button>
+          {contentPage?.snapshotId && contentPage.snapshotId === contentPage.scope.currentSnapshot ? <SourceImpactPanel key={contentPage.snapshotId} project={project} snapshotId={contentPage.snapshotId} active={open} disabled={locked} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork ? () => { setOpen(false); onOpenWork(); } : undefined} /> : null}
+          <p>{t("source.correctionHelp")}</p><SourceHistoryPanel project={project} disabled={locked} active={open} onHistoryCursor={setHistoryOffset} />
           <p>{t("source.draftHelp")}</p>
         </div>
       </WorkbenchPanel>
@@ -249,7 +405,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}>
         <Dialog.Title>{t("source.leaveTitle")}</Dialog.Title><Dialog.Description>{t("source.leaveHelp")}</Dialog.Description>
         <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; }}>{t("source.keep")}</button>
-          <button className="primary-button" onClick={() => { sequence.current++; void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; }); }}>{t("source.leave")}</button></div>
+          <button className="primary-button" onClick={() => { sequence.current++; captureRunning.current = false; setCaptureBusy(false); void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; }); }}>{t("source.leave")}</button></div>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
   </>;

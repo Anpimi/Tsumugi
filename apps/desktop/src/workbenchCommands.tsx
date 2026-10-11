@@ -5,7 +5,8 @@ import type { TranslationKey } from "./i18n/types";
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.cancel-checks" | "review.retry-pending"
-  | "review.approve-batch" | "review.stop-batch";
+  | "review.approve-batch" | "review.stop-batch"
+  | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
 export interface ReviewFallbackCommandPayload {
   kind: "review-fallback";
   unitId: string;
@@ -32,6 +33,21 @@ export interface ResourcePendingCommandPayload { kind: "resource-pending"; pendi
 export interface ResourceTranslationCommandPayload { kind: "resource-translation"; locale: string;
   target: { unitId: string; sourceRevisionId: string; key: string; sourceText: string };
   evidenceKind: "tm" | "impact"; evidenceId: string; selectionId: string | null }
+export interface SourceSelectionCommandPayload { kind: "source-selection"; domain: string; integrationId: string; version: string }
+export interface SourceCaptureCommandPayload { kind: "source-capture"; selectionId: string; sourceLanguage: string }
+export interface SourceBasisCommandPayload { kind: "source-basis"; attemptId: string; resultId: string; revision: string; currentSnapshot: string | null; base: string | null; editSeq: number }
+export interface SourceComparisonCommandPayload { kind: "source-comparison"; attemptId: string; resultId: string; revision: string; currentSnapshot: string | null;
+  originalBase: string; base: string | null; filter: string; after: number; editSeq: number }
+export interface SourcePendingCommandPayload { kind: "source-pending"; pendingKind: "start" | "apply"; attemptId: string; actionId: string | null }
+export interface SourceTaskCommandPayload { kind: "source-task"; attemptId: string; taskId: string }
+export interface SourcePageCommandPayload { kind: "source-page"; snapshotId: string | null; attemptId: string; resultId: string; after: number }
+export interface SourceHistoryCommandPayload { kind: "source-history"; offset: number }
+export interface SourceHistoryContentCommandPayload { kind: "source-history-content"; snapshotId: string; query: string; after: number; newOrdinal: number | null }
+export interface SourceLineageCommandPayload { kind: "source-lineage"; snapshotId: string; ordinal: number }
+export interface SourceImpactCommandPayload { kind: "source-impact"; snapshotId: string; locale: string; after: number }
+export interface SourceImpactTargetCommandPayload { kind: "source-impact-target"; snapshotId: string; locale: string; occurrenceId: string;
+  target: { unitId: string; sourceRevisionId: string; key: string; sourceText: string };
+  selectionId: string | null; translationRevisionId: string | null; reviewBasis: string }
 interface WorkbenchCommandPayloads {
   "review.allow-fallback": ReviewFallbackCommandPayload;
   "review.withdraw-fallback": ReviewFallbackCommandPayload;
@@ -46,6 +62,26 @@ interface WorkbenchCommandPayloads {
   "resource.decide-entry": ResourceDecisionCommandPayload;
   "resource.retry-pending": ResourcePendingCommandPayload;
   "resource.open-translation": ResourceTranslationCommandPayload;
+  "source.select": SourceSelectionCommandPayload;
+  "source.preflight": SourceCaptureCommandPayload;
+  "source.start": SourceCaptureCommandPayload;
+  "source.apply": SourceBasisCommandPayload;
+  "source.estimate": SourceBasisCommandPayload;
+  "source.search-comparison": SourceComparisonCommandPayload;
+  "source.refresh-comparison": SourceComparisonCommandPayload;
+  "source.retry-start": SourcePendingCommandPayload;
+  "source.check-receipt": SourcePendingCommandPayload;
+  "source.retry-apply": SourcePendingCommandPayload;
+  "source.keep-output": SourcePendingCommandPayload;
+  "source.cancel-task": SourceTaskCommandPayload;
+  "source.read-page": SourcePageCommandPayload;
+  "source.read-history": SourceHistoryCommandPayload;
+  "source.read-history-content": SourceHistoryContentCommandPayload;
+  "source.find-lineage-candidates": SourceHistoryContentCommandPayload;
+  "source.read-lineage": SourceLineageCommandPayload;
+  "source.read-impact": SourceImpactCommandPayload;
+  "source.open-work": SourceImpactCommandPayload;
+  "source.open-translation": SourceImpactTargetCommandPayload;
 }
 export type WorkbenchCommandId = PlainWorkbenchCommandId | keyof WorkbenchCommandPayloads;
 type CommandPayload = WorkbenchCommandPayloads[keyof WorkbenchCommandPayloads];
@@ -62,12 +98,13 @@ export interface CommandAvailability {
 }
 interface CommandMetadata {
   nameKey: TranslationKey;
-  category: "project" | "translation" | "review" | "resources";
+  category: "project" | "translation" | "review" | "resources" | "source";
   scope: CommandScope;
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
-    | "writes-resources" | "captures-resources" | "reads-resources" | "retries-resource-action" | "opens-translation";
+    | "writes-resources" | "captures-resources" | "reads-resources" | "retries-resource-action" | "opens-translation"
+    | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -100,7 +137,19 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"resource-capture", "resource.open-preview" | "resource.refresh-preview">
   | ResourceCommand<"resource-decision", "resource.decide-entry">
   | ResourceCommand<"resource-pending", "resource.retry-pending">
-  | ResourceCommand<"resource-translation", "resource.open-translation">;
+  | ResourceCommand<"resource-translation", "resource.open-translation">
+  | ResourceCommand<"source-selection", "source.select">
+  | ResourceCommand<"source-capture", "source.preflight" | "source.start">
+  | ResourceCommand<"source-basis", "source.apply" | "source.estimate">
+  | ResourceCommand<"source-comparison", "source.search-comparison" | "source.refresh-comparison">
+  | ResourceCommand<"source-pending", "source.retry-start" | "source.check-receipt" | "source.retry-apply" | "source.keep-output">
+  | ResourceCommand<"source-task", "source.cancel-task">
+  | ResourceCommand<"source-page", "source.read-page">
+  | ResourceCommand<"source-history", "source.read-history">
+  | ResourceCommand<"source-history-content", "source.read-history-content" | "source.find-lineage-candidates">
+  | ResourceCommand<"source-lineage", "source.read-lineage">
+  | ResourceCommand<"source-impact", "source.read-impact" | "source.open-work">
+  | ResourceCommand<"source-impact-target", "source.open-translation">;
 export type WorkbenchCommandDescription = CommandMetadata & {
   id: WorkbenchCommandId;
   payloadKind?: CommandPayload["kind"];
@@ -108,6 +157,23 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind?.startsWith("source-")) {
+    if (!validSourcePayload(payload)) return unavailable;
+    switch (command.payloadKind) {
+      case "source-selection": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-capture": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-basis": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-comparison": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-task": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-page": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-history": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-history-content": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-lineage": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-impact": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "source-impact-target": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+    }
+  }
   if (command.payloadKind?.startsWith("resource-")) {
     if (!validResourcePayload(payload)) return { enabled: false, reason: "unavailable" };
     switch (command.payloadKind) {
@@ -137,7 +203,7 @@ function validTarget(payload: ReviewFallbackCommandPayload | ReviewWaiverCommand
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 function nullableIdentity(value: unknown) { return value === null || validIdentity(value); }
 function editSequence(value: unknown) { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
-function validResourcePayload(payload: CommandPayload | undefined): payload is Exclude<CommandPayload, ReviewFallbackCommandPayload | ReviewWaiverCommandPayload> {
+function validResourcePayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload, { kind: `resource-${string}` }> {
   if (!payload || typeof payload !== "object") return false;
   switch (payload.kind) {
     case "resource-term": return validIdentity(payload.locale) && nullableIdentity(payload.termId) && nullableIdentity(payload.expectedRevisionId) && editSequence(payload.editSeq);
@@ -152,6 +218,32 @@ function validResourcePayload(payload: CommandPayload | undefined): payload is E
       && validIdentity(payload.target.unitId) && validIdentity(payload.target.sourceRevisionId) && validIdentity(payload.target.key)
       && typeof payload.target.sourceText === "string" && validIdentity(payload.evidenceId)
       && (payload.evidenceKind === "tm" ? payload.selectionId === null : payload.evidenceKind === "impact" && validIdentity(payload.selectionId));
+    default: return false;
+  }
+}
+type SourcePayload = Extract<CommandPayload, { kind: `source-${string}` }>;
+function validSourcePayload(payload: CommandPayload | undefined): payload is SourcePayload {
+  if (!payload || typeof payload !== "object") return false;
+  switch (payload.kind) {
+    case "source-selection": return validIdentity(payload.domain) && validIdentity(payload.integrationId) && validIdentity(payload.version);
+    case "source-capture": return validIdentity(payload.selectionId) && validIdentity(payload.sourceLanguage);
+    case "source-basis": return validIdentity(payload.attemptId) && validIdentity(payload.resultId) && validIdentity(payload.revision)
+      && nullableIdentity(payload.currentSnapshot) && nullableIdentity(payload.base) && editSequence(payload.editSeq);
+    case "source-comparison": return validIdentity(payload.attemptId) && validIdentity(payload.resultId) && validIdentity(payload.revision)
+      && nullableIdentity(payload.currentSnapshot) && validIdentity(payload.originalBase) && nullableIdentity(payload.base)
+      && typeof payload.filter === "string" && editSequence(payload.after) && editSequence(payload.editSeq);
+    case "source-pending": return validIdentity(payload.attemptId) && (payload.pendingKind === "start" ? payload.actionId === null : payload.pendingKind === "apply" && validIdentity(payload.actionId));
+    case "source-task": return validIdentity(payload.attemptId) && validIdentity(payload.taskId);
+    case "source-page": return nullableIdentity(payload.snapshotId) && validIdentity(payload.attemptId) && validIdentity(payload.resultId) && editSequence(payload.after);
+    case "source-history": return editSequence(payload.offset);
+    case "source-history-content": return validIdentity(payload.snapshotId) && typeof payload.query === "string" && editSequence(payload.after)
+      && (payload.newOrdinal === null || editSequence(payload.newOrdinal));
+    case "source-lineage": return validIdentity(payload.snapshotId) && editSequence(payload.ordinal);
+    case "source-impact": return validIdentity(payload.snapshotId) && validIdentity(payload.locale) && editSequence(payload.after);
+    case "source-impact-target": return validIdentity(payload.snapshotId) && validIdentity(payload.locale) && validIdentity(payload.occurrenceId)
+      && !!payload.target && typeof payload.target === "object" && validIdentity(payload.target.unitId) && validIdentity(payload.target.sourceRevisionId)
+      && validIdentity(payload.target.key) && typeof payload.target.sourceText === "string" && nullableIdentity(payload.selectionId)
+      && nullableIdentity(payload.translationRevisionId) && validIdentity(payload.reviewBasis);
     default: return false;
   }
 }
@@ -198,6 +290,18 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "resource-decision" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "resource-translation" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-selection" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-capture" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-basis" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-comparison" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-task" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-page" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-history" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-history-content" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-lineage" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-impact" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "source-impact-target" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (!command.payloadKind) command.handler();
     else return false;
     return true;

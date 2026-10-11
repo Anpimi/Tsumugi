@@ -125,3 +125,45 @@ describe("resource command payloads", () => {
     remove(); expect(dispatch(payload)).toBe(false);
   });
 });
+
+describe("source command payloads", () => {
+  const sourceScope = { ...scope, area: "source" as const };
+  const metadata = { nameKey: "source.search" as const, category: "source" as const, scope: sourceScope,
+    binding: null, risk: "reads-source" as const, confirmation: "none" as const };
+  it.each([
+    ["source.select", { kind: "source-selection", domain: "webvtt", integrationId: "webvtt", version: "0.1.0" }, [{ domain: null }, { version: "" }]],
+    ["source.preflight", { kind: "source-capture", selectionId: "selection", sourceLanguage: "en" }, [{ selectionId: undefined }, { sourceLanguage: false }]],
+    ["source.start", { kind: "source-capture", selectionId: "selection", sourceLanguage: "en" }, [{ sourceLanguage: [] }]],
+    ["source.apply", { kind: "source-basis", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: null, base: null, editSeq: 0 }, [{ revision: 1 }, { currentSnapshot: undefined }, { editSeq: 1.5 }]],
+    ["source.estimate", { kind: "source-basis", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", base: "base", editSeq: 1 }, [{ base: "" }, { editSeq: -1 }]],
+    ["source.search-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: "base", filter: "A", after: 1, editSeq: 1 }, [{ filter: [] }, { after: -1 }, { originalBase: null }]],
+    ["source.refresh-comparison", { kind: "source-comparison", attemptId: "attempt", resultId: "result", revision: "1", currentSnapshot: "snapshot", originalBase: "base", base: null, filter: "", after: 0, editSeq: 1 }, [{ base: undefined }]],
+    ["source.retry-start", { kind: "source-pending", pendingKind: "start", attemptId: "attempt", actionId: null }, [{ actionId: "action" }, { pendingKind: "other" }]],
+    ["source.check-receipt", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action" }, [{ actionId: null }]],
+    ["source.retry-apply", { kind: "source-pending", pendingKind: "apply", attemptId: "attempt", actionId: "action" }, [{ actionId: undefined }]],
+    ["source.cancel-task", { kind: "source-task", attemptId: "attempt", taskId: "task" }, [{ taskId: "" }]],
+    ["source.read-page", { kind: "source-page", snapshotId: null, attemptId: "attempt", resultId: "result", after: 50 }, [{ snapshotId: undefined }, { after: NaN }]],
+    ["source.read-history", { kind: "source-history", offset: 50 }, [{ offset: -1 }]],
+    ["source.read-history-content", { kind: "source-history-content", snapshotId: "snapshot", query: "", after: 1, newOrdinal: null }, [{ query: null }, { newOrdinal: undefined }]],
+    ["source.find-lineage-candidates", { kind: "source-history-content", snapshotId: "snapshot", query: "A", after: 20, newOrdinal: 70 }, [{ after: 1.5 }, { newOrdinal: -1 }]],
+    ["source.read-lineage", { kind: "source-lineage", snapshotId: "snapshot", ordinal: 70 }, [{ ordinal: NaN }]],
+    ["source.read-impact", { kind: "source-impact", snapshotId: "snapshot", locale: "zh-CN", after: 10 }, [{ locale: "" }]],
+    ["source.open-translation", { kind: "source-impact-target", snapshotId: "snapshot", locale: "zh-CN", occurrenceId: "occurrence",
+      target: { unitId: "unit", sourceRevisionId: "source", key: "key", sourceText: "" }, selectionId: null, translationRevisionId: null, reviewBasis: "current" }, [{ target: { unitId: "unit" } }, { selectionId: undefined }, { reviewBasis: "" }]],
+  ] as const)("validates and describes the exact %s input before dispatch", (id, payload, malformed) => {
+    const commands = new WorkbenchCommands(), handler = vi.fn(); let enabled = true;
+    const remove = commands.register({ ...metadata, id, payloadKind: payload.kind, availability: () => ({ enabled }), handler } as WorkbenchCommand);
+    const dispatch = (value?: unknown, target = sourceScope) => Reflect.apply(commands.dispatch, commands, [id, target, value]);
+    expect(dispatch()).toBe(false); expect(dispatch(null)).toBe(false); expect(dispatch({ ...payload, kind: "resource-capture" })).toBe(false);
+    malformed.forEach(change => expect(dispatch({ ...payload, ...change })).toBe(false));
+    expect(dispatch(payload, { ...sourceScope, projectId: "other" })).toBe(false);
+    expect(dispatch(payload, { ...sourceScope, sessionToken: "other" })).toBe(false);
+    expect(Reflect.apply(commands.dispatch, commands, [id, { ...sourceScope, area: "translation" }, payload])).toBe(false);
+    expect(commands.list(sourceScope)[0].availability.enabled).toBe(false);
+    expect(Reflect.apply(commands.describe, commands, [id, sourceScope, payload])?.availability.enabled).toBe(true);
+    expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledWith(payload);
+    enabled = false; expect(Reflect.apply(commands.describe, commands, [id, sourceScope, payload])?.availability.enabled).toBe(false);
+    expect(dispatch(payload)).toBe(false); expect(handler).toHaveBeenCalledTimes(1);
+    remove(); expect(dispatch(payload)).toBe(false);
+  });
+});
