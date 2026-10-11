@@ -38,6 +38,14 @@ mod settings_race;
     target_os = "macos",
     target_arch = "aarch64"
 ))]
+#[path = "generation_receipt_recovery.rs"]
+mod receipt_recovery;
+
+#[cfg(all(
+    feature = "execution-test-host",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
 struct ComponentAction {
     scope: Value,
     preparing: Value,
