@@ -1,4 +1,4 @@
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { refreshWorkbenchReads, renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -35,6 +35,7 @@ beforeEach(async () => {
   invoke.mockImplementation(async (command: string) => {
     if (command === "list_releases") return releases;
     if (command === "read_source_integration") return sourceIntegrationFixture;
+    if (command === "read_content_scope") return { currentSnapshot: fixtureIdentity(707), revision: "1" };
     if (command === "read_review_eligibility") return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(707), basis: "basis", ready: true,
       locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 532, blockerCount: 0, exceptionCount: 0 }] };
     if (command === "create_execution_identity") return fixtureIdentity(1);
@@ -43,7 +44,7 @@ beforeEach(async () => {
     if (command === "preview_delivery") return { previewId: fixtureIdentity(705), releaseId: fixtureIdentity(702), selectionId: fixtureIdentity(704), folderName: "export",
       files: [{ locale: "zh-CN", fileName: "i18n/zh.json", expectedSha256: "hash", currentSha256: "old", state: "conflict" }] };
     if (command === "list_deliveries") return deliveryRows;
-    if (command === "reconcile_delivery") return { ...deliveryRows[0], state: "succeeded" };
+    if (command === "reconcile_delivery") return { ...deliveryRows[0], state: "succeeded", files: deliveryRows[0].files.map(file => ({ ...file, state: "succeeded", actualSha256: file.expectedSha256 })) };
     if (command === "export_release") return { deliveryId: fixtureIdentity(708), actionId: fixtureIdentity(1), releaseId: fixtureIdentity(702), directory: "C:\\isolated\\export",
       overwriteConflicts: true,
       state: "succeeded", files: [{ locale: "zh-CN", fileName: "i18n/zh.json", expectedSha256: "hash", actualSha256: "hash", state: "succeeded" }], createdAt: "today" };
@@ -54,25 +55,25 @@ beforeEach(async () => {
 async function readyBuild() {
   const user = userEvent.setup();
   const ref = createRef<ReleaseHandle>();
-  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
+  const view = render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
   await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
   await user.click(screen.getByRole("button", { name: i18n.t("release.check") }));
   await screen.findByText(i18n.t("release.ready", { count: 0 }));
-  return { user, ref };
+  return { user, ref, view };
 }
 
 async function readyExport() {
   releases = [release];
   const user = userEvent.setup();
   const ref = createRef<ReleaseHandle>();
-  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
+  const view = render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Build and export" }));
   await user.click(await screen.findByRole("button", { name: /2026-09-29/ }));
   await user.click(screen.getByRole("button", { name: "Choose export folder" }));
   await user.click(await screen.findByRole("button", { name: "Check destination" }));
   await user.click(screen.getByRole("checkbox", { name: /Replace the existing conflicting files/ }));
-  return { user, ref };
+  return { user, ref, view };
 }
 
 const savedBuild = { ...executionFixture.detail, attemptId: fixtureIdentity(1), operation: "locale-build",
@@ -87,7 +88,8 @@ it.each(["en-US", "zh-CN"])("checks the original build after an unrelated ACK wi
   await user.click(screen.getByRole("button", { name: i18n.t("release.build") }));
   await screen.findByText(i18n.t("release.buildUnknown"));
   expect(await ref.current!.allowLeave()).toBe(false);
-  expect(screen.getByRole("button", { name: i18n.t("workbench.backOverview") })).toBeDisabled();
+  expect(screen.getByRole("button", { name: i18n.t("workbench.backOverview") })).toBeEnabled();
+  expect(await ref.current!.allowNavigate()).toBe(true);
   await user.click(screen.getByRole("button", { name: i18n.t("release.checkBuild") }));
   await screen.findByText(i18n.t("release.started", { id: fixtureIdentity(1) }));
   expect(await ref.current!.allowLeave()).toBe(true);
@@ -203,7 +205,8 @@ it.each([
   await screen.findByText(/These files may have been exported/);
   expect(await ref.current!.allowLeave()).toBe(false);
   expect(screen.getByRole("alert")).toHaveTextContent("The action may have completed");
-  expect(screen.getByRole("button", { name: "Back to overview" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Back to overview" })).toBeEnabled();
+  expect(await ref.current!.allowNavigate()).toBe(true);
   const originalRequest = invoke.mock.calls.find(([command]) => command === "export_release")![1].request;
   await user.click(screen.getByRole("button", { name: "Check this export" }));
   expect(await screen.findByText("Export verified")).toBeInTheDocument();
@@ -227,7 +230,8 @@ it.each(["en-US", "zh-CN"])("describes root caption delivery in %s", async local
   await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
   await user.click(await screen.findByRole("button", { name: /2026-09-29/ }));
   await user.click(screen.getByRole("button", { name: i18n.t("release.chooseFolder") }));
-  expect(await screen.findByText(i18n.t("release.webvttDestination", { name: "export" }))).toBeInTheDocument();
+  expect(await screen.findByText(i18n.t("release.savedDestination", { name: "export" }))).toBeInTheDocument();
+  expect(screen.getByText(/zh-CN → zh-CN.vtt/)).toBeInTheDocument();
   expect(screen.queryByText(i18n.t("release.destination", { name: "export" }))).not.toBeInTheDocument();
 });
 
@@ -352,4 +356,84 @@ it("ignores a folder choice returned after the project changes", async () => {
   await user.click(await screen.findByRole("button", { name: /2026-09-29/ }));
   expect(screen.queryByText(/old-export/)).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Check destination" })).not.toBeInTheDocument();
+});
+
+it("continues an original build after the consumer unmounts and keeps newer file names on its confirmation", async () => {
+  const { user, ref, view } = await readyBuild();
+  const original = invoke.getMockImplementation()!;
+  let finish!: (id: string) => void;
+  invoke.mockImplementation((command: string, args: unknown) => command === "start_locale_build" ? new Promise<string>(resolve => { finish = resolve; }) : original(command, args));
+  await user.click(screen.getByRole("button", { name: "Start build" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "start_locale_build")).toHaveLength(1));
+  const name = screen.getByRole("textbox", { name: "SMAPI file name for zh-CN" });
+  await user.clear(name); await user.type(name, "newer.json");
+  view.rerender(null);
+  await act(async () => finish(fixtureIdentity(1)));
+  view.rerender(<ReleaseWorkbench ref={ref} project={project} disabled={false}/>);
+  expect(screen.getByRole("textbox", { name: "SMAPI file name for zh-CN" })).toHaveValue("newer.json");
+  expect(await screen.findByText(i18n.t("release.earlierBuild"))).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Start build" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([command]) => command === "start_locale_build")).toHaveLength(1);
+});
+
+it("retains captured release and consent across real consumer remount and a bounded history rollover", async () => {
+  const { user, ref, view } = await readyExport();
+  view.rerender(null); view.rerender(<ReleaseWorkbench ref={ref} project={project} disabled={false}/>);
+  expect(screen.getByRole("checkbox", { name: /Replace the existing conflicting files/ })).toBeChecked();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh releases" })).toBeEnabled());
+  releases = [];
+  await user.click(screen.getByRole("button", { name: "Refresh releases" }));
+  await screen.findByText(i18n.t("release.empty"));
+  expect(screen.getByRole("heading", { name: "Selected release" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Export these files" })).toBeEnabled();
+  expect(invoke.mock.calls.filter(([command]) => command === "choose_delivery_folder")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "preview_delivery")).toHaveLength(1);
+});
+
+it.each(["en-US", "zh-CN"])("keeps an original unknown export when a newly authorized folder has no record in %s", async language => {
+  await i18n.changeLanguage(language);
+  releases = [release];
+  const user = userEvent.setup(), ref = createRef<ReleaseHandle>();
+  render(<ReleaseWorkbench ref={ref} project={project} disabled={false}/>);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await user.click(await screen.findByRole("button", { name: /2026-09-29/ }));
+  await user.click(screen.getByRole("button", { name: i18n.t("release.chooseFolder") }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("release.preview") }));
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("release.overwrite") }));
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "export_release" ? Promise.reject(new Error("Lost ACK"))
+    : command === "choose_delivery_folder" ? Promise.resolve({ selectionId: fixtureIdentity(799), folderName: "export" })
+    : command === "read_delivery_action" ? Promise.resolve(null) : original(command, args));
+  await user.click(screen.getByRole("button", { name: i18n.t("release.export") }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("release.reauthorizeFolder") }));
+  await screen.findByText(i18n.t("release.reauthorizationLimit"));
+  await user.click(screen.getByRole("button", { name: i18n.t("release.checkExport") }));
+  await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("release.checkExport") })).toBeEnabled());
+  expect(await ref.current!.allowLeave()).toBe(false);
+  expect(screen.queryByText(i18n.t("release.exportMissing"))).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: i18n.t("release.export") })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.find(([command]) => command === "read_delivery_action")![1].request.selectionId).toBe(fixtureIdentity(799));
+  expect(invoke.mock.calls.find(([command]) => command === "export_release")![1].request.selectionId).toBe(fixtureIdentity(704));
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(1);
+});
+
+it("revokes readiness when project evidence changes and retains user mappings", async () => {
+  const { user } = await readyBuild();
+  await refreshWorkbenchReads(["resources"]);
+  expect(await screen.findByText(i18n.t("release.readinessStale"))).toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: "SMAPI file name for zh-CN" })).toHaveValue("zh.json");
+  expect(screen.getByRole("button", { name: "Start build" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Check build readiness" }));
+  await screen.findByText(i18n.t("release.ready", { count: 0 }));
+});
+
+it("revokes replacement consent as soon as a new destination preview is requested, including a failed response", async () => {
+  const { user } = await readyExport();
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "preview_delivery" ? Promise.reject(new Error("Preview ACK lost")) : original(command, args));
+  await user.click(screen.getByRole("button", { name: "Check destination" }));
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Export these files" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /Replace the existing conflicting files/ })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(0);
 });

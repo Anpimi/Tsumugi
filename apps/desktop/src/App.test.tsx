@@ -4,13 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import { sourceIntegrationFixture, sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
+import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 import { defaultAiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
 import { aiViewFixture, arenaViewFixture } from "./testSupport/aiFixture";
 import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
+
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -197,6 +201,67 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  function installReleasePreparation() {
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "read_source_integration") return sourceIntegrationFixture;
+      if (command === "read_content_scope") return { revision: "1", currentSnapshot: releaseFixture.responses.releases[0].sourceSnapshotId };
+      if (command === "read_review_eligibility") return { ready: true, basis: releaseFixture.requests.build.expectedEligibilityBasis,
+        policyVersion: "balanced-1", sourceSnapshotId: releaseFixture.responses.releases[0].sourceSnapshotId,
+        locales: [{ locale: "zh-CN", ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 }] };
+      if (command === "list_releases" || command === "list_execution_tasks") return [];
+      if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
+      if (command === "create_execution_identity" || command === "start_locale_build") return releaseFixture.requests.build.attemptId;
+      if (command === "read_locale_build_attempt") return { ...executionFixture.detail, attemptId: args.request.attemptId, operation: "locale-build",
+        recovery: { ...executionFixture.detail.recovery, attemptId: args.request.attemptId } };
+      return original(command, args);
+    });
+  }
+  async function prepareReleaseInApp(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Build and export" }));
+    await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+    await user.click(screen.getByRole("button", { name: "Check build readiness" }));
+    await screen.findByText(i18n.t("release.ready", { count: 0 }));
+  }
+  it("retains release preparation through registered navigation and asks before discarding it on project close", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installReleasePreparation();
+    await prepareReleaseInApp(user);
+    const name = screen.getByRole("textbox", { name: "SMAPI file name for zh-CN" });
+    await user.clear(name); await user.type(name, "my-file.json");
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    expect(screen.queryByRole("dialog", { name: i18n.t("release.unsaved") })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Build and export" }));
+    expect(screen.getByRole("textbox", { name: "SMAPI file name for zh-CN" })).toHaveValue("my-file.json");
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    let dialog = await screen.findByRole("dialog", { name: i18n.t("release.unsaved") });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: i18n.t("release.stay") }));
+    expect(screen.getByRole("textbox", { name: "SMAPI file name for zh-CN" })).toHaveValue("my-file.json");
+    await user.click(screen.getByRole("button", { name: "Back to overview" })); await user.click(screen.getByRole("button", { name: "Close project" }));
+    dialog = await screen.findByRole("dialog", { name: i18n.t("release.unsaved") });
+    await user.click(within(dialog).getByRole("button", { name: i18n.t("release.discard") }));
+    await screen.findByRole("heading", { name: "No project open" });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_locale_build")).toHaveLength(0);
+  });
+  it("keeps an unknown build recoverable across real App navigation and blocks project close until exact confirmation", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installReleasePreparation();
+    await prepareReleaseInApp(user);
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "start_locale_build" ? Promise.reject(new Error("Lost build ACK")) : original(command, args));
+    await user.click(screen.getByRole("button", { name: "Start build" })); await screen.findByText(i18n.t("release.buildUnknown"));
+    const request = mocks.invoke.mock.calls.find(([command]) => command === "start_locale_build")![1];
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByRole("region", { name: "Tasks" });
+    await user.click(screen.getByRole("button", { name: "Back to overview" })); await user.click(screen.getByRole("button", { name: "Close project" }));
+    await screen.findByText(i18n.t("release.buildUnknown"));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Check saved build task" }));
+    await screen.findByText(i18n.t("release.started", { id: releaseFixture.requests.build.attemptId }));
+    expect(mocks.invoke.mock.calls.find(([command]) => command === "read_locale_build_attempt")![1]).toEqual(request);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "start_locale_build")).toHaveLength(1);
+  });
   it("keeps the Arena owner in real App assembly while registered navigation hides its consumer",async()=>{
     const user=userEvent.setup();await renderApp();await createProject(user);installArenaPreparation();
     await prepareArenaInApp(user);
@@ -1075,6 +1140,7 @@ describe("project lifecycle workbench", () => {
   });
 
   beforeEach(async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
     localStorage.clear();
     mocks.reads = null;
     await i18n.changeLanguage("en-US");
@@ -1092,6 +1158,8 @@ describe("project lifecycle workbench", () => {
 
   afterEach(() => {
     cleanup();
+    if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+    else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
     vi.resetAllMocks();
   });
 

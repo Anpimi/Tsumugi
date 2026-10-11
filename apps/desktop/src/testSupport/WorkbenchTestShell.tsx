@@ -11,6 +11,7 @@ import { ReviewDraftSession } from "../ReviewDraftSession";
 import { SourceDraftSession } from "../SourceDraftSession";
 import { ResourceDraftSession } from "../ResourceDraftSession";
 import { ArenaDraftSession } from "../ArenaDraftSession";
+import { ReleaseDraftSession } from "../ReleaseDraftSession";
 import { WorkbenchCommands, WorkbenchCommandsProvider } from "../workbenchCommands";
 import type { ChangeScope } from "../sessionReads";
 
@@ -31,7 +32,7 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
   return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
-    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><ExecutionTaskSession project={project}><TranslationDraftSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><ArenaDraftSession project={project}>{children}</ArenaDraftSession></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></TranslationDraftSession></ExecutionTaskSession></SessionReadProvider> : children}
+    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><ExecutionTaskSession project={project}><TranslationDraftSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><ArenaDraftSession project={project}><ReleaseDraftSession project={project}>{children}</ReleaseDraftSession></ArenaDraftSession></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></TranslationDraftSession></ExecutionTaskSession></SessionReadProvider> : children}
   </WorkspaceViewProvider></WorkbenchCommandsProvider>;
 }
 
