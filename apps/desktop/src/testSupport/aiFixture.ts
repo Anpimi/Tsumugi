@@ -20,9 +20,9 @@ export function aiViewFixture(item: AiItem, config: AiConfig): AiView {
   view.detail.recovery.attemptId = aiAttempt;
   view.rows[0].item = item;
   view.rows[0].output = { ...view.rows[0].output!, unitId: item.unitId, targetLocale: item.targetLocale, text: "你好", usage: null, usageIncomplete: true };
-  view.detail.items[0].scope.id = item.unitId;
+  view.detail.items[0].scope = { kind: "translation-unit", id: item.unitId, locale: item.targetLocale };
   view.detail.recovery.units[0].unitId = execution.prepare.unitId;
-  view.detail.recovery.units[0].scopes[0].id = item.unitId;
+  view.detail.recovery.units[0].scopes[0] = { kind: "translation-unit", id: item.unitId, locale: item.targetLocale };
   return view;
 }
 

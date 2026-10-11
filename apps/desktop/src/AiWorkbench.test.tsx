@@ -11,6 +11,8 @@ import {defaultAiConfig,type AiConfig,type AiPrepared, type AiItem} from "./aiCo
 import type {ProjectView} from "./projectCommands";
 import {i18n} from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
+import aiFixture from "../test/fixtures/aiCommands.contract.json";
+import type { AdoptionAction, PrepareRequest, Receipt } from "./executionCommands";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { aiAttempt, aiViewFixture } from "./testSupport/aiFixture";
@@ -31,7 +33,32 @@ function ToggleAiWorkbench({project:current,mounted}:{project:ProjectView;mounte
 }
 const item:AiItem={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302),sourceSnapshotId:fixtureIdentity(300),nativeKey:"first",sourceLocale:"en",sourceText:"Hello",targetLocale:"zh-CN",terms:[],context:null,omissions:["terms-not-shared","context-not-shared"],resourceBaseline:"0"};
 let prepared:AiPrepared;
-beforeEach(async()=>{currentReads=null;await i18n.changeLanguage("en-US");prepared={attemptId:aiAttempt,preview:{config:{...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:"test-model",credentialEnv:""},recipe:"direct-translation-1",digest:"digest",items:[item]}};invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{if(command==="read_content_scope")return{revision:"2",currentSnapshot:fixtureIdentity(300)};if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},rows:[sourceRowFixture({unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302)},{key:"first",text:item.sourceText})]});if(command==="preview_ai_translation"){prepared.preview.config=args.request.config as typeof defaultAiConfig;return prepared;}if(command==="start_ai_translation")return aiAttempt;if(command==="read_ai_translation")return aiViewFixture(item,prepared.preview.config);if(command==="create_execution_identity")return executionFixture.prepare.actionId;if(command==="prepare_execution_adoption")return executionFixture.action;if(command==="adopt_execution")return executionFixture.receipt;throw new Error(command);});});
+let originalAction:AdoptionAction;
+function actionFor(request:PrepareRequest):AdoptionAction {
+ return {...executionFixture.action,projectId:request.projectId,attemptId:request.attemptId,actionId:request.actionId,unitId:request.unitId,
+  operation:"ai-translation",parameters:null,resultIds:[...request.resultIds]};
+}
+function receiptFor(action=originalAction):Receipt {
+ return {...executionFixture.receipt,projectId:action.projectId,attemptId:action.attemptId,actionId:action.actionId,unitId:action.unitId,
+  changes:[{kind:"translation-revision",id:fixtureIdentity(900),revision:"1"}]};
+}
+beforeEach(async()=>{
+ currentReads=null;await i18n.changeLanguage("en-US");
+ prepared={attemptId:aiAttempt,preview:{config:{...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:"test-model",credentialEnv:""},
+  recipe:"direct-translation-1",digest:aiFixture.responses.prepared.preview.digest,items:[item]}};
+ invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
+  if(command==="read_content_scope")return{revision:"2",currentSnapshot:fixtureIdentity(300)};
+  if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},
+   rows:[sourceRowFixture({unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302)},{key:"first",text:item.sourceText})]});
+  if(command==="preview_ai_translation"){prepared.preview.config=args.request.config as typeof defaultAiConfig;return prepared;}
+  if(command==="start_ai_translation")return aiAttempt;
+  if(command==="read_ai_translation")return aiViewFixture(item,prepared.preview.config);
+  if(command==="create_execution_identity")return executionFixture.prepare.actionId;
+  if(command==="prepare_execution_adoption"){originalAction=actionFor(args.request as unknown as PrepareRequest);return originalAction;}
+  if(command==="adopt_execution")return receiptFor();
+  throw new Error(command);
+ });
+});
 afterEach(cleanup);
 it("retains AI cancellation through consumer remount and confirms only an exact original retry",async()=>{
  const user=userEvent.setup(),ref=createRef<AiHandle>();const original=invoke.getMockImplementation()!;
@@ -141,7 +168,7 @@ it("shows a removed captured target until the user chooses a current language an
  const original=invoke.getMockImplementation()!;
  invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
   if(command==="preview_ai_translation"&&args.request.locale==="ja-JP")return{
-   attemptId:fixtureIdentity(420),preview:{config:args.request.config as AiConfig,recipe:"direct-translation-1",digest:"ja-preview",items:[{...item,targetLocale:"ja-JP"}]}
+   attemptId:fixtureIdentity(420),preview:{config:args.request.config as AiConfig,recipe:"direct-translation-1",digest:aiFixture.responses.prepared.preview.digest,items:[{...item,targetLocale:"ja-JP"}]}
   } satisfies AiPrepared;
   return original(command,args);
  });
@@ -179,7 +206,7 @@ it("lets the user explicitly clear a removed cross-page AI scope without losing 
   if(command==="preview_ai_translation"&&removed){
    const units=args.request.unitIds as string[];
    if(units.includes(removedUnit))throw{code:"invalid-input",outcome:"rejected",stage:"execution-read",reason:"execution-storage",recoveryRequired:false};
-   return{attemptId:fixtureIdentity(410),preview:{config:args.request.config as AiConfig,recipe:"direct-translation-1",digest:"replacement-digest",items:[{...item,unitId:replacementUnit,sourceRevisionId:fixtureIdentity(402),sourceSnapshotId:fixtureIdentity(400),nativeKey:"second",sourceText:"World"}]}} satisfies AiPrepared;
+   return{attemptId:fixtureIdentity(410),preview:{config:args.request.config as AiConfig,recipe:"direct-translation-1",digest:aiFixture.responses.prepared.preview.digest,items:[{...item,unitId:replacementUnit,sourceRevisionId:fixtureIdentity(402),sourceSnapshotId:fixtureIdentity(400),nativeKey:"second",sourceText:"World"}]}} satisfies AiPrepared;
   }
   return original(command,args);
  });
@@ -242,7 +269,7 @@ it("checks an uncertain adoption receipt before retrying the same action",async(
 
 it("uses a committed receipt to reconcile adoption without repeating the mutation",async()=>{
  const user=await preview();const original=invoke.getMockImplementation()!;
- invoke.mockImplementation((command:string,args:unknown)=>command==="adopt_execution"?Promise.reject({code:"outcome-unknown"}):command==="read_execution_receipt"?Promise.resolve(executionFixture.receipt):original(command,args));
+ invoke.mockImplementation((command:string,args:unknown)=>command==="adopt_execution"?Promise.reject({code:"outcome-unknown"}):command==="read_execution_receipt"?Promise.resolve(receiptFor()):original(command,args));
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await user.click(await screen.findByRole("button",{name:"Save candidate"}));await screen.findByText(/Saving may have committed/);await user.click(screen.getByRole("button",{name:"Check saved result"}));
  await waitFor(()=>expect(screen.queryByText(/Saving may have committed/)).not.toBeInTheDocument());expect(invoke.mock.calls.filter(([c])=>c==="adopt_execution")).toHaveLength(1);expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();
 });
@@ -257,4 +284,99 @@ it("shows durable unknown and legacy exposure without replaying when refreshed",
 it("explains queue rejection and preserves preview without sending another task",async()=>{
  const user=await preview();const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="start_ai_translation"?Promise.reject({code:"limit-exceeded",outcome:"rejected",reason:"execution-queue"}):original(c,a));
  await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));await screen.findByText(/waiting queue is full/);expect(screen.getByRole("heading",{name:"Data sharing preview"})).toBeInTheDocument();expect(invoke.mock.calls.filter(([c])=>c==="start_ai_translation")).toHaveLength(1);
+});
+
+async function prepareToggle() {
+ const user=userEvent.setup(),rendered=render(<ToggleAiWorkbench project={project} mounted/>);
+ await user.click(screen.getByRole("button",{name:"AI translation"}));
+ await user.type(screen.getByRole("textbox",{name:"Chat Completions URL"}),"http://127.0.0.1:4000/v1/chat/completions");
+ await user.type(screen.getByRole("textbox",{name:"Model"}),"test-model");
+ await user.clear(screen.getByRole("textbox",{name:"API key environment variable name"}));
+ await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
+ await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+ await screen.findByRole("heading",{name:"Data sharing preview"});
+ await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
+ return {user,rendered};
+}
+
+it("restores an original unknown generation after actual consumer unmount without automatically sending again",async()=>{
+ const {user,rendered}=await prepareToggle(),original=invoke.getMockImplementation()!;
+ let fail!:(error:unknown)=>void;
+ invoke.mockImplementation((command:string,args:unknown)=>command==="start_ai_translation"?new Promise((_,reject)=>{fail=reject;}):original(command,args));
+ await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ rendered.rerender(<ToggleAiWorkbench project={project} mounted={false}/>);
+ await act(async()=>{fail(new Error("Disconnected"));});
+ rendered.rerender(<ToggleAiWorkbench project={project} mounted/>);
+ await screen.findByText(/Start may have succeeded/);
+ expect(invoke.mock.calls.filter(([name])=>name==="start_ai_translation")).toHaveLength(1);
+ expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
+ await user.click(screen.getByRole("button",{name:"Check saved result"}));
+ await screen.findByText("你好");
+ expect(screen.queryByText(/Start may have succeeded/)).not.toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([name])=>name==="start_ai_translation")).toHaveLength(1);
+});
+
+it("finishes candidate saving through consumer identity and ACK waits and retains confirmation after read failure",async()=>{
+ const {user,rendered}=await prepareToggle(),original=invoke.getMockImplementation()!;
+ await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ const save=await screen.findByRole("button",{name:"Save candidate"});await waitFor(()=>expect(save).toBeEnabled());
+ let identify!:(id:string)=>void,confirm!:(receipt:Receipt)=>void,failReads=false;
+ invoke.mockImplementation((command:string,args:unknown)=>{
+  if(command==="create_execution_identity")return new Promise<string>(resolve=>{identify=resolve;});
+  if(command==="adopt_execution")return new Promise<Receipt>(resolve=>{confirm=resolve;});
+  if(command==="read_ai_translation"&&failReads)return Promise.reject(new Error("Result read disconnected"));
+  return original(command,args);
+ });
+ await user.click(save);
+ rendered.rerender(<ToggleAiWorkbench project={project} mounted={false}/>);
+ await act(async()=>{identify(executionFixture.prepare.actionId);});
+ expect(invoke.mock.calls.filter(([name])=>name==="prepare_execution_adoption")).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([name])=>name==="adopt_execution")).toHaveLength(1);
+ failReads=true;await act(async()=>{confirm(receiptFor());});
+ rendered.rerender(<ToggleAiWorkbench project={project} mounted/>);
+ await screen.findByText(/This candidate was saved/);
+ await screen.findByRole("alert");
+ expect(screen.queryByText(/Saving may have committed/)).not.toBeInTheDocument();
+ expect(screen.queryByRole("button",{name:"Check saved result"})).not.toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([name])=>name==="create_execution_identity")).toHaveLength(1);
+ failReads=false;await user.click(screen.getByRole("button",{name:"Refresh"}));
+ expect(await screen.findByRole("button",{name:"Candidate saved"})).toBeDisabled();
+ expect(invoke.mock.calls.filter(([name])=>name==="adopt_execution")).toHaveLength(1);
+ await act(async()=>{await i18n.changeLanguage("zh-CN");});
+ expect(screen.getByText(/此候选已保存/)).toBeInTheDocument();
+});
+
+it("offers the captured uncertain candidate after a complete consumer remount and checks its original receipt",async()=>{
+ const {user,rendered}=await prepareToggle(),original=invoke.getMockImplementation()!;
+ invoke.mockImplementation((command:string,args:unknown)=>command==="adopt_execution"?Promise.reject(new Error("Disconnected"))
+  :command==="read_execution_receipt"?Promise.resolve(receiptFor()):original(command,args));
+ await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+ await user.click(await screen.findByRole("button",{name:"Save candidate"}));
+ await screen.findByText(/Saving may have committed/);
+ const request=invoke.mock.calls.find(([name])=>name==="prepare_execution_adoption")![1].request;
+ rendered.rerender(<ToggleAiWorkbench project={project} mounted={false}/>);
+ rendered.rerender(<ToggleAiWorkbench project={project} mounted/>);
+ await screen.findByText(/Saving may have committed/);
+ expect(screen.getByText("first → zh-CN")).toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([name])=>name==="adopt_execution")).toHaveLength(1);
+ await user.click(screen.getByRole("button",{name:"Check saved result"}));
+ expect(await screen.findByRole("button",{name:"Candidate saved"})).toBeDisabled();
+ expect(invoke.mock.calls.find(([name])=>name==="read_execution_receipt")![1].request).toEqual({sessionToken:project.sessionToken,projectId:project.metadata.projectId,actionId:request.actionId});
+ expect(invoke.mock.calls.filter(([name])=>name==="adopt_execution")).toHaveLength(1);
+});
+
+it("lets a pure source read leave the view without taking the AI business reservation",async()=>{
+ const user=userEvent.setup(),ref=createRef<AiHandle>(),original=invoke.getMockImplementation()!;
+ let finish!:(page:ReturnType<typeof sourcePageFixture>)=>void;
+ invoke.mockImplementation((command:string,args:unknown)=>command==="read_source_content"?new Promise(resolve=>{finish=resolve;}):original(command,args));
+ render(<TestAiWorkbench project={project} ref={ref}/>);
+ await user.click(screen.getByRole("button",{name:"AI translation"}));
+ await waitFor(()=>expect(finish).toBeDefined());
+ expect(screen.getByText(/Loading current source/)).toBeInTheDocument();
+ expect(screen.getByRole("button",{name:"Back to overview"})).toBeEnabled();
+ await user.click(screen.getByRole("button",{name:"Back to overview"}));
+ let allowed=false;await act(async()=>{allowed=await ref.current!.allowLeave();});expect(allowed).toBe(true);
+ await act(async()=>{finish(sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)}}));});
+ expect(document.querySelector("section.ai-dialog")).toBeNull();
+ expect(invoke.mock.calls.filter(([name])=>name==="start_ai_translation"||name==="adopt_execution")).toHaveLength(0);
 });
