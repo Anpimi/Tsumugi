@@ -4,31 +4,34 @@ import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { SourceWorkbench, type SourceHandle } from "./SourceWorkbench";
-import type { ContentPage, SourceChangePage } from "./sourceCommands";
+import type { ContentPage, SourceChangePage, SourceAdoptRequest } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
 import { i18n } from "./i18n";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourcePageFixture, sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
+import { sourcePageFixture, sourceIntegrationFixture, captionIntegrationFixture, sourceAttemptFixture, sourceActionFixture, sourceReceiptFixture } from "./testSupport/sourceFixture";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: "project", displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
-const preview: ContentPage = { snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: "hash" }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [{ occurrenceId: null, unitId: null, sourceRevisionId: null, occurrence: { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", keyByteRange: [1, 8], valueByteRange: [9, 30], identityBasis: "native-key" } }] };
+const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: executionFixture.session.projectId, displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" } };
+const preview: ContentPage = { snapshotId: null, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], scope: { revision: "1", currentSnapshot: null }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: sourcePageFixture().confirmation.resultDigest, identityPolicy: "smapi-native-key/1", expectedContentRevision: "1", sourceLanguage: "en-US" }, namespace: "Example.Mod", coverage: [{ artifactId: fixtureIdentity(101), logicalPath: "i18n/default.json", role: "source", sha256: sourcePageFixture().coverage[0].sha256 }], total: 2, nextOrdinal: 1, diagnostics: [], rows: [{ occurrenceId: null, unitId: null, sourceRevisionId: null, occurrence: { ordinal: 0, artifactId: fixtureIdentity(101), namespace: "Example.Mod", key: "hello", text: "Unchanged {{name}} 世界", keyByteRange: [1, 8], valueByteRange: [9, 30], identityBasis: "smapi-native-key/1" } }] };
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); invoke.mockReset();
-  invoke.mockImplementation(async (command: string) => {
+  let identities = 0;
+  let prepared: SourceAdoptRequest | null = null;
+  invoke.mockImplementation(async (command: string, args: { request?: Record<string, unknown> }) => {
     if (command === "read_source_integration") return sourceIntegrationFixture;
     if (command === "read_content_scope") return { revision: "1", currentSnapshot: null };
     if (command === "select_source") return { selectionId: fixtureIdentity(102), folderName: "Example Mod" };
     if (command === "preflight_source") return { namespace: "Example.Mod", count: 2, sourceLanguage: "en-US", diagnostics: [], files: [] };
-    if (command === "create_execution_identity") return executionFixture.prepare.actionId;
-    if (command === "start_source_import") return executionFixture.detail.attemptId;
-    if (command === "read_execution_attempt") return { ...executionFixture.detail, items: [{ ...executionFixture.detail.items[0], resultId: executionFixture.prepare.resultIds[0], status: { ...executionFixture.detail.items[0].status, execution: "succeeded", validation: "valid" } }] };
-    if (command === "read_source_preview") return preview;
-    if (command === "prepare_source_adoption") return executionFixture.action;
+    if (command === "create_execution_identity") return ++identities === 1 ? executionFixture.detail.attemptId : executionFixture.prepare.actionId;
+    if (command === "start_source_import") return args.request!.attemptId;
+    if (command === "read_execution_attempt") return sourceAttemptFixture(args.request!.attemptId as string, preview.resultId);
+    if (command === "read_source_preview") return { ...preview, attemptId: args.request!.attemptId };
+    if (command === "prepare_source_adoption") { prepared = args.request as unknown as SourceAdoptRequest; return sourceActionFixture(prepared); }
     if (command === "cancel_source_capture") return null;
-    if (command === "adopt_execution" || command === "read_execution_receipt") return { ...executionFixture.receipt, changes: [{ kind: "source-snapshot", id: fixtureIdentity(100), revision: "2" }] };
-    if (command === "read_source_content") return { ...preview, snapshotId: fixtureIdentity(100), scope: { revision: "2", currentSnapshot: fixtureIdentity(100) } };
+    if (command === "adopt_execution" || command === "read_execution_receipt") return sourceReceiptFixture(prepared!);
+    if (command === "read_source_content") return { ...preview, snapshotId: fixtureIdentity(100), scope: { revision: "2", currentSnapshot: fixtureIdentity(100) },
+      confirmation: { ...preview.confirmation, expectedContentRevision: "2", expectedCurrentSnapshot: fixtureIdentity(100) } };
     if (command === "read_source_impact") return { snapshotId: fixtureIdentity(100), summary: { locale: "zh-CN", preserved: 0, reassess: 0, unresolved: 2, total: 2 }, rows: [], nextOrdinal: null };
     throw new Error(command);
   });
@@ -51,7 +54,7 @@ it.each([["en-US", "Source content", "Source format", "Choose subtitle folder", 
   await user.click(await screen.findByRole("button", { name: choose }));
   expect(screen.getByRole("region", { name: choose })).toBeInTheDocument();
   expect(screen.queryByText(/The name default\.json|default\.json 文件名/)).not.toBeInTheDocument();
-  expect(invoke).toHaveBeenCalledWith("select_webvtt_source", { request: { sessionToken: "session", projectId: "project" } });
+  expect(invoke).toHaveBeenCalledWith("select_webvtt_source", { request: { sessionToken: "session", projectId: executionFixture.session.projectId } });
   await user.click(screen.getByRole("checkbox", { name: new RegExp(declaration) }));
   await user.click(screen.getByRole("button", { name: check }));
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
@@ -138,8 +141,42 @@ it("requires a language declaration and full-range confirmation, retaining liter
   await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
   await user.click(screen.getByRole("button", { name: "Apply to project" }));
   await screen.findByRole("heading", { name: "Imported source content" });
-  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: "project", attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], actionId: executionFixture.prepare.actionId, confirmation: preview.confirmation } });
+  expect(invoke).toHaveBeenCalledWith("prepare_source_adoption", { request: { sessionToken: "session", projectId: executionFixture.session.projectId, attemptId: executionFixture.detail.attemptId, resultId: executionFixture.prepare.resultIds[0], actionId: executionFixture.prepare.actionId, confirmation: preview.confirmation } });
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+});
+it("keeps confirmed application separate from a failed content read and retries only the read", async () => {
+  const original = invoke.getMockImplementation()!;
+  let unreadable = true;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_source_content" && unreadable
+    ? Promise.reject(new Error("Content read unavailable")) : original(command, args));
+  const view = render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await prepare();
+  await user.click(screen.getByRole("checkbox", { name: /Apply all 2 strings/ }));
+  await user.click(screen.getByRole("button", { name: "Apply to project" }));
+  await screen.findByText("Source content was applied. If reading it fails, retry the read below.");
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "Check recorded outcome" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Apply to project" })).not.toBeInTheDocument();
+  view.rerender(null); view.rerender(<SourceWorkbench project={project} disabled={false} />);
+  await screen.findByRole("alert");
+  unreadable = false;
+  await user.click(screen.getByRole("button", { name: "Read applied source content" }));
+  await screen.findByRole("heading", { name: "Imported source content" });
+  expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_source_adoption")).toHaveLength(1);
+});
+
+it("restores source selection, declaration and preflight when only the view remounts", async () => {
+  const view = render(<SourceWorkbench project={project} disabled={false} />);
+  const user = await select();
+  await user.click(screen.getByRole("checkbox", { name: /I confirm/ }));
+  await user.click(screen.getByRole("button", { name: "Check source files" }));
+  await screen.findByRole("button", { name: "Import for preview" });
+  view.rerender(null); view.rerender(<SourceWorkbench project={project} disabled={false} />);
+  expect(await screen.findByText("Example Mod")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /I confirm/ })).toBeChecked();
+  expect(screen.getByRole("button", { name: "Import for preview" })).toBeEnabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "preflight_source")).toHaveLength(1);
 });
 it("keeps the selection across view changes and requires a decision before leaving the project", async () => {
   const ref = createRef<SourceHandle>();
@@ -157,7 +194,7 @@ it("keeps the selection across view changes and requires a decision before leavi
   act(() => { decision = ref.current!.allowLeave(); });
   await user.click(screen.getByRole("button", { name: "Discard selection and continue" }));
   expect(await decision).toBe(true);
-  expect(invoke).toHaveBeenCalledWith("cancel_source_capture", { request: { sessionToken: "session", projectId: "project" } });
+  expect(invoke).toHaveBeenCalledWith("cancel_source_capture", { request: { sessionToken: "session", projectId: executionFixture.session.projectId } });
 });
 it("queries a lost acknowledgement without applying a second time", async () => {
   const original = invoke.getMockImplementation()!;
