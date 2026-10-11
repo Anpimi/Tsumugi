@@ -15,7 +15,7 @@ import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { aiAttempt, aiViewFixture } from "./testSupport/aiFixture";
 const invoke=vi.hoisted(()=>vi.fn());vi.mock("@tauri-apps/api/core",()=>({invoke}));
-const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:"project",displayName:"AI test",sourceLocale:"en",targetLocales:["zh-CN"],metadataRevision:"1"}};
+const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:fixtureIdentity(500),displayName:"AI test",sourceLocale:"en",targetLocales:["zh-CN"],metadataRevision:"1"}};
 let currentReads:SessionReads|null=null;
 function CaptureReads(){const reads=useSessionReads();useEffect(()=>{currentReads=reads;return()=>{if(currentReads===reads)currentReads=null;};},[reads]);return null;}
 function TestAiWorkbench({project:current,ref}:{project:ProjectView;ref?:Ref<AiHandle>}) {
@@ -33,6 +33,26 @@ const item:AiItem={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(
 let prepared:AiPrepared;
 beforeEach(async()=>{currentReads=null;await i18n.changeLanguage("en-US");prepared={attemptId:aiAttempt,preview:{config:{...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:"test-model",credentialEnv:""},recipe:"direct-translation-1",digest:"digest",items:[item]}};invoke.mockReset();invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{if(command==="read_content_scope")return{revision:"2",currentSnapshot:fixtureIdentity(300)};if(command==="read_source_content")return sourcePageFixture({snapshotId:fixtureIdentity(300),scope:{revision:"2",currentSnapshot:fixtureIdentity(300)},rows:[sourceRowFixture({unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302)},{key:"first",text:item.sourceText})]});if(command==="preview_ai_translation"){prepared.preview.config=args.request.config as typeof defaultAiConfig;return prepared;}if(command==="start_ai_translation")return aiAttempt;if(command==="read_ai_translation")return aiViewFixture(item,prepared.preview.config);if(command==="create_execution_identity")return executionFixture.prepare.actionId;if(command==="prepare_execution_adoption")return executionFixture.action;if(command==="adopt_execution")return executionFixture.receipt;throw new Error(command);});});
 afterEach(cleanup);
+it("retains AI cancellation through consumer remount and confirms only an exact original retry",async()=>{
+ const user=userEvent.setup(),ref=createRef<AiHandle>();const original=invoke.getMockImplementation()!;
+ let cancellations=0;
+ invoke.mockImplementation(async(command:string,payload:unknown)=>{
+  if(command==="read_ai_translation"){const view=await original(command,payload);return {...view,detail:{...view.detail,progress:{...view.detail.progress,queued:1,succeeded:0}}};}
+  if(command==="cancel_execution_task"){if(++cancellations===1)throw new Error("Disconnected");return "5";}
+  return original(command,payload);
+ });
+ const view=render(<TestAiWorkbench project={project} ref={ref}/>);
+ act(()=>{ref.current!.showAttempt(aiAttempt);});
+ const cancel=await screen.findByRole("button",{name:"Cancel remaining work"});await waitFor(()=>expect(cancel).toBeEnabled());
+ await user.click(cancel);await screen.findByRole("button",{name:"Retry the original cancellation"});
+ view.rerender(null,project);view.rerender(<TestAiWorkbench project={project} ref={ref}/>);
+ await user.click(await screen.findByRole("button",{name:"Retry the original cancellation"}));
+ await screen.findByText(/Cancellation request recorded/);
+ const requests=invoke.mock.calls.filter(([name])=>name==="cancel_execution_task").map(([,payload])=>payload.request);
+ expect(requests).toHaveLength(2);expect(requests[0]).toEqual(requests[1]);
+ expect(invoke.mock.calls.filter(([name])=>name==="create_execution_identity")).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([name])=>name==="adopt_execution")).toHaveLength(0);
+});
 
 it("reveals invalid connection fields when preview fails after settings were collapsed",async()=>{
  const user=userEvent.setup();render(<TestAiWorkbench project={project}/>);

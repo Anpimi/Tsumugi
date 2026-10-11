@@ -3,6 +3,7 @@ import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type AdoptionAction, type AttemptDetail, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads } from "./SessionReadProvider";
+import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { sourceCommands, confirmSourceAction, confirmSourceReceipt, sameSourceConfirmation, type ContentPage, type ContentScope, type LineageChoice,
   type Preflight, type SourceAdoptRequest, type SourceChangePage, type SourceImpactSummary, type SourceSelection, type StartRequest } from "./sourceCommands";
 
@@ -83,7 +84,7 @@ function invalidAcknowledgement() { throw new Error("Invalid source action ackno
 
 /** Fixed preparation and original actions live as long as the project session. */
 export function SourceDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
-  const reads = useSessionReads();
+  const reads = useSessionReads(), tasks = useExecutionTaskSession();
   const [session] = useState(() => executionContext(project));
   const [state, setState] = useState<SourceDraftState>(() => ({ domain: "stardew-smapi", selection: null,
     sourceLanguage: project.metadata.sourceLocale, declared: false, preflight: null, attempt: null, preview: null,
@@ -390,8 +391,8 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     update(before => ({ ...before, preview: null, comparison: null, updating: false, confirmed: false, attempt: null, selection: null, preflight: null }));
   }
   async function cancelTask(taskId: string, proof: () => boolean = live) {
-    if (!proof()) return;
-    await run(async () => { const requestId = await executionCommands.identity(session); if (live() && proof()) await executionCommands.cancel({ ...session, taskId, requestId }); });
+    if (!live() || reserved() || !proof()) return;
+    await tasks.cancel({ taskId, attemptId: current().attempt ?? "", origin: "source" }, () => live() && proof());
   }
   return <SourceContext.Provider value={{ state, current, inFlight: () => !!flight.current, setDomain, declare, edit, confirm,
     select, preflight, start, retryStart: async () => { const request = current().pendingStart; if (request) await run(() => dispatchStart(request), true); },

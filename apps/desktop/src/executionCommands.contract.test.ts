@@ -72,3 +72,17 @@ it("keeps a malformed adoption acknowledgement unknown without replaying it", as
   invoke.mockResolvedValueOnce(fixture.receipt);
   expect(await executionCommands.receipt(fixture.adopt)).toEqual(fixture.receipt);
 });
+it("requires a positive checked cancellation revision and preserves the exact original request", async () => {
+  expect(validators.validateResponseCancellation("0")).toBe(true);
+  for (const invalid of ["0", 1, "01", "9223372036854775808", {}]) {
+    invoke.mockResolvedValueOnce(invalid);
+    const failure = await executionCommands.cancel(fixture.cancel).catch(error => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(hasUnknownOutcome(failure)).toBe(true);
+    expect(invoke).toHaveBeenLastCalledWith("cancel_execution_task", { request: fixture.cancel });
+  }
+  expect(invoke).toHaveBeenCalledTimes(5);
+  invoke.mockResolvedValueOnce("9007199254740993");
+  expect(await executionCommands.cancel(fixture.cancel)).toBe("9007199254740993");
+  expect(invoke).toHaveBeenLastCalledWith("cancel_execution_task", { request: fixture.cancel });
+});

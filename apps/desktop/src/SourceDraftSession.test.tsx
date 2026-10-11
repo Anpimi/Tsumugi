@@ -3,6 +3,7 @@ import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import sourceFixture from "../test/fixtures/sourceCommands.contract.json";
 import { useSourceDraftSession } from "./SourceDraftSession";
+import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { executionCommands, type AdoptionAction, type Receipt } from "./executionCommands";
 import { sourceCommands, type ContentScope, type SourceAdoptRequest, type SourceChangePage } from "./sourceCommands";
 import type { ProjectView } from "./projectCommands";
@@ -20,11 +21,13 @@ const comparison: SourceChangePage = { ...sourceFixture.comparison,
   confirmation: { ...preview.confirmation, expectedCurrentSnapshot: sourceFixture.content.snapshotId, lineageBaseSnapshot: sourceFixture.content.snapshotId },
   rows: [{ kind: "added", old: null, new: sourceRowFixture().occurrence, candidates: [] }] };
 let owner: ReturnType<typeof useSourceDraftSession>;
+let tasks: ReturnType<typeof useExecutionTaskSession>;
 let scope: ContentScope;
 let originalRequest: SourceAdoptRequest | null;
 function Probe() {
   const value = useSourceDraftSession();
-  useLayoutEffect(() => { owner = value; });
+  const cancellation = useExecutionTaskSession();
+  useLayoutEffect(() => { owner = value; tasks = cancellation; });
   return <><output aria-label="Source outcome">{value.state.pendingApply ? "Unconfirmed" : value.state.receipt ? "Applied" : "Idle"}</output>
     <output aria-label="Source decisions">{Object.values(value.state.lineage).map(row => `${row.newOrdinal}: ${row.reason}`).join("; ")}</output></>;
 }
@@ -421,4 +424,22 @@ it.each(["start", "apply", "cancel"] as const)("does not dispatch fresh %s when 
   await act(async () => { finish(fixtureIdentity(95)); await pending; });
   expect(invoke.mock.calls.filter(([command]) => ["start_source_import", "prepare_source_adoption", "adopt_execution", "cancel_execution_task"].includes(command))).toHaveLength(0);
   expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingApply).toBeNull(); expect(owner.inFlight()).toBe(false);
+});
+it("bridges Source cancellation to the shared original request without using Source mutation pending", async () => {
+  const view = render(<Probe />, project);
+  act(() => { owner.showAttempt(preview.attemptId); });
+  const original = invoke.getMockImplementation()!;
+  let cancelCount = 0;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "cancel_execution_task"
+    ? ++cancelCount === 1 ? Promise.reject(new Error("Disconnected")) : Promise.resolve("3") : original(command, payload));
+  await act(async () => { await owner.cancelTask(fixtureIdentity(150)); });
+  expect(owner.current().pendingStart).toBeNull(); expect(owner.current().pendingApply).toBeNull();
+  expect(owner.current().busyMutation).toBe(false);
+  expect(tasks.current(fixtureIdentity(150))?.phase).toBe("unknown");
+  view.rerender(null, project); view.rerender(<Probe />, project);
+  await act(async () => { await owner.cancelTask(fixtureIdentity(150)); await tasks.retry(fixtureIdentity(150)); });
+  const requests = invoke.mock.calls.filter(([name]) => name === "cancel_execution_task").map(([, payload]) => payload.request);
+  expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+  expect(tasks.current(fixtureIdentity(150))).toMatchObject({ phase: "recorded", revision: "3" });
 });

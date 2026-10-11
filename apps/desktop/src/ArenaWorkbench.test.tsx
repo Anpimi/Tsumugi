@@ -1,5 +1,5 @@
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
-import {cleanup,screen,waitFor,within} from "@testing-library/react";
+import {act,cleanup,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import {createRef} from "react";
@@ -12,7 +12,7 @@ import {fixtureIdentity} from "./testSupport/executionFixture";
 import {aiAttempt,aiTask,arenaViewFixture} from "./testSupport/aiFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 const invoke=vi.hoisted(()=>vi.fn());vi.mock("@tauri-apps/api/core",()=>({invoke}));
-const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:"project",displayName:"Arena test",sourceLocale:"en",targetLocales:["zh-CN","ja"],metadataRevision:"1"}};
+const project:ProjectView={sessionToken:"session",locator:"isolated",reconciliationState:"settled",metadata:{projectId:fixtureIdentity(500),displayName:"Arena test",sourceLocale:"en",targetLocales:["zh-CN","ja"],metadataRevision:"1"}};
 const item={unitId:fixtureIdentity(301),sourceRevisionId:fixtureIdentity(302),sourceSnapshotId:fixtureIdentity(300),nativeKey:"first",sourceLocale:"en",sourceText:"Hello {name}",targetLocale:"zh-CN",terms:[],context:null,omissions:["terms-not-shared","context-not-shared"],resourceBaseline:"0"};
 let prepared:ArenaPrepared,comparison:ComparisonView;
 beforeEach(async()=>{await i18n.changeLanguage("en-US");prepared={attemptId:aiAttempt,preview:{config:defaultArenaConfig(),digest:"digest",items:[{slot:0,sourceOrder:0,item},{slot:1,sourceOrder:0,item}]}};
@@ -168,10 +168,35 @@ it("reports a committed save separately from a failed projection refresh",async(
  expect(screen.queryByRole("button",{name:"Retry same action"})).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([c])=>c==="save_arena_merge")).toHaveLength(1);
 });
+it("settles Arena cancellation after consumer unmount and preserves a checked ACK despite read failure",async()=>{
+ const user=userEvent.setup(),ref=createRef<AttemptWorkbenchHandle>();const original=invoke.getMockImplementation()!;
+ let finish!:(value:unknown)=>void,readsFail=false;
+ invoke.mockImplementation(async(command:string,payload:unknown)=>{
+  if(command==="read_arena_translation"){if(readsFail)throw new Error("Read unavailable");const view=await original(command,payload);return {...view,detail:{...view.detail,progress:{...view.detail.progress,queued:1,succeeded:0}}};}
+  if(command==="cancel_execution_task")return new Promise(resolve=>{finish=resolve;});
+  return original(command,payload);
+ });
+ const view=render(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ act(()=>{ref.current!.showAttempt(aiAttempt);});
+ const cancel=await screen.findByRole("button",{name:"Cancel remaining work"});await waitFor(()=>expect(cancel).toBeEnabled());
+ await user.click(cancel);await waitFor(()=>expect(finish).toBeTypeOf("function"));
+ view.rerender(null,project);readsFail=true;
+ await act(async()=>{finish("9");});
+ view.rerender(<ArenaWorkbench ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);
+ await screen.findByText(/Cancellation request recorded/);
+ expect(screen.queryByRole("button",{name:"Retry the original cancellation"})).not.toBeInTheDocument();
+ expect(invoke.mock.calls.filter(([name])=>name==="cancel_execution_task")).toHaveLength(1);
+ expect(invoke.mock.calls.filter(([name])=>name==="create_execution_identity")).toHaveLength(1);
+ await screen.findByRole("checkbox",{name:/first: Hello/});
+ act(()=>{ref.current!.showAttempt(aiAttempt);});
+ await screen.findByText(/Cancellation request recorded/);
+ await waitFor(()=>expect(screen.getAllByRole("alert").length).toBeGreaterThan(0));
+ expect(screen.queryByRole("button",{name:"Retry the original cancellation"})).not.toBeInTheDocument();
+});
 it("reconciles an uncertain cancellation before allowing another action",async()=>{
  const user=await open();const original=invoke.getMockImplementation()!;let cancelled=false;
  invoke.mockImplementation(async(c:string,a:unknown)=>{
-  if(c==="cancel_execution_task"){cancelled=true;throw {code:"outcome-unknown"};}
+  if(c==="cancel_execution_task"){if(cancelled)return "1";cancelled=true;throw {code:"outcome-unknown"};}
   const value=await original(c,a);
   if(c==="read_arena_translation")return {...value,detail:{...value.detail,
    progress:{...value.detail.progress,queued:cancelled?0:2},
@@ -181,11 +206,19 @@ it("reconciles an uncertain cancellation before allowing another action",async()
  });
  await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
  await user.click(await screen.findByRole("checkbox",{name:/I confirm sending the shown/}));await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
- await user.click(await screen.findByRole("button",{name:"Cancel remaining work"}));await screen.findByText(/The action may have committed/);
+ await user.click(await screen.findByRole("button",{name:"Cancel remaining work"}));await screen.findByText(/The original cancellation may have been recorded/);
  expect(screen.getByRole("button",{name:"Back to overview"})).toBeDisabled();
- await user.click(screen.getByRole("button",{name:"Check saved result"}));await screen.findByText(/The saved action has been confirmed/);
+ await refreshWorkbenchReads();
+ await screen.findByRole("button",{name:"Prepare a new round"});
+ expect(screen.getByRole("button",{name:"Prepare a new round"})).toBeDisabled();
+ expect(screen.queryByText(/The saved action has been confirmed/)).not.toBeInTheDocument();
  expect(invoke.mock.calls.filter(([c])=>c==="cancel_execution_task")).toHaveLength(1);
  expect(invoke.mock.calls.find(([c])=>c==="cancel_execution_task")?.[1].request).toMatchObject({taskId:aiTask,requestId:fixtureIdentity(1)});
+ await user.click(screen.getByRole("button",{name:"Retry the original cancellation"}));
+ await screen.findByText(/Cancellation request recorded/);
+ const requests=invoke.mock.calls.filter(([c])=>c==="cancel_execution_task").map(([,payload])=>payload.request);
+ expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);
+ expect(screen.getByRole("button",{name:"Prepare a new round"})).toBeEnabled();
 });
 it("drops a late preview after the project session is replaced",async()=>{const user=userEvent.setup();const ref=createRef<AttemptWorkbenchHandle>();const rendered=render(<ArenaWorkbench key="old" ref={ref} project={project} disabled={false} onOpenTranslation={()=>true}/>);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await user.click(await screen.findByRole("checkbox",{name:/first: Hello/}));let finish:(p:ArenaPrepared)=>void=()=>{};const original=invoke.getMockImplementation()!;invoke.mockImplementation((c:string,a:unknown)=>c==="preview_arena_translation"?new Promise<ArenaPrepared>(done=>{finish=done;}):original(c,a));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));rendered.rerender(<ArenaWorkbench key="new" ref={ref} project={{...project,sessionToken:"new"}} disabled={false} onOpenTranslation={()=>true}/>);finish(prepared);await user.click(screen.getByRole("button",{name:"Arena comparison"}));await waitFor(()=>expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument());});
 

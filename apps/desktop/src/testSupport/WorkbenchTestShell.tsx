@@ -1,4 +1,5 @@
 import { SessionReadProvider, useSessionReads } from "../SessionReadProvider";
+import { ExecutionTaskSession } from "../ExecutionTaskSession";
 import { executionContext } from "../executionCommands";
 import type { ProjectView } from "../projectCommands";
 import { useState, useEffect, isValidElement, type ReactNode } from "react";
@@ -29,7 +30,7 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
   return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
-    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>{children}</SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></TranslationDraftSession></SessionReadProvider> : children}
+    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><ExecutionTaskSession project={project}><TranslationDraftSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>{children}</SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></TranslationDraftSession></ExecutionTaskSession></SessionReadProvider> : children}
   </WorkspaceViewProvider></WorkbenchCommandsProvider>;
 }
 

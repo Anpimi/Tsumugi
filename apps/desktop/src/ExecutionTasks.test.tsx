@@ -8,6 +8,9 @@ import fixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import type { ProjectView } from "./projectCommands";
 import type { AttemptDetail } from "./executionCommands";
+import { createRef, useLayoutEffect } from "react";
+import type { TasksHandle } from "./ExecutionTasks";
+import { useExecutionTaskSession } from "./ExecutionTaskSession";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session-1", locator: "C:\\isolated\\project", metadata: { projectId: fixture.session.projectId, displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" }, reconciliationState: "settled" };
@@ -15,6 +18,65 @@ const task = { taskId: fixture.detail.taskId, projectId: fixture.session.project
 function detail(): AttemptDetail { return structuredClone(fixture.detail) as AttemptDetail; }
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
+it("retains the original cancellation after a complete Tasks remount and blocks project leave", async () => {
+  const ref = createRef<TasksHandle>(), user = userEvent.setup();
+  let cancelCount = 0;
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task];
+    if (command === "read_execution_task") return [fixture.summary];
+    if (command === "read_execution_attempt") return detail();
+    if (command === "create_execution_identity") return fixtureIdentity(201);
+    if (command === "cancel_execution_task") { if (++cancelCount === 1) throw new Error("Disconnected"); return "4"; }
+    throw new Error(command);
+  });
+  const view = render(<ExecutionTasks ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: /Sample update/ }));
+  await user.click(await screen.findByRole("button", { name: "Cancel remaining work" }));
+  await user.click(within(screen.getByRole("dialog", { name: "Cancel remaining work" })).getByRole("button", { name: "Cancel remaining work" }));
+  await screen.findByRole("button", { name: "Retry the original cancellation" });
+  await act(async () => { expect(await ref.current!.allowLeave()).toBe(false); });
+  view.rerender(null, project);
+  view.rerender(<ExecutionTasks ref={ref} project={project} disabled={false} />);
+  await act(async () => { expect(await ref.current!.allowLeave()).toBe(false); });
+  await user.click(await screen.findByRole("button", { name: "Retry the original cancellation" }));
+  await screen.findByText(/Cancellation request recorded/);
+  expect(await ref.current!.allowLeave()).toBe(true);
+  const requests = invoke.mock.calls.filter(([name]) => name === "cancel_execution_task").map(([, payload]) => payload.request);
+  expect(requests).toHaveLength(2); expect(requests[0]).toEqual(requests[1]);
+  expect(requests[0]).toEqual({ sessionToken: project.sessionToken, projectId: project.metadata.projectId, taskId: task.taskId, requestId: fixtureIdentity(201) });
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+});
+it("opens previously unvisited Tasks when another workspace has an unknown cancellation and retries that original request", async () => {
+  const ref = createRef<TasksHandle>(), user = userEvent.setup();
+  let owner!: ReturnType<typeof useExecutionTaskSession>, cancelCount = 0;
+  function UnvisitedTasks() {
+    const value = useExecutionTaskSession();
+    useLayoutEffect(() => { owner = value; });
+    return <ExecutionTasks ref={ref} project={project} disabled={false} />;
+  }
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [];
+    if (command === "create_execution_identity") return fixtureIdentity(202);
+    if (command === "cancel_execution_task") { if (++cancelCount === 1) throw new Error("Disconnected"); return "5"; }
+    throw new Error(command);
+  });
+  render(<UnvisitedTasks />, project);
+  await act(async () => { await owner.cancel({ taskId: task.taskId, attemptId: fixture.detail.attemptId, origin: "ai" }); });
+  expect(screen.queryByRole("heading", { name: "Tasks" })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([name]) => name === "list_execution_tasks")).toBe(false);
+  await act(async () => { expect(await ref.current!.allowLeave()).toBe(false); });
+  expect(screen.getByRole("heading", { name: "Tasks" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Tasks" })).toHaveAttribute("aria-current", "page");
+  await user.click(await screen.findByRole("button", { name: "Retry the original cancellation" }));
+  await screen.findByText(/Cancellation request recorded/);
+  expect(await ref.current!.allowLeave()).toBe(true);
+  const request = { ...fixture.session, taskId: task.taskId, requestId: fixtureIdentity(202) };
+  expect(invoke.mock.calls.filter(([name]) => name === "cancel_execution_task").map(([, payload]) => payload.request)).toEqual([request, request]);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+});
 async function openTasks(value = detail()) {
   invoke.mockImplementation(async (command: string) => {
     if (command === "execution_status") return fixture.status;

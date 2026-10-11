@@ -1,4 +1,5 @@
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { TaskCancellationFeedback, useExecutionTaskSession, type CancellationTarget } from "./ExecutionTaskSession";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
@@ -8,24 +9,29 @@ import type { CommandError, ProjectView } from "./projectCommands";
 import { projectCommands } from "./projectCommands";
 import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type PrepareRequest, type ResultEnvelope } from "./executionCommands";
 
-type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string };
+type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string; cancellation?: CancellationTarget };
 export interface TasksHandle { allowLeave: () => Promise<boolean> }
 export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; ref?: Ref<TasksHandle> }) {
   const { t } = useTranslation();
   const [open, setOpen] = useWorkbenchView("tasks");
+  const cancellations = useExecutionTaskSession();
   const [dismissBlocked, setDismissBlocked] = useState(false);
   const [visited, setVisited] = useState(false);
   useEffect(() => { if (open) setVisited(true); }, [open]);
-  useImperativeHandle(ref, () => ({ allowLeave: () => Promise.resolve(!dismissBlocked) }));
+  useImperativeHandle(ref, () => ({ allowLeave: () => {
+    if (cancellations.unresolved()) { setVisited(true); setOpen(true); return Promise.resolve(false); }
+    return Promise.resolve(!dismissBlocked);
+  } }));
   return <WorkbenchPanel open={open} title={t("execution.title")} description={project.metadata.displayName}
     onBack={() => { if (!dismissBlocked) setOpen(false); }} backDisabled={disabled || dismissBlocked}>
-    {visited ? <TaskContent active={open} onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
+    {visited ? <TaskContent active={open} disabled={disabled} onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
   </WorkbenchPanel>;
 }
 
-export function TaskContent({ project, active = true, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; active?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
+export function TaskContent({ project, active = true, disabled = false, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; active?: boolean; disabled?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
   const { t } = useTranslation();
   const context = executionContext(project);
+  const cancellations = useExecutionTaskSession();
   const [taskId, setTaskId] = useState<string | null>(null);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [cursor, setCursor] = useState("0");
@@ -44,7 +50,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
   const outputRegion = useRef<HTMLDivElement | null>(null);
   useEffect(() => { onDismissBlockedChange?.(busy || pendingAction !== null); return () => onDismissBlockedChange?.(false); }, [busy, pendingAction, onDismissBlockedChange]);
   useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
-  function confirm(choice: Confirmation) { actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFailure(null); setMessage(null); setConfirmation(choice); }
+  function confirm(choice: Confirmation) { actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFailure(null); setMessage(null); setConfirmation(choice.action === "cancel" && detail ? { ...choice, cancellation: { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } } : choice); }
   const mounted = useRef(true);
   const mutating = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -68,6 +74,9 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
     },
   });
   const tasks = projection.data?.tasks ?? [], attempts = projection.data?.attempts ?? [], detail = projection.data?.detail ?? null;
+  const cancelTarget: CancellationTarget | null = detail ? { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } : null;
+  const cancellation = confirmation?.cancellation ? cancellations.current(confirmation.cancellation.taskId) : undefined;
+  const cancelling = cancellation?.phase === "preparing" || cancellation?.phase === "pending";
   const loading = projection.isPending && active && !busy;
   useEffect(() => { const error = projection.error ?? projection.data?.runtime.error; if (error) showError(error); }, [projection.error, projection.data?.runtime.error]);
 
@@ -81,30 +90,35 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
     finally { mutating.current = false; if (mounted.current) { setBusy(false); reads.invalidate(["execution"]); } }
   }
   async function execute(choice: Confirmation) {
+    if (choice.action === "cancel") {
+      if (!choice.cancellation || disabled || busy || pendingAction || !cancellations.canCancel(choice.cancellation)) return;
+      await cancellations.cancel(choice.cancellation);
+      if (mounted.current) setConfirmation(null);
+      return;
+    }
+    const action = choice.action;
     if (!detail) return;
     const selected = detail;
     await perform(async () => {
-      if (choice.action === "cancel") {
-        await commands.cancel({ ...context, taskId: selected.taskId, requestId: await commands.identity(context) });
-      } else if (choice.unit) {
+      if (choice.unit) {
         const unit = choice.unit;
-        if (choice.action === "adopt-result") {
+        if (action === "adopt-result") {
           const actionId = await commands.identity(context);
           const prepared = { ...context, attemptId: selected.attemptId, unitId: unit.unitId, actionId, resultIds: unit.resultIds };
           setPendingAction(prepared); setReceiptChecked(false);
           await commands.prepare(prepared);
           const result = await commands.adopt({ ...context, actionId });
           if (mounted.current) { setReceipt(result); setPendingAction(null); }
-        } else if (choice.action === "view-receipt" && unit.receiptId) {
+        } else if (action === "view-receipt" && unit.receiptId) {
           const result = await commands.receipt({ ...context, actionId: unit.receiptId });
           if (mounted.current) setReceipt(result);
         } else {
-          const result = await commands.recover({ ...context, attemptId: selected.attemptId, unitId: unit.unitId, action: choice.action, itemIds: choice.itemId ? [choice.itemId] : unit.remainingItemIds });
+          const result = await commands.recover({ ...context, attemptId: selected.attemptId, unitId: unit.unitId, action, itemIds: choice.itemId ? [choice.itemId] : unit.remainingItemIds });
           if (mounted.current && result.attemptId !== selected.attemptId) { setAttemptId(result.attemptId); setOffset(0); setOutput(null); setReceipt(null); }
           if (mounted.current && result.queryStarted) setMessage("queryStarted");
         }
       }
-      if (mounted.current) { setConfirmation(null); if (choice.action !== "query-outcome") setMessage("done"); }
+      if (mounted.current) { setConfirmation(null); if (action !== "query-outcome") setMessage("done"); }
     });
   }
   async function checkReceipt() {
@@ -125,7 +139,8 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
   const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel") : t(`execution.actions.${action}`);
   const confirmationCount = confirmation?.itemId ? 1 : confirmation?.unit?.itemIds.length ?? 0;
   const blockedKey = (reason: string) => reason === "external-new-consent" ? "externalConsent" : reason === "outcome-unknown" ? "unknown" : reason === "scope-removed" ? "scopeRemoved" : reason === "output-invalid" ? "invalid" : reason === "retry-not-safe" ? "retryUnsafe" : "blocked";
-  return <div className="execution-content" aria-busy={busy || loading}>
+  return <div className="execution-content" aria-busy={busy || cancelling || loading}>
+    <TaskCancellationFeedback origin="tasks" taskId={taskId ?? undefined} disabled={busy || pendingAction !== null} visible={active} />
     {!confirmation ? feedback : null}
     <div className="execution-actions">
       {taskId ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => selectTask(null)}>{t("execution.allTasks")}</button> : null}
@@ -165,7 +180,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
         </section>
         <section aria-label={t("execution.nextSteps")}>
           <div className="execution-section-heading"><h3>{t("execution.nextSteps")}</h3>
-            <button className="text-button" disabled={busy || pendingAction !== null} onClick={() => confirm({ action: "cancel" })}>{t("execution.cancel")}</button>
+            <button className="text-button" disabled={disabled || busy || pendingAction !== null || !cancelTarget || !cancellations.canCancel(cancelTarget)} onClick={() => confirm({ action: "cancel" })}>{t("execution.cancel")}</button>
           </div>
           {detail.recovery.units.map(unit => <section className="execution-unit" key={unit.unitId}>
             <details><summary>{t("execution.groupScope", { count: unit.itemIds.length })}</summary>
@@ -212,9 +227,9 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
       </> : null}
     </>}
     {receipt ? <section className="execution-receipt" role="status"><h3>{t("execution.receipt")}</h3><ul>{receipt.changes.map(change => <li key={`${change.kind}:${change.id}`}>{change.id} · {t("execution.revision", { number: change.revision })}</li>)}</ul></section> : null}
-    <Dialog.Root open={confirmation !== null} onOpenChange={open => { if (!open && !busy) setConfirmation(null); }}>
+    <Dialog.Root open={confirmation !== null} onOpenChange={open => { if (!open && !busy && !cancelling) setConfirmation(null); }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" />
-        <Dialog.Content className="confirm-dialog execution-confirm-dialog" onCloseAutoFocus={event => { event.preventDefault(); actionTrigger.current?.focus(); }} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
+        <Dialog.Content className="confirm-dialog execution-confirm-dialog" onCloseAutoFocus={event => { event.preventDefault(); actionTrigger.current?.focus(); }} onEscapeKeyDown={event => { if (busy || cancelling) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <Dialog.Title>{confirmation ? titleFor(confirmation.action) : t("execution.nextSteps")}</Dialog.Title>
           <Dialog.Description>{confirmation?.action === "cancel" ? t("execution.cancelHelp") : confirmation ? t(`execution.actionHelp.${confirmation.action}`, {
             count: confirmationCount, remaining: confirmation.unit?.remainingItemIds.length ?? 0,
@@ -225,8 +240,8 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
             {confirmation.action === "resume-undispatched" || confirmation.action === "retry-safe-failure" ? <small> · {t(confirmation.unit!.remainingItemIds.includes(confirmation.unit!.itemIds[index]) ? "execution.willRun" : "execution.reuse")}</small> : null}
           </li> : null)}</ul>
           {feedback}
-          <div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => setConfirmation(null)}>{t("execution.back")}</button>
-            <button className="primary-button" disabled={busy || pendingAction !== null} onClick={() => { if (confirmation) void execute(confirmation); }}>{busy ? t("execution.working") : confirmation ? titleFor(confirmation.action) : t("execution.confirm")}</button>
+          <div className="form-actions"><button className="secondary-button" disabled={busy || cancelling} onClick={() => setConfirmation(null)}>{t("execution.back")}</button>
+            <button className="primary-button" disabled={busy || cancelling || pendingAction !== null || (confirmation?.action === "cancel" && (disabled || !confirmation.cancellation || !cancellations.canCancel(confirmation.cancellation)))} onClick={() => { if (confirmation) void execute(confirmation); }}>{busy || cancelling ? t("execution.working") : confirmation ? titleFor(confirmation.action) : t("execution.confirm")}</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

@@ -9,6 +9,7 @@ import type { EditorTarget } from "./TranslationWorkbench";
 import type { UiMessages } from "./i18n/types";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useSourceDraftSession } from "./SourceDraftSession";
+import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { SourceHistoryPanel, SourceImpactPanel, SourceReadFeedback } from "./SourceMaintenance";
 import { sourceReads } from "./sourceQueries";
 import { useWorkbenchCommands, type CommandAvailability, type SourceSelectionCommandPayload, type SourceCaptureCommandPayload,
@@ -27,7 +28,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const context = executionContext(project), commandScope = { ...context, area: "source" as const };
   const [open, setOpen] = useWorkbenchView("source");
-  const owner = useSourceDraftSession();
+  const owner = useSourceDraftSession(), tasks = useExecutionTaskSession();
   const { domain, selection, declared, preflight, attempt, comparison: fixedComparison, updating, lineage, actor, filter, appliedFilter,
     manualOrdinal, historicalQuery, estimate, confirmed, pendingStart, pendingApply, receiptChecked, busyMutation } = owner.state;
   const fixedPreview = owner.state.preview;
@@ -154,7 +155,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   }
   function taskPayload(): SourceTaskCommandPayload { return { kind: "source-task", attemptId: attempt ?? "", taskId: detail?.taskId ?? "" }; }
   function taskAvailability(input?: SourceTaskCommandPayload, rendering = false) { const allowed = common(false, rendering); return allowed.enabled && input && ready(detailKey)
-    && input.attemptId === owner.current().attempt && input.taskId === detail?.taskId && !fixedPreview && !fixedComparison ? allowed : allowed.enabled ? unavailable : allowed; }
+    && input.attemptId === owner.current().attempt && input.taskId === detail?.taskId && !fixedPreview && !fixedComparison
+    && tasks.canCancel({ taskId: input.taskId, attemptId: input.attemptId, origin: "source" }) ? allowed : allowed.enabled ? unavailable : allowed; }
   function pagePayload(page: ContentPage, after: number): SourcePageCommandPayload { return { kind: "source-page", snapshotId: page.snapshotId, attemptId: page.attemptId,
     resultId: page.resultId, after }; }
   function pageAvailability(input?: SourcePageCommandPayload, rendering = false) {
@@ -218,7 +220,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
       registry.register({ ...meta, id: "source.check-receipt", nameKey: "execution.checkReceipt", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkReceipt() }),
       registry.register({ ...meta, id: "source.retry-apply", nameKey: "execution.retryAdoption", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: () => void owner.retryApply() }),
       registry.register({ ...meta, id: "source.keep-output", nameKey: "execution.keepOutput", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: owner.keepOutput }),
-      registry.register({ ...meta, id: "source.cancel-task", nameKey: "execution.cancel", risk: "cancels-source-task", payloadKind: "source-task", availability: taskAvailability, handler: input => void owner.cancelTask(input.taskId, proof([detailKey])) }),
+      registry.register({ ...meta, id: "source.cancel-task", nameKey: "execution.cancel", risk: "cancels-source-task", payloadKind: "source-task", availability: taskAvailability, handler: input => void owner.cancelTask(input.taskId, () => owner.current().attempt === input.attemptId) }),
       registry.register({ ...meta, id: "source.read-page", nameKey: "execution.nextPage", payloadKind: "source-page", availability: pageAvailability, handler: input => {
         if (input.snapshotId === null) { if (input.after === owner.current().previewAfter) void previewRead.refetch(); else owner.pageIntent(input.after); }
         else if (input.after === contentAfter) void contentRead.refetch(); else setContentCursor({ snapshotId: input.snapshotId!, revision: contentRevision, after: input.after });
@@ -290,6 +292,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     <WorkbenchPanel open={open} title={t("source.title")} description={t("source.description")} className="source-dialog" onBack={() => void requestBack()} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
           {integration ? <><p>{t("source.profile", { version: integration.version, name: integration.id === "webvtt" ? "WebVTT" : "Stardew SMAPI", profile: integration.formatProfiles.join(", ") })}</p>{!integration.available ? <p role="alert">{t("source.unavailable")}</p> : null}</> : <p role="status">{t("source.loadingIntegration")}</p>}
+          <TaskCancellationFeedback origin="source" taskId={detail?.taskId} disabled={busy} visible={open} />
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
           <SourceReadFeedback error={open ? integrationRead.error || scopeRead.error : null} fetching={open && (integrationRead.isFetching || scopeRead.isFetching)} messageKey="source.readFailed" retry={() => {

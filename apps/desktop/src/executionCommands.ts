@@ -15,7 +15,9 @@ export const executionCommands = {
   task: (request: TaskRequest) => checkedInvoke("read_execution_task", request, validateResponseAttempts),
   attempt: (request: AttemptRequest) => checkedInvoke("read_execution_attempt", request, validateResponseAttempt),
   output: (request: OutputRequest) => checkedInvoke("read_execution_output", request, validateResponseOutput),
-  cancel: (request: CancelRequest) => checkedInvoke("cancel_execution_task", request, validateResponseCancellation),
+  // The scalar wire type allows zero, but a persisted cancellation increments it.
+  cancel: (request: CancelRequest) => checkedInvoke("cancel_execution_task", request,
+    (value): value is string => validateResponseCancellation(value) && value !== "0"),
   recover: (request: RecoveryRequest) => checkedInvoke("recover_execution", request, validateResponseRecovery),
   prepare: (request: PrepareRequest) => checkedInvoke("prepare_execution_adoption", request, validateResponseAction),
   adopt: (request: AdoptRequest) => checkedInvoke("adopt_execution", request, validateResponseAdoption),
