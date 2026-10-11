@@ -424,6 +424,41 @@ describe("project lifecycle workbench", () => {
     expect(mocks.invoke.mock.calls.some(([command]) => command === "close_project")).toBe(false);
   });
 
+  it("keeps resource edits during ordinary navigation and confirms real project close", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation(async (command: string, payload: unknown) => {
+      if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(750) };
+      if (command === "read_source_content") return sourcePageFixture({ snapshotId: fixtureIdentity(750), scope: { revision: "2", currentSnapshot: fixtureIdentity(750) }, rows: [] });
+      if (command === "read_terms" || command === "list_resource_captures" || command === "list_execution_tasks") return [];
+      if (command === "execution_status") return { active: false, quiescing: false, queryCount: 0, error: null };
+      if (command === "close_project") return { closed: true };
+      return original(command, payload);
+    });
+    await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+    await user.type(screen.getByRole("textbox", { name: "Source term" }), "Barrel");
+    await user.type(screen.getByRole("textbox", { name: "Source aliases, separated by commas" }), "Cask,  Drum");
+    await user.type(screen.getByRole("textbox", { name: "Preferred target form" }), "Keep this draft");
+    await user.type(screen.getByRole("textbox", { name: "Reason or source note" }), "Reviewed");
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    expect(screen.queryByRole("dialog", { name: "Leave with unsaved resource edits?" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Glossary and context" }));
+    expect(screen.getByRole("textbox", { name: "Preferred target form" })).toHaveValue("Keep this draft");
+    expect(screen.getByRole("textbox", { name: "Source aliases, separated by commas" })).toHaveValue("Cask,  Drum");
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    const dialog = await screen.findByRole("dialog", { name: "Leave with unsaved resource edits?" });
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "close_project")).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: "Stay and keep edits" }));
+    expect(screen.getByRole("textbox", { name: "Preferred target form" })).toHaveValue("Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Leave with unsaved resource edits?" })).getByRole("button", { name: "Discard edits and leave" }));
+    await screen.findByRole("heading", { name: "No project open" });
+    expect(mocks.invoke.mock.calls.filter(([name]) => name === "close_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.some(([name]) => name === "save_term")).toBe(false);
+  });
+
   it("saves the visible translation from list and reference focus without replaying an in-flight save", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     const fixture = installTranslationEditor();
