@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Translation import preparations, fixed match previews, complete-file confirmations and original uncertain actions survive leaving their view. Checked adoption keeps newer manual input, and import, manual saves and revision selection share one write reservation. Uncertain revision selections retain their captured text and can reconcile the original action after source or language changes.
+
 - Source content, history, identity evidence and translation impact refresh with current project facts. Paged searches retry their original filter and cursor, hidden views stop reads, and removed languages block stale navigation. Automatic comparison reads preserve fixed identity decisions and confirmation evidence; viewing current content remains separate from reading an earlier applied snapshot, including beside newer decisions retained after a late confirmation.
 
 - Source selections, declarations, fixed previews and identity decisions survive view remounts. Original uncertain actions retain their exact request for checked recovery; preparation and adoption confirmations must match that request and its frozen unit. Confirmed application remains saved when a later content read fails, and late confirmations keep newer decisions.

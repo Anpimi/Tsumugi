@@ -5,6 +5,7 @@ import { useState, useEffect, isValidElement, type ReactNode } from "react";
 import { render, act } from "@testing-library/react";
 import { WorkbenchNavigation, WorkspaceViewProvider, type WorkspaceArea } from "../WorkbenchFrame";
 import { TranslationDraftSession } from "../TranslationDraftSession";
+import { TranslationImportSession } from "../TranslationImportSession";
 import { ReviewDraftSession } from "../ReviewDraftSession";
 import { SourceDraftSession } from "../SourceDraftSession";
 import { ResourceDraftSession } from "../ResourceDraftSession";
@@ -28,7 +29,7 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
   return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
-    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>{children}</SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationDraftSession></SessionReadProvider> : children}
+    {project ? <SessionReadProvider key={project.sessionToken} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}>{children}</SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></TranslationDraftSession></SessionReadProvider> : children}
   </WorkspaceViewProvider></WorkbenchCommandsProvider>;
 }
 

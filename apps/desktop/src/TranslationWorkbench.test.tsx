@@ -8,6 +8,8 @@ import type { ProjectView } from "./projectCommands";
 import type { TranslationHistory, TranslationPreview } from "./translationCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
+import { translationActionFixture, translationAttemptFixture, translationReceiptFixture, translationRecoveryUnit } from "./testSupport/translationFixture";
+import type { TranslationAdoptRequest } from "./translationCommands";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
@@ -30,6 +32,7 @@ let history: TranslationHistory;
 let applied: boolean;
 let conflicting: boolean;
 let identity: number;
+let importActions: Map<string, TranslationAdoptRequest>;
 let savedActions: Map<string, ReturnType<typeof saveReceipt>>;
 function saveReceipt(request: Record<string, unknown>) {
   const prior = history.current?.unitId === request.unitId ? history.current : null;
@@ -53,7 +56,7 @@ function seedSelectedTranslation(text = "Saved base") {
 }
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
-  invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map();
+  invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map(); importActions = new Map();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
@@ -74,10 +77,11 @@ beforeEach(async () => {
     if (command === "list_translation_files") return ["zh.json"];
     if (command === "preflight_translation") return { fileName: "zh.json", fileDigest: "file-digest", declaredLocale: "zh", targetLocale: "zh-CN", count: 1, sourceSnapshotId: fixtureIdentity(200) };
     if (command === "create_execution_identity") return fixtureIdentity(++identity);
-    if (command === "start_translation_import") return fixtureIdentity(210);
-    if (command === "read_translation_preview") return applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict", currentText: "旧译文", currentSelection: { eventId: fixtureIdentity(221), unitId: fixtureIdentity(204), locale: "zh-CN", sequence: "1", revisionId: fixtureIdentity(222), actionId: fixtureIdentity(223), previousEventId: null } }] } : preview;
-    if (command === "prepare_translation_adoption") return { ...executionFixture.action, projectId: args.request.projectId, actionId: args.request.actionId, attemptId: args.request.attemptId, resultIds: [args.request.resultId], unitId: (args.request.confirmation as { targetUnitId: string }).targetUnitId };
-    if (command === "adopt_execution") { applied = true; return { ...executionFixture.receipt, actionId: args.request.actionId, changes: [{ kind: "translation-revision", id: "revision", revision: "1" }] }; }
+    if (command === "start_translation_import") return args.request.attemptId;
+    if (command === "read_translation_preview") { const result = applied ? { ...preview, unique: 0, applied: 1, rows: [{ ...preview.rows[0], status: "applied" as const }] } : conflicting ? { ...preview, unique: 0, selectedConflicts: 1, rows: [{ ...preview.rows[0], status: "selected-conflict" as const, currentText: "旧译文", currentSelection: { eventId: fixtureIdentity(221), unitId: fixtureIdentity(204), locale: "zh-CN", sequence: "1", revisionId: fixtureIdentity(222), actionId: fixtureIdentity(223), previousEventId: null } }] } : preview; return { ...result, attemptId: String(args.request.attemptId) }; }
+    if (command === "read_execution_attempt") return translationAttemptFixture({ ...preview, attemptId: String(args.request.attemptId) });
+    if (command === "prepare_translation_adoption") { const request = args.request as unknown as TranslationAdoptRequest; importActions.set(request.actionId, request); return translationActionFixture(request, translationRecoveryUnit(preview.rows[0])); }
+    if (command === "adopt_execution") { applied = true; const request = importActions.get(String(args.request.actionId))!; return translationReceiptFixture(request, translationRecoveryUnit(preview.rows[0]), request.confirmation.expectedSelectionId ? "1" : null); }
     if (command === "save_translation_revision") {
       const existing = savedActions.get(String(args.request.actionId));
       if (existing) return existing;
@@ -92,6 +96,32 @@ beforeEach(async () => {
   });
 });
 afterEach(cleanup);
+
+it("keeps the fixed import preview after complete consumer removal and session query garbage collection", async () => {
+  const user = userEvent.setup();
+  const view = render(<TranslationWorkbench project={project} disabled={false} />, project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(screen.getByRole("button", { name: "Import file" }));
+  await user.click(await screen.findByRole("button", { name: "Choose Mod folder" }));
+  await user.click(await screen.findByRole("button", { name: "Check file" }));
+  await user.click(screen.getByRole("checkbox", { name: /I confirm that zh.json/ }));
+  await user.click(screen.getByRole("button", { name: "Import for review" }));
+  await screen.findByRole("heading", { name: "Review translation matches" });
+  const reads = invoke.mock.calls.filter(([name]) => name === "read_translation_preview").length;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "read_translation_preview"
+    ? Promise.resolve({ ...preview, basis: "different current preview", rows: [] }) : original(command, payload));
+  vi.useFakeTimers();
+  try {
+    view.rerender(null);
+    await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
+  } finally { vi.useRealTimers(); }
+  view.rerender(<TranslationWorkbench project={project} disabled={false} />);
+  expect(await screen.findByRole("heading", { name: "Review translation matches" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "你好" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_preview")).toHaveLength(reads);
+  expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeEnabled();
+});
 
 it("keeps a newer draft when the entire translation consumer unmounts before save A acknowledges", async () => {
   const originalSelection = seedSelectedTranslation();
@@ -575,7 +605,7 @@ it("keeps an in-flight import attempt and an uncertain adoption checkable after 
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
     if (command === "start_translation_import" && delayStart) {
       delayStart = false;
-      return new Promise(resolve => { releaseStart = () => resolve(fixtureIdentity(210)); });
+      return new Promise(resolve => { releaseStart = () => resolve(args.request.attemptId); });
     }
     if (command === "adopt_execution") return Promise.reject({ code: "outcome-unknown", outcome: "unknown", stage: "adopt", recoveryRequired: true });
     if (command === "read_execution_receipt") return null;
@@ -596,9 +626,19 @@ it("keeps an in-flight import attempt and an uncertain adoption checkable after 
   expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeDisabled();
   expect(invoke.mock.calls.filter(([name]) => name === "start_translation_import")).toHaveLength(1);
 
+  const previewReads = invoke.mock.calls.filter(([name]) => name === "read_translation_preview").length;
   rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN"], metadataRevision: "3" } }} disabled={false} />);
+  expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_preview")).toHaveLength(previewReads);
+  await user.click(screen.getByRole("button", { name: "Refresh matches" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeEnabled());
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_preview").at(-1)?.[1].request)
+    .toMatchObject({ attemptId: invoke.mock.calls.find(([name]) => name === "start_translation_import")![1].request.attemptId, basis: null });
   await user.click(screen.getByRole("button", { name: "Apply 1 unique matches" }));
+  const batchDialog = await screen.findByRole("dialog", { name: "Apply this complete file range?" });
+  expect(batchDialog).toHaveTextContent("The complete file has 1 entries: 1 unique matches will be applied; 0 entries will remain unchanged.");
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_translation_adoption" || name === "adopt_execution")).toHaveLength(0);
+  await user.click(within(batchDialog).getByRole("button", { name: "Confirm these matches" }));
   await screen.findByRole("button", { name: "Check the uncertain action's receipt" });
   const originalAction = invoke.mock.calls.find(([name]) => name === "adopt_execution")![1].request.actionId;
   rerender(<TranslationWorkbench project={{ ...project, metadata: { ...project.metadata, targetLocales: ["ja-JP"], metadataRevision: "4" } }} disabled={false} />);
@@ -627,9 +667,12 @@ it("shows the removed target and recovery for a task-opened import after a clean
   expect(invoke.mock.calls.find(([name]) => name === "read_translation_preview")?.[1].request.attemptId)
     .toBe(preview.attemptId);
   expect(screen.getByRole("combobox", { name: "Target language" })).toHaveValue("zh-CN");
-  expect(screen.getByRole("alert")).toHaveTextContent("zh-CN");
-  expect(screen.getByRole("alert")).toHaveTextContent(/restore|project settings/i);
-  expect(screen.getByRole("button", { name: "Back to project settings, keep this work" })).toBeEnabled();
+  const returnToSettings = screen.getByRole("button", { name: "Back to project settings, keep this work" });
+  const removedTargetAlert = returnToSettings.closest('[role="alert"]');
+  expect(removedTargetAlert).toHaveTextContent("zh-CN");
+  expect(removedTargetAlert).toHaveTextContent(/restore|project settings/i);
+  expect(returnToSettings).toBeEnabled();
+  expect(screen.getByText("This fixed preview needs an explicit refresh before making another decision. Saved results and original pending actions are kept.")).toHaveAttribute("role", "alert");
   expect(screen.getByRole("button", { name: "Apply 1 unique matches" })).toBeDisabled();
   expect(invoke.mock.calls.filter(([name]) => name === "prepare_translation_adoption" || name === "adopt_execution"))
     .toHaveLength(0);
@@ -1096,7 +1139,14 @@ it("requires language mapping and applies only the reviewed unique result", asyn
   await user.click(screen.getByRole("button", { name: "Import for review" }));
   await screen.findByRole("heading", { name: "Review translation matches" });
   expect(screen.getByText("你好")).toBeInTheDocument();
+  const identities = invoke.mock.calls.filter(([name]) => name === "create_execution_identity").length;
   await user.click(screen.getByRole("button", { name: "Apply 1 unique matches" }));
+  const dialog = await screen.findByRole("dialog", { name: "Apply this complete file range?" });
+  expect(dialog).toHaveTextContent("The complete file has 1 entries: 1 unique matches will be applied; 0 entries will remain unchanged.");
+  expect(dialog).toHaveTextContent("Create candidates for these fixed matches. Current selections are kept.");
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(identities);
+  expect(invoke.mock.calls.filter(([name]) => name === "prepare_translation_adoption" || name === "adopt_execution")).toHaveLength(0);
+  await user.click(within(dialog).getByRole("button", { name: "Confirm these matches" }));
   await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "adopt_execution")).toBe(true));
   expect(invoke.mock.calls.find(([name]) => name === "prepare_translation_adoption")?.[1].request.confirmation).toMatchObject({ decision: "candidate-only", resultDigest: "result-digest", targetUnitId: fixtureIdentity(204) });
 });
@@ -1286,7 +1336,8 @@ it("requires a separate comparison and confirmation before replacing a selected 
 it("reports a partial batch without treating an uncommitted conflict as applied", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
-    if (command === "read_translation_preview" && !applied) return Promise.resolve({ ...preview, total: 2, unique: 2, rows: [preview.rows[0], { ...preview.rows[0], entry: { ...preview.rows[0].entry, ordinal: 1, nativeKey: "SECOND" }, itemId: fixtureIdentity(215), resultId: fixtureIdentity(216) }] });
+    if (command === "read_translation_preview" && !applied) return Promise.resolve({ ...preview, attemptId: String(args.request.attemptId), total: 2, unique: 2, rows: [preview.rows[0], { ...preview.rows[0], entry: { ...preview.rows[0].entry, ordinal: 1, nativeKey: "SECOND" }, itemId: fixtureIdentity(215), resultId: fixtureIdentity(216) }] });
+    if (command === "read_execution_attempt") return Promise.resolve(translationAttemptFixture({ ...preview, attemptId: String(args.request.attemptId), total: 2, unique: 2, rows: [preview.rows[0], { ...preview.rows[0], entry: { ...preview.rows[0].entry, ordinal: 1, nativeKey: "SECOND" }, itemId: fixtureIdentity(215), resultId: fixtureIdentity(216) }] }));
     if (command === "prepare_translation_adoption" && args.request.itemId === fixtureIdentity(215)) return Promise.reject({ code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false, reason: "translation-selection" });
     return original(command, args);
   });
@@ -1300,6 +1351,9 @@ it("reports a partial batch without treating an uncommitted conflict as applied"
   await user.click(screen.getByRole("button", { name: "Import for review" }));
   await screen.findByRole("button", { name: "Apply 2 unique matches" });
   await user.click(screen.getByRole("button", { name: "Apply 2 unique matches" }));
+  expect(await screen.findByRole("dialog", { name: "Apply this complete file range?" })).toHaveTextContent("complete file has 2 entries");
+  expect(invoke.mock.calls.some(([name]) => name === "prepare_translation_adoption")).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Confirm these matches" }));
   expect(await screen.findByText(/Applied 1; conflicted 1; failed 0; outcome unknown 0/)).toBeInTheDocument();
   await user.click(screen.getByText("Entry results"));
   expect(screen.getByText("SECOND: Conflict; not applied")).toBeInTheDocument();
