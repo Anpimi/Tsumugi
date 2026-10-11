@@ -31,6 +31,10 @@ workbench: {
   references: "术语、上下文与历史", saved: "已保存", unsaved: "有未保存修改", saving: "正在保存…", unselected: "未选择译文", selected: "已选择译文", qaPending: "QA 尚未有效", reviewPending: "尚未批准",
 },
 arena: {
+  "removedLocale": "目标语言 {{locale}} 已不可用。新行动请选择当前语言；原行动仍可核对恢复。",
+  "sourceStale": "原文或共享资源已变化。发送新轮前请重新预览完整所选范围。",
+  "clearRange": "清空所选范围",
+  "staleMerge": "保存依据已变化。译文已保留，新合并前请明确复核当前依据。",
   "open": "Arena 对比",
   "title": "比较译文候选",
   "description": "生成二至四个方案，或离线比较已保存候选。保存、选择和合并后仍需正常审阅。",

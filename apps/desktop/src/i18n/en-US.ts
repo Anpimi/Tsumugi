@@ -30,6 +30,10 @@ workbench: {
 },
 
 arena: {
+  "removedLocale": "The target language {{locale}} is no longer available. Choose a current language for a new action; the original action remains recoverable.",
+  "sourceStale": "The source or shared resources changed. Preview the complete selected range again before sending a new round.",
+  "clearRange": "Clear selected range",
+  "staleMerge": "The saved basis changed. Keep your text and explicitly review the current basis before a new merge.",
   "open": "Arena comparison",
   "title": "Compare translation candidates",
   "description": "Generate two to four schemes or compare saved candidates offline. Saving, selecting and merging still require normal review.",

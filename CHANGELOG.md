@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Arena settings, explicit generation consent, fixed merge drafts and original start, comparison, reveal, selection and candidate-save requests survive view remounts. Recovery checks complete rounds and the original action, preserves newer input and confirmed saves after read failures, and shares the translation write reservation for selection, merging and candidate saving.
+
 - AI generation and candidate saving keep their original preview, complete selected scope and requests across view remounts. Explicit recovery checks the original attempt or action; confirmed saves remain recorded when result reads fail, and late confirmations preserve newer settings.
 
 - Task, Source, AI and Arena cancellation share the original request across workspace changes and remounts. Explicit retries reuse its identity, and a checked cancellation acknowledgement is kept separate from later task reads and actual worker stopping.

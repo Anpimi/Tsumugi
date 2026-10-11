@@ -8,7 +8,8 @@ import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 import { defaultAiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
-import { aiViewFixture } from "./testSupport/aiFixture";
+import { aiViewFixture, arenaViewFixture } from "./testSupport/aiFixture";
+import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
 
 const mocks = vi.hoisted(() => ({
@@ -162,7 +163,91 @@ function installAiPreparation() {
   };
 }
 
+function installArenaPreparation() {
+  const facts = installAiPreparation(), original = mocks.invoke.getMockImplementation()!;
+  let captured: ArenaPrepared;
+  const view = (): ArenaView => {
+    const value = arenaViewFixture(captured.preview.items[0].item,captured.preview.config);
+    value.detail.attemptId = captured.attemptId; value.detail.recovery.attemptId = captured.attemptId; return value;
+  };
+  mocks.invoke.mockImplementation(async (command: string, args: {request: Record<string,unknown>}) => {
+    if (command === "list_arena_comparisons") return [];
+    if (command === "preview_arena_translation") {
+      const config = args.request.config as ArenaConfig, item = facts.view().rows[0].item;
+      captured = {attemptId:fixtureIdentity(560),preview:{config:structuredClone({...config,parentAttemptId:config.parentAttemptId ?? null}),
+        digest:"arena-preview",items:config.variants.map((_,slot)=>({slot,sourceOrder:0,item:structuredClone(item)}))}};
+      return captured;
+    }
+    if (command === "start_arena_translation") return args.request.attemptId;
+    if (command === "read_arena_translation") return view();
+    return original(command,args);
+  });
+  return {...facts,view};
+}
+async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button",{name:"Arena comparison"}));
+  for (const number of [1,2]) {
+    await user.type(screen.getByRole("textbox",{name:`Scheme ${number} · Chat Completions URL`}),"http://127.0.0.1:4000/v1/chat/completions");
+    await user.type(screen.getByRole("textbox",{name:`Scheme ${number} · Model`}),`arena-model-${number}`);
+  }
+  await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
+  await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+  await screen.findByRole("heading",{name:"Data sharing preview"});
+  await user.click(screen.getByRole("checkbox",{name:/I confirm sending the shown/}));
+}
+
 describe("project lifecycle workbench", () => {
+  it("keeps the Arena owner in real App assembly while registered navigation hides its consumer",async()=>{
+    const user=userEvent.setup();await renderApp();await createProject(user);installArenaPreparation();
+    await prepareArenaInApp(user);
+    await user.click(screen.getByRole("button",{name:"Glossary and context"}));
+    await screen.findByRole("region",{name:"Glossary and context"});
+    expect(screen.queryByRole("region",{name:"Compare translation candidates"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog",{name:"Keep your Arena draft?"})).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button",{name:"Arena comparison"}));
+    expect(screen.getByRole("textbox",{name:"Scheme 2 · Model"})).toHaveValue("arena-model-2");
+    expect(screen.getByRole("checkbox",{name:"first: Hello"})).toBeChecked();
+    expect(screen.getByRole("checkbox",{name:/I confirm sending the shown/})).toBeChecked();
+    expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeEnabled();
+    expect(mocks.invoke.mock.calls.filter(([command])=>command==="preview_arena_translation")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command])=>command==="start_arena_translation")).toHaveLength(0);
+  });
+  it.each(["source","resources"] as const)("revokes Arena consent across hidden App views after %s changes",async scope=>{
+    const user=userEvent.setup();await renderApp();await createProject(user);const facts=installArenaPreparation();
+    await prepareArenaInApp(user);await user.click(screen.getByRole("button",{name:"Glossary and context"}));
+    if(scope==="source")facts.changeSource();else facts.changeResources();
+    await act(async()=>{mocks.reads!.invalidate([scope]);});
+    await user.click(screen.getByRole("button",{name:"Arena comparison"}));
+    expect(screen.getByRole("textbox",{name:"Scheme 1 · Model"})).toHaveValue("arena-model-1");
+    expect(await screen.findByRole("checkbox",{name:scope==="source"?"first: Updated source":"first: Hello"})).toBeChecked();
+    expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.filter(([command])=>command==="start_arena_translation")).toHaveLength(0);
+    await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+    await screen.findByRole("heading",{name:"Data sharing preview"});
+    expect(screen.getByRole("checkbox",{name:/I confirm sending the shown/})).not.toBeChecked();
+    expect(screen.getByRole("button",{name:"Send and generate candidates"})).toBeDisabled();
+  });
+  it("keeps late Arena reads from project A out of project B after an actual App project switch",async()=>{
+    const user=userEvent.setup();await renderApp();await createProject(user);const facts=installArenaPreparation();
+    const original=mocks.invoke.getMockImplementation()!;
+    const other={...projectView("Other"),sessionToken:"session-2",locator:"C:\\Projects\\other",metadata:{...metadata("Other"),projectId:fixtureIdentity(900)}};
+    let finish!:(value:ArenaView)=>void;
+    mocks.invoke.mockImplementation((command:string,args:{request:Record<string,unknown>})=>{
+      if(command==="read_arena_translation"&&args.request.sessionToken==="session-1")return new Promise<ArenaView>(resolve=>{finish=resolve;});
+      if(command==="open_project")return Promise.resolve(other);return original(command,args);
+    });
+    await prepareArenaInApp(user);await user.click(screen.getByRole("button",{name:"Send and generate candidates"}));
+    await waitFor(()=>expect(finish).toBeDefined());await user.click(screen.getByRole("button",{name:"Back to overview"}));
+    await user.click(screen.getByRole("button",{name:"Open another"}));
+    await user.type(screen.getByRole("textbox",{name:/Project folder/}),"C:\\Projects\\other");
+    await user.click(screen.getByRole("button",{name:"Open project"}));await screen.findByRole("heading",{name:"Other"});
+    await act(async()=>finish(facts.view()));await user.click(screen.getByRole("button",{name:"Arena comparison"}));
+    expect(screen.getByRole("textbox",{name:"Scheme 2 · Model"})).toHaveValue("");
+    expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading",{name:"Candidate A"})).not.toBeInTheDocument();
+    expect(mocks.reads?.context.sessionToken).toBe("session-2");
+  });
+
   it("preserves AI configuration, scope, preview, and consent through registered resource navigation", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     installAiPreparation();
