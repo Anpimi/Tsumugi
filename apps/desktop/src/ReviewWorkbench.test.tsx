@@ -12,6 +12,7 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewDecisionFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
 import type { ChangeScope } from "./sessionReads";
+import type { Eligibility } from "./reviewCommands";
 
 function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
   const commands = useWorkbenchCommands();
@@ -41,6 +42,12 @@ function historyPage(target: ReviewTarget, version: string, nextOffset: number |
   return { decisions: [], checks: [reviewCheckFixture(target, fixtureIdentity(650), "completed", {
     runId: fixtureIdentity(651), validatorVersion: version,
   })], waivers: [], fallbacks: [], nextOffset };
+}
+function eligibilityResult(locales: string[], marker: string, ready = false): Eligibility {
+  return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: marker, ready,
+    locales: locales.map(locale => ({ locale, ready, checkedUnits: 1, blockerCount: ready ? 0 : 1, exceptionCount: 0,
+      blockers: ready ? [] : [{ unitId: targets.first.unitId, nativeKey: marker, code: "qa-missing-or-stale", reference: null }],
+      exceptions: [] })) };
 }
 
 let targets: Record<string, ReviewTarget>;
@@ -887,6 +894,335 @@ it("shows a localized reason for each blocked language entry", async () => {
   await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
   expect(await screen.findByText("first: Run the current checks")).toBeInTheDocument();
   expect(screen.getByText("zh-CN: Build preparation blocked")).toBeInTheDocument();
+});
+
+it("waits for an explicit assessment of a nonempty language selection without capturing review work", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? Promise.resolve(eligibilityResult(args.request.locales!, "explicit-subset")) : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "1")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await screen.findByRole("button", { name: "first" });
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  expect(screen.getByRole("checkbox", { name: "zh-CN" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "ja" })).toBeChecked();
+  expect(screen.getByText("Assess the selected languages to see their current build readiness.")).toBeVisible();
+  await refreshWorkbenchReads(["source", "translation", "resources", "review", "project"]);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility")).toHaveLength(0);
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  await user.click(screen.getByRole("checkbox", { name: "ja" }));
+  expect(screen.getByText("Choose at least one language to assess.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Assess build readiness" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: "ja" }));
+  const beforeAssess = invoke.mock.calls.length;
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByText("explicit-subset: Run the current checks")).toBeVisible();
+  expect(invoke.mock.calls.slice(beforeAssess).map(([name]) => name)).toEqual(["read_review_eligibility"]);
+  expect(invoke.mock.calls.find(([name]) => name === "read_review_eligibility")![1].request)
+    .toEqual({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, locales: ["ja"] });
+  expect(screen.queryByText("zh-CN: Build preparation blocked")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility")).toHaveLength(2));
+});
+
+it("keeps the newly assessed languages when an older language selection returns late", async () => {
+  let finishOld!: (value: unknown) => void;
+  const oldAssessment = new Promise(resolve => { finishOld = resolve; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? args.request.locales!.length === 2 ? oldAssessment : Promise.resolve(eligibilityResult(args.request.locales!, "new-subset"))
+    : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "1")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByText("Assessing current build readiness…")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Assess build readiness" })).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  expect(screen.queryByText("Assessing current build readiness…")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Assess build readiness" })).toBeEnabled();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility")).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByText("new-subset: Run the current checks")).toBeVisible();
+  await act(async () => finishOld(eligibilityResult(["zh-CN", "ja"], "old-selection")));
+  expect(screen.getByText("new-subset: Run the current checks")).toBeVisible();
+  expect(screen.queryByText(/old-selection/)).not.toBeInTheDocument();
+  expect(screen.queryByText("zh-CN: Build preparation blocked")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => args.request.locales))
+    .toEqual([["zh-CN", "ja"], ["ja"]]);
+});
+
+it.each(["tab", "hidden"] as const)("releases an assessment wait when %s and reopens only its captured languages", async destination => {
+  let rejectOld!: (error: unknown) => void;
+  const oldAssessment = new Promise((_, reject) => { rejectOld = reject; });
+  const original = invoke.getMockImplementation()!;
+  let assessmentReads = 0;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? ++assessmentReads === 1 ? oldAssessment : Promise.resolve(eligibilityResult(args.request.locales!, "reopened-assessment"))
+    : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "1")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await screen.findByRole("button", { name: "first" });
+  if (destination === "tab") await user.click(screen.getByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  if (destination === "tab") await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Keep reason");
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("checkbox", { name: "ja" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  await waitFor(() => expect(assessmentReads).toBe(1));
+  if (destination === "hidden") {
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await refreshWorkbenchReads(["source"]);
+    expect(assessmentReads).toBe(1);
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  } else {
+    await user.click(screen.getByRole("tab", { name: "Review" }));
+    expect(screen.getByRole("button", { name: "Refresh current evidence" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeEnabled();
+    await refreshWorkbenchReads(["source"]);
+    expect(assessmentReads).toBe(1);
+    await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  }
+  expect(await screen.findByText("reopened-assessment: Run the current checks")).toBeVisible();
+  await act(async () => rejectOld(new Error("Old assessment unavailable")));
+  expect(screen.getByText("reopened-assessment: Run the current checks")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  expect(screen.getByRole("textbox", { name: "Reviewer name" })).toHaveValue("Reviewer A");
+  expect(screen.getByRole("button", { name: "Refresh current evidence" })).toBeEnabled();
+  if (destination === "tab") {
+    expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep reason");
+    expect(screen.getByRole("button", { name: "Approve selected revision" })).toBeEnabled();
+  }
+  expect(screen.queryByText(/This action could not complete/)).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => args.request.locales))
+    .toEqual([["zh-CN"], ["zh-CN"]]);
+});
+
+it("retries a failed assessment at exactly its original language scope and keeps review feedback separate", async () => {
+  const original = invoke.getMockImplementation()!;
+  let assessmentReads = 0;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? ++assessmentReads === 1 ? Promise.reject(new Error("Assessment unavailable"))
+      : Promise.resolve(eligibilityResult(args.request.locales!, "retried-assessment")) : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "1")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.click(screen.getByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  await user.click(screen.getByRole("button", { name: "Request changes" }));
+  expect(await screen.findByText("Enter a reason for this action.")).toBeVisible();
+  await user.type(screen.getByRole("textbox", { name: "Reason or evidence" }), "Keep validation reason");
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Build readiness could not be assessed.");
+  expect(screen.getByText("Enter a reason for this action.")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Can enter build preparation" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry assessment" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Retry assessment" }));
+  expect(await screen.findByText("retried-assessment: Run the current checks")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => args.request))
+    .toEqual([{ projectId: project.metadata.projectId, sessionToken: project.sessionToken, locales: ["ja"] },
+      { projectId: project.metadata.projectId, sessionToken: project.sessionToken, locales: ["ja"] }]);
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("Keep validation reason");
+  expect(screen.getByRole("checkbox", { name: "Approve selected entries: first" })).toBeChecked();
+  expect(screen.getByText("Enter a reason for this action.")).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity" || name === "write_review_decision")).toHaveLength(0);
+});
+
+it.each(["source", "translation", "resources", "review", "project"] as ChangeScope[])("refreshes an assessed scope on %s changes without recapturing review work or pending actions", async scope => {
+  const original = invoke.getMockImplementation()!;
+  let assessmentReads = 0;
+  invoke.mockImplementation(async (command: string, args: { request: { locales?: string[] } }) => {
+    if (command === "read_review_eligibility") return eligibilityResult(args.request.locales!, ++assessmentReads === 1 ? "initial-assessment" : "current-assessment");
+    const response = await original(command, args);
+    return command === "write_review_decision" ? { ...response, actionId: fixtureIdentity(629) } : response;
+  });
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(await screen.findByRole("checkbox", { name: "Approve selected entries: first" }));
+  await user.click(screen.getByRole("button", { name: "first" }));
+  await user.type(screen.getByRole("textbox", { name: "Reviewer name" }), "Reviewer A");
+  const reason = screen.getByRole("textbox", { name: "Reason or evidence" });
+  await user.type(reason, "A");
+  await user.click(screen.getByRole("button", { name: "Approve selected revision" }));
+  await screen.findByRole("button", { name: "Retry the same action" });
+  const originalRequest = invoke.mock.calls.find(([name]) => name === "write_review_decision")![1].request;
+  await user.type(reason, "B");
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByText("initial-assessment: Run the current checks")).toBeVisible();
+  targets.first = reviewTargetFixture({ ...targets.first, basisEvidence: undefined, basis: "changed-assessment-basis",
+    sourceText: "Changed source", translationText: "Changed translation", sourceRevisionId: fixtureIdentity(690),
+    selectionId: fixtureIdentity(691), revisionId: fixtureIdentity(692) });
+  const beforeChange = invoke.mock.calls.length;
+  await refreshWorkbenchReads([scope]);
+  expect(await screen.findByText("current-assessment: Run the current checks")).toBeVisible();
+  expect(invoke.mock.calls.slice(beforeChange).map(([name]) => name)).toEqual(["read_review_eligibility"]);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => args.request.locales))
+    .toEqual([["zh-CN"], ["zh-CN"]]);
+  expect(screen.getByRole("button", { name: "Retry the same action" })).toBeEnabled();
+  await user.click(screen.getByRole("tab", { name: "Review" }));
+  expect(screen.getByRole("textbox", { name: "Reviewer name" })).toHaveValue("Reviewer A");
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("AB");
+  expect(screen.getByRole("checkbox", { name: "Approve selected entries: first" })).toBeChecked();
+  expect(screen.queryByText("Changed source")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry the same action" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(2));
+  expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision").map(([, args]) => args.request))
+    .toEqual([originalRequest, originalRequest]);
+  expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
+  expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("AB");
+});
+
+it("hides an old ready verdict while refreshed eligibility is loading or has failed", async () => {
+  let rejectRefresh!: (error: unknown) => void;
+  const refreshAssessment = new Promise((_, reject) => { rejectRefresh = reject; });
+  const original = invoke.getMockImplementation()!;
+  let assessmentReads = 0;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? ++assessmentReads === 1 ? Promise.resolve(eligibilityResult(args.request.locales!, "ready-assessment", true))
+      : assessmentReads === 2 ? refreshAssessment : Promise.resolve(eligibilityResult(args.request.locales!, "blocked-after-refresh"))
+    : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByRole("heading", { name: "Can enter build preparation" })).toBeVisible();
+  await refreshWorkbenchReads(["translation"]);
+  expect(await screen.findByText("Assessing current build readiness…")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Can enter build preparation" })).not.toBeInTheDocument();
+  await act(async () => rejectRefresh(new Error("Current eligibility unavailable")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Build readiness could not be assessed.");
+  expect(screen.queryByRole("heading", { name: "Can enter build preparation" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry assessment" }));
+  expect(await screen.findByText("blocked-after-refresh: Run the current checks")).toBeVisible();
+});
+
+it("revokes a removed language capture without silently narrowing it or reviving it on restoration", async () => {
+  let finishOld!: (value: unknown) => void;
+  const oldAssessment = new Promise(resolve => { finishOld = resolve; });
+  const original = invoke.getMockImplementation()!;
+  let assessmentReads = 0;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? ++assessmentReads === 1 ? oldAssessment : Promise.resolve(eligibilityResult(args.request.locales!, "restored-explicit-assessment"))
+    : original(command, args));
+  const current = withLocales(["zh-CN", "ja"], "1");
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={current} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  await waitFor(() => expect(assessmentReads).toBe(1));
+  view.rerender(<ReviewWorkbench project={withLocales(["zh-CN"], "2")} disabled={false} onOpenTranslation={() => true} />);
+  await refreshWorkbenchReads(["project"]);
+  expect(screen.getByText("Assess the selected languages to see their current build readiness.")).toBeVisible();
+  expect(screen.queryByText("Assessing current build readiness…")).not.toBeInTheDocument();
+  expect(assessmentReads).toBe(1);
+  await act(async () => finishOld(eligibilityResult(["zh-CN", "ja"], "removed-language-assessment")));
+  expect(screen.queryByText(/removed-language-assessment/)).not.toBeInTheDocument();
+  view.rerender(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "3")} disabled={false} onOpenTranslation={() => true} />);
+  await refreshWorkbenchReads(["project"]);
+  expect(assessmentReads).toBe(1);
+  expect(screen.getByRole("checkbox", { name: "zh-CN" })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "ja" })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByText("restored-explicit-assessment: Run the current checks")).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => args.request.locales))
+    .toEqual([["zh-CN", "ja"], ["zh-CN"]]);
+});
+
+it("revokes an assessment through a target-language round trip before an old response returns", async () => {
+  let finishOld!: (value: unknown) => void;
+  const oldAssessment = new Promise(resolve => { finishOld = resolve; });
+  const original = invoke.getMockImplementation()!;
+  let assessmentReads = 0;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? ++assessmentReads === 1 ? oldAssessment : Promise.resolve(eligibilityResult(args.request.locales!, "explicit-after-round-trip"))
+    : original(command, args));
+  const user = userEvent.setup();
+  render(<ReviewWorkbench project={withLocales(["zh-CN", "ja"], "1")} disabled={false} onOpenTranslation={() => true} />);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  await waitFor(() => expect(assessmentReads).toBe(1));
+  const locale = screen.getByRole("combobox", { name: "Target language" });
+  expect(locale).toBeEnabled();
+  await user.selectOptions(locale, "ja");
+  expect(screen.getByText("Assess the selected languages to see their current build readiness.")).toBeVisible();
+  await user.selectOptions(locale, "zh-CN");
+  await refreshWorkbenchReads(["project"]);
+  expect(assessmentReads).toBe(1);
+  await act(async () => finishOld(eligibilityResult(["zh-CN", "ja"], "old-round-trip-assessment")));
+  expect(screen.queryByText(/old-round-trip-assessment/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Assess build readiness" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findAllByText("explicit-after-round-trip: Run the current checks")).toHaveLength(2);
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => args.request.locales))
+    .toEqual([["zh-CN", "ja"], ["zh-CN", "ja"]]);
+});
+
+it("requires a fresh explicit assessment after the Review consumer unmounts in the same session", async () => {
+  let finishOld!: (value: unknown) => void;
+  const oldAssessment = new Promise(resolve => { finishOld = resolve; });
+  const original = invoke.getMockImplementation()!;
+  let assessmentReads = 0;
+  invoke.mockImplementation((command: string, args: { request: { locales?: string[] } }) => command === "read_review_eligibility"
+    ? ++assessmentReads === 1 ? oldAssessment : Promise.resolve(eligibilityResult(args.request.locales!, "remounted-assessment"))
+    : original(command, args));
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />, project);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  await waitFor(() => expect(assessmentReads).toBe(1));
+  view.rerender(null, project);
+  await act(async () => finishOld(eligibilityResult(["zh-CN"], "unmounted-assessment")));
+  view.rerender(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />, project);
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  expect(screen.getByText("Assess the selected languages to see their current build readiness.")).toBeVisible();
+  expect(screen.queryByText(/unmounted-assessment/)).not.toBeInTheDocument();
+  expect(assessmentReads).toBe(1);
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByText("remounted-assessment: Run the current checks")).toBeVisible();
+});
+
+it("does not display another project session's late assessment", async () => {
+  let finishOld!: (value: unknown) => void;
+  const oldAssessment = new Promise(resolve => { finishOld = resolve; });
+  const original = invoke.getMockImplementation()!;
+  const next = { ...project, sessionToken: "session-2", metadata: { ...project.metadata, projectId: fixtureIdentity(800) } };
+  invoke.mockImplementation((command: string, args: { request: { sessionToken?: string; locales?: string[] } }) => command === "read_review_eligibility"
+    ? args.request.sessionToken === project.sessionToken ? oldAssessment : Promise.resolve(eligibilityResult(args.request.locales!, "next-session-assessment"))
+    : original(command, args));
+  const user = userEvent.setup();
+  const view = render(<ReviewWorkbench project={project} disabled={false} onOpenTranslation={() => true} />, project);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  await waitFor(() => expect(invoke.mock.calls.some(([name]) => name === "read_review_eligibility")).toBe(true));
+  view.rerender(null, next);
+  view.rerender(<ReviewWorkbench project={next} disabled={false} onOpenTranslation={() => true} />, next);
+  await user.click(screen.getByRole("button", { name: "Review and QA" }));
+  await user.click(screen.getByRole("tab", { name: "Build readiness" }));
+  expect(screen.getByText("Assess the selected languages to see their current build readiness.")).toBeVisible();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility")).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+  expect(await screen.findByText("next-session-assessment: Run the current checks")).toBeVisible();
+  await act(async () => finishOld(eligibilityResult(["zh-CN"], "old-session-assessment")));
+  expect(screen.getByText("next-session-assessment: Run the current checks")).toBeVisible();
+  expect(screen.queryByText(/old-session-assessment/)).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_eligibility").map(([, args]) => [args.request.projectId, args.request.sessionToken]))
+    .toEqual([[project.metadata.projectId, project.sessionToken], [next.metadata.projectId, next.sessionToken]]);
 });
 
 it("keeps the review open when its translation editor cannot be opened", async () => {

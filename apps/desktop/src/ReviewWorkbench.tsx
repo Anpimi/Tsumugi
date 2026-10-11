@@ -54,8 +54,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const [pageAfter, setPageAfter] = useState(0);
   const [historyCursor, setHistoryCursor] = useState({ unitId: "", locale: "", offset: 0 });
   const [workCursor, setWorkCursor] = useState({ locale, offset: 0 });
-  const [eligibility, setEligibility] = useState<Eligibility | null>(null);
   const [languages, setLanguages] = useState<string[]>(project.metadata.targetLocales);
+  const [assessment, setAssessment] = useState<{ projectId: string; sessionToken: string; reviewLocale: string; locales: string[] } | null>(null);
   const reason = failureReason(reasonValue) ?? "";
   const [readBusy, setReadBusy] = useState(false);
   const [leavePrompt, setLeavePrompt] = useState(false);
@@ -105,6 +105,22 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const history = historyActive && !historyFailure ? historyRead.data ?? null : null;
   const historyLoading = historyActive && historyRead.isFetching && !history;
   const historyBusy = historyActive && historyRead.isFetching;
+  const assessmentCurrent = !!assessment && assessment.projectId === session.projectId
+    && assessment.sessionToken === session.sessionToken && assessment.reviewLocale === locale && assessment.locales.length > 0
+    && assessment.locales.length === languages.length
+    && assessment.locales.every((value, index) => value === languages[index] && project.metadata.targetLocales.includes(value));
+  const eligibilityActive = open && tab === "eligibility" && assessmentCurrent;
+  const assessedLocales = assessment?.locales ?? [];
+  const eligibilityRead = useSessionQuery<Eligibility>({
+    key: ["review-eligibility", assessedLocales], scopes: ["source", "translation", "resources", "review"],
+    enabled: eligibilityActive,
+    read: () => commands.eligibility({ ...session, locales: assessedLocales }),
+  });
+  const eligibilityBusy = eligibilityActive && eligibilityRead.isFetching;
+  const eligibilityFailure = eligibilityActive && eligibilityRead.error ? errorReason(eligibilityRead.error) : null;
+  // Readiness is current evidence: do not present an older verdict while its
+  // dependencies are being checked again or the new read has failed.
+  const eligibility = eligibilityActive && !eligibilityBusy && !eligibilityFailure ? eligibilityRead.data ?? null : null;
   const busy = readBusy || busyMutation;
   const chosenCount = Object.keys(chosen).length;
   const invalidChosenLocale = Object.values(chosen).find(value => !project.metadata.targetLocales.includes(value.locale))?.locale;
@@ -187,7 +203,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
 
   useEffect(() => {
     setLanguages(current => current.filter(value => availableLocales.current.includes(value)));
-    setEligibility(null);
+    setAssessment(current => current?.locales.some(value => !availableLocales.current.includes(value)) ? null : current);
     setReadBusy(false);
   }, [targetScope]);
   useLayoutEffect(() => {
@@ -214,7 +230,7 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     const ticket = beginViewRead(false);
     const localeChanged = previousLocale.current !== locale;
     previousLocale.current = locale;
-    if (localeChanged) { setSelected(null); setPage(null); setEligibility(null); setPageAfter(0); }
+    if (localeChanged) { setSelected(null); setPage(null); setAssessment(null); setPageAfter(0); }
     const after = localeChanged ? 0 : pageAfter;
     void commands.summaryPage({ ...session, locale, query: "", scopeId: null, afterOrdinal: after, limit: 50 })
       .then(async value => { if (alive.current && generation.current === ticket && currentLocale(locale)) {
@@ -237,7 +253,6 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     void commands.target({ ...session, unitId: target.unitId, locale: target.locale }).then(latest => {
       if (!alive.current || generation.current !== ticket || !currentLocale(target.locale)) return;
       owner.observeProjection(latest, capture);
-      setEligibility(null);
     }).catch(error => {
       if (alive.current && generation.current === ticket && currentLocale(target.locale)) setReason(errorReason(error));
     });
@@ -265,16 +280,15 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); }
     } finally { if (alive.current && generation.current === ticket) setReadBusy(false); }
   }
-  async function assess() {
+  function assess() {
     if (languages.length === 0 || languages.some(value => !localeAvailable(value))) return;
-    const ticket = beginViewRead(true);
-    setNotice(null);
-    try {
-      const value = await commands.eligibility({ ...session, locales: languages });
-      if (alive.current && generation.current === ticket && languages.every(localeAvailable)) setEligibility(value);
-    } catch (error) {
-      if (alive.current && generation.current === ticket && languages.every(localeAvailable)) { setNotice("error"); setReason(errorReason(error)); }
-    } finally { if (alive.current && generation.current === ticket) setReadBusy(false); }
+    if (eligibilityActive) { void eligibilityRead.refetch(); return; }
+    const locales = [...languages];
+    // A newly confirmed selection must read current evidence even if this
+    // language set was assessed earlier in the same project session.
+    void reads.client.invalidateQueries({ queryKey: reads.key(["review-eligibility", locales]),
+      exact: true, refetchType: "none" });
+    setAssessment({ ...session, reviewLocale: locale, locales });
   }
   async function selectUnit(unitId: string, observe = false) {
     if (!currentLocale(locale)) return;
@@ -321,7 +335,6 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
       if (alive.current && generation.current === ticket && currentLocale(locale)) {
         setPage(newPage);
         if (newSelected && capture) owner.observeProjection(newSelected, capture);
-        setEligibility(null);
       }
     } catch (error) {
       if (alive.current && generation.current === ticket && currentLocale(locale)) { setNotice("error"); setReason(errorReason(error)); }
@@ -454,8 +467,14 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
             {work ? <><p>{t("review.workCount", { count: work.total })}</p>{work.items.length === 0 ? <p>{t("review.workEmpty")}</p> : work.items.map(item => <div key={item.unitId} className="review-work-item"><button className="text-button" disabled={!targetAvailable} onClick={() => void selectUnit(item.unitId)}>{item.nativeKey}</button><ul>{[...new Set(item.reasons.map(queueReason))].map(value => <li key={value}>{value}</li>)}</ul></div>)}</> : targetAvailable && !workLoading && !workFailure ? <p>{t("review.selectEntry")}</p> : null}
             {work || workOffset > 0 ? <div className="form-actions"><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || workOffset === 0} onClick={() => setWorkCursor({ locale, offset: 0 })}>{t("review.previousPage")}</button><button className="secondary-button" disabled={busy || workBusy || !targetAvailable || !work || work.nextOffset === null} onClick={() => { if (work?.nextOffset != null) setWorkCursor({ locale, offset: work.nextOffset }); }}>{t("review.nextPage")}</button></div> : null}
           </section> : null}
-          {tab === "eligibility" ? <section><p>{t("review.policy")}</p><p>{t("review.buildWarning")}</p><fieldset><legend>{t("review.chooseLanguages")}</legend>{project.metadata.targetLocales.map(value => <label key={value}><input type="checkbox" checked={languages.includes(value)} onChange={event => { setEligibility(null); setLanguages(previous => event.target.checked ? [...previous, value] : previous.filter(item => item !== value)); }} />{value}</label>)}</fieldset>
-            <button className="primary-button" disabled={busy || languages.length === 0 || languages.some(value => !project.metadata.targetLocales.includes(value))} onClick={() => void assess()}>{t("review.assess")}</button>
+          {tab === "eligibility" ? <section><p>{t("review.policy")}</p><p>{t("review.buildWarning")}</p><fieldset><legend>{t("review.chooseLanguages")}</legend>{project.metadata.targetLocales.map(value => <label key={value}><input type="checkbox" checked={languages.includes(value)} onChange={event => { setAssessment(null); setLanguages(previous => event.target.checked ? [...previous, value] : previous.filter(item => item !== value)); }} />{value}</label>)}</fieldset>
+            <button className="primary-button" disabled={busy || eligibilityBusy || languages.length === 0 || languages.some(value => !project.metadata.targetLocales.includes(value))} onClick={assess}>{t("review.assess")}</button>
+            {eligibilityBusy ? <p role="status">{t("review.eligibilityLoading")}</p> : null}
+            {eligibilityFailure && !eligibilityBusy ? <div role="alert">{t("review.eligibilityUnavailable")}
+              <CommandFailureDetails failure={eligibilityFailure} />
+              <button className="secondary-button" onClick={() => void eligibilityRead.refetch()}>{t("review.eligibilityRetry")}</button>
+            </div> : null}
+            {!assessmentCurrent ? <p>{t(languages.length === 0 ? "review.eligibilityChooseLanguages" : "review.eligibilityNotAssessed")}</p> : null}
             {eligibility ? <><h3>{t(eligibility.ready ? "review.ready" : "review.blocked")}</h3>{eligibility.locales.map(value => <div key={value.locale} className="review-eligibility"><h4>{value.locale}: {t(value.ready ? "review.ready" : "review.blocked")}</h4>
               <p>{t("review.blockers")}: {value.blockerCount}; {t("review.exceptions")}: {value.exceptionCount}</p>
               <ul>{value.blockers.map((item, index) => <li key={`${index}:${item.unitId}:${item.code}`}>{item.nativeKey}: {eligibilityReasonLabel(item)}</li>)}</ul>
