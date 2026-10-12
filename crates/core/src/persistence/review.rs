@@ -3260,9 +3260,38 @@ pub(super) mod tests {
         );
     }
 
+    fn assert_unsupported_review_snapshot(path: &std::path::Path, version: i64) {
+        let database = path.join("project.sqlite3");
+        let before = std::fs::read(&database).unwrap();
+        let entries = || {
+            std::fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<std::io::Result<std::collections::BTreeSet<_>>>()
+                .unwrap()
+        };
+        let before_entries = entries();
+        let error = ProjectStore::open(path).unwrap_err();
+        assert_eq!(error.code(), crate::PersistenceErrorCode::UnsupportedSchema);
+        assert_eq!(error.found_schema_version(), Some(version));
+        assert_eq!(std::fs::read(&database).unwrap(), before);
+        assert_eq!(entries(), before_entries);
+        let unchanged = Connection::open_with_flags(
+            &database,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        assert_eq!(
+            unchanged
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            version
+        );
+    }
+
     #[test]
-    fn schema_six_migration_keeps_a_recoverable_backup() {
-        let (directory, mut store, project, _) = fixture();
+    fn schema_six_snapshot_is_refused_without_ddl_or_backup() {
+        let (directory, mut store, _, _) = fixture();
         let connection = store.connection_mut().unwrap();
         crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
         for (name, _) in TABLES.iter().rev() {
@@ -3276,91 +3305,66 @@ pub(super) mod tests {
         crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
         connection.pragma_update(None, "user_version", 6).unwrap();
         drop(store);
-        let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
-        assert_eq!(
-            reopened.review_page(project, "zh-CN", 0, 10).unwrap().total,
-            2
-        );
-        let backups: Vec<_> = std::fs::read_dir(directory.path().join("project"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().contains("pre-v6"))
-            .collect();
-        assert_eq!(backups.len(), 1);
-        let backup = Connection::open_with_flags(
-            backups[0].path(),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )
-        .unwrap();
-        assert_eq!(
-            backup
-                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            6
-        );
+        assert_unsupported_review_snapshot(&directory.path().join("project"), 6);
     }
 
     #[test]
-    fn schema_six_crash_child() {
-        let Ok(path) = std::env::var("TSUMUGI_M06_CRASH_PROJECT") else {
+    fn schema_six_refusal_child() {
+        let Ok(path) = std::env::var("TSUMUGI_REVIEW_UNSUPPORTED_PROJECT") else {
             return;
         };
-        let _ = ProjectStore::open(path);
-        panic!("migration crash hook did not run");
+        let proof = std::env::var("TSUMUGI_REVIEW_UNSUPPORTED_PROOF").unwrap();
+        assert_unsupported_review_snapshot(std::path::Path::new(&path), 6);
+        std::fs::write(proof, b"unsupported-schema:6").unwrap();
     }
 
     #[test]
-    fn schema_six_migration_recovers_across_process_commit_boundaries() {
-        for (point, expected) in [
-            ("before-review-migration-commit", 6),
-            ("after-review-migration-commit", 7),
-        ] {
-            let (directory, mut store, project, _) = fixture();
-            let path = directory.path().join("project");
-            let connection = store.connection_mut().unwrap();
-            crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
-            for (name, _) in TABLES.iter().rev() {
-                connection
-                    .execute_batch(&format!("DROP TABLE {name}"))
-                    .unwrap();
-            }
+    fn schema_six_process_reopen_refuses_old_snapshot_without_changes() {
+        let (directory, mut store, _, _) = fixture();
+        let path = directory.path().join("project");
+        let connection = store.connection_mut().unwrap();
+        crate::persistence::release::drop_for_legacy_fixture(connection).unwrap();
+        for (name, _) in TABLES.iter().rev() {
             connection
-                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+                .execute_batch(&format!("DROP TABLE {name}"))
                 .unwrap();
-            crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-            connection.pragma_update(None, "user_version", 6).unwrap();
-            drop(store);
-            let child = std::process::Command::new(std::env::current_exe().unwrap())
+        }
+        connection
+            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+            .unwrap();
+        crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
+        connection.pragma_update(None, "user_version", 6).unwrap();
+        drop(store);
+        let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+        for replay in 0..2 {
+            let proof = directory.path().join(format!("refusal-{replay}.txt"));
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "persistence::review::tests::schema_six_crash_child",
+                    "persistence::review::tests::schema_six_refusal_child",
                 ])
-                .env("TSUMUGI_M06_CRASH_PROJECT", &path)
-                .env("TSUMUGI_MIGRATION_CRASH", point)
-                .output()
+                .env("TSUMUGI_REVIEW_UNSUPPORTED_PROJECT", &path)
+                .env("TSUMUGI_REVIEW_UNSUPPORTED_PROOF", &proof)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
                 .unwrap();
-            assert!(!child.status.success());
-            let database = Connection::open(path.join("project.sqlite3")).unwrap();
-            assert_eq!(
-                database
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                expected
-            );
-            drop(database);
-            let reopened = ProjectStore::open(&path).unwrap();
-            assert_eq!(
-                reopened.review_page(project, "zh-CN", 0, 10).unwrap().total,
-                2
-            );
-            assert_eq!(
-                std::fs::read_dir(&path)
-                    .unwrap()
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.file_name().to_string_lossy().contains("pre-v6"))
-                    .count(),
-                if expected == 6 { 2 } else { 1 }
-            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("unsupported snapshot child timed out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert!(status.success());
+            assert_eq!(std::fs::read(&proof).unwrap(), b"unsupported-schema:6");
+            assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), before);
+            assert_unsupported_review_snapshot(&path, 6);
         }
     }
 
@@ -4143,7 +4147,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn approved_locale_build_preserves_history_across_schema_nine_upgrade_and_reopen() {
+    fn approved_locale_build_preserves_current_history_and_refuses_schema_nine() {
         use crate::{
             BuildLocaleChoice, ReleaseAdoptionHandler,
             content::{BuildManifest, BuildOutput, BuildRunner, validate_build_output},
@@ -4410,16 +4414,18 @@ pub(super) mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        let before_upgrade = history_rows(store.connection().unwrap());
-        assert!(before_upgrade.iter().all(|rows| !rows.is_empty()));
+        let before_reopen = history_rows(store.connection().unwrap());
+        assert!(before_reopen.iter().all(|rows| !rows.is_empty()));
         drop(runtime);
         drop(store);
-        let legacy = Connection::open(directory.path().join("project/project.sqlite3")).unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&legacy).unwrap();
-        legacy.pragma_update(None, "user_version", 9).unwrap();
-        drop(legacy);
         let reopened = ProjectStore::open(directory.path().join("project")).unwrap();
-        assert_eq!(history_rows(reopened.connection().unwrap()), before_upgrade);
+        assert_eq!(history_rows(reopened.connection().unwrap()), before_reopen);
+        assert_eq!(
+            reopened.connection().unwrap()
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            crate::persistence::SCHEMA_VERSION
+        );
         assert_eq!(
             reopened.release_artifact(release_id, "zh-CN").unwrap().1,
             bytes
@@ -4431,6 +4437,20 @@ pub(super) mod tests {
         );
         assert!(!reopened.list_deliveries(release_id).unwrap()[0].overwrite_conflicts);
         drop(reopened);
+        let database = directory.path().join("project/project.sqlite3");
+        let current_snapshot = std::fs::read(&database).unwrap();
+        let legacy = Connection::open(&database).unwrap();
+        crate::persistence::restore_legacy_translation_fixture(&legacy).unwrap();
+        legacy.pragma_update(None, "user_version", 9).unwrap();
+        drop(legacy);
+        assert_unsupported_review_snapshot(&directory.path().join("project"), 9);
+        // Restore this owned test fixture's saved current-format bytes. Opening the
+        // unsupported snapshot above must never perform an upgrade or repair.
+        std::fs::write(&database, current_snapshot).unwrap();
+        let restored = ProjectStore::open(directory.path().join("project")).unwrap();
+        assert_eq!(history_rows(restored.connection().unwrap()), before_reopen);
+        assert_eq!(restored.release_artifact(release_id, "zh-CN").unwrap().1, bytes);
+        drop(restored);
         let moved = directory.path().join("moved-project");
         std::fs::rename(directory.path().join("project"), &moved).unwrap();
         let reopened = ProjectStore::open(&moved).unwrap();

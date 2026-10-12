@@ -8,7 +8,7 @@ import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
 import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
-import { executionCommands, type AttemptDetail } from "./executionCommands";
+import { executionCommands, type AttemptDetail, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { validateResponseAttempt } from "./generated/execution.validators";
@@ -20,10 +20,12 @@ const project: ProjectView = { ...fixture.session, locator: "isolated", reconcil
 const target: CancellationTarget = { taskId: fixture.detail.taskId, attemptId: fixture.detail.attemptId, origin: "tasks" };
 let owner: ReturnType<typeof useExecutionTaskSession>;
 let translation: ReturnType<typeof useTranslationDraftSession>;
+let sessionReads: ReturnType<typeof useSessionReads>;
 function Probe() {
   const value = useExecutionTaskSession();
   const draft = useTranslationDraftSession();
-  useLayoutEffect(() => { owner = value; translation = draft; });
+  const reads = useSessionReads();
+  useLayoutEffect(() => { owner = value; translation = draft; sessionReads = reads; });
   return <TaskCancellationFeedback origin="tasks" />;
 }
 function FailedReadProbe() {
@@ -45,6 +47,7 @@ beforeEach(async () => {
   invoke.mockImplementation(async command => {
     if (command === "create_execution_identity") return fixtureIdentity(identity++);
     if (command === "cancel_execution_task") return "1";
+    if (command === "read_execution_task_view") return { ...fixture.task, cancellationRevision: "0" };
     throw new Error(command);
   });
 });
@@ -266,21 +269,127 @@ it("does not let an already recorded cancellation conceal the same task's new un
   expect(owner.activity?.phase).toBe("unknown"); expect(owner.unresolved()).toBe(true);
 });
 
-it("keeps a missing original recovery outcome unresolved through remount and newer projections without retrying it", async () => {
+it("keeps a missing original typed recovery outcome unresolved through remount and newer projections without retrying it", async () => {
   const view = render(<Probe />, project);
   const value = applicationDetail(); value.items[0].status.execution = "failed"; value.items[0].status.validation = "absent";
   value.recovery.units[0].actions = ["retry-safe-failure"]; value.recovery.units[0].remainingItemIds = [...value.recovery.units[0].itemIds];
   await act(async () => { await owner.begin(value, value.recovery.units[0], "retry-safe-failure", 0); });
-  invoke.mockRejectedValueOnce(new Error("New attempt created, ACK lost"));
+  invoke.mockResolvedValueOnce(fixtureIdentity(90)).mockRejectedValueOnce(new Error("New attempt created, ACK lost"));
   await act(async () => { await owner.submit(); });
-  const request = owner.activity?.recoveryRequest;
-  expect(request).toEqual({ ...fixture.recover, action: "retry-safe-failure" });
+  const request = owner.activity?.continuationRequest;
+  expect(request).toEqual({ ...fixture.session, action: { actionId: fixtureIdentity(90), projectId: fixture.session.projectId,
+    sourceAttemptId: value.attemptId, unitId: value.recovery.units[0].unitId, kind: "retry-safe-failure",
+    expectedCancellationRevision: "0", itemIds: value.recovery.units[0].remainingItemIds } });
   view.rerender(null, project); view.rerender(<Probe />, project); await refreshWorkbenchReads();
-  await act(async () => { await owner.submit(); await owner.retryAdoption(); owner.dismiss(); });
-  expect(owner.activity).toMatchObject({ phase: "unknown", recoveryRequest: request });
-  expect(calls("recover_execution")).toHaveLength(1);
-  expect(calls("create_execution_identity")).toHaveLength(0);
+  await act(async () => { await owner.submit(); await owner.retryAdoption(); await owner.retryContinuation(); owner.dismiss(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", continuationRequest: request, retryAllowed: false });
+  expect(calls("continue_execution").map(([, payload]) => payload.request)).toEqual([request]);
+  expect(calls("recover_execution")).toHaveLength(0);
+  expect(calls("create_execution_identity")).toHaveLength(1);
   expect(owner.unresolved()).toBe(true);
+});
+
+function continuationDetail(): AttemptDetail {
+  const value = structuredClone(fixture.detail) as AttemptDetail;
+  Object.assign(value.items[0].status, { execution: "queued", cancellationRequested: false });
+  Object.assign(value.progress, { unknown: 0, queued: 1 });
+  Object.assign(value.recovery.units[0], { actions: ["resume-undispatched"], blockedReason: null });
+  return value;
+}
+function continuationReceipt(request: ContinuationRequest): ContinuationReceipt {
+  return { ...structuredClone(fixture.continuationReceipt), action: { ...request.action, itemIds: [...request.action.itemIds].sort() },
+    taskId: target.taskId, operation: "sample-update", attemptId: fixtureIdentity(290), sequence: "2" };
+}
+async function confirmContinuation(value = continuationDetail(), offset = 0) {
+  await act(async () => { await owner.begin(value, value.recovery.units[0], "resume-undispatched", offset); });
+  expect(owner.activity?.phase).toBe("confirming");
+}
+
+it("freezes a legitimate zero continuation basis before a delayed identity and preserves it after consumer remount", async () => {
+  const view = render(<Probe />, project); const detail = continuationDetail(); await confirmContinuation(detail);
+  let identify!: (value: unknown) => void;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: { request: ContinuationRequest }) => {
+    if (command === "create_execution_identity") return new Promise(resolve => { identify = resolve; });
+    if (command === "continue_execution") return Promise.resolve(continuationReceipt(payload.request));
+    if (command === "read_execution_task_view") return Promise.resolve({ ...fixture.task, cancellationRevision: "9" });
+    return original(command, payload);
+  });
+  let pending!: Promise<void>;
+  act(() => { pending = owner.submit(); void owner.submit(); void owner.cancel(target); });
+  expect(owner.canCancel(target)).toBe(false);
+  detail.recovery.units[0].remainingItemIds.length = 0; detail.recovery.units[0].scopes[0].id = "Changed caller";
+  view.rerender(null, project); await refreshWorkbenchReads();
+  await act(async () => { identify(fixtureIdentity(291)); await pending; });
+  view.rerender(<Probe />, project);
+  const request: ContinuationRequest = { ...fixture.session, action: { actionId: fixtureIdentity(291), projectId: fixture.session.projectId,
+    sourceAttemptId: target.attemptId, unitId: fixture.detail.recovery.units[0].unitId, kind: "resume-undispatched",
+    expectedCancellationRevision: "0", itemIds: fixture.detail.recovery.units[0].remainingItemIds } };
+  expect(owner.activity).toMatchObject({ phase: "recorded", continuationRequest: request, continuation: continuationReceipt(request) });
+  expect(owner.activity?.intent.unit.scopes[0].id).toBe("Sample A");
+  expect(Object.isFrozen(owner.activity?.continuationRequest?.action.itemIds)).toBe(true);
+  expect(calls("read_execution_task_view")).toHaveLength(1);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("continue_execution").map(([, payload]) => payload.request)).toEqual([request]);
+  expect(calls("cancel_execution_task")).toHaveLength(0); expect(calls("recover_execution")).toHaveLength(0);
+  expect(owner.unresolved()).toBe(false);
+});
+
+it.each(["retired", "replaced"] as const)("stops a late typed continuation identity when the original owner is %s", async boundary => {
+  const view = render(<Probe />, project); await confirmContinuation();
+  let identify!: (value: unknown) => void;
+  invoke.mockImplementation(command => command === "create_execution_identity" ? new Promise(resolve => { identify = resolve; }) : Promise.reject(new Error(command)));
+  const originalOwner = owner;
+  let pending!: Promise<void>; act(() => { pending = originalOwner.submit(); });
+  const captured = originalOwner.currentActivity();
+  if (boundary === "retired") act(() => sessionReads.retire());
+  else view.rerender(<Probe />, { ...project, sessionToken: "replacement-session" });
+  await act(async () => { identify(fixtureIdentity(292)); await pending; await originalOwner.submit(); await originalOwner.retryContinuation(); });
+  expect(originalOwner.currentActivity()).toBe(captured);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("continue_execution")).toHaveLength(0);
+  expect(calls("recover_execution")).toHaveLength(0);
+  if (boundary === "replaced") expect(owner.activity).toBeNull();
+});
+
+it.each(["task", "project", "operation", "revision"] as const)("rejects invalid continuation %s evidence before identity allocation", async field => {
+  render(<Probe />, project);
+  const task = { ...fixture.task, cancellationRevision: "0" };
+  if (field === "task") task.taskId = fixtureIdentity(293);
+  if (field === "project") task.projectId = fixtureIdentity(294);
+  if (field === "operation") task.operation = "another-operation";
+  if (field === "revision") task.cancellationRevision = "01";
+  invoke.mockResolvedValueOnce(task);
+  const value = continuationDetail();
+  await act(async () => { await owner.begin(value, value.recovery.units[0], "resume-undispatched", 0); await owner.submit(); });
+  expect(owner.activity?.phase).toBe("rejected");
+  expect(calls("create_execution_identity")).toHaveLength(0); expect(calls("continue_execution")).toHaveLength(0);
+});
+
+it("requires exact absence after every uncertain continuation and never refreshes the original cancellation basis", async () => {
+  const view = render(<Probe />, project); await confirmContinuation();
+  invoke.mockResolvedValueOnce(fixtureIdentity(295)).mockRejectedValueOnce(new Error("First continuation ACK lost"));
+  await act(async () => { await owner.submit(); });
+  const request = owner.activity!.continuationRequest!;
+  invoke.mockResolvedValueOnce({ ...continuationReceipt(request), operation: "another-operation" });
+  await act(async () => { await owner.checkContinuation(); await owner.retryContinuation(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", retryAllowed: false, uncertain: true, continuationRequest: request });
+  expect(calls("continue_execution")).toHaveLength(1);
+  invoke.mockResolvedValueOnce(null); await act(async () => { await owner.checkContinuation(); });
+  expect(owner.activity?.retryAllowed).toBe(true);
+  view.rerender(null, project); view.rerender(<Probe />, project);
+  invoke.mockRejectedValueOnce({ code: "cancelled", outcome: "rejected", stage: "execution-recover", recoveryRequired: false, reason: "continuation-cancellation-basis" });
+  await act(async () => { await owner.retryContinuation(); await owner.retryContinuation(); owner.dismiss(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", retryAllowed: false, uncertain: true, continuationRequest: request });
+  invoke.mockResolvedValueOnce(null); await act(async () => { await owner.checkContinuation(); });
+  invoke.mockRejectedValueOnce(new Error("Second continuation ACK lost"));
+  await act(async () => { await owner.retryContinuation(); await owner.retryContinuation(); });
+  expect(owner.activity?.retryAllowed).toBe(false); expect(owner.unresolved()).toBe(true);
+  invoke.mockResolvedValueOnce(continuationReceipt(request)); await act(async () => { await owner.checkContinuation(); });
+  expect(owner.activity).toMatchObject({ phase: "recorded", continuationRequest: request, continuation: continuationReceipt(request) });
+  expect(calls("continue_execution").map(([, payload]) => payload.request)).toEqual([request, request, request]);
+  expect(calls("create_execution_identity")).toHaveLength(1); expect(calls("read_execution_task_view")).toHaveLength(1);
+  expect(calls("read_execution_continuation").map(([, payload]) => payload.request)).toEqual(Array(4).fill({ ...fixture.session, actionId: request.action.actionId }));
 });
 
 it.each(["source-import", "translation-import", "ai-translation", "arena-translation"])("keeps %s adoption on its dedicated confirmation route", async operation => {
@@ -303,6 +412,33 @@ function spanningDetail() {
     recovery: { attemptId: value.attemptId, units: [structuredClone(unit)] } });
   return { page, items, unit };
 }
+
+it("captures a complete cross-page continuation group and preserves its original remaining-item order on replay", async () => {
+  render(<Probe />, project);
+  const { page: applicationPage, unit: applicationUnit } = spanningDetail();
+  const unit = { ...applicationUnit, actions: ["resume-undispatched" as const], resultIds: [], remainingItemIds: [...applicationUnit.itemIds].reverse() };
+  const page = (offset: number): AttemptDetail => {
+    const value = applicationPage(offset);
+    return { ...value, progress: { ...value.progress, succeeded: 0, queued: 101 },
+      items: value.items.map(item => ({ ...item, resultId: null, status: { ...item.status, execution: "queued" as const, validation: "absent" as const } })),
+      recovery: { ...value.recovery, units: [unit] } };
+  };
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: { request: { offset?: number } }) => command === "read_execution_attempt"
+    ? Promise.resolve(page(payload.request.offset!)) : original(command, payload));
+  await confirmContinuation(page(100), 100);
+  expect(owner.activity?.intent.items.map(item => item.scope.id)).toEqual(["Sample A", "Item 100"]);
+  expect(calls("read_execution_attempt").map(([, payload]) => payload.request)).toEqual([{ ...fixture.session, attemptId: target.attemptId, offset: 0, limit: 100 }]);
+  invoke.mockResolvedValueOnce(fixtureIdentity(296)).mockRejectedValueOnce(new Error("Continuation ACK lost"));
+  await act(async () => { await owner.submit(); });
+  const request = owner.activity!.continuationRequest!;
+  expect(request.action.itemIds).toEqual(unit.remainingItemIds);
+  invoke.mockResolvedValueOnce(null); await act(async () => { await owner.checkContinuation(); });
+  invoke.mockResolvedValueOnce(continuationReceipt(request)); await act(async () => { await owner.retryContinuation(); });
+  expect(owner.activity?.phase).toBe("recorded");
+  expect(calls("continue_execution").map(([, payload]) => payload.request)).toEqual([request, request]);
+  expect(calls("create_execution_identity")).toHaveLength(1); expect(calls("read_execution_task_view")).toHaveLength(1);
+});
 
 it("captures a complete cross-page unit from a later page and preserves reverse-order requests on every replay", async () => {
   render(<Probe />, project); installApplication();

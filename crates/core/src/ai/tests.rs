@@ -233,8 +233,43 @@ fn config(url: String) -> AiConfig {
         ..Default::default()
     }
 }
+fn assert_unsupported_snapshot_unchanged(path: &std::path::Path, version: i64) {
+    let database = path.join("project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let entries = || {
+        std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<std::collections::BTreeSet<_>>>()
+            .unwrap()
+    };
+    let before_entries = entries();
+    let error = ProjectStore::open(path).unwrap_err();
+    assert_eq!(error.code(), crate::PersistenceErrorCode::UnsupportedSchema);
+    assert_eq!(error.found_schema_version(), Some(version));
+    assert_eq!(std::fs::read(&database).unwrap(), before);
+    assert_eq!(entries(), before_entries);
+    let unchanged = rusqlite::Connection::open_with_flags(
+        &database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        unchanged
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        version
+    );
+    assert_eq!(
+        unchanged
+            .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+}
+
 #[test]
-fn direct_ai_schema_nine_preserves_manual_history_and_backup() {
+fn direct_ai_current_manual_history_reopens_and_schema_nine_is_refused() {
     let (temp, mut store, rows) = source_project();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let saved = store
@@ -249,11 +284,6 @@ fn direct_ai_schema_nine_preserves_manual_history_and_backup() {
         })
         .unwrap();
     store.close().unwrap();
-    let connection =
-        rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
-    crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-    connection.pragma_update(None, "user_version", 9).unwrap();
-    drop(connection);
     let reopened = ProjectStore::open(temp.path().join("project")).unwrap();
     let history = reopened
         .translation_history(project, rows[0].unit_id.unwrap(), "zh-CN", 0, 10)
@@ -264,31 +294,13 @@ fn direct_ai_schema_nine_preserves_manual_history_and_backup() {
         "Preserved manual translation"
     );
     reopened.close().unwrap();
-    let backup = std::fs::read_dir(temp.path().join("project"))
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .find(|p| {
-            p.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("project.sqlite3.pre-v9-")
-        })
-        .unwrap();
-    let connection =
-        rusqlite::Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .unwrap();
-    assert_eq!(
-        connection
-            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .unwrap(),
-        9
-    );
-    assert_eq!(
-        connection
-            .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
-            .unwrap(),
-        "ok"
-    );
+    let path = temp.path().join("project");
+    let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    connection.execute_batch("DROP TABLE execution_continuations;").unwrap();
+    crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
+    connection.pragma_update(None, "user_version", 9).unwrap();
+    drop(connection);
+    assert_unsupported_snapshot_unchanged(&path, 9);
 }
 #[test]
 fn direct_ai_wire_partial_budget_candidates_and_reopen() {
@@ -366,9 +378,10 @@ fn direct_ai_wire_partial_budget_candidates_and_reopen() {
     assert_eq!(history.total, 1);
     assert!(history.current.is_none());
     assert_eq!(history.rows[0].origin_kind, crate::TranslationOrigin::Ai);
+    let continuation = crate::execution::test_continuation_action(&store, view.attempt_id, &[success.item_id]);
     assert!(
         runtime
-            .resume(&mut store, view.attempt_id, &[success.item_id])
+            .resume(&mut store, &continuation)
             .is_err()
     );
     drop(runtime);

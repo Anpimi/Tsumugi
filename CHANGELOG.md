@@ -37,10 +37,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
-- Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization; upgraded historical operations preserve uncertain exposure and do not replay automatically. Earlier AI/Arena requests without durable per-request evidence hold their full configured limit after upgrade.
+- Execution recovery uses the host-verified effect policy captured at enqueue. External operations require a fresh explicit preview or authorization. Reopening preserves durable request reservations and uncertain exposure without replaying old queued work.
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically.
-- Project storage now uses schema 12. Valid schema 3 through 11 projects receive a SQLite backup before automatic upgrade. Schema 1 and 2 projects from early development are unsupported; preserve their directories and create a new project to reimport their source files. Unsupported or corrupt databases are rejected without reset. Downgrading an upgraded project is not supported.
+- Project storage now uses schema 13, with exact recovery-intent associations committed atomically with their new execution attempt. Other development schemas are unsupported and are refused before schema changes; preserve their directories and create a new project to reimport the original source files. Current projects reopen with full integrity checks. Unsupported or corrupt databases are never reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
@@ -90,6 +90,9 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Target-language changes recheck the active translation scope. Drafts for removed languages remain available with a return-to-settings recovery action, while new reads and writes for an unavailable language are blocked.
 
 - Ctrl+S and Command+S save the active translation draft from its list or reference panel. Project-name shortcuts use the same required-name validation as the save button and keep invalid input available for correction. Composition, modal dialogs, pending saves and unknown outcomes prevent unintended shortcut mutations; an uncertain translation save can only be checked or retried explicitly.
+- Resuming undispatched work and retrying safe failures retain the original action, selected items and cancellation basis after a lost confirmation. Exact lookup or replay returns the recorded attempt without another enqueue or dispatch. Modified requests conflict; an unrecorded request cannot refresh its cancellation basis. The Tasks view can inspect the original recovery history. Anonymous resume/retry IPC calls are now refused; outcome queries and output validation keep their existing behavior.
+
+- A recorded task cancellation remains unconfirmed if reading a running worker's state fails. Rechecking the original request preserves its cancellation revision and does not cancel explicitly resumed work.
 
 - Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
 

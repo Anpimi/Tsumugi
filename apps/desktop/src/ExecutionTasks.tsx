@@ -6,9 +6,15 @@ import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, u
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ProjectView } from "./projectCommands";
-import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ResultEnvelope } from "./executionCommands";
+import { executionCommands as commands, executionContext, matchesContinuation, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ResultEnvelope, type ContinuationPage, type ContinuationReceipt } from "./executionCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string; cancellation?: CancellationTarget };
+type HistorySelection = { id: number; record: ContinuationReceipt };
+function sameContinuationRecord(record: ContinuationReceipt, found: ContinuationReceipt) {
+  return matchesContinuation(record.action, found) && found.attemptId === record.attemptId
+    && found.taskId === record.taskId && found.operation === record.operation && found.sequence === record.sequence
+    && found.requestDigest === record.requestDigest && found.inputDigest === record.inputDigest && found.sourceInputDigest === record.sourceInputDigest;
+}
 export interface TasksHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
 export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; ref?: Ref<TasksHandle> }) {
   const { t } = useTranslation();
@@ -36,6 +42,9 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const [attemptId, setAttemptId] = useWorkbenchState<string | null>("tasks", "attemptId", null);
   const [cursor, setCursor] = useWorkbenchState("tasks", "cursor", "0");
   const [attemptCursor, setAttemptCursor] = useWorkbenchState("tasks", "attemptCursor", "0");
+  const [continuationCursor, setContinuationCursor] = useWorkbenchState("tasks", "continuationCursor", "0");
+  const [historySelection, setHistorySelection] = useWorkbenchState<HistorySelection | null>("tasks", "historySelection", null);
+  const historyIntent = useWorkbenchRef("tasks", "historyIntent", 0);
   const [offset, setOffset] = useWorkbenchState("tasks", "offset", 0);
   const busy = cancellations.busy;
   const activity = cancellations.activity;
@@ -83,6 +92,36 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     },
   });
   const tasks = projection.data?.tasks ?? [], attempts = projection.data?.attempts ?? [], detail = projection.data?.detail ?? null;
+  const continuationHistory = useSessionQuery<ContinuationPage>({
+    key: ["execution-continuations", detail?.attemptId ?? null, continuationCursor], scopes: ["execution"], enabled: active && !busy && detail !== null,
+    read: () => {
+      if (!detail) throw new Error("No selected execution attempt");
+      return commands.continuations({ ...context, sourceAttemptId: detail.attemptId, after: continuationCursor, limit: 50 }).then(page => {
+        if (page.receipts.some(receipt => receipt.taskId !== detail.taskId || receipt.operation !== detail.operation)) throw new Error("Invalid continuation history task");
+        return page;
+      });
+    },
+  });
+  const selectedContinuation = useSessionQuery<HistorySelection>({
+    key: ["execution-continuation", historySelection], scopes: ["execution"], enabled: active && !busy && pendingAction === null && historySelection !== null,
+    read: async () => {
+      if (!historySelection) throw new Error("No recorded continuation selected");
+      const found = await commands.continuation({ ...context, actionId: historySelection.record.action.actionId });
+      if (!found || !sameContinuationRecord(historySelection.record, found)) throw new Error("Invalid recorded continuation");
+      return { id: historySelection.id, record: found };
+    },
+  });
+  useEffect(() => {
+    const found = selectedContinuation.data;
+    // A previous successful lookup cannot complete a new selection or a remount's fresh read.
+    if (!active || busy || pendingAction || selectedContinuation.status !== "success" || selectedContinuation.fetchStatus !== "idle"
+      || selectedContinuation.isFetching || selectedContinuation.error !== null || !found || !historySelection
+      || found.id !== historySelection.id || !sameContinuationRecord(historySelection.record, found.record)
+      || !detail || detail.attemptId !== historySelection.record.action.sourceAttemptId || detail.taskId !== historySelection.record.taskId
+      || detail.operation !== historySelection.record.operation) return;
+    setAttemptId(found.record.attemptId); setContinuationCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setHistorySelection(null);
+  }, [selectedContinuation.data, selectedContinuation.status, selectedContinuation.fetchStatus, selectedContinuation.isFetching,
+    selectedContinuation.error, historySelection, active, busy, pendingAction, detail?.attemptId, detail?.taskId, detail?.operation]);
   const cancelTarget: CancellationTarget | null = detail ? { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } : null;
   const cancellation = confirmation?.cancellation ? cancellations.current(confirmation.cancellation.taskId) : undefined;
   const cancelling = cancellation?.phase === "preparing" || cancellation?.phase === "pending";
@@ -91,7 +130,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   useEffect(() => { const error = projection.error ?? projection.data?.runtime.error; if (error) showError(error); }, [projection.error, projection.data?.runtime.error]);
 
   function selectTask(id: string | null) {
-    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setFailure(null);
+    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setReceipt(null); setFailure(null);
   }
   async function execute(choice: Confirmation) {
     if (choice.action === "cancel") {
@@ -107,16 +146,17 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     await cancellations.submit();
   }
   const recovered = activity?.phase === "recorded" ? activity.recovery : null;
+  const continued = activity?.phase === "recorded" ? activity.continuation : null;
   useEffect(() => {
-    if (recovered && activity) {
-      const marker = `${activity.intent.attemptId}:${activity.prepare?.actionId ?? ""}:${recovered.attemptId}`;
+    if ((recovered || continued) && activity) {
+      const marker = `${activity.intent.attemptId}:${continued?.action.actionId ?? activity.prepare?.actionId ?? ""}:${continued?.attemptId ?? recovered!.attemptId}`;
       if (handledRecovery.current === marker) return;
       handledRecovery.current = marker;
       setTaskId(activity.intent.taskId);
-      setAttemptId(recovered.attemptId); setOffset(0); setOutput(null); setReceipt(null);
-      setMessage(recovered.queryStarted ? "queryStarted" : "done");
+      setAttemptId(continued?.attemptId ?? recovered!.attemptId); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setReceipt(null);
+      setMessage(recovered?.queryStarted ? "queryStarted" : "done");
     }
-  }, [recovered]);
+  }, [recovered, continued]);
   const outputQuery = useSessionQuery<ResultEnvelope>({ key: ["task-output", outputSelection], scopes: ["execution"], enabled: active && outputSelection !== null,
     read: async () => {
       if (!outputSelection) throw new Error("No task output selected");
@@ -136,7 +176,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const output = outputQuery.data ?? null;
   const shownReceipt = receiptSelection ? receiptQuery.data : activity?.phase === "recorded" ? activity.receipt : null;
   useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
-  useEffect(() => { const error = outputQuery.error ?? receiptQuery.error; if (error) showError(error); }, [outputQuery.error, receiptQuery.error]);
+  useEffect(() => { const error = outputQuery.error ?? receiptQuery.error ?? selectedContinuation.error; if (error) showError(error); }, [outputQuery.error, receiptQuery.error, selectedContinuation.error]);
   const ownerFailure = activity?.failure ?? null;
   const displayedFailure = ownerFailure ?? failureValue;
   const displayedCode = typeof displayedFailure === "string" ? displayedFailure : displayedFailure?.code ?? null;
@@ -147,15 +187,19 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     {displayedFailure ? <div role="alert" tabIndex={-1} ref={errorRegion}><p>{t(`execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={displayedFailure} /></div> : null}
     {activity?.phase === "capturing" ? <p role="status">{t("execution.capturing")}</p> : null}
     {activity?.phase === "unknown" ? <section aria-label={t("execution.originalAction")}>
-      <p role="status">{t(activity.intent.action === "adopt-result" ? "execution.adoptionUnknown" : "execution.recoveryUnknown")}</p>
+      <p role="status">{t(activity.continuationRequest ? "execution.continuationUnconfirmed" : activity.intent.action === "adopt-result" ? "execution.adoptionUnknown" : "execution.recoveryUnknown")}</p>
       <ul>{activity.intent.unit.scopes.map((scope, index) => <li key={activity.intent.unit.itemIds[index]}>{scope.id}{scope.locale ? ` · ${scope.locale}` : ""}</li>)}</ul>
       <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify({ taskId: activity.intent.taskId, operation: activity.intent.operation,
-        unit: activity.intent.unit, request: activity.prepare ?? activity.recoveryRequest }, null, 2)}</pre></details>
+        unit: activity.intent.unit, request: activity.continuationRequest ?? activity.prepare ?? activity.recoveryRequest }, null, 2)}</pre></details>
       {activity.prepare ? <div className="execution-actions">
         <button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.checkAdoption()}>{t("execution.checkReceipt")}</button>
         {activity.retryAllowed ? <><p role="status">{t("execution.noReceipt")}</p><button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.retryAdoption()}>{t("execution.retryAdoption")}</button></> : null}
       </div> : null}
-      <button className="text-button" disabled={busy} onClick={() => { setConfirmation(null); setShowOwnerDialog(false); }}>{t("execution.keepOutput")}</button>
+      {activity.continuationRequest ? <div className="execution-actions">
+        <button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.checkContinuation()}>{t("execution.checkContinuation")}</button>
+        {activity.retryAllowed ? <><p role="status">{t("execution.noContinuation")}</p><button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.retryContinuation()}>{t("execution.retryContinuation")}</button></> : null}
+      </div> : null}
+      <button className="text-button" disabled={busy} onClick={() => { setConfirmation(null); setShowOwnerDialog(false); }}>{t(activity.continuationRequest ? "execution.deferContinuation" : "execution.keepOutput")}</button>
     </section> : null}
     {activity?.phase === "recorded" && activity.receipt ? <p role="status">{t("execution.adoptionRecorded")}</p> : message ? <p role="status">{t(`execution.${message}`)}</p> : null}</>;
   const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel") : t(`execution.actions.${action}`);
@@ -183,15 +227,15 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
     </> : <>
       <label className="field execution-attempt">{t("execution.attempt")}
         <select disabled={busy || pendingAction !== null} value={attemptId ?? detail?.attemptId ?? ""} onChange={event => {
-          setAttemptId(event.target.value); setOffset(0); setOutput(null); setReceipt(null);
+          setAttemptId(event.target.value); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setReceipt(null);
         }}>
           {attempts.map(attempt => <option key={attempt.attemptId} value={attempt.attemptId}>{t("execution.attemptNumber", { number: attempt.sequence })}</option>)}
           {detail && !attempts.some(attempt => attempt.attemptId === detail.attemptId) ? <option value={detail.attemptId}>{t("execution.currentAttempt")}</option> : null}
         </select>
       </label>
       {attemptCursor !== "0" || attempts.length === 100 ? <div className="execution-actions">
-        <button className="text-button" disabled={attemptCursor === "0" || busy || pendingAction !== null} onClick={() => { setAttemptCursor("0"); setAttemptId(null); }}>{t("execution.firstPage")}</button>
-        <button className="text-button" disabled={attempts.length < 100 || busy || pendingAction !== null} onClick={() => { setAttemptCursor(attempts.at(-1)!.sequence); setAttemptId(null); }}>{t("execution.nextPage")}</button>
+        <button className="text-button" disabled={attemptCursor === "0" || busy || pendingAction !== null} onClick={() => { setAttemptCursor("0"); setAttemptId(null); setContinuationCursor("0"); setHistorySelection(null); }}>{t("execution.firstPage")}</button>
+        <button className="text-button" disabled={attempts.length < 100 || busy || pendingAction !== null} onClick={() => { setAttemptCursor(attempts.at(-1)!.sequence); setAttemptId(null); setContinuationCursor("0"); setHistorySelection(null); }}>{t("execution.nextPage")}</button>
       </div> : null}
       {detail ? <>
         <section className="execution-summary" aria-label={t("execution.summary")}>
@@ -216,6 +260,23 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
               else if (action === "adopt-result" && detail.operation === "arena-translation") onArenaPreview?.(detail.attemptId); else if (action === "adopt-result" && detail.operation === "ai-translation") onAiPreview?.(detail.attemptId); else if (action === "view-receipt") void execute({ action, unit }); else confirm({ action, unit });
             }}>{t(action === "adopt-result" && detail.operation === "source-import" ? "source.preview" : action === "adopt-result" && detail.operation === "translation-import" ? "translation.preview" : `execution.actions.${action}`)}</button>)}</div>
           </section>)}
+        </section>
+        <section aria-label={t("execution.continuationHistory")}>
+          <h3>{t("execution.continuationHistory")}</h3>
+          {continuationHistory.isPending ? <p role="status">{t("execution.loading")}</p> : null}
+          {continuationHistory.error ? <p role="alert">{t("execution.continuationHistoryFailed")}</p> : null}
+          {continuationHistory.data ? <>
+            {continuationHistory.data.receipts.length === 0 && continuationCursor === "0" ? <p>{t("execution.noContinuationHistory")}</p> : null}
+            <ul>{continuationHistory.data.receipts.map(record => <li key={record.action.actionId}>
+              {t(`execution.actions.${record.action.kind}`)} · {t("execution.continuationItems", { count: record.action.itemIds.length })}
+              <button className="text-button" disabled={busy || pendingAction !== null || activity?.phase === "confirming" || selectedContinuation.isFetching}
+                onClick={() => { setFailure(null); setHistorySelection({ id: ++historyIntent.current, record: structuredClone(record) }); }}>{t("execution.viewContinuation")}</button>
+            </li>)}</ul>
+            {continuationCursor !== "0" || continuationHistory.data.next !== null ? <div className="execution-actions">
+              <button className="text-button" disabled={busy || pendingAction !== null || continuationCursor === "0"} onClick={() => setContinuationCursor("0")}>{t("execution.firstPage")}</button>
+              <button className="text-button" disabled={busy || pendingAction !== null || continuationHistory.data.next === null} onClick={() => { const next = continuationHistory.data?.next; if (next) setContinuationCursor(next); }}>{t("execution.nextPage")}</button>
+            </div> : null}
+          </> : null}
         </section>
         <h3>{t("execution.itemResults")}</h3>{detail.operation === "arena-translation" ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onArenaPreview?.(detail.attemptId)}>{t("arena.open")}</button> : null}{detail.operation === "ai-translation" ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onAiPreview?.(detail.attemptId)}>{t("ai.results")}</button> : null}
         {detail.operation === "source-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onSourcePreview?.(detail.attemptId)}>{t("source.preview")}</button> : null}

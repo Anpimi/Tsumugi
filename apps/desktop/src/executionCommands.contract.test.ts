@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
-import { executionCommands, confirmExecutionAction, confirmExecutionReceipt, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
+import { executionCommands, confirmExecutionAction, confirmExecutionReceipt, type ContinuationRequest, type ListRequest, type PrepareRequest, type Receipt, type SessionRequest } from "./executionCommands";
 import * as validators from "./generated/execution.validators";
 import { hasUnknownOutcome } from "./projectCommands";
 const invoke = vi.hoisted(() => vi.fn());
@@ -35,6 +35,10 @@ it("validates shared Rust fixtures in both directions with exact scalar bounds",
     [validators.validateRequestOutput, fixture.outputRequest],
     [validators.validateRequestCancel, fixture.cancel],
     [validators.validateRequestRecovery, fixture.recover],
+    [validators.validateRequestContinuation, fixture.continuation],
+    [validators.validateRequestContinuationRead, fixture.continuationRead],
+    [validators.validateRequestContinuationList, fixture.continuationList],
+    [validators.validateRequestTaskView, fixture.taskViewRequest],
     [validators.validateRequestPrepare, fixture.prepare],
     [validators.validateRequestAdopt, fixture.adopt],
   ] as const;
@@ -47,6 +51,11 @@ it("validates shared Rust fixtures in both directions with exact scalar bounds",
     [validators.validateResponseOutput, fixture.output],
     [validators.validateResponseCancellation, "9223372036854775807"],
     [validators.validateResponseRecovery, fixture.recovery],
+    [validators.validateResponseContinuation, fixture.continuationReceipt],
+    [validators.validateResponseContinuationReceipt, fixture.continuationReceipt],
+    [validators.validateResponseContinuationReceipt, null],
+    [validators.validateResponseContinuations, fixture.continuations],
+    [validators.validateResponseTaskView, fixture.task],
     [validators.validateResponseAction, fixture.action],
     [validators.validateResponseAdoption, fixture.receipt],
     [validators.validateResponseReceipt, fixture.receipt],
@@ -121,4 +130,60 @@ it("keeps actual general adoption on the three-field request and accepts a zero 
   await executionCommands.adopt(fixture.adopt);
   expect(invoke).toHaveBeenLastCalledWith("adopt_execution", { request: fixture.adopt });
   expect(Object.keys(invoke.mock.calls[1][1].request).sort()).toEqual(["actionId", "projectId", "sessionToken"]);
+});
+
+it("binds continuation ACK and exact lookup to the complete original action", async () => {
+  const request: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched" } };
+  invoke.mockResolvedValueOnce(fixture.continuationReceipt);
+  expect(await executionCommands.continue(request)).toEqual(fixture.continuationReceipt);
+  expect(invoke).toHaveBeenLastCalledWith("continue_execution", { request });
+  for (const action of [
+    { ...request.action, unitId: fixture.output.dispatchToken },
+    { ...request.action, expectedCancellationRevision: "0" },
+    { ...request.action, itemIds: [] },
+    { ...request.action, kind: "retry-safe-failure" },
+  ]) {
+    invoke.mockResolvedValueOnce({ ...fixture.continuationReceipt, action });
+    const error = await executionCommands.continue(request).catch(error => error);
+    expect(hasUnknownOutcome(error)).toBe(true);
+  }
+  invoke.mockResolvedValueOnce({ ...fixture.continuationReceipt, action: { ...request.action, actionId: fixture.prepare.actionId } });
+  await expect(executionCommands.continuation(fixture.continuationRead)).rejects.toThrow();
+  invoke.mockResolvedValueOnce(fixture.continuationReceipt);
+  expect(await executionCommands.continuation(fixture.continuationRead)).toEqual(fixture.continuationReceipt);
+  expect(invoke.mock.calls.filter(([command]) => command === "continue_execution")).toHaveLength(5);
+});
+
+it("rejects incomplete or mis-scoped continuation history without a false absence result", async () => {
+  const request = { ...fixture.continuationList, after: "0", limit: 1 };
+  invoke.mockResolvedValueOnce({ receipts: [fixture.continuationReceipt], next: fixture.continuationReceipt.sequence });
+  expect((await executionCommands.continuations(request)).next).toBe(fixture.continuationReceipt.sequence);
+  for (const page of [
+    { receipts: [fixture.continuationReceipt], next: "1" },
+    { receipts: [fixture.continuationReceipt], next: null },
+    { receipts: [{ ...fixture.continuationReceipt, action: { ...fixture.continuationReceipt.action, sourceAttemptId: fixture.output.dispatchToken } }], next: null },
+    { receipts: [fixture.continuationReceipt, fixture.continuationReceipt], next: null },
+  ]) {
+    invoke.mockResolvedValueOnce(page);
+    await expect(executionCommands.continuations(request)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce({ receipts: [], next: null });
+  expect(await executionCommands.continuations({ ...request, after: fixture.continuationReceipt.sequence })).toEqual({ receipts: [], next: null });
+});
+
+it("accepts a zero continuation basis while checking the original TaskView scope and exact revision", async () => {
+  const request: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched", expectedCancellationRevision: "0" } };
+  expect(validators.validateRequestContinuation(request)).toBe(true);
+  const receipt = { ...fixture.continuationReceipt, action: request.action };
+  invoke.mockResolvedValueOnce(receipt);
+  expect(await executionCommands.continue(request)).toEqual(receipt);
+  expect(invoke).toHaveBeenLastCalledWith("continue_execution", { request });
+  for (const patch of [{ taskId: fixture.prepare.actionId }, { projectId: fixture.prepare.actionId }, { cancellationRevision: "01" }, { cancellationRevision: 0 }]) {
+    invoke.mockResolvedValueOnce({ ...fixture.task, ...patch });
+    await expect(executionCommands.taskView(fixture.taskViewRequest)).rejects.toThrow();
+  }
+  const task = { ...fixture.task, cancellationRevision: "0" };
+  invoke.mockResolvedValueOnce(task);
+  expect(await executionCommands.taskView(fixture.taskViewRequest)).toEqual(task);
+  expect(invoke).toHaveBeenLastCalledWith("read_execution_task_view", { request: fixture.taskViewRequest });
 });

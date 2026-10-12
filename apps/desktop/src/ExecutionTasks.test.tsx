@@ -2,20 +2,23 @@ import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ExecutionTasks } from "./ExecutionTasks";
+import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
 import { i18n } from "./i18n";
 import fixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import type { ProjectView } from "./projectCommands";
-import type { AttemptDetail } from "./executionCommands";
-import { createRef, useLayoutEffect } from "react";
-import type { TasksHandle } from "./ExecutionTasks";
+import type { AttemptDetail, ContinuationRequest, ContinuationReceipt } from "./executionCommands";
+import { createRef, useLayoutEffect, type RefObject } from "react";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
+import { useSessionReads } from "./SessionReadProvider";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session-1", locator: "C:\\isolated\\project", metadata: { projectId: fixture.session.projectId, displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" }, reconciliationState: "settled" };
 const task = { taskId: fixture.detail.taskId, projectId: fixture.session.projectId, operation: "sample-update", sequence: "1", cancellationRevision: "0" };
 function detail(): AttemptDetail { return structuredClone(fixture.detail) as AttemptDetail; }
+function continuationResult(request: ContinuationRequest): ContinuationReceipt {
+  return { ...fixture.continuationReceipt, sequence: "2", action: { ...request.action, itemIds: [...request.action.itemIds].sort() }, attemptId: fixtureIdentity(3), taskId: task.taskId, operation: task.operation };
+}
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 it("retains the original cancellation after a complete Tasks remount and blocks project leave", async () => {
@@ -23,6 +26,7 @@ it("retains the original cancellation after a complete Tasks remount and blocks 
   let cancelCount = 0;
   invoke.mockImplementation(async (command: string) => {
     if (command === "execution_status") return fixture.status;
+    if (command === "read_execution_continuations") return Promise.resolve({ receipts: [], next: null });
     if (command === "list_execution_tasks") return [task];
     if (command === "read_execution_task") return [fixture.summary];
     if (command === "read_execution_attempt") return detail();
@@ -78,19 +82,23 @@ it("opens previously unvisited Tasks when another workspace has an unknown cance
   expect(invoke.mock.calls.filter(([name]) => name === "cancel_execution_task").map(([, payload]) => payload.request)).toEqual([request, request]);
   expect(invoke.mock.calls.filter(([name]) => name === "create_execution_identity")).toHaveLength(1);
 });
-async function openTasks(value = detail()) {
+async function openTasks(value = detail(), ref?: RefObject<TasksHandle | null>) {
+
   invoke.mockImplementation(async (command: string) => {
     if (command === "execution_status") return fixture.status;
     if (command === "list_execution_tasks") return [task];
     if (command === "read_execution_task") return [{ attemptId: value.attemptId, sequence: "1" }];
     if (command === "read_execution_attempt") return value;
+    if (command === "read_execution_task_view") return task;
+    if (command === "read_execution_continuations") return { receipts: [], next: null };
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup();
-  render(<ExecutionTasks project={project} disabled={false} />);
+  render(<ExecutionTasks project={project} disabled={false} ref={ref} />);
   await user.click(screen.getByRole("button", { name: "Tasks" }));
   await user.click(await screen.findByRole("button", { name: /Sample update/ }));
   await screen.findByText(/outputs generated/);
+  await screen.findByText(i18n.t("execution.noContinuationHistory"));
   return user;
 }
 function taskReplies(replies: Record<string, () => unknown>) {
@@ -139,6 +147,8 @@ it("discards a previous selection's late detail response", async () => {
     if (command === "list_execution_tasks") return [task, { ...task, taskId: fixtureIdentity(2), sequence: "2" }];
     if (command === "read_execution_task") return [{ attemptId: args.request.taskId === fixtureIdentity(2) ? fresh.attemptId : fixture.detail.attemptId, sequence: "1" }];
     if (command === "read_execution_attempt") return args.request.attemptId === fresh.attemptId ? fresh : old;
+    if (command === "read_execution_task_view") return { ...task, taskId: args.request.taskId };
+    if (command === "read_execution_continuations") return { receipts: [], next: null };
   });
   const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Tasks" }));
@@ -208,7 +218,11 @@ it("shows named failure details beside the item and focuses the readable result"
   expect(result).toHaveFocus();
   expect(result.closest("li")).toContainElement(screen.getByText("Sample A · zh-CN", { selector: "strong" }));
   await user.click(screen.getByRole("button", { name: "Retry eligible failures" }));
-  invoke.mockResolvedValueOnce({ attemptId: fixtureIdentity(3), queryStarted: false });
+  await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Retry eligible failures" })).getByRole("button", { name: "Retry eligible failures" })).toBeEnabled());
+  taskReplies({ create_execution_identity: () => fixtureIdentity(6) });
+  const replies = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: { request: ContinuationRequest }) => command === "continue_execution"
+    ? Promise.resolve(continuationResult(payload.request)) : replies(command, payload));
   await user.click(within(screen.getByRole("dialog", { name: "Retry eligible failures" })).getByRole("button", { name: "Retry eligible failures" }));
   await waitFor(() => expect(screen.queryByRole("region", { name: "Result for Sample A" })).not.toBeInTheDocument());
 });
@@ -241,6 +255,7 @@ it("settles actual TaskContent adoption after a complete consumer unmount during
   let identify!: (value: unknown) => void;
   invoke.mockImplementation((command: string) => {
     if (command === "execution_status") return Promise.resolve(fixture.status);
+    if (command === "read_execution_continuations") return Promise.resolve({ receipts: [], next: null });
     if (command === "list_execution_tasks") return Promise.resolve([task]);
     if (command === "read_execution_task") return Promise.resolve([fixture.summary]);
     if (command === "read_execution_attempt") return Promise.resolve(value);
@@ -269,6 +284,7 @@ it("keeps the original uncertain application after Keep output and a full remoun
   const value = applicationDetail(), user = userEvent.setup(), ref = createRef<TasksHandle>();
   invoke.mockImplementation(async command => {
     if (command === "execution_status") return fixture.status;
+    if (command === "read_execution_continuations") return Promise.resolve({ receipts: [], next: null });
     if (command === "list_execution_tasks") return [task];
     if (command === "read_execution_task") return [fixture.summary];
     if (command === "read_execution_attempt") return value;
@@ -371,6 +387,7 @@ it("includes the complete cross-page consistency group before applying any of it
     scopes: [items[0].scope, items[100].scope], resultIds: [items[100].resultId!, items[0].resultId!] };
   invoke.mockImplementation(async (command: string, payload: { request: { offset?: number } }) => {
     if (command === "execution_status") return fixture.status;
+    if (command === "read_execution_continuations") return Promise.resolve({ receipts: [], next: null });
     if (command === "list_execution_tasks") return [task];
     if (command === "read_execution_task") return [fixture.summary];
     if (command === "read_execution_attempt") { const offset = payload.request.offset ?? 0; return { ...base, progress: { ...base.progress, total: 101, succeeded: 101 },
@@ -409,4 +426,236 @@ it("confirms a generic action with no changes and a zero cancellation basis usin
   expect(screen.queryByRole("button", { name: "核对已记录结果" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "重试原应用请求" })).not.toBeInTheDocument();
   expect(invoke.mock.calls.filter(([name]) => name === "adopt_execution").map(([, payload]) => payload.request)).toEqual([fixture.adopt]);
+});
+it("keeps the complete original recovery after lost ACK, wrong lookup and later rejection", async () => {
+  const value = detail();
+  value.recovery.units[0].actions = ["resume-undispatched"];
+  value.recovery.units[0].blockedReason = null;
+  value.progress.unknown = 0; value.progress.queued = 1;
+  value.items[0].status.execution = "queued";
+  const user = await openTasks(value);
+  await user.click(screen.getByRole("button", { name: "Continue remaining work" }));
+  await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" })).toBeEnabled());
+  taskReplies({ create_execution_identity: () => fixtureIdentity(6), continue_execution: () => Promise.reject(new Error("lost ACK")) });
+  await user.click(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" }));
+  const check = await screen.findByRole("button", { name: "Check original recovery request" });
+  const original = invoke.mock.calls.find(([command]) => command === "continue_execution")![1].request as ContinuationRequest;
+  expect(original.action).toMatchObject({ kind: "resume-undispatched", expectedCancellationRevision: "0", itemIds: value.recovery.units[0].remainingItemIds });
+  expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument();
+  // A shaped but unrelated receipt cannot acknowledge the pending original intent.
+  taskReplies({ read_execution_continuation: () => ({ ...continuationResult(original), action: { ...original.action, unitId: fixtureIdentity(8) } }) });
+  await user.click(check);
+  expect(await screen.findByText(/original recovery request is still unconfirmed/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument();
+  taskReplies({ read_execution_continuation: () => null });
+  await user.click(screen.getByRole("button", { name: "Check original recovery request" }));
+  const retry = await screen.findByRole("button", { name: "Retry the same recovery request" });
+  taskReplies({ continue_execution: () => Promise.reject({ code: "cancelled", outcome: "rejected", stage: "execution-recover", recoveryRequired: false, reason: "continuation-cancellation-basis" }) });
+  await user.click(retry);
+  expect(await screen.findByText(/original recovery request is still unconfirmed/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument();
+  const writes = invoke.mock.calls.filter(([command]) => command === "continue_execution");
+  expect(writes).toHaveLength(2); expect(writes[1][1]).toEqual(writes[0][1]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  taskReplies({ read_execution_continuation: () => continuationResult(original) });
+  await user.click(screen.getByRole("button", { name: "Check original recovery request" }));
+  await waitFor(() => expect(screen.queryByText(/original recovery request is still unconfirmed/)).not.toBeInTheDocument());
+  expect(invoke.mock.calls.filter(([command]) => command === "continue_execution")).toHaveLength(2);
+  expect(invoke.mock.calls.some(([command]) => command === "recover_execution")).toBe(false);
+});
+
+it("resets replay permission after a second unknown and keeps deferred request on return", async () => {
+  const value = detail(); value.recovery.units[0].actions = ["resume-undispatched"];
+  const handle = createRef<TasksHandle>();
+  const user = await openTasks(value, handle);
+  await user.click(screen.getByRole("button", { name: "Continue remaining work" }));
+  await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" })).toBeEnabled());
+  taskReplies({ create_execution_identity: () => fixtureIdentity(6), continue_execution: () => Promise.reject(new Error("lost ACK")) });
+  await user.click(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" }));
+  taskReplies({ read_execution_continuation: () => null });
+  await user.click(await screen.findByRole("button", { name: "Check original recovery request" }));
+  taskReplies({ continue_execution: () => Promise.reject(new Error("second ACK lost")) });
+  await user.click(await screen.findByRole("button", { name: "Retry the same recovery request" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: "Keep request and return" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check original recovery request" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Continue remaining work" })).toBeDisabled();
+  expect(await handle.current!.allowLeave()).toBe(false);
+  const writes = invoke.mock.calls.filter(([command]) => command === "continue_execution");
+  expect(writes[1][1]).toEqual(writes[0][1]);
+});
+
+it("finds a saved original continuation after reopening without resubmitting it", async () => {
+  const value = detail();
+  value.recovery.units[0].actions = []; value.recovery.units[0].blockedReason = "continued-in-new-attempt";
+  const original: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched", expectedCancellationRevision: "0" } };
+  const saved = continuationResult(original);
+  invoke.mockImplementation(async (command: string, args: { request: { attemptId?: string; sourceAttemptId?: string; after?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks" || command === "read_execution_task_view") return command === "list_execution_tasks" ? [task] : task;
+    if (command === "read_execution_task") return [{ attemptId: value.attemptId, sequence: "1" }];
+    if (command === "read_execution_attempt") return args.request.attemptId === saved.attemptId ? { ...value, attemptId: saved.attemptId, recovery: { ...value.recovery, attemptId: saved.attemptId } } : value;
+    if (command === "read_execution_continuations") return args.request.after === "0" && args.request.sourceAttemptId === saved.action.sourceAttemptId ? { receipts: [saved], next: null } : { receipts: [], next: null };
+    if (command === "read_execution_continuation") return saved;
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const handle = createRef<TasksHandle>();
+  const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} ref={handle} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: /Sample update/ }));
+  await user.click(await screen.findByRole("button", { name: "View continued work" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_execution_attempt", { request: { ...fixture.session, attemptId: saved.attemptId, offset: 0, limit: 100 } }));
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "create_execution_identity")).toBe(false);
+  expect(await handle.current!.allowLeave()).toBe(true);
+});
+
+function recordedContinuation(index: number): ContinuationReceipt {
+  return { ...fixture.continuationReceipt, taskId: task.taskId, operation: task.operation,
+    sequence: (9007199254740993n + BigInt(index)).toString(), attemptId: fixtureIdentity(1600 + index),
+    action: { ...fixture.continuationReceipt.action, kind: "resume-undispatched", actionId: fixtureIdentity(1500 + index), expectedCancellationRevision: "0" } };
+}
+
+it("retains exact continuation history pagination across a complete consumer remount without treating a terminal page as absence", async () => {
+  const value = detail(), records = Array.from({ length: 50 }, (_, index) => recordedContinuation(index));
+  const next = records.at(-1)!.sequence;
+  invoke.mockImplementation(async (command: string, payload: { request: { after?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task];
+    if (command === "read_execution_task") return [fixture.summary];
+    if (command === "read_execution_attempt") return value;
+    if (command === "read_execution_continuations") return payload.request.after === "0" ? { receipts: records, next } : { receipts: [], next: null };
+    throw new Error(command);
+  });
+  const user = userEvent.setup(), view = render(<ExecutionTasks project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: /Sample update/ }));
+  const history = await screen.findByRole("region", { name: "Recorded recovery requests" });
+  await waitFor(() => expect(within(history).getAllByRole("button", { name: "View continued work" })).toHaveLength(50));
+  await user.click(within(history).getByRole("button", { name: "Next page" }));
+  await waitFor(() => expect(within(history).getByRole("button", { name: "First page" })).toBeEnabled());
+  await waitFor(() => expect(within(history).queryByRole("button", { name: "View continued work" })).not.toBeInTheDocument());
+  expect(within(history).queryByText(i18n.t("execution.noContinuationHistory"))).not.toBeInTheDocument();
+  view.rerender(null, project); view.rerender(<ExecutionTasks project={project} disabled={false} />);
+  const reopened = await screen.findByRole("region", { name: "Recorded recovery requests" });
+  await waitFor(() => expect(within(reopened).getByRole("button", { name: "First page" })).toBeEnabled());
+  expect(within(reopened).queryByText(i18n.t("execution.noContinuationHistory"))).not.toBeInTheDocument();
+  await user.click(within(reopened).getByRole("button", { name: "First page" }));
+  await waitFor(() => expect(within(reopened).getAllByRole("button", { name: "View continued work" })).toHaveLength(50));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_execution_continuations").map(([, payload]) => payload.request))
+    .toContainEqual({ ...fixture.session, sourceAttemptId: value.attemptId, after: next, limit: 50 });
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "create_execution_identity")).toBe(false);
+});
+
+it.each(["action", "attempt", "task", "operation", "digest", "sequence"] as const)("rejects a changed recorded continuation %s without navigating or resubmitting", async field => {
+  const value = detail(), saved = recordedContinuation(0), found = structuredClone(saved);
+  if (field === "action") found.action.unitId = fixtureIdentity(1700);
+  if (field === "attempt") found.attemptId = fixtureIdentity(1701);
+  if (field === "task") found.taskId = fixtureIdentity(1702);
+  if (field === "operation") found.operation = "another-operation";
+  if (field === "digest") found.sourceInputDigest = "d".repeat(64);
+  if (field === "sequence") found.sequence = "9007199254740994";
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task];
+    if (command === "read_execution_task") return [fixture.summary];
+    if (command === "read_execution_attempt") return value;
+    if (command === "read_execution_continuations") return { receipts: [saved], next: null };
+    if (command === "read_execution_continuation") return found;
+    throw new Error(command);
+  });
+  const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" })); await user.click(await screen.findByRole("button", { name: /Sample update/ }));
+  await user.click(await screen.findByRole("button", { name: "View continued work" }));
+  await screen.findByRole("alert");
+  expect(invoke).toHaveBeenCalledWith("read_execution_continuation", { request: { ...fixture.session, actionId: saved.action.actionId } });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_execution_attempt").every(([, payload]) => payload.request.attemptId === value.attemptId)).toBe(true);
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "create_execution_identity")).toBe(false);
+});
+
+it("ignores a late exact-history lookup after a different Task selection", async () => {
+  const saved = recordedContinuation(0), value = detail(), fresh = detail();
+  fresh.taskId = fixtureIdentity(1710); fresh.attemptId = fixtureIdentity(1711); fresh.recovery.attemptId = fresh.attemptId;
+  fresh.items[0].scope.id = "Fresh task item"; fresh.recovery.units[0].scopes[0].id = "Fresh task item";
+  let finish!: (receipt: ContinuationReceipt) => void;
+  const pending = new Promise<ContinuationReceipt>(resolve => { finish = resolve; });
+  invoke.mockImplementation(async (command: string, payload: { request: { taskId?: string; attemptId?: string; sourceAttemptId?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task, { ...task, taskId: fresh.taskId, sequence: "2" }];
+    if (command === "read_execution_task") return [{ attemptId: payload.request.taskId === fresh.taskId ? fresh.attemptId : value.attemptId, sequence: "1" }];
+    if (command === "read_execution_attempt") return payload.request.attemptId === fresh.attemptId ? fresh : value;
+    if (command === "read_execution_continuations") return payload.request.sourceAttemptId === value.attemptId ? { receipts: [saved], next: null } : { receipts: [], next: null };
+    if (command === "read_execution_continuation") return pending;
+    throw new Error(command);
+  });
+  const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" })); await user.click(await screen.findByRole("button", { name: "Sample update · Task 1" }));
+  await user.click(await screen.findByRole("button", { name: "View continued work" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "read_execution_continuation")).toHaveLength(1));
+  await user.click(screen.getByRole("button", { name: "All tasks" }));
+  await user.click(await screen.findByRole("button", { name: "Sample update · Task 2" }));
+  await screen.findByText("Fresh task item · zh-CN", { selector: "strong" });
+  await act(async () => { finish(saved); await pending; });
+  expect(screen.getByText("Fresh task item · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command, payload]) => command === "read_execution_attempt" && payload.request.attemptId === saved.attemptId)).toBe(false);
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "create_execution_identity")).toBe(false);
+});
+
+it.each(["mismatch", "null", "rejected"] as const)("awaits a fresh repeated history selection despite a successful cache before a deferred %s", async outcome => {
+  const saved = recordedContinuation(0), original = detail(), continued = detail();
+  original.items[0].scope.id = "Original history item"; original.recovery.units[0].scopes[0].id = "Original history item";
+  continued.attemptId = saved.attemptId; continued.recovery.attemptId = saved.attemptId;
+  continued.items[0].scope.id = "Continued history item"; continued.recovery.units[0].scopes[0].id = "Continued history item";
+  let finish!: (value: ContinuationReceipt | null) => void, reject!: (reason: unknown) => void;
+  const deferred = new Promise<ContinuationReceipt | null>((resolve, fail) => { finish = resolve; reject = fail; });
+  let lookups = 0;
+  invoke.mockImplementation(async (command: string, payload: { request: { attemptId?: string; sourceAttemptId?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task];
+    if (command === "read_execution_task") return lookups === 0 ? [fixture.summary]
+      : [fixture.summary, { attemptId: saved.attemptId, sequence: "2" }];
+    if (command === "read_execution_attempt") return payload.request.attemptId === saved.attemptId ? continued : original;
+    if (command === "read_execution_continuations") return payload.request.sourceAttemptId === original.attemptId ? { receipts: [saved], next: null } : { receipts: [], next: null };
+    if (command === "read_execution_continuation") return ++lookups === 1 ? saved : deferred;
+    throw new Error(command);
+  });
+  let reads!: ReturnType<typeof useSessionReads>;
+  function TasksWithReads() {
+    const value = useSessionReads(); useLayoutEffect(() => { reads = value; });
+    return <ExecutionTasks project={project} disabled={false} />;
+  }
+  const user = userEvent.setup(); render(<TasksWithReads />, project);
+  await user.click(screen.getByRole("button", { name: "Tasks" })); await user.click(await screen.findByRole("button", { name: /Sample update/ }));
+  await user.click(await screen.findByRole("button", { name: "View continued work" }));
+  await screen.findByText("Continued history item · zh-CN", { selector: "strong" });
+  const cached = reads.client.getQueryCache().findAll({ queryKey: reads.key(["execution-continuation"]) })
+    .find(query => query.state.status === "success");
+  expect(cached).toBeDefined();
+  const cachedData = cached!.state.data;
+  expect(cachedData).toBeDefined();
+  await user.selectOptions(screen.getByRole("combobox", { name: "Execution history" }), original.attemptId);
+  await screen.findByText("Original history item · zh-CN", { selector: "strong" });
+  const destinationReads = () => invoke.mock.calls.filter(([command, payload]) => command === "read_execution_attempt" && payload.request.attemptId === saved.attemptId).length;
+  const previousReads = destinationReads();
+  await user.click(await screen.findByRole("button", { name: "View continued work" }));
+  await waitFor(() => expect(lookups).toBe(2));
+  // The original selection must stay visible while this selection's exact read is still unresolved.
+  expect(screen.getByRole("combobox", { name: "Execution history" })).toHaveValue(original.attemptId);
+  expect(screen.getByText("Original history item · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  expect(destinationReads()).toBe(previousReads);
+  expect(reads.client.getQueryData(cached!.queryKey)).toEqual(cachedData);
+  await act(async () => {
+    if (outcome === "mismatch") finish({ ...saved, requestDigest: "d".repeat(64) });
+    else if (outcome === "null") finish(null);
+    else reject({ code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false });
+    await deferred.catch(() => {});
+  });
+  await screen.findByRole("alert");
+  expect(screen.getByRole("combobox", { name: "Execution history" })).toHaveValue(original.attemptId);
+  expect(screen.getByText("Original history item · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  expect(destinationReads()).toBe(previousReads);
+  expect(reads.client.getQueryData(cached!.queryKey)).toEqual(cachedData);
+  expect(invoke.mock.calls.filter(([command]) => command === "read_execution_continuation").map(([, payload]) => payload.request))
+    .toEqual(Array(2).fill({ ...fixture.session, actionId: saved.action.actionId }));
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "create_execution_identity")).toBe(false);
 });

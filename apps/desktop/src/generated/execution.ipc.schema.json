@@ -80,6 +80,124 @@
         ],
         "type": "object"
       },
+      "ContinuationAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedCancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/definitions/ContinuationKind"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "sourceAttemptId",
+          "unitId",
+          "kind",
+          "itemIds",
+          "expectedCancellationRevision"
+        ],
+        "type": "object"
+      },
+      "ContinuationKind": {
+        "description": "Fresh continuation authority is fixed before submission. Replaying a recorded\naction reads its original receipt; it never refreshes this cancellation basis.",
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure"
+        ],
+        "type": "string"
+      },
+      "ContinuationListRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/definitions/Revision"
+          },
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "sourceAttemptId",
+          "after",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "ContinuationReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "actionId"
+        ],
+        "type": "object"
+      },
+      "ContinuationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/ContinuationAction"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "action"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "type": "string"
       },
@@ -265,6 +383,26 @@
           "limit"
         ],
         "type": "object"
+      },
+      "TaskViewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "taskId"
+        ],
+        "type": "object"
       }
     },
     "properties": {
@@ -276,6 +414,15 @@
       },
       "cancel": {
         "$ref": "#/definitions/CancelRequest"
+      },
+      "continuation": {
+        "$ref": "#/definitions/ContinuationRequest"
+      },
+      "continuationList": {
+        "$ref": "#/definitions/ContinuationListRequest"
+      },
+      "continuationRead": {
+        "$ref": "#/definitions/ContinuationReadRequest"
       },
       "list": {
         "$ref": "#/definitions/ListRequest"
@@ -294,6 +441,9 @@
       },
       "task": {
         "$ref": "#/definitions/TaskRequest"
+      },
+      "taskView": {
+        "$ref": "#/definitions/TaskViewRequest"
       }
     },
     "required": [
@@ -304,6 +454,10 @@
       "output",
       "cancel",
       "recovery",
+      "continuation",
+      "continuationRead",
+      "continuationList",
+      "taskView",
       "prepare",
       "adopt"
     ],
@@ -992,6 +1146,120 @@
           }
         ]
       },
+      "ContinuationAction": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expectedCancellationRevision": {
+            "$ref": "#/definitions/Revision"
+          },
+          "itemIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/definitions/ContinuationKind"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sourceAttemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "actionId",
+          "projectId",
+          "sourceAttemptId",
+          "unitId",
+          "kind",
+          "itemIds",
+          "expectedCancellationRevision"
+        ],
+        "type": "object"
+      },
+      "ContinuationKind": {
+        "description": "Fresh continuation authority is fixed before submission. Replaying a recorded\naction reads its original receipt; it never refreshes this cancellation basis.",
+        "enum": [
+          "resume-undispatched",
+          "retry-safe-failure"
+        ],
+        "type": "string"
+      },
+      "ContinuationPage": {
+        "additionalProperties": false,
+        "properties": {
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/Revision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receipts": {
+            "items": {
+              "$ref": "#/definitions/ContinuationReceipt"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "receipts",
+          "next"
+        ],
+        "type": "object"
+      },
+      "ContinuationReceipt": {
+        "additionalProperties": false,
+        "description": "Complete immutable evidence associating the original intent with one attempt.",
+        "properties": {
+          "action": {
+            "$ref": "#/definitions/ContinuationAction"
+          },
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "requestDigest": {
+            "type": "string"
+          },
+          "sequence": {
+            "$ref": "#/definitions/Revision"
+          },
+          "sourceInputDigest": {
+            "type": "string"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "sequence",
+          "action",
+          "requestDigest",
+          "sourceInputDigest",
+          "attemptId",
+          "inputDigest",
+          "taskId",
+          "operation"
+        ],
+        "type": "object"
+      },
       "Diagnostic": {
         "additionalProperties": false,
         "properties": {
@@ -1455,6 +1723,22 @@
       "cancellation": {
         "$ref": "#/definitions/Revision"
       },
+      "continuation": {
+        "$ref": "#/definitions/ContinuationReceipt"
+      },
+      "continuationReceipt": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/ContinuationReceipt"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "continuations": {
+        "$ref": "#/definitions/ContinuationPage"
+      },
       "identity": {
         "$ref": "#/definitions/ExecutionId"
       },
@@ -1477,6 +1761,9 @@
       "status": {
         "$ref": "#/definitions/RuntimeStatus"
       },
+      "taskView": {
+        "$ref": "#/definitions/TaskView"
+      },
       "tasks": {
         "items": {
           "$ref": "#/definitions/TaskView"
@@ -1493,6 +1780,10 @@
       "output",
       "cancellation",
       "recovery",
+      "continuation",
+      "continuationReceipt",
+      "continuations",
+      "taskView",
       "action",
       "adoption",
       "receipt"

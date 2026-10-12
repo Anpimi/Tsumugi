@@ -1,8 +1,8 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { executionCommands, executionContext, confirmExecutionAction, confirmExecutionReceipt, sameExecutionIds, type CancelRequest, type AttemptDetail, type RecoveryAction, type RecoveryUnit, type ItemView, type PrepareRequest, type AdoptionAction, type Receipt, type RecoveryRequest, type RecoveryView } from "./executionCommands";
-import { validateRequestCancel, validateRequestPrepare, validateRequestRecovery, validateResponseIdentity, validateResponseAttempt } from "./generated/execution.validators";
+import { executionCommands, executionContext, confirmExecutionAction, confirmExecutionReceipt, matchesContinuation, sameExecutionIds, type CancelRequest, type AttemptDetail, type RecoveryAction, type RecoveryUnit, type ItemView, type PrepareRequest, type AdoptionAction, type Receipt, type RecoveryRequest, type RecoveryView, type ContinuationRequest, type ContinuationReceipt } from "./executionCommands";
+import { validateRequestCancel, validateRequestPrepare, validateRequestRecovery, validateRequestContinuation, validateResponseIdentity, validateResponseAttempt } from "./generated/execution.validators";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
@@ -27,6 +27,7 @@ export interface TaskIntent {
   readonly unit: RecoveryUnit;
   readonly itemId?: string;
   readonly items: readonly ItemView[];
+  readonly cancellationRevision: string | null;
 }
 export interface TaskActivity {
   readonly intent: TaskIntent;
@@ -36,6 +37,8 @@ export interface TaskActivity {
   readonly receipt: Receipt | null;
   readonly recoveryRequest: RecoveryRequest | null;
   readonly recovery: RecoveryView | null;
+  readonly continuationRequest: ContinuationRequest | null;
+  readonly continuation: ContinuationReceipt | null;
   readonly retryAllowed: boolean;
   readonly uncertain: boolean;
   readonly failure: CommandFailure | null;
@@ -67,6 +70,8 @@ interface TaskSession {
   submit: () => Promise<void>;
   checkAdoption: () => Promise<void>;
   retryAdoption: () => Promise<void>;
+  checkContinuation: () => Promise<void>;
+  retryContinuation: () => Promise<void>;
   dismiss: () => void;
   busy: boolean;
 }
@@ -183,9 +188,9 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     // These domains require their own preview and complete authorization flow.
     if (action === "adopt-result" && ["source-import", "translation-import", "ai-translation", "arena-translation"].includes(detail.operation)) return;
     const intent: TaskIntent = freeze({ taskId: detail.taskId, attemptId: detail.attemptId, operation: detail.operation, action,
-      unit: structuredClone(unit), ...(itemId ? { itemId } : {}), items: [] });
+      unit: structuredClone(unit), ...(itemId ? { itemId } : {}), items: [], cancellationRevision: null });
     let value: TaskActivity = { intent, phase: "capturing", prepare: null, proof: null, receipt: null,
-      recoveryRequest: null, recovery: null, retryAllowed: false, uncertain: false, failure: null };
+      recoveryRequest: null, recovery: null, continuationRequest: null, continuation: null, retryAllowed: false, uncertain: false, failure: null };
     updateActivity(value);
     try {
       if (!validateResponseAttempt(detail) || !validateResponseIdentity(detail.taskId) || !validateResponseIdentity(session.projectId)
@@ -193,6 +198,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
         || !sameExecutionIds(unit.itemIds, unit.itemIds) || unit.itemIds.length === 0 || unit.scopes.length !== unit.itemIds.length
         || !sameExecutionIds(unit.remainingItemIds, unit.remainingItemIds) || unit.remainingItemIds.some(id => !unit.itemIds.includes(id))
         || !sameExecutionIds(unit.resultIds, unit.resultIds)
+        || ((action === "resume-undispatched" || action === "retry-safe-failure") && (unit.remainingItemIds.length < 1 || unit.remainingItemIds.length > 2000))
         || (action === "query-outcome" && (!itemId || !unit.remainingItemIds.includes(itemId)))
         || (action !== "query-outcome" && itemId !== undefined)) throw new Error("Invalid task confirmation scope");
       const items: ItemView[] = [];
@@ -220,7 +226,15 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       });
       if (action === "adopt-result" && (!sameExecutionIds(selected.flatMap(item => item.resultId ? [item.resultId] : []), intent.unit.resultIds)
         || selected.some(item => item.status.execution !== "succeeded" || item.status.validation !== "valid"))) throw new Error("Invalid task result coverage");
-      value = change(value, { phase: "confirming", intent: freeze({ ...intent, items: structuredClone(selected) }) });
+      let cancellationRevision: string | null = null;
+      if (action === "resume-undispatched" || action === "retry-safe-failure") {
+        const task = await executionCommands.taskView({ ...session, taskId: intent.taskId });
+        if (!holds(value)) return;
+        if (task.operation !== intent.operation) throw new Error("Invalid continuation task operation");
+        // Zero is a valid basis before any cancellation. Keep it through identity allocation and every replay.
+        cancellationRevision = task.cancellationRevision;
+      }
+      value = change(value, { phase: "confirming", intent: freeze({ ...intent, items: structuredClone(selected), cancellationRevision }) });
     } catch (error) {
       if (holds(value)) change(value, { phase: "rejected", failure: commandFailure(error, "output-invalid") });
     }
@@ -253,9 +267,44 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       if (holds(value)) settle(value, receipt);
     } catch (error) { fail(value, error, true); }
   }
+  function settleContinuation(value: TaskActivity, receipt: ContinuationReceipt) {
+    if (!holds(value) || !value.continuationRequest) return;
+    if (!matchesContinuation(value.continuationRequest.action, receipt) || receipt.taskId !== value.intent.taskId
+      || receipt.operation !== value.intent.operation || (value.continuation && (receipt.attemptId !== value.continuation.attemptId
+        || receipt.sequence !== value.continuation.sequence || receipt.requestDigest !== value.continuation.requestDigest
+        || receipt.sourceInputDigest !== value.continuation.sourceInputDigest || receipt.inputDigest !== value.continuation.inputDigest))) {
+      throw new Error("Unconfirmed original task continuation");
+    }
+    change(value, { phase: "recorded", continuation: freeze(structuredClone(receipt)), uncertain: false, retryAllowed: false, failure: null });
+    reads.invalidate(["execution"]);
+  }
+  async function dispatchContinuation(start: TaskActivity) {
+    if (!holds(start) || !start.continuationRequest || cancellationBlocks(start.intent.taskId)) return;
+    const value = change(start, { phase: "recovering", retryAllowed: false, failure: null });
+    try {
+      const receipt = await executionCommands.continue(value.continuationRequest!);
+      if (holds(value)) settleContinuation(value, receipt);
+    } catch (error) { fail(value, error, true); }
+  }
   async function submit() {
     const start = activityRef.current;
     if (!live() || start?.phase !== "confirming" || cancellationBlocks(start.intent.taskId)) return;
+    if (start.intent.action === "resume-undispatched" || start.intent.action === "retry-safe-failure") {
+      let value = change(start, { phase: "identifying", failure: null });
+      try {
+        const actionId = await executionCommands.identity(session);
+        if (!holds(value)) return;
+        if (!validateResponseIdentity(actionId) || value.intent.cancellationRevision === null || cancellationBlocks(value.intent.taskId)) throw new Error("Invalid continuation identity");
+        const request: ContinuationRequest = freeze({ ...session, action: {
+          actionId, projectId: session.projectId, sourceAttemptId: value.intent.attemptId, unitId: value.intent.unit.unitId,
+          kind: start.intent.action, expectedCancellationRevision: value.intent.cancellationRevision, itemIds: [...value.intent.unit.remainingItemIds],
+        } });
+        if (!validateRequestContinuation(request)) throw new Error("Invalid continuation request");
+        value = change(value, { continuationRequest: request });
+        await dispatchContinuation(value);
+      } catch (error) { fail(value, error, false); }
+      return;
+    }
     if (start.intent.action !== "adopt-result") {
       const request: RecoveryRequest = freeze({ ...session, attemptId: start.intent.attemptId, unitId: start.intent.unit.unitId,
         action: start.intent.action, itemIds: [...(start.intent.itemId ? [start.intent.itemId] : start.intent.unit.remainingItemIds)] });
@@ -314,9 +363,29 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     if (!live() || value?.phase !== "unknown" || !value.retryAllowed || value.receipt || !value.prepare || !reservation.current) return;
     await dispatchAdoption(value);
   }
+  async function checkContinuation() {
+    const start = activityRef.current;
+    if (!live() || start?.phase !== "unknown" || !start.continuationRequest) return;
+    const value = change(start, { phase: "checking", retryAllowed: false, failure: null });
+    try {
+      const receipt = await executionCommands.continuation(freeze({ ...session, actionId: value.continuationRequest!.action.actionId }));
+      if (!holds(value)) return;
+      if (receipt === null) {
+        if (value.continuation) throw new Error("Previously recorded continuation is missing");
+        change(value, { phase: "unknown", retryAllowed: true });
+        return;
+      }
+      settleContinuation(value, receipt);
+    } catch (error) { fail(value, error, true); }
+  }
+  async function retryContinuation() {
+    const value = activityRef.current;
+    if (!live() || value?.phase !== "unknown" || !value.retryAllowed || value.continuation || !value.continuationRequest) return;
+    await dispatchContinuation(value);
+  }
 
   return <TaskContext.Provider value={{ state, current, canCancel, cancel, retry, activity, currentActivity: () => activityRef.current,
-    begin, submit, checkAdoption, retryAdoption, dismiss, busy: activityBusy(activity),
+    begin, submit, checkAdoption, retryAdoption, checkContinuation, retryContinuation, dismiss, busy: activityBusy(activity),
     unresolved: () => Object.values(stateRef.current).some(unresolved) || activityUnresolved(activityRef.current) }}>{children}</TaskContext.Provider>;
 }
 
