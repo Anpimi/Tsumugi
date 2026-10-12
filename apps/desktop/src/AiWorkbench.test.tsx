@@ -1,5 +1,5 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import {cleanup,screen,waitFor} from "@testing-library/react";
+import {act,cleanup,screen,waitFor,within} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {afterEach,beforeEach,expect,it,vi} from "vitest";
 import type { AiHandle } from "./AiWorkbench";
@@ -14,6 +14,8 @@ import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { aiAttempt, aiViewFixture } from "./testSupport/aiFixture";
 import { formatReviewSlotFixture } from "./testSupport/textReviewFixture";
+import { toolQueryInventory, toolQueryPackage, toolQueryView } from "./testSupport/pluginToolFixture";
+import type { WorkPlanToolSelection } from "./generated/ai.requests";
 function formatCheckerFixture(): WorkPlanView["checkers"][number] {
   const checker = formatReviewSlotFixture();
   return { kind: "ready", checker: checker.checker, plugin: checker.plugin };
@@ -306,4 +308,131 @@ it("displays native application identity and keeps checker consent separate", as
   expect(screen.getByRole("checkbox", { name: /I authorize this checker/ })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
   expect(invoke.mock.calls.some(([command]) => command === "authorize_work_plan")).toBe(false);
+});
+
+function installReferenceProviders() {
+  const alternative = structuredClone(toolQueryView);
+  alternative.binding.capability.provider.plugin.id = "reference-alternative";
+  alternative.binding.capability.provider.packageDigest = "c".repeat(64);
+  alternative.binding.declaration.title = "Independent alternative reference";
+  alternative.packageOrigin = { sourceId: "independent-local", publisherId: "user-approved" };
+  const packageDetails = { ...structuredClone(toolQueryPackage), packageDigest: alternative.binding.capability.provider.packageDigest,
+    manifest: { ...structuredClone(toolQueryPackage.manifest), plugin: alternative.binding.capability.provider.plugin } };
+  const inventory = structuredClone(toolQueryInventory), provider = alternative.binding.capability.provider;
+  inventory.packages.push({ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: alternative.packageOrigin, state: "sealed" });
+  inventory.packageDecisions.push({ plugin: provider.plugin, packageDigest: provider.packageDigest, origin: alternative.packageOrigin, enabled: true });
+  const views = [toolQueryView, alternative], original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_plugin_inventory") return structuredClone(inventory);
+    if (command === "read_plugin_package") return structuredClone(args.request.packageDigest === packageDetails.packageDigest ? packageDetails : toolQueryPackage);
+    if (command === "read_plugin_tool") return structuredClone((args.request.package as { packageDigest: string }).packageDigest === packageDetails.packageDigest ? alternative : toolQueryView);
+    const value = await original(command, args);
+    if (command === "prepare_work_plan") {
+      const selection = args.request.toolSelection as WorkPlanToolSelection | null;
+      if (selection) {
+        const entries = selection.entries.map(entry => {
+        const view = views.find(candidate => candidate.binding.capability.provider.packageDigest === entry.tool.package.packageDigest);
+        if (!view) throw new Error("Missing captured synthetic provider");
+        return { handle: entry.handle, target: entry.target, selections: entry.selections, binding: structuredClone(view.binding),
+          environment: structuredClone(view.environment), resourceId: view.resourceId, settingsRevision: view.settingsRevision,
+          packageOrigin: structuredClone(view.packageOrigin), runtimeOrigin: structuredClone(view.runtimeOrigin) };
+        }).reverse();
+        const [first, ...remaining] = entries;
+        if (!first) throw new Error("Expected a nonempty captured tool selection");
+        plan.tools = { maxInvocations: selection.maxInvocations, entries: [first, ...remaining] };
+      } else plan.tools = null;
+      return structuredClone(plan);
+    }
+    return value;
+  });
+  return views;
+}
+async function chooseReferences(user: ReturnType<typeof userEvent.setup>, views: ReturnType<typeof installReferenceProviders>) {
+  await user.click(screen.getByRole("checkbox", { name: "Include read-only reference tools" }));
+  await screen.findByRole("option", { name: /reference-alternative/ });
+  for (const [index, view] of views.entries()) {
+    if (index > 0) await user.click(screen.getByRole("button", { name: "Add reference provider" }));
+    const row = within(screen.getByRole("group", { name: `Reference provider ${index + 1}` }));
+    await user.selectOptions(row.getByRole("combobox", { name: "Reference package" }), `${view.binding.capability.provider.packageDigest}:${view.resourceId}`);
+    await user.selectOptions(row.getByRole("combobox", { name: "Execution environment" }), view.environmentDigest);
+    await row.findByRole("checkbox", { name: /^Term 👩🏽‍💻/ });
+    await user.selectOptions(row.getByRole("combobox", { name: "Target language" }), index === 0 ? "zh-CN" : "ja");
+    await user.click(row.getByRole("checkbox", { name: index === 0 ? /^Term 👩🏽‍💻/ : /^Other/ }));
+  }
+  await user.clear(screen.getByRole("spinbutton", { name: "Total tool-call limit" }));
+  await user.type(screen.getByRole("spinbutton", { name: "Total tool-call limit" }), "3");
+}
+
+it("prepares multiple exact reference providers with distinct handles and one shared limit, accepting reordered keyed acknowledgements", async () => {
+  const user = await preview(), views = installReferenceProviders();
+  await chooseReferences(user, views);
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await screen.findByRole("heading", { name: "Data sharing preview" });
+  const request = invoke.mock.calls.filter(([command]) => command === "prepare_work_plan").at(-1)![1].request;
+  expect(request.toolSelection.maxInvocations).toBe(3);
+  expect(new Set(request.toolSelection.entries.map((entry: { handle: string }) => entry.handle)).size).toBe(2);
+  expect(request.toolSelection.entries).toEqual(views.map((view, index) => ({ handle: expect.any(String),
+    tool: { package: { plugin: view.binding.capability.provider.plugin, packageDigest: view.binding.capability.provider.packageDigest },
+      resourceId: view.resourceId, environmentDigest: view.environmentDigest },
+    target: index === 0 ? "zh-CN" : "ja", selections: index === 0 ? ["term"] : ["other"] })));
+  expect(plan.tools?.entries.map(entry => entry.packageOrigin)).toEqual([...views].reverse().map(view => view.packageOrigin));
+  expect(screen.getByText("Shared tool-call limit: 3")).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /I allow these exact plugins/ })).not.toBeChecked();
+  expect(invoke.mock.calls.some(([command]) => ["authorize_work_plan", "start_work_plan", "select_translation_revision", "save_term"].includes(command))).toBe(false);
+  await user.click(screen.getByRole("checkbox", { name: /I confirm sending/ }));
+  await user.click(screen.getByRole("button", { name: "Remove reference provider 2" }));
+  expect(screen.queryByRole("heading", { name: "Data sharing preview" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: /I confirm sending/ })).not.toBeInTheDocument();
+  expect(within(screen.getByRole("group", { name: "Reference provider 1" })).getByRole("checkbox", { name: /^Term 👩🏽‍💻/ })).toBeChecked();
+});
+
+it("refuses a reference preparation whose second provider origin was replaced and retains both option drafts", async () => {
+  const user = await preview(), views = installReferenceProviders();
+  await chooseReferences(user, views);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    const value = await original(command, args);
+    if (command === "prepare_work_plan" && value.tools) value.tools.entries[0].packageOrigin = structuredClone(views[0].packageOrigin);
+    return value;
+  });
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("heading", { name: "Data sharing preview" })).not.toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.getByRole("region", { name: "References in this work plan" })).toHaveAttribute("aria-busy", "false");
+    const first = screen.getByRole("group", { name: "Reference provider 1" });
+    const second = screen.getByRole("group", { name: "Reference provider 2" });
+    expect(first).toHaveAttribute("aria-busy", "false");
+    expect(second).toHaveAttribute("aria-busy", "false");
+    expect(within(first).getByRole("combobox", { name: "Target language" })).toHaveValue("zh-CN");
+    expect(within(second).getByRole("combobox", { name: "Target language" })).toHaveValue("ja");
+    expect(within(first).getByRole("checkbox", { name: /^Term 👩🏽‍💻/ })).toBeChecked();
+    expect(within(second).getByRole("checkbox", { name: /^Other/ })).toBeChecked();
+  });
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_work_plan")).toHaveLength(2);
+  expect(invoke.mock.calls.some(([command]) => ["authorize_work_plan", "start_work_plan"].includes(command))).toBe(false);
+});
+
+it("locks provider edits while allocating captured handles and does not prepare a replacement session after a late identity", async () => {
+  const user = await preview(), views = installReferenceProviders();
+  await chooseReferences(user, views);
+  const original = invoke.getMockImplementation()!, ref = createRef<AiHandle>();
+  let release: () => void = () => {}, calls = 0;
+  const gate = new Promise<void>(done => { release = done; });
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === "create_execution_identity" && ++calls === 2) await gate;
+    return original(command, args);
+  });
+  // The mounted workbench remains the original production consumer.
+  await user.click(screen.getByRole("button", { name: "Preview what will be sent" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2));
+  expect(screen.getByRole("button", { name: "Add reference provider" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Remove reference provider 1" })).toBeDisabled();
+  expect(screen.getByRole("spinbutton", { name: "Total tool-call limit" })).toBeDisabled();
+  const oldPreparationCount = invoke.mock.calls.filter(([command]) => command === "prepare_work_plan").length;
+  cleanup();
+  render(<AiWorkbench key="replacement" ref={ref} project={{ ...project, sessionToken: "replacement" }} disabled={false} onOpenTranslation={() => true} />);
+  await act(async () => { release(); await gate; });
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_work_plan")).toHaveLength(oldPreparationCount);
+  expect(invoke.mock.calls.some(([command]) => ["authorize_work_plan", "start_work_plan"].includes(command))).toBe(false);
 });

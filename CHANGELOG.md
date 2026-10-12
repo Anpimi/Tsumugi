@@ -6,6 +6,11 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The AI workbench can explicitly add, configure and remove multiple reference
+  providers. Each keeps its own target, options and captured source while all
+  providers share the plan's total tool allowance. Duplicate or unavailable
+  choices require correction before preparation; refreshing preserves inputs.
+
 - The AI workbench can choose an installed generation component, explicit profile
   and approved JavaScript environment for a subset of the original plan. Users
   review fixed material, permissions and shared budget before separate local

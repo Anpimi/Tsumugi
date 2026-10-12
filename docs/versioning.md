@@ -1,5 +1,11 @@
 # Application versioning and changelog maintenance
 
+The AI workbench supports explicit multiple reference-provider choices, each with
+independent query options and captured provenance under the existing total tool
+allowance. This additive frontend flow changes no Core/Host/SDK contract,
+persistent format or dependency. Bilingual Unreleased entries are synchronized;
+the same undistributed `0.2.0-alpha.1` batch requires no additional bump.
+
 The workbench adds explicit installed generation component, profile and environment
 choices with separate human consent and original-record recovery. Its internal
 preflight adds the existing outer task identity so the UI can observe waiting

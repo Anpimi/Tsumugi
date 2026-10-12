@@ -201,6 +201,15 @@ methods remain outside it. This is a bounded application consumer, rather than
 a complete autonomous model loop.
 
 An assisted plan can additionally capture read-only reference tools through
+the AI workbench's explicit provider rows. Add a row for each intended source,
+choose its installed provider and approved environment, then review that row's
+target and query options. Remove rows that are no longer needed. Unavailable or
+duplicate provider/environment choices must be corrected before preparation;
+refreshing metadata retains the entered options. All rows share one total tool
+invocation allowance. Results keep independent captured provenance and are not
+automatically combined or adopted.
+
+The same captured collection uses
 `prepare_work_plan_with_tools`. Each entry fixes an opaque handle, the actual
 SDK binding and approved environment, installed settings revision, package and
 runtime origins, and explicit query target and category choices. The plan fixes
