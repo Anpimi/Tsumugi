@@ -1047,6 +1047,7 @@ ai: {
       staleRefreshFailed: "项目已变化，但无法重新读取当前元数据。请先重试刷新，再保存。",
       unknown: "无法确认这次更改是否已保存。再次更改或离开前会先确认项目状态。",
       committed: "已确认这次更改。",
+      committedDraftRetained: "原更改已确认，较新的编辑仍未保存。",
       previous: "这次不确定的保存没有提交。草稿仍保留在这里。",
       reconcileFailed: "结果仍然不确定。项目可用后请重试读取。",
       savedBeforeContinue: "草稿已保存，正在继续请求的操作。",

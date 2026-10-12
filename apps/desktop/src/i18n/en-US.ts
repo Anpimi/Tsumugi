@@ -1046,6 +1046,7 @@ ai: {
       staleRefreshFailed: "The project changed, but its current metadata could not be re-read. Retry the refresh before saving again.",
       unknown: "We couldn't confirm whether the change was saved. Tsumugi will check before another change or navigation.",
       committed: "The change was confirmed.",
+      committedDraftRetained: "The original change was confirmed. Your newer edits remain unsaved.",
       previous: "The uncertain save was not committed. Your draft remains here.",
       reconcileFailed: "The result is still uncertain. Retry the read when the project is available.",
       savedBeforeContinue: "Draft saved; continuing the requested action.",

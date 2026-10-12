@@ -16,6 +16,8 @@ import type { SessionReads } from "./sessionReads";
 import type { AttemptDetail } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import type { Eligibility } from "./reviewCommands";
+import { StrictMode } from "react";
+import type { ProjectMetadataReconcileCommandPayload, WorkbenchCommands } from "./workbenchCommands";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 
@@ -27,8 +29,16 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn(),
   destroy: vi.fn(),
   reads: null as SessionReads | null,
+  commands: null as WorkbenchCommands | null,
   drafts: new Map<string, ReturnType<typeof import("./TranslationDraftSession").useTranslationDraftSession>>(),
 }));
+
+vi.mock("./workbenchCommands", async importOriginal => {
+  const actual = await importOriginal<typeof import("./workbenchCommands")>();
+  function CaptureCommands() { mocks.commands = actual.useWorkbenchCommands(); return null; }
+  return { ...actual, WorkbenchCommandsProvider: (props: React.ComponentProps<typeof actual.WorkbenchCommandsProvider>) =>
+    <actual.WorkbenchCommandsProvider {...props}><CaptureCommands />{props.children}</actual.WorkbenchCommandsProvider> };
+});
 
 // Composition tests isolate native notifications; the bridge has its own race tests.
 vi.mock("./SessionReadProvider", async importOriginal => {
@@ -90,6 +100,39 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/Project name/), "Demo");
   await user.click(screen.getByRole("button", { name: "Create and open" }));
   await waitFor(() => expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument());
+}
+
+function metadataRegistry() {
+  if (!mocks.commands) throw new Error("Expected the actual App command owner");
+  return mocks.commands;
+}
+
+async function prepareUnknownMetadata({ directory = false, navigation = false, strict = false, target = false } = {}) {
+  const user = userEvent.setup(), view = strict ? render(<StrictMode><App /></StrictMode>) : await renderApp();
+  await createProject(user);
+  await user.click(screen.getByRole("button", { name: target ? "Edit target languages" : "Rename" }));
+  const field = screen.getByRole("textbox", { name: target ? "Target locales" : "Project name" });
+  await user.clear(field); await user.type(field, target ? "iw" : "Captured A");
+  if (directory) await user.click(screen.getByRole("checkbox", { name: "Also rename the project folder" }));
+  const original = mocks.invoke.getMockImplementation();
+  if (!original) throw new Error("Expected the project fixture");
+  mocks.invoke.mockImplementation((command: string, args) => {
+    if (command === (target ? "set_target_locales" : "rename_project")) return Promise.reject(new Error("Save acknowledgement lost"));
+    if (command === "read_project") return Promise.reject(new Error("Read acknowledgement lost"));
+    return original(command, args);
+  });
+  if (navigation) {
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save and continue" }));
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry read" })).toBeEnabled());
+  } else {
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry read" })).toBeEnabled());
+  }
+  const payload: ProjectMetadataReconcileCommandPayload = { kind: "project-metadata-reconcile", previous: projectView(),
+    form: { kind: target ? "target" : "rename", expectedRevision: "1" }, value: target ? "iw" : "Captured A", directoryName: directory ? "Captured A" : null };
+  const scope = { projectId: payload.previous.metadata.projectId, sessionToken: payload.previous.sessionToken, area: "overview" as const };
+  return { user, view, payload, scope, commands: metadataRegistry() };
 }
 
 async function prepareAiInApp(user: ReturnType<typeof userEvent.setup>) {
@@ -213,6 +256,181 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("routes metadata reconciliation through the exact original Registry capture and refuses other scopes and payloads", async () => {
+    const { user, payload, scope, commands, view } = await prepareUnknownMetadata({ directory: true, strict: true });
+    expect(commands.describe("project.metadata.reconcile", scope, payload)).toMatchObject({
+      nameKey: "action.retry", category: "project", binding: null, risk: "reconciles-project", confirmation: "none", availability: { enabled: true },
+    });
+    const reads = () => mocks.invoke.mock.calls.filter(([command]) => command === "read_project");
+    const changed: ProjectMetadataReconcileCommandPayload[] = [
+      { ...payload, previous: { ...payload.previous, sessionToken: "other-session" } },
+      { ...payload, previous: { ...payload.previous, metadata: { ...payload.previous.metadata, projectId: fixtureIdentity(990) } } },
+      { ...payload, previous: { ...payload.previous, locator: "C:\\Projects\\other" } },
+      { ...payload, previous: { ...payload.previous, metadata: { ...payload.previous.metadata, targetLocales: ["fr"] } } },
+      { ...payload, previous: { ...payload.previous, reconciliationState: "committed" } },
+      { ...payload, form: { ...payload.form, kind: "target" } },
+      { ...payload, form: { ...payload.form, expectedRevision: "2" } },
+      { ...payload, value: "Another request" }, { ...payload, directoryName: null },
+    ];
+    changed.forEach(value => {
+      expect(commands.describe("project.metadata.reconcile", scope, value)?.availability.enabled).toBe(false);
+      expect(commands.dispatch("project.metadata.reconcile", scope, value)).toBe(false);
+    });
+    expect(commands.dispatch("project.metadata.reconcile", { ...scope, sessionToken: "other-session" }, payload)).toBe(false);
+    expect(commands.dispatch("project.metadata.reconcile", { ...scope, projectId: fixtureIdentity(990) }, payload)).toBe(false);
+    expect(commands.dispatch("project.metadata.reconcile", { ...scope, area: "tasks" }, payload)).toBe(false);
+    expect(reads()).toHaveLength(1);
+    const dispatch = vi.spyOn(commands, "dispatch");
+    mocks.invoke.mockImplementation(async (command: string) => command === "read_project"
+      ? { ...projectView("Captured A", "2", "committed"), locator: "C:\\Projects\\Captured A" } : projectView());
+    await user.click(screen.getByRole("button", { name: "Retry read" }));
+    await screen.findByText("The change was confirmed.");
+    expect(dispatch).toHaveBeenCalledWith("project.metadata.reconcile", scope, payload);
+    expect(reads()).toHaveLength(2);
+    expect(reads().map(([, args]) => args.request)).toEqual([
+      { sessionToken: "session-1", expectedRevision: "1" }, { sessionToken: "session-1", expectedRevision: "1" },
+    ]);
+    expect(commands.describe("project.metadata.reconcile", scope, payload)?.availability).toEqual({ enabled: false, reason: "hidden" });
+    expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(false);
+    view.unmount();
+    expect(commands.describe("project.metadata.reconcile", scope, payload)).toBeUndefined();
+    expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(false);
+    expect(reads()).toHaveLength(2);
+  });
+
+  it.each(["text", "checkbox", "both"] as const)("settles the original metadata read once and retains newer %s edits as dirty against the confirmed basis", async change => {
+    const { user, payload, scope, commands } = await prepareUnknownMetadata({ directory: true });
+    let resolveRead!: (value: ProjectView) => void;
+    mocks.invoke.mockImplementation((command: string) => command === "read_project"
+      ? new Promise<ProjectView>(resolve => { resolveRead = resolve; }) : Promise.resolve(projectView()));
+    act(() => {
+      expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(true);
+      expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(false);
+    });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Retry read" })).toBeDisabled());
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_project")).toHaveLength(2);
+    const text = screen.getByRole("textbox", { name: "Project name" });
+    const checkbox = screen.getByRole("checkbox", { name: "Also rename the project folder" });
+    expect(text).toBeEnabled(); expect(checkbox).toBeEnabled();
+    expect(screen.getByRole("button", { name: i18n.t("status.saving") })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close project" })).toBeDisabled();
+    const newerText = change === "checkbox" ? "Captured A" : "Newer B";
+    if (change !== "checkbox") { await user.clear(text); await user.type(text, newerText); }
+    if (change !== "text") await user.click(checkbox);
+    await act(async () => resolveRead({ ...projectView("Captured A", "2", "committed"), locator: "C:\\Projects\\Captured A" }));
+    await screen.findByText("The original change was confirmed. Your newer edits remain unsaved.");
+    expect(text).toHaveValue(newerText); expect(checkbox).toHaveProperty("checked", change === "text");
+    expect(screen.getByText(i18n.t("editor.basis", { revision: "2" }))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
+    expect(readRecentProjects().map(row => row.locator)).toEqual(["C:\\Projects\\Captured A"]);
+    mocks.invoke.mockImplementation(async (command: string) => command === "rename_project"
+      ? { ...projectView(newerText, change === "checkbox" ? "2" : "3"), locator: change === "text" ? "C:\\Projects\\Newer B" : "C:\\Projects\\Captured A",
+        outcome: change === "checkbox" ? "unchanged" : "changed", directoryChanged: change === "text" } : projectView());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(2));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project").at(-1)?.[1].request).toEqual({
+      sessionToken: "session-1", expectedRevision: "2", displayName: newerText,
+      ...(change === "text" ? { directoryName: newerText } : {}),
+    });
+  });
+
+  it("retains the original metadata request and newer input across unknown and failed reads until explicit previous-state confirmation", async () => {
+    const { user, payload, scope, commands } = await prepareUnknownMetadata();
+    const text = screen.getByRole("textbox", { name: "Project name" });
+    await user.clear(text); await user.type(text, "Newer B");
+    let reads = 0;
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command !== "read_project") return projectView();
+      reads++;
+      if (reads === 1) return projectView("Unrelated", "3");
+      if (reads === 2) throw new Error("Read result lost again");
+      return projectView("Demo", "1", "previous");
+    });
+    for (let index = 0; index < 3; index++) {
+      await waitFor(() => expect(screen.getByRole("button", { name: "Retry read" })).toBeEnabled());
+      expect(commands.describe("project.metadata.reconcile", scope, payload)?.availability.enabled).toBe(true);
+      await user.click(screen.getByRole("button", { name: "Retry read" }));
+      if (index < 2) {
+        await screen.findByText(index === 0 ? i18n.t("feedback.unknown") : i18n.t("feedback.reconcileFailed"));
+        expect(text).toHaveValue("Newer B"); expect(screen.getByRole("button", { name: i18n.t("status.saving") })).toBeDisabled();
+        expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
+      }
+    }
+    await screen.findByText("The uncertain save was not committed. Your draft remains here.");
+    expect(text).toHaveValue("Newer B"); expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(false);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_project").map(([, args]) => args.request))
+      .toEqual(Array.from({ length: 4 }, () => ({ sessionToken: "session-1", expectedRevision: "1" })));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(1);
+  });
+
+  it("preserves a newer raw target-language draft when the original canonicalized change is confirmed and keeps presets locked during the read", async () => {
+    const { user, payload, scope, commands } = await prepareUnknownMetadata({ target: true });
+    let resolveRead!: (value: ProjectView) => void;
+    mocks.invoke.mockImplementation((command: string) => command === "read_project"
+      ? new Promise<ProjectView>(resolve => { resolveRead = resolve; }) : Promise.resolve(projectView()));
+    act(() => { expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(true); });
+    const field = screen.getByRole("textbox", { name: "Target locales" });
+    expect(field).toBeEnabled();
+    expect(screen.getByRole("combobox", { name: i18n.t("editor.targetPreset") })).toBeDisabled();
+    await user.clear(field); await user.type(field, "iw, fr");
+    await act(async () => resolveRead({ ...projectView("Demo", "2", "committed"), metadata: { ...metadata("Demo", "2"), targetLocales: ["he"] } }));
+    await screen.findByText("The original change was confirmed. Your newer edits remain unsaved.");
+    expect(field).toHaveValue("iw, fr");
+    expect(screen.getByText(i18n.t("editor.basis", { revision: "2" }))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "set_target_locales").map(([, args]) => args.request))
+      .toEqual([{ sessionToken: "session-1", expectedRevision: "1", targetLocales: ["iw"] }]);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_project").map(([, args]) => args.request))
+      .toEqual([{ sessionToken: "session-1", expectedRevision: "1" }, { sessionToken: "session-1", expectedRevision: "1" }]);
+  });
+
+  it("keeps a save-and-continue metadata recovery open when a delayed confirmation settles A after newer B", async () => {
+    const { user } = await prepareUnknownMetadata({ navigation: true });
+    let resolveRead!: (value: ProjectView) => void;
+    mocks.invoke.mockImplementation((command: string) => command === "read_project"
+      ? new Promise<ProjectView>(resolve => { resolveRead = resolve; }) : Promise.resolve(projectView()));
+    const dialog = within(screen.getByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Retry read" }));
+    // Model a queued editor event while the modal owns focus; ordinary recovery
+    // editing above is exercised through real user input outside this dialog.
+    fireEvent.change(screen.getByRole("textbox", { name: "Project name" }), { target: { value: "Queued B" } });
+    await act(async () => resolveRead(projectView("Captured A", "2", "committed")));
+    await waitFor(() => expect(dialog.getByRole("button", { name: "Save and continue" })).toBeEnabled());
+    expect(dialog.getByText("The original change was confirmed. Your newer edits remain unsaved.")).toBeInTheDocument();
+    expect(dialog.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Project name" })).toHaveValue("Queued B");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+  });
+
+  it("disposes metadata recovery on App replacement and ignores its old-session late result and recent-location update", async () => {
+    const { view, payload, scope, commands } = await prepareUnknownMetadata({ directory: true });
+    let resolveRead!: (value: ProjectView) => void;
+    mocks.invoke.mockImplementation((command: string) => command === "read_project"
+      ? new Promise<ProjectView>(resolve => { resolveRead = resolve; }) : Promise.resolve(projectView()));
+    act(() => { expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(true); });
+    view.unmount();
+    expect(commands.dispatch("project.metadata.reconcile", scope, payload)).toBe(false);
+    localStorage.clear();
+    const replacement = { ...projectView(), sessionToken: "session-2", locator: "C:\\Projects\\second",
+      metadata: { ...metadata(), projectId: fixtureIdentity(990) } };
+    mocks.join.mockResolvedValue(replacement.locator);
+    mocks.invoke.mockImplementation(async () => replacement);
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.type(screen.getByRole("textbox", { name: "Project name" }), " replacement draft");
+    const recents = readRecentProjects();
+    await act(async () => resolveRead({ ...projectView("Captured A", "2", "committed"), locator: "C:\\Projects\\Captured A" }));
+    expect(screen.getByRole("heading", { name: "Demo" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Project name" })).toHaveValue("Demo replacement draft");
+    expect(readRecentProjects()).toEqual(recents);
+    expect(metadataRegistry().dispatch("project.metadata.reconcile", scope, payload)).toBe(false);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_project")).toHaveLength(2);
+  });
+
   it("settles a same-session open acknowledgement while preserving metadata entered during the RPC", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     await user.click(screen.getByRole("button", { name: "Rename" }));
@@ -1544,6 +1762,7 @@ describe("project lifecycle workbench", () => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
     localStorage.clear();
     mocks.reads = null;
+    mocks.commands = null;
     mocks.drafts.clear();
     await i18n.changeLanguage("en-US");
     mocks.join.mockResolvedValue("C:\\Projects\\demo");

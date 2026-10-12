@@ -7,12 +7,21 @@ import type { BuildLocaleChoice, DeliveryView } from "./releaseCommands";
 import { validateResponseDelivery } from "./generated/release.validators";
 import type { TranslationStartRequest, TranslationAdoptRequest, TranslationSelectRequest, TranslationDecision } from "./translationCommands";
 import { validateRequestStart, validateRequestAdopt, validateRequestSelect } from "./generated/translation.validators";
+import type { ProjectView } from "./projectCommands";
+import { validateResponseProjectView } from "./generated/validators";
 
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.cancel-checks" | "review.retry-pending"
   | "review.approve-batch" | "review.stop-batch"
   | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
+export interface ProjectMetadataReconcileCommandPayload {
+  kind: "project-metadata-reconcile";
+  previous: ProjectView;
+  form: { kind: "rename" | "target"; expectedRevision: string };
+  value: string;
+  directoryName: string | null;
+}
 export interface ReviewFallbackCommandPayload {
   kind: "review-fallback";
   unitId: string;
@@ -153,6 +162,7 @@ export interface TaskReceiptCommandPayload extends TaskCommandTarget { kind: "ta
 export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string; attemptId: string; operation: string; itemId: string; resultId: string }
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 interface WorkbenchCommandPayloads {
+  "project.metadata.reconcile": ProjectMetadataReconcileCommandPayload;
   "translation.choose-import-folder": TranslationImportSetupCommandPayload;
   "translation.inspect-import": TranslationImportSetupCommandPayload;
   "translation.confirm-import-language": TranslationImportConsentCommandPayload;
@@ -284,7 +294,7 @@ interface CommandMetadata {
     | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
     | "captures-execution-action" | "writes-execution" | "reads-execution" | "opens-execution-preview"
     | "captures-release" | "runs-release-build" | "exports-release" | "reconciles-release" | "opens-release"
-    | "captures-translation-import" | "runs-translation-import";
+    | "captures-translation-import" | "runs-translation-import" | "reconciles-project";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -311,6 +321,7 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"project-metadata-reconcile", "project.metadata.reconcile">
   | ResourceCommand<"translation-import-setup", "translation.choose-import-folder" | "translation.inspect-import">
   | ResourceCommand<"translation-import-consent", "translation.confirm-import-language" | "translation.start-import">
   | ResourceCommand<"translation-import-start-pending", "translation.retry-import-start">
@@ -381,6 +392,13 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind === "project-metadata-reconcile") {
+    return payload?.kind === command.payloadKind && validateResponseProjectView(payload.previous)
+      && !!payload.form && typeof payload.form === "object" && ["rename", "target"].includes(payload.form.kind)
+      && taskRevision(payload.form.expectedRevision) && typeof payload.value === "string"
+      && (payload.directoryName === null || typeof payload.directoryName === "string" && payload.form.kind === "rename")
+      ? command.availability(payload) : unavailable;
+  }
   if (command.payloadKind?.startsWith("translation-")) {
     if (!validTranslationPayload(payload)) return unavailable;
     switch (command.payloadKind) {
@@ -707,7 +725,8 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "translation-import-setup" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "project-metadata-reconcile" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-import-setup" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-import-consent" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-import-start-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-import-preview" && payload?.kind === command.payloadKind) command.handler(payload);

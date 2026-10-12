@@ -2,9 +2,39 @@ import { describe, expect, it, vi } from "vitest";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import translationFixture from "../test/fixtures/translation-commands.json";
 import { validateResponseDelivery } from "./generated/release.validators";
-import { WorkbenchCommands, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
+import { WorkbenchCommands, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type ProjectMetadataReconcileCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
+
+describe("Project metadata recovery commands", () => {
+  it("validates a complete typed original capture and keeps describe, dispatch and disposal in the same scope", () => {
+    const payload: ProjectMetadataReconcileCommandPayload = { kind: "project-metadata-reconcile", previous: {
+      sessionToken: "original-session", locator: "C:\\Projects\\original", reconciliationState: "settled",
+      metadata: { projectId: translationFixture.start.projectId, displayName: "Original", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" },
+    }, form: { kind: "rename", expectedRevision: "1" }, value: "Captured name", directoryName: "Captured name" };
+    const currentScope = { projectId: payload.previous.metadata.projectId, sessionToken: payload.previous.sessionToken, area: "overview" as const };
+    const commands = new WorkbenchCommands(), handler = vi.fn();
+    let visible = true;
+    const remove = commands.register({ id: "project.metadata.reconcile", nameKey: "action.retry", category: "project", scope: currentScope,
+      binding: null, risk: "reconciles-project", confirmation: "none", payloadKind: "project-metadata-reconcile",
+      availability: () => ({ enabled: visible, ...(!visible ? { reason: "hidden" as const } : {}) }), handler });
+    const dispatch = (value: unknown, targetScope = currentScope) => Reflect.apply(commands.dispatch, commands, ["project.metadata.reconcile", targetScope, value]);
+    for (const malformed of [undefined, null, { ...payload, kind: "other" }, { ...payload, previous: null },
+      { ...payload, previous: { ...payload.previous, metadata: {} } }, { ...payload, form: null },
+      { ...payload, form: { kind: "other", expectedRevision: "1" } }, { ...payload, form: { kind: "rename", expectedRevision: "01" } },
+      { ...payload, value: null }, { ...payload, directoryName: undefined },
+      { ...payload, form: { kind: "target", expectedRevision: "1" } }]) expect(dispatch(malformed)).toBe(false);
+    expect(dispatch(payload, { ...currentScope, sessionToken: "other" })).toBe(false);
+    expect(dispatch(payload, { ...currentScope, projectId: "other" })).toBe(false);
+    expect(Reflect.apply(commands.dispatch, commands, ["project.metadata.reconcile", { ...currentScope, area: "tasks" }, payload])).toBe(false);
+    expect(commands.describe("project.metadata.reconcile", currentScope, payload)?.availability.enabled).toBe(true);
+    expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
+    visible = false;
+    expect(commands.describe("project.metadata.reconcile", currentScope, payload)?.availability).toEqual({ enabled: false, reason: "hidden" });
+    expect(dispatch(payload)).toBe(false); remove();
+    expect(commands.describe("project.metadata.reconcile", currentScope, payload)).toBeUndefined(); expect(dispatch(payload)).toBe(false);
+  });
+});
 
 describe("Translation business command payloads",()=>{
   const translationScope={...scope,area:"translation" as const},metadata={nameKey:"translation.start" as const,category:"translation" as const,

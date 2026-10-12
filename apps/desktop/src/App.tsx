@@ -35,7 +35,7 @@ import {
 import { isLocale, localeOptions, type Locale } from "./i18n";
 import { languageName } from "./i18n/languageNames";
 import type { TranslationKey } from "./i18n/types";
-import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
+import { WorkbenchCommands, WorkbenchCommandsProvider, type ProjectMetadataReconcileCommandPayload } from "./workbenchCommands";
 import { executionCommands, executionContext } from "./executionCommands";
 import {
   clearLastOpenProject,
@@ -366,6 +366,11 @@ function App() {
   const [stopping, setStopping] = useState(false);
   const [stoppedSession, setStoppedSession] = useState<string | null>(null);
   const pendingSave = useRef<PendingSave | null>(null);
+  const metadataOwnerAlive = useRef(true);
+  useLayoutEffect(() => {
+    metadataOwnerAlive.current = true;
+    return () => { metadataOwnerAlive.current = false; };
+  }, []);
   const createInFlight = useRef(false);
   const reconciliationInFlight = useRef(false);
   const folderNameEdited = useRef(false);
@@ -394,6 +399,9 @@ function App() {
   const destinationPreview = previewDestination(createParentDirectory, createDirectoryName);
   const busy = operation !== "idle" || stopping || stopIntent !== null || retiredSession !== null;
   const projectActionUnavailable = busy || coordinating;
+  const metadataRecoveryEditable = operation === "reconciling" && !!pendingSave.current
+    && activeForm === pendingSave.current.form && metadataCaptureCurrent(pendingSave.current)
+    && !stopping && stopIntent === null && !restorePromptOpen && !projectActionInFlight();
   const status = statusFor(t, operation, dirty || createDraftDirty);
 
   useLayoutEffect(() => { currentNavigationIntent.current = navigationIntent; }, [navigationIntent]);
@@ -772,36 +780,82 @@ function App() {
     return { ok: false };
   }
 
-  async function reconcileUnknown(form: ActiveForm): Promise<SaveResult> {
-    if (!project || !pendingSave.current || reconciliationInFlight.current) return { ok: false };
+  function metadataCaptureCurrent(original: PendingSave) {
+    const current = currentProject.current;
+    return metadataOwnerAlive.current && pendingSave.current === original
+      && current?.sessionToken === original.previous.sessionToken
+      && current.metadata.projectId === original.previous.metadata.projectId
+      && currentSession.current === original.previous.sessionToken
+      && currentExitPresentation.current.form === original.form && !currentRetiredSession.current;
+  }
+
+  function metadataReconcilePayload(): ProjectMetadataReconcileCommandPayload | undefined {
+    const original = pendingSave.current;
+    return original ? { kind: "project-metadata-reconcile", previous: structuredClone(original.previous),
+      form: { ...original.form }, value: original.value, directoryName: original.directoryName ?? null } : undefined;
+  }
+
+  function metadataReconcileAvailability(payload?: ProjectMetadataReconcileCommandPayload) {
+    const original = pendingSave.current;
+    if (!original || !metadataCaptureCurrent(original) || (!navigationIntent && area !== "overview")) {
+      return { enabled: false, reason: "hidden" as const };
+    }
+    if (reconciliationInFlight.current || (operation !== "idle" && operation !== "reconciling")
+      || stopping || stopIntent || restorePromptOpen || projectActionInFlight()) {
+      return { enabled: false, reason: "busy" as const };
+    }
+    const previous = payload?.previous, captured = original.previous;
+    const exact = payload?.kind === "project-metadata-reconcile" && previous
+      && previous.sessionToken === captured.sessionToken && previous.locator === captured.locator
+      && previous.reconciliationState === captured.reconciliationState && sameMetadata(previous.metadata, captured.metadata)
+      && previous.metadata.targetLocales.every((locale, index) => locale === captured.metadata.targetLocales[index])
+      && payload.form.kind === original.form.kind && payload.form.expectedRevision === original.form.expectedRevision
+      && payload.value === original.value && payload.directoryName === (original.directoryName ?? null);
+    return exact ? { enabled: true } : { enabled: false, reason: "unavailable" as const };
+  }
+
+  async function reconcileUnknown(original: PendingSave | null): Promise<SaveResult> {
+    if (!original || !metadataCaptureCurrent(original) || reconciliationInFlight.current) return { ok: false };
     reconciliationInFlight.current = true;
     setOperation("reconciling");
     setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
     try {
-      const view = await projectCommands.read({ sessionToken: project.sessionToken, expectedRevision: pendingSave.current.form.expectedRevision });
-      const outcome = classifySave(view, pendingSave.current);
+      const view = await projectCommands.read({ sessionToken: original.previous.sessionToken, expectedRevision: original.form.expectedRevision });
+      if (!metadataCaptureCurrent(original)) return { ok: false };
+      const outcome = classifySave(view, original);
       if (outcome === "unknown") {
         setFeedback({ tone: "warning", messageKey: "feedback.unknown", code: "outcome-unknown", action: "retry-reconciliation" });
         return { ok: false };
       }
-      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(project.locator);
+      const locatorChanged = normalizeLocator(view.locator) !== normalizeLocator(original.previous.locator);
       setProject(view);
-      if (locatorChanged) rememberOpenedProject(view, project.locator);
+      if (locatorChanged) rememberOpenedProject(view, original.previous.locator);
       setActiveForm((current) =>
-        current && current.kind === form.kind ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
+        current === original.form ? { ...current, expectedRevision: view.metadata.metadataRevision } : current,
       );
       pendingSave.current = null;
       if (outcome === "committed") {
-        editorForm.reset(EDITOR_DEFAULT_VALUES);
-        setActiveForm(null);
+        const latest = editorForm.getValues();
+        const retained = latest.value !== original.value || latest.syncDirectoryName !== (original.directoryName !== undefined);
+        if (retained) {
+          // The captured raw input is the completed edit basis. New text and
+          // folder consent remain a separate dirty edit against the confirmed revision.
+          editorForm.reset({ value: original.value, syncDirectoryName: original.directoryName !== undefined });
+          editorForm.setValue("value", latest.value, { shouldDirty: true });
+          editorForm.setValue("syncDirectoryName", latest.syncDirectoryName, { shouldDirty: true });
+        } else {
+          editorForm.reset(EDITOR_DEFAULT_VALUES);
+          setActiveForm(null);
+        }
         setOperation("idle");
-        setFeedback({ tone: "success", messageKey: "feedback.committed" });
-        return { ok: true, metadata: view.metadata };
+        setFeedback({ tone: retained ? "warning" : "success", messageKey: retained ? "feedback.committedDraftRetained" : "feedback.committed" });
+        return { ok: !retained, metadata: view.metadata };
       }
       setOperation("idle");
       setFeedback({ tone: "warning", messageKey: "feedback.previous" });
       return { ok: false, metadata: view.metadata };
     } catch {
+      if (!metadataCaptureCurrent(original)) return { ok: false };
       setOperation("reconciling");
       setFeedback({ tone: "error", messageKey: "feedback.reconcileFailed", code: "outcome-unknown", action: "retry-reconciliation" });
     } finally {
@@ -818,7 +872,9 @@ function App() {
     }
 
     setOperation("saving");
-    pendingSave.current = { previous: project, form, value, ...(form.kind === "rename" && editorForm.getValues("syncDirectoryName") ? { directoryName: value } : {}) };
+    const original: PendingSave = { previous: structuredClone(project), form, value,
+      ...(form.kind === "rename" && editorForm.getValues("syncDirectoryName") ? { directoryName: value } : {}) };
+    pendingSave.current = original;
     setFeedback({ tone: "info", messageKey: "status.saving" });
     try {
       let result: MetadataMutationView;
@@ -876,7 +932,7 @@ function App() {
     } catch (value) {
       const failure = asCommandError(value, form.kind === "rename" ? "rename" : "set-target-locales");
       if (failure.code === "busy" && form.kind === "rename" && editorForm.getValues("syncDirectoryName")) setStopIntent({ kind: "rename" });
-      if (failure.code === "outcome-unknown") return reconcileUnknown(form);
+      if (failure.code === "outcome-unknown") return reconcileUnknown(original);
       pendingSave.current = null;
       if (failure.code === "stale-revision") return refreshAfterStale(form, failure);
       setOperation("idle");
@@ -1003,7 +1059,10 @@ function App() {
   }
 
   function handleRetryReconciliation() {
-    if (activeForm && project && (operation === "idle" || operation === "reconciling")) void reconcileUnknown(activeForm);
+    const payload = metadataReconcilePayload();
+    if (project && payload) commandRegistry.dispatch("project.metadata.reconcile", {
+      projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: navigationIntent ? area : "overview",
+    }, payload);
   }
 
   async function chooseDirectory(target: DirectoryPickerTarget) {
@@ -1107,6 +1166,20 @@ function App() {
         }, () => {
           if (currentSession.current === sessionToken && currentNavigationIntent.current === intent) handleEditorInvalid();
         })();
+      },
+    });
+  });
+
+  useLayoutEffect(() => {
+    if (!project) return;
+    return commandRegistry.register({
+      id: "project.metadata.reconcile", nameKey: "action.retry", category: "project",
+      scope: { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: navigationIntent ? area : "overview" },
+      binding: null, risk: "reconciles-project", confirmation: "none", payloadKind: "project-metadata-reconcile",
+      availability: metadataReconcileAvailability,
+      handler: payload => {
+        const original = pendingSave.current;
+        if (original && metadataReconcileAvailability(payload).enabled) void reconcileUnknown(original);
       },
     });
   });
@@ -1216,7 +1289,7 @@ function App() {
           </button>
         ) : null}
         {feedback.action === "retry-reconciliation" ? (
-          <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "idle" && operation !== "reconciling"}>
+          <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={!metadataReconcileAvailability(metadataReconcilePayload()).enabled}>
             <Icon name="refresh" size={16} />
             {t("action.retry")}
           </button>
@@ -1591,7 +1664,7 @@ function App() {
 
                 {activeForm ? (
                   <form className="editor-card" onChange={clearEditorFeedback} onSubmit={event => { event.preventDefault(); if (project) commandRegistry.dispatch("project.metadata.save", { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area }); }}>
-                    <fieldset className="editor-fields" disabled={busy}>
+                    <fieldset className="editor-fields" disabled={busy && !metadataRecoveryEditable}>
                     <div className="editor-heading">
                       <div>
                         <p className="eyebrow">{activeForm.kind === "rename" ? t("project.rename") : t("project.addTarget")}</p>
@@ -1724,7 +1797,7 @@ function App() {
                   <span>{renderFeedbackMessage(t, feedback)}</span>
                   <CommandFailureDetails failure={feedback.commandError ?? null} />
                   {feedback.action === "refresh" ? <button className="text-button" type="button" onClick={handleRefresh} disabled={busy}>{t("action.refresh")}</button> : null}
-                  {feedback.action === "retry-reconciliation" ? <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={operation !== "idle" && operation !== "reconciling"}>{t("action.retry")}</button> : null}
+                  {feedback.action === "retry-reconciliation" ? <button className="text-button" type="button" onClick={handleRetryReconciliation} disabled={!metadataReconcileAvailability(metadataReconcilePayload()).enabled}>{t("action.retry")}</button> : null}
                 </div>
               ) : null}
               <div className="dialog-actions">

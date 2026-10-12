@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Project metadata recovery checks the original saved request through scoped commands. While its result is being checked, users may edit the text and folder checkbox without changing that request; confirmation keeps newer edits unsaved, and repeated reads or late responses cannot clear another draft or continue navigation.
+
 - Translation import, fixed match application and historical revision selection share scoped commands and preserve their original requests. A later rejected retry cannot erase an earlier uncertain import or selection; checked history and current-source reads remain separate from captured import work.
 
 - Build and export actions share scoped commands with exact mappings, saved release identities and destination consent. Original uncertain requests remain recoverable across view changes; historical release export stays available when current readiness or history reads fail.
