@@ -51,17 +51,53 @@ export interface SourceImpactTargetCommandPayload { kind: "source-impact-target"
   selectionId: string | null; translationRevisionId: string | null; reviewBasis: string }
 export interface AiPreparationCommandPayload { kind: "ai-preparation"; editSeq: number; locale: string; unitIds: string[] }
 export interface AiStartCommandPayload { kind: "ai-start"; attemptId: string; editSeq: number }
-interface AiItemCommandTarget {
+interface ExecutionItemCommandTarget {
   attemptId: string; taskId: string; itemId: string; translationUnitId: string;
   locale: string; sourceRevisionId: string; sourceSnapshotId: string;
 }
-export interface AiCandidateCommandPayload extends AiItemCommandTarget { kind: "ai-candidate"; resultId: string; recoveryUnitId: string }
-export interface AiTranslationCommandPayload extends AiItemCommandTarget { kind: "ai-translation-target" }
+export interface AiCandidateCommandPayload extends ExecutionItemCommandTarget { kind: "ai-candidate"; resultId: string; recoveryUnitId: string }
+export interface AiTranslationCommandPayload extends ExecutionItemCommandTarget { kind: "ai-translation-target" }
 export interface AiStartPendingCommandPayload { kind: "ai-start-pending"; attemptId: string; editSeq: number }
 export interface AiAdoptionPendingCommandPayload { kind: "ai-adoption-pending"; attemptId: string; actionId: string; recoveryUnitId: string; resultId: string }
 export interface ExecutionCancellationCommandPayload extends CancellationTarget { kind: "execution-cancellation" }
 export interface ExecutionCancellationRetryCommandPayload extends CancellationTarget { kind: "execution-cancellation-retry"; requestId: string }
+export interface ArenaPreparationCommandPayload { kind: "arena-preparation"; editSeq: number; locale: string; unitIds: string[] }
+export interface ArenaStartCommandPayload { kind: "arena-start"; attemptId: string; editSeq: number }
+export interface ArenaCandidateCommandPayload extends ExecutionItemCommandTarget { kind: "arena-candidate"; resultId: string; recoveryUnitId: string }
+export interface ArenaTranslationCommandPayload extends ExecutionItemCommandTarget { kind: "arena-translation-target" }
+export interface ArenaCompareCommandPayload { kind: "arena-compare"; unitId: string; locale: string; revisionIds: string[]; blind: boolean; editSeq: number }
+interface ArenaComparisonTarget { comparisonId: string; unitId: string; locale: string; sourceRevisionId: string; selectionId: string | null; basis: string }
+export interface ArenaComparisonCommandPayload extends ArenaComparisonTarget { kind: "arena-comparison" }
+export interface ArenaSelectionCommandPayload extends ArenaComparisonTarget { kind: "arena-selection"; revisionId: string }
+export interface ArenaMergeCommandPayload extends ArenaComparisonTarget { kind: "arena-merge-draft"; editSeq: number }
+export interface ArenaRevealCommandPayload { kind: "arena-reveal"; targetKind: "attempt" | "comparison"; targetId: string }
+export interface ArenaRoundCommandPayload { kind: "arena-round"; attemptId: string; taskId: string; editSeq: number }
+export interface ArenaOpenComparisonCommandPayload { kind: "arena-open-comparison"; comparisonId: string; nativeKey: string; locale: string }
+export type ArenaPendingCommandPayload = { kind: "arena-pending" } & (
+  | { pendingKind: "start"; attemptId: string }
+  | { pendingKind: "compare"; actionId: string; unitId: string; locale: string }
+  | { pendingKind: "reveal"; actionId: string; targetKind: "attempt" | "comparison"; targetId: string }
+  | { pendingKind: "select" | "merge"; actionId: string; unitId: string; locale: string }
+  | { pendingKind: "adopt"; actionId: string; attemptId: string; recoveryUnitId: string; resultId: string }
+);
 interface WorkbenchCommandPayloads {
+  "arena.preview": ArenaPreparationCommandPayload;
+  "arena.start": ArenaStartCommandPayload;
+  "arena.adopt-result": ArenaCandidateCommandPayload;
+  "arena.create-comparison": ArenaCompareCommandPayload;
+  "arena.reveal-identities": ArenaRevealCommandPayload;
+  "arena.select-candidate": ArenaSelectionCommandPayload;
+  "arena.begin-merge": ArenaComparisonCommandPayload;
+  "arena.save-merge": ArenaMergeCommandPayload;
+  "arena.refresh-merge-basis": ArenaMergeCommandPayload;
+  "arena.discard-merge": ArenaMergeCommandPayload;
+  "arena.new-round": ArenaRoundCommandPayload;
+  "arena.open-comparison": ArenaOpenComparisonCommandPayload;
+  "arena.reconcile-pending": ArenaPendingCommandPayload;
+  "arena.retry-pending": ArenaPendingCommandPayload;
+  "arena.cancel-task": ExecutionCancellationCommandPayload;
+  "arena.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "arena.open-translation": ArenaTranslationCommandPayload;
   "ai.preview": AiPreparationCommandPayload;
   "ai.start": AiStartCommandPayload;
   "ai.adopt-result": AiCandidateCommandPayload;
@@ -121,14 +157,15 @@ export interface CommandAvailability {
 }
 interface CommandMetadata {
   nameKey: TranslationKey;
-  category: "project" | "translation" | "review" | "resources" | "source" | "ai";
+  category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena";
   scope: CommandScope;
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
     | "writes-resources" | "captures-resources" | "reads-resources" | "retries-resource-action" | "opens-translation"
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
-    | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task";
+    | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"
+    | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -155,13 +192,25 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"arena-preparation", "arena.preview">
+  | ResourceCommand<"arena-start", "arena.start">
+  | ResourceCommand<"arena-candidate", "arena.adopt-result">
+  | ResourceCommand<"arena-compare", "arena.create-comparison">
+  | ResourceCommand<"arena-reveal", "arena.reveal-identities">
+  | ResourceCommand<"arena-selection", "arena.select-candidate">
+  | ResourceCommand<"arena-comparison", "arena.begin-merge">
+  | ResourceCommand<"arena-merge-draft", "arena.save-merge" | "arena.refresh-merge-basis" | "arena.discard-merge">
+  | ResourceCommand<"arena-round", "arena.new-round">
+  | ResourceCommand<"arena-open-comparison", "arena.open-comparison">
+  | ResourceCommand<"arena-pending", "arena.reconcile-pending" | "arena.retry-pending">
+  | ResourceCommand<"arena-translation-target", "arena.open-translation">
   | ResourceCommand<"ai-preparation", "ai.preview">
   | ResourceCommand<"ai-start", "ai.start">
   | ResourceCommand<"ai-candidate", "ai.adopt-result">
   | ResourceCommand<"ai-start-pending", "ai.reconcile-start" | "ai.retry-start">
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
-  | ResourceCommand<"execution-cancellation", "ai.cancel-task">
-  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation">
+  | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task">
+  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation">
   | ResourceCommand<"ai-translation-target", "ai.open-translation">
   | ResourceCommand<"resource-term", "resource.save-term">
   | ResourceCommand<"resource-context", "resource.save-context" | "resource.capture-context">
@@ -189,6 +238,23 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind?.startsWith("arena-")) {
+    if (!validArenaPayload(payload)) return unavailable;
+    switch (command.payloadKind) {
+      case "arena-preparation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-start": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-candidate": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-compare": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-reveal": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-selection": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-comparison": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-merge-draft": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-round": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-open-comparison": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "arena-translation-target": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+    }
+  }
   if (command.payloadKind?.startsWith("ai-") || command.payloadKind?.startsWith("execution-cancellation")) {
     if (!validAiPayload(payload)) return unavailable;
     switch (command.payloadKind) {
@@ -249,9 +315,39 @@ const unavailable: CommandAvailability = { enabled: false, reason: "unavailable"
 function nullableIdentity(value: unknown) { return value === null || validIdentity(value); }
 function editSequence(value: unknown) { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
 type AiCommandPayload = Extract<CommandPayload, { kind: `ai-${string}` | `execution-cancellation${string}` }>;
-function validAiItemTarget(payload: AiItemCommandTarget) {
+function validExecutionItemTarget(payload: ExecutionItemCommandTarget) {
   return [payload.attemptId, payload.taskId, payload.itemId, payload.translationUnitId, payload.locale,
     payload.sourceRevisionId, payload.sourceSnapshotId].every(validIdentity);
+}
+function validComparisonTarget(payload: ArenaComparisonTarget) {
+  return [payload.comparisonId, payload.unitId, payload.locale, payload.sourceRevisionId, payload.basis].every(validIdentity) && nullableIdentity(payload.selectionId);
+}
+function validArenaPayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload, { kind: `arena-${string}` }> {
+  if (!payload || typeof payload !== "object") return false;
+  switch (payload.kind) {
+    case "arena-preparation": return editSequence(payload.editSeq) && validIdentity(payload.locale) && Array.isArray(payload.unitIds)
+      && payload.unitIds.length > 0 && payload.unitIds.every(validIdentity) && new Set(payload.unitIds).size === payload.unitIds.length;
+    case "arena-start": return validIdentity(payload.attemptId) && editSequence(payload.editSeq);
+    case "arena-candidate": return validExecutionItemTarget(payload) && validIdentity(payload.resultId) && validIdentity(payload.recoveryUnitId);
+    case "arena-translation-target": return validExecutionItemTarget(payload);
+    case "arena-compare": return validIdentity(payload.unitId) && validIdentity(payload.locale) && editSequence(payload.editSeq) && typeof payload.blind === "boolean"
+      && Array.isArray(payload.revisionIds) && payload.revisionIds.length >= 2 && payload.revisionIds.length <= 4
+      && payload.revisionIds.every(validIdentity) && new Set(payload.revisionIds).size === payload.revisionIds.length;
+    case "arena-reveal": return validIdentity(payload.targetId) && ["attempt", "comparison"].includes(payload.targetKind);
+    case "arena-selection": return validComparisonTarget(payload) && validIdentity(payload.revisionId);
+    case "arena-comparison": return validComparisonTarget(payload);
+    case "arena-merge-draft": return validComparisonTarget(payload) && editSequence(payload.editSeq);
+    case "arena-round": return validIdentity(payload.attemptId) && validIdentity(payload.taskId) && editSequence(payload.editSeq);
+    case "arena-open-comparison": return [payload.comparisonId, payload.locale].every(validIdentity) && typeof payload.nativeKey === "string";
+    case "arena-pending": switch (payload.pendingKind) {
+      case "start": return validIdentity(payload.attemptId);
+      case "compare": case "select": case "merge": return [payload.actionId, payload.unitId, payload.locale].every(validIdentity);
+      case "reveal": return validIdentity(payload.actionId) && validIdentity(payload.targetId) && ["attempt", "comparison"].includes(payload.targetKind);
+      case "adopt": return [payload.actionId, payload.attemptId, payload.recoveryUnitId, payload.resultId].every(validIdentity);
+      default: return false;
+    }
+    default: return false;
+  }
 }
 function validAiPayload(payload: CommandPayload | undefined): payload is AiCommandPayload {
   if (!payload || typeof payload !== "object") return false;
@@ -259,8 +355,8 @@ function validAiPayload(payload: CommandPayload | undefined): payload is AiComma
     case "ai-preparation": return editSequence(payload.editSeq) && validIdentity(payload.locale) && Array.isArray(payload.unitIds)
       && payload.unitIds.length > 0 && payload.unitIds.every(validIdentity) && new Set(payload.unitIds).size === payload.unitIds.length;
     case "ai-start": case "ai-start-pending": return validIdentity(payload.attemptId) && editSequence(payload.editSeq);
-    case "ai-candidate": return validAiItemTarget(payload) && validIdentity(payload.resultId) && validIdentity(payload.recoveryUnitId);
-    case "ai-translation-target": return validAiItemTarget(payload);
+    case "ai-candidate": return validExecutionItemTarget(payload) && validIdentity(payload.resultId) && validIdentity(payload.recoveryUnitId);
+    case "ai-translation-target": return validExecutionItemTarget(payload);
     case "ai-adoption-pending": return [payload.attemptId, payload.actionId, payload.recoveryUnitId, payload.resultId].every(validIdentity);
     case "execution-cancellation": return validIdentity(payload.taskId) && validIdentity(payload.attemptId)
       && ["tasks", "source", "ai", "arena"].includes(payload.origin);
@@ -343,7 +439,19 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "ai-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "arena-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-start" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-candidate" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-compare" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-reveal" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-selection" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-comparison" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-merge-draft" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-round" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-open-comparison" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-translation-target" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-start" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-candidate" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "ai-start-pending" && payload?.kind === command.payloadKind) command.handler(payload);

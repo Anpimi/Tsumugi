@@ -1,5 +1,5 @@
 import { isCommandError } from "./projectCommands";
-import { QueryClient, type QueryKey, type Query } from "@tanstack/react-query";
+import { QueryClient, matchQuery, type QueryKey, type Query } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { validateResponseChanges, validateResponseNotification } from "./generated/validators";
 import type { ChangeScope, ProjectChanges, ChangeNotification } from "./generated/responses";
@@ -69,6 +69,21 @@ export class SessionReads {
     this.client.clear();
   }
   key(key: QueryKey): QueryKey { return [this.context.projectId, this.context.sessionToken, ...key]; }
+  /** Observe an exact session-relative Query record for one caller-owned wait. */
+  watchExactQuery(key: QueryKey) {
+    const cache = this.client.getQueryCache(), filters = { queryKey: this.key(key), exact: true };
+    let witness = cache.find(filters), listening = true;
+    const unsubscribe = cache.subscribe(event => {
+      if (!matchQuery(filters, event.query) || !["added", "updated", "removed"].includes(event.type)) return;
+      // Retain the latest record even after removal. An old record's late
+      // notification cannot replace evidence from a newer exact Query.
+      if (event.type === "added" || event.query === witness || cache.find(filters) === event.query) witness = event.query;
+    });
+    return {
+      current: () => witness,
+      dispose() { if (listening) { listening = false; unsubscribe(); } },
+    };
+  }
   status = () => this.failed;
   subscribeStatus = (receive: () => void) => { this.statusListeners.add(receive); return () => { this.statusListeners.delete(receive); }; };
   subscribeChanges = (receive: (scopes: readonly ChangeScope[]) => void) => { this.changeListeners.add(receive); return () => { this.changeListeners.delete(receive); }; };

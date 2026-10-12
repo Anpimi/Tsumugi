@@ -207,3 +207,48 @@ describe("AI command payloads", () => {
     remove(); expect(dispatch(payload)).toBe(false);
   });
 });
+
+describe("Arena command payloads", () => {
+  const arenaScope = { ...scope, area: "arena" as const };
+  const metadata = { nameKey: "arena.compare" as const, category: "arena" as const, scope: arenaScope,
+    binding: null, risk: "captures-arena" as const, confirmation: "none" as const };
+  const item = { attemptId: "attempt", taskId: "task", itemId: "item", translationUnitId: "unit", locale: "zh-CN",
+    sourceRevisionId: "source", sourceSnapshotId: "snapshot" };
+  const comparison = { comparisonId: "comparison", unitId: "unit", locale: "zh-CN", sourceRevisionId: "source", selectionId: null, basis: "basis" };
+  it.each([
+    ["arena.preview", { kind: "arena-preparation", editSeq: 1, locale: "zh-CN", unitIds: ["second-page", "first-page"] }, [{ editSeq: -1 }, { unitIds: [] }, { unitIds: ["same", "same"] }]],
+    ["arena.start", { kind: "arena-start", attemptId: "attempt", editSeq: 1 }, [{ attemptId: null }, { editSeq: NaN }]],
+    ["arena.adopt-result", { kind: "arena-candidate", ...item, resultId: "result", recoveryUnitId: "recovery" }, [{ recoveryUnitId: "" }, { sourceSnapshotId: null }]],
+    ["arena.create-comparison", { kind: "arena-compare", unitId: "unit", locale: "zh-CN", revisionIds: ["first", "second"], blind: true, editSeq: 2 }, [{ revisionIds: ["same", "same"] }, { revisionIds: ["first"] }, { blind: null }, { editSeq: 1.5 }]],
+    ["arena.reveal-identities", { kind: "arena-reveal", targetKind: "comparison", targetId: "comparison" }, [{ targetKind: "task" }, { targetId: "" }]],
+    ["arena.select-candidate", { kind: "arena-selection", ...comparison, revisionId: "revision" }, [{ revisionId: null }, { selectionId: undefined }]],
+    ["arena.begin-merge", { kind: "arena-comparison", ...comparison }, [{ basis: "" }, { sourceRevisionId: null }]],
+    ["arena.save-merge", { kind: "arena-merge-draft", ...comparison, editSeq: 3 }, [{ editSeq: -1 }]],
+    ["arena.refresh-merge-basis", { kind: "arena-merge-draft", ...comparison, editSeq: 3 }, [{ editSeq: undefined }]],
+    ["arena.discard-merge", { kind: "arena-merge-draft", ...comparison, editSeq: 3 }, [{ comparisonId: "" }]],
+    ["arena.new-round", { kind: "arena-round", attemptId: "attempt", taskId: "task", editSeq: 3 }, [{ taskId: null }, { editSeq: false }]],
+    ["arena.open-comparison", { kind: "arena-open-comparison", comparisonId: "comparison", nativeKey: "", locale: "zh-CN" }, [{ locale: "" }, { nativeKey: null }]],
+    ["arena.reconcile-pending", { kind: "arena-pending", pendingKind: "start", attemptId: "attempt" }, [{ pendingKind: "other" }, { attemptId: null }]],
+    ["arena.retry-pending", { kind: "arena-pending", pendingKind: "adopt", attemptId: "attempt", actionId: "action", recoveryUnitId: "recovery", resultId: "result" }, [{ recoveryUnitId: null }, { resultId: "" }]],
+    ["arena.cancel-task", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "arena" }, [{ origin: "other" }, { attemptId: null }]],
+    ["arena.retry-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "source", requestId: "request" }, [{ requestId: "" }]],
+    ["arena.open-translation", { kind: "arena-translation-target", ...item }, [{ sourceRevisionId: null }, { locale: "" }]],
+    ["arena.reconcile-pending", { kind: "arena-pending", pendingKind: "compare", actionId: "action", unitId: "unit", locale: "zh-CN" }, [{ actionId: "" }, { unitId: null }]],
+    ["arena.reconcile-pending", { kind: "arena-pending", pendingKind: "reveal", actionId: "action", targetKind: "attempt", targetId: "attempt" }, [{ targetKind: "other" }, { targetId: null }]],
+    ["arena.reconcile-pending", { kind: "arena-pending", pendingKind: "select", actionId: "action", unitId: "unit", locale: "zh-CN" }, [{ locale: "" }]],
+    ["arena.reconcile-pending", { kind: "arena-pending", pendingKind: "merge", actionId: "action", unitId: "unit", locale: "zh-CN" }, [{ unitId: "" }]],
+  ] as const)("validates fixed Arena intent for %s before reaching the owner", (id, payload, malformed) => {
+    const commands = new WorkbenchCommands(), handler = vi.fn(); let enabled = true;
+    const remove = commands.register({ ...metadata, id, payloadKind: payload.kind, availability: () => ({ enabled }), handler } as WorkbenchCommand);
+    const dispatch = (value?: unknown, target = arenaScope) => Reflect.apply(commands.dispatch, commands, [id, target, value]);
+    expect(dispatch()).toBe(false); expect(dispatch(null)).toBe(false); expect(dispatch({ ...payload, kind: "unknown" })).toBe(false);
+    malformed.forEach(change => expect(dispatch({ ...payload, ...change })).toBe(false));
+    expect(dispatch(payload, { ...arenaScope, projectId: "other" })).toBe(false);
+    expect(dispatch(payload, { ...arenaScope, sessionToken: "other" })).toBe(false);
+    expect(Reflect.apply(commands.dispatch, commands, [id, { ...arenaScope, area: "ai" }, payload])).toBe(false);
+    expect(Reflect.apply(commands.describe, commands, [id, arenaScope, payload])?.availability.enabled).toBe(true);
+    expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledWith(payload);
+    enabled = false; expect(dispatch(payload)).toBe(false); expect(handler).toHaveBeenCalledTimes(1);
+    remove(); expect(dispatch(payload)).toBe(false);
+  });
+});

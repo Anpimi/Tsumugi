@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Arena actions verify their exact workspace scope, comparison basis, draft or saved candidate through the shared command context. Original uncertain requests remain recoverable, checked Task cancellation stays available during view refreshes, and captured work survives view changes without accepting a replaced or failed read.
+
 - AI actions share the current workspace command context and verify the selected scope or saved candidate before starting. Original uncertain requests remain available for explicit recovery, and approved captured work continues across view switches without applying late results to a replacement project.
 
 - Translation and review workspaces refresh their current references and history through the project session while preserving drafts and captured scopes. Failed reads keep completed saves distinct from uncertain writes; returning to a workspace does not restore stale editing or navigation permission.

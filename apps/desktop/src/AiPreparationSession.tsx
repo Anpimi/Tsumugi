@@ -6,7 +6,6 @@ import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import { matchQuery } from "@tanstack/react-query";
 
 type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; uncertain: boolean };
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
@@ -180,31 +179,23 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     return {taskId:view.detail.taskId,item:row.item,resultId,unitId:unit.unitId,text:row.output.text};
   }
   function candidateReadProof(value: Candidate, attemptId: string) {
-    const cache = reads.client.getQueryCache(), filters = {queryKey:reads.key(["aiCommands",attemptId]),exact:true};
-    const capturedQuery = cache.find(filters);
+    const witness = reads.watchExactQuery(["aiCommands",attemptId]);
+    const capturedQuery = witness.current();
     const capturedState = capturedQuery?.state;
-    let witness = capturedQuery, listening = true;
-    // Keep the latest exact record through replacement and removal while this
-    // business flight awaits identity/prepare. Removal must not revive Q1 after
-    // a newer Q2 supplied contradictory evidence and was itself collected.
-    const unsubscribe = cache.subscribe(event => {
-      if (!matchQuery(filters,event.query) || !["added","updated","removed"].includes(event.type)) return;
-      if (event.type === "added" || event.query === witness || cache.find(filters) === event.query) witness = event.query;
-    });
     // Direct owner callers can supply checked fixed evidence. The consumer must
     // additionally prove a current Query before dispatch. Once captured, hiding
     // its view only invalidates that read; it does not revoke the business intent.
     return {
       current() {
-        const projection = witness?.state.data as AiView | null | undefined;
+        const query = witness.current(), projection = query?.state.data as AiView | null | undefined;
         // A checked direct-owner read may be newer than an inactive cache entry.
         // Only that unchanged original record retains this initial exception;
         // production fresh entry points still require a successful current Query.
-        return !witness || (witness === capturedQuery && witness.state === capturedState)
-          || (witness.state.status === "success" && witness.state.error === null
+        return !query || (query === capturedQuery && query.state === capturedState)
+          || (query.state.status === "success" && query.state.error === null
             && !!projection && JSON.stringify(candidate(projection,value.resultId)) === JSON.stringify(value));
       },
-      dispose() { if (listening) { listening = false; unsubscribe(); } },
+      dispose: witness.dispose,
     };
   }
   function cancellationPending(taskId: string) {
