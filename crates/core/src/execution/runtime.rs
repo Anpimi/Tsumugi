@@ -230,6 +230,15 @@ impl ExecutionRuntime {
         input: &FixedInput,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
+        let policy = self.submission_policy(store, input, parent)?;
+        store.enqueue_execution_with_policy(input, policy, parent)
+    }
+    fn submission_policy(
+        &self,
+        store: &ProjectStore,
+        input: &FixedInput,
+        parent: Option<ExecutionId>,
+    ) -> Result<RecoveryPolicy, ExecutionError> {
         if !self.accepting || self.input_package_stopped(input) {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
@@ -259,34 +268,65 @@ impl ExecutionRuntime {
                 "execution-queue",
             ));
         }
-        let policy = self.policies[&input_key(input)?];
-        store.enqueue_execution_with_policy(input, policy, parent)
+        Ok(self.policies[&input_key(input)?])
     }
     pub fn is_active(&self, attempt: ExecutionId) -> bool {
         self.workers
             .iter()
             .any(|worker| worker.request.input.envelope().attempt_id == attempt)
     }
-    /// Rebuild only eligible remaining work from durable evidence. Capability
-    /// registration and enqueue-time checks remain authoritative.
+    /// Exact replay returns durable evidence before consulting live controls.
+    /// It does not schedule historical queued work after a process reopens.
     pub fn resume(
         &mut self,
         store: &mut ProjectStore,
-        attempt: ExecutionId,
-        items: &[ExecutionId],
-    ) -> Result<ExecutionId, ExecutionError> {
-        if self.is_active(attempt) || self.retired.iter().any(|worker| worker.attempt == attempt) {
+        action: &ContinuationAction,
+    ) -> Result<ContinuationReceipt, ExecutionError> {
+        let action = action.canonical()?;
+        if let Some(receipt) = store.execution_continuation(action.action_id)? {
+            return if receipt.action == action {
+                Ok(receipt)
+            } else {
+                Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "continuation-identity",
+                ))
+            };
+        }
+        if self.is_active(action.source_attempt_id)
+            || self
+                .retired
+                .iter()
+                .any(|worker| worker.attempt == action.source_attempt_id)
+        {
             return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
         }
-        let input = store.execution_retry_input(attempt, items)?;
-        if !store.execution_recovery_policy(attempt)?.allows_replay() {
+        let plan = store.execution_recovery(action.source_attempt_id, false)?;
+        let unit = plan
+            .units
+            .iter()
+            .find(|unit| unit.unit_id == action.unit_id)
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "continuation-unit"))?;
+        let mut remaining = unit.remaining_item_ids.clone();
+        remaining.sort();
+        if remaining != action.item_ids || !unit.actions.contains(&action.kind.recovery_action()) {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "continuation-eligibility",
+            ));
+        }
+        let input = store.execution_retry_input(action.source_attempt_id, &action.item_ids)?;
+        if !store
+            .execution_recovery_policy(action.source_attempt_id)?
+            .allows_replay()
+        {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
                 "external-new-consent",
             ));
         }
-        self.submit(store, &input)?;
-        Ok(input.envelope().attempt_id)
+        let policy = self.submission_policy(store, &input, None)?;
+        store.enqueue_continuation(&action, &input, policy)
     }
     pub fn apply_query_outcome(
         &self,
@@ -581,7 +621,13 @@ impl ExecutionRuntime {
         let revision = store.cancel_execution(task, request)?;
         for worker in &mut self.workers {
             if store
-                .execution_attempt(worker.request.input.envelope().attempt_id, true)?
+                .execution_attempt(worker.request.input.envelope().attempt_id, true)
+                .map_err(|mut error| {
+                    // Cancellation is already durable; a failed projection cannot
+                    // reject it or confirm that running workers received a signal.
+                    error.code = ErrorCode::OutcomeUnknown;
+                    error
+                })?
                 .items
                 .iter()
                 .any(|item| item.cancellation_requested)

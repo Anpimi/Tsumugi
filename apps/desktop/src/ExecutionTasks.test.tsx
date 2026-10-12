@@ -2,14 +2,15 @@ import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ExecutionTasks } from "./ExecutionTasks";
+import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
 import { i18n } from "./i18n";
 import fixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import type { ProjectView } from "./projectCommands";
-import type { AttemptDetail } from "./executionCommands";
 import { savedPluginBuild } from "./testSupport/pluginBuildFixture";
 import type { SavedPluginBuildView } from "./releaseCommands";
+import { createRef, type RefObject } from "react";
+import type { AttemptDetail, ContinuationRequest, ContinuationReceipt } from "./executionCommands";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session-1", locator: "C:\\isolated\\project", metadata: { projectId: fixture.session.projectId, displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" }, reconciliationState: "settled" };
@@ -30,6 +31,8 @@ async function openSavedBuild(options: { saved?: SavedPluginBuildView; onSavedBu
     if (command === "list_execution_tasks") return [{ ...task, taskId: saved.taskId, operation: "locale-build" }];
     if (command === "read_execution_task") return [{ attemptId: saved.attemptId, sequence: "1" }];
     if (command === "read_execution_attempt") return value;
+    if (command === "read_execution_task_view") return { ...task, taskId: saved.taskId, operation: "locale-build" };
+    if (command === "read_execution_continuations") return { receipts: [], next: null };
     if (command === "read_saved_plugin_build") return options.read ? options.read() : saved;
     throw new Error(`Unexpected command: ${command}`);
   });
@@ -40,18 +43,23 @@ async function openSavedBuild(options: { saved?: SavedPluginBuildView; onSavedBu
   await screen.findByRole("button", { name: i18n.t("execution.output") });
   return { user, saved };
 }
+function continuationResult(request: ContinuationRequest): ContinuationReceipt {
+  return { ...fixture.continuationReceipt, sequence: "2", action: { ...request.action, itemIds: [...request.action.itemIds].sort() }, attemptId: fixtureIdentity(3), taskId: task.taskId, operation: task.operation };
+}
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
-async function openTasks(value = detail()) {
+async function openTasks(value = detail(), ref?: RefObject<TasksHandle | null>) {
   invoke.mockImplementation(async (command: string) => {
     if (command === "execution_status") return fixture.status;
     if (command === "list_execution_tasks") return [task];
     if (command === "read_execution_task") return [{ attemptId: value.attemptId, sequence: "1" }];
     if (command === "read_execution_attempt") return value;
+    if (command === "read_execution_task_view") return task;
+    if (command === "read_execution_continuations") return { receipts: [], next: null };
     throw new Error(`Unexpected command: ${command}`);
   });
   const user = userEvent.setup();
-  render(<ExecutionTasks project={project} disabled={false} />);
+  render(<ExecutionTasks project={project} disabled={false} ref={ref} />);
   await user.click(screen.getByRole("button", { name: "Tasks" }));
   await user.click(await screen.findByRole("button", { name: /Sample update/ }));
   await screen.findByText(/0 of 1 outputs/);
@@ -98,6 +106,8 @@ it("discards a previous selection's late detail response", async () => {
     if (command === "list_execution_tasks") return [task, { ...task, taskId: fixtureIdentity(2), sequence: "2" }];
     if (command === "read_execution_task") return [{ attemptId: args.request.taskId === fixtureIdentity(2) ? fresh.attemptId : fixture.detail.attemptId, sequence: "1" }];
     if (command === "read_execution_attempt") return args.request.attemptId === fresh.attemptId ? fresh : old;
+    if (command === "read_execution_task_view") return { ...task, taskId: args.request.taskId };
+    if (command === "read_execution_continuations") return { receipts: [], next: null };
   });
   const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: "Tasks" }));
@@ -164,7 +174,7 @@ it("shows named failure details beside the item and focuses the readable result"
   expect(result).toHaveFocus();
   expect(result.closest("li")).toContainElement(screen.getByText("Sample A · zh-CN", { selector: "strong" }));
   await user.click(screen.getByRole("button", { name: "Retry eligible failures" }));
-  invoke.mockResolvedValueOnce({ attemptId: fixtureIdentity(3), queryStarted: false });
+  invoke.mockResolvedValueOnce(fixtureIdentity(6)).mockImplementationOnce(async (_command, args: { request: ContinuationRequest }) => continuationResult(args.request));
   await user.click(within(screen.getByRole("dialog", { name: "Retry eligible failures" })).getByRole("button", { name: "Retry eligible failures" }));
   await waitFor(() => expect(screen.queryByRole("region", { name: "Result for Sample A" })).not.toBeInTheDocument());
 });
@@ -211,7 +221,7 @@ it.each(["en-US", "zh-CN"])("shows every saved plugin artifact and original targ
     expect(within(artifacts).getByLabelText(i18n.t("releasePlugin.savedSha", { path: artifact.logicalPath }))).toHaveTextContent(artifact.sha256);
   }
   expect(screen.queryByRole("button", { name: i18n.t("execution.actions.validate-output") })).not.toBeInTheDocument();
-  expect(invoke.mock.calls.every(([command]) => ["execution_status", "list_execution_tasks", "read_execution_task", "read_execution_attempt", "read_saved_plugin_build"].includes(command))).toBe(true);
+  expect(invoke.mock.calls.every(([command]) => ["execution_status", "list_execution_tasks", "read_execution_task", "read_execution_task_view", "read_execution_attempt", "read_execution_continuations", "read_saved_plugin_build"].includes(command))).toBe(true);
   expect(invoke).toHaveBeenCalledWith("read_saved_plugin_build", { request: { sessionToken: project.sessionToken, projectId: project.metadata.projectId, attemptId: saved.attemptId } });
 });
 
@@ -263,4 +273,295 @@ it("keeps Tasks open when the saved-build owner refuses navigation and forwards 
   expect(navigate.mock.calls).toEqual([[saved.attemptId], [saved.attemptId]]);
   expect(screen.queryByRole("heading", { name: i18n.t("execution.title") })).not.toBeInTheDocument();
   expect(invoke.mock.calls.every(([command]) => command.startsWith("read_") || command === "execution_status" || command === "list_execution_tasks")).toBe(true);
+});
+it("keeps the complete original recovery after lost ACK, wrong lookup and later rejection", async () => {
+  const value = detail();
+  value.recovery.units[0].actions = ["resume-undispatched"];
+  value.recovery.units[0].blockedReason = null;
+  value.progress.unknown = 0; value.progress.queued = 1;
+  value.items[0].status.execution = "queued";
+  const user = await openTasks(value);
+  await user.click(screen.getByRole("button", { name: "Continue remaining work" }));
+  invoke.mockResolvedValueOnce(fixtureIdentity(6)).mockRejectedValueOnce(new Error("lost ACK"));
+  await user.click(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" }));
+  const check = await screen.findByRole("button", { name: "Check original recovery request" });
+  const original = invoke.mock.calls.find(([command]) => command === "continue_execution")![1].request as ContinuationRequest;
+  expect(original.action).toMatchObject({ kind: "resume-undispatched", expectedCancellationRevision: "0", itemIds: value.recovery.units[0].remainingItemIds });
+  expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument();
+  // A shaped but unrelated receipt cannot acknowledge the pending original intent.
+  invoke.mockResolvedValueOnce({ ...continuationResult(original), action: { ...original.action, unitId: fixtureIdentity(8) } });
+  await user.click(check);
+  expect(await screen.findByText(/original recovery request is still unconfirmed/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument();
+  invoke.mockResolvedValueOnce(null);
+  await user.click(screen.getByRole("button", { name: "Check original recovery request" }));
+  const retry = await screen.findByRole("button", { name: "Retry the same recovery request" });
+  invoke.mockRejectedValueOnce({ code: "cancelled", outcome: "rejected", stage: "execution-recover", recoveryRequired: false, reason: "continuation-cancellation-basis" });
+  await user.click(retry);
+  expect(await screen.findByText(/original recovery request is still unconfirmed/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument();
+  const writes = invoke.mock.calls.filter(([command]) => command === "continue_execution");
+  expect(writes).toHaveLength(2); expect(writes[1][1]).toEqual(writes[0][1]);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  invoke.mockResolvedValueOnce(continuationResult(original));
+  await user.click(screen.getByRole("button", { name: "Check original recovery request" }));
+  await waitFor(() => expect(screen.queryByText(/original recovery request is still unconfirmed/)).not.toBeInTheDocument());
+  expect(invoke.mock.calls.filter(([command]) => command === "continue_execution")).toHaveLength(2);
+  expect(invoke.mock.calls.some(([command]) => command === "recover_execution")).toBe(false);
+});
+
+it("resets replay permission after a second unknown and keeps deferred request on return", async () => {
+  const value = detail(); value.recovery.units[0].actions = ["resume-undispatched"];
+  const handle = createRef<TasksHandle>();
+  const user = await openTasks(value, handle);
+  await user.click(screen.getByRole("button", { name: "Continue remaining work" }));
+  invoke.mockResolvedValueOnce(fixtureIdentity(6)).mockRejectedValueOnce(new Error("lost ACK"));
+  await user.click(within(screen.getByRole("dialog", { name: "Continue remaining work" })).getByRole("button", { name: "Continue remaining work" }));
+  invoke.mockResolvedValueOnce(null);
+  await user.click(await screen.findByRole("button", { name: "Check original recovery request" }));
+  invoke.mockRejectedValueOnce(new Error("second ACK lost"));
+  await user.click(await screen.findByRole("button", { name: "Retry the same recovery request" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Retry the same recovery request" })).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: "Keep request and return" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Check original recovery request" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Continue remaining work" })).toBeDisabled();
+  expect(await handle.current!.allowLeave()).toBe(false);
+  const writes = invoke.mock.calls.filter(([command]) => command === "continue_execution");
+  expect(writes[1][1]).toEqual(writes[0][1]);
+});
+
+it("finds a saved original continuation after reopening without resubmitting it", async () => {
+  const value = detail();
+  value.recovery.units[0].actions = []; value.recovery.units[0].blockedReason = "continued-in-new-attempt";
+  const original: ContinuationRequest = { ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched", expectedCancellationRevision: "0" } };
+  const saved = continuationResult(original);
+  invoke.mockImplementation(async (command: string, args: { request: { attemptId?: string; sourceAttemptId?: string; after?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks" || command === "read_execution_task_view") return command === "list_execution_tasks" ? [task] : task;
+    if (command === "read_execution_task") return [{ attemptId: value.attemptId, sequence: "1" }];
+    if (command === "read_execution_attempt") return args.request.attemptId === saved.attemptId ? { ...value, attemptId: saved.attemptId, recovery: { ...value.recovery, attemptId: saved.attemptId } } : value;
+    if (command === "read_execution_continuations") return args.request.after === "0" && args.request.sourceAttemptId === saved.action.sourceAttemptId ? { receipts: [saved], next: null } : { receipts: [], next: null };
+    if (command === "read_execution_continuation") return saved;
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const handle = createRef<TasksHandle>();
+  const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} ref={handle} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: /Sample update/ }));
+  const view = await screen.findByRole("button", { name: "View continued work" });
+  await waitFor(() => expect(view).toBeEnabled());
+  await user.click(view);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("read_execution_attempt", { request: { ...fixture.session, attemptId: saved.attemptId, offset: 0, limit: 100 } }));
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "create_execution_identity")).toBe(false);
+  expect(await handle.current!.allowLeave()).toBe(true);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void, reject!: (error: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+it("captures the complete revision-zero recovery before identity await and reserves it synchronously", async () => {
+  const value = detail(); value.recovery.units[0].actions = ["resume-undispatched"];
+  const handle = createRef<TasksHandle>();
+  const user = await openTasks(value, handle);
+  const identity = deferred<string>();
+  const read = invoke.getMockImplementation()!;
+  let sent: ContinuationRequest | undefined;
+  invoke.mockImplementation(async (command: string, args: { request: ContinuationRequest }) => {
+    if (command === "create_execution_identity") return identity.promise;
+    if (command === "continue_execution") { sent = args.request; throw new Error("lost ACK"); }
+    return read(command, args);
+  });
+  await user.click(screen.getByRole("button", { name: "Continue remaining work" }));
+  const submit = within(screen.getByRole("dialog")).getByRole("button", { name: "Continue remaining work" });
+  await act(async () => { submit.click(); submit.click(); expect(await handle.current!.allowLeave()).toBe(false); });
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  const original = structuredClone(value.recovery.units[0]);
+  task.cancellationRevision = "9";
+  value.recovery.units[0].remainingItemIds = [fixtureIdentity(908)];
+  value.recovery.units[0].unitId = fixtureIdentity(909);
+  try {
+    await act(async () => { identity.resolve(fixtureIdentity(906)); await identity.promise; });
+    await screen.findByRole("button", { name: "Check original recovery request" });
+    expect(sent).toEqual({ ...fixture.session, action: { actionId: fixtureIdentity(906), projectId: project.metadata.projectId,
+      sourceAttemptId: value.attemptId, unitId: original.unitId, kind: "resume-undispatched", itemIds: original.remainingItemIds, expectedCancellationRevision: "0" } });
+    expect(invoke.mock.calls.filter(([command]) => command === "continue_execution")).toHaveLength(1);
+  } finally { task.cancellationRevision = "0"; }
+});
+
+it.each(["identity", "ack"] as const)("discards a replaced session's late continuation %s without dispatching into its replacement", async stage => {
+  const value = detail(); value.recovery.units[0].actions = ["resume-undispatched"];
+  const user = await openTasks(value);
+  const response = deferred<string | ContinuationReceipt>();
+  const read = invoke.getMockImplementation()!;
+  let original: ContinuationRequest | undefined;
+  invoke.mockImplementation(async (command: string, args: { request: ContinuationRequest }) => {
+    if (command === "create_execution_identity") return stage === "identity" ? response.promise : fixtureIdentity(906);
+    if (command === "continue_execution") { original = args.request; return response.promise; }
+    return read(command, args);
+  });
+  await user.click(screen.getByRole("button", { name: "Continue remaining work" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Continue remaining work" }));
+  cleanup();
+  const replacement = { ...project, sessionToken: "session-2" };
+  render(<ExecutionTasks project={replacement} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await screen.findByRole("button", { name: "Sample update · Task 1" });
+  const callsBefore = invoke.mock.calls.length;
+  await act(async () => { response.resolve(stage === "identity" ? fixtureIdentity(906) : continuationResult(original!)); await response.promise; });
+  expect(invoke.mock.calls.slice(callsBefore).some(([command]) => command === "continue_execution" || command === "read_execution_attempt")).toBe(false);
+  expect(invoke.mock.calls.filter(([command]) => command === "continue_execution")).toHaveLength(stage === "identity" ? 0 : 1);
+  expect(screen.queryByRole("button", { name: "Check original recovery request" })).not.toBeInTheDocument();
+  expect(screen.queryByText(i18n.t("execution.done"))).not.toBeInTheDocument();
+});
+
+it("does not dispatch a continuation when its retained owner becomes unavailable during identity allocation", async () => {
+  const value = detail(); value.recovery.units[0].actions = ["resume-undispatched"];
+  const identity = deferred<string>();
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task];
+    if (command === "read_execution_task_view") return task;
+    if (command === "read_execution_task") return [{ attemptId: value.attemptId, sequence: "1" }];
+    if (command === "read_execution_attempt") return value;
+    if (command === "read_execution_continuations") return { receipts: [], next: null };
+    if (command === "create_execution_identity") return identity.promise;
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup(); const view = render(<ExecutionTasks project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: "Sample update · Task 1" }));
+  await user.click(await screen.findByRole("button", { name: "Continue remaining work" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Continue remaining work" }));
+  view.rerender(<ExecutionTasks project={project} disabled />);
+  await act(async () => { identity.resolve(fixtureIdentity(906)); await identity.promise; });
+  await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "Continue remaining work" })).toBeDisabled());
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution")).toBe(false);
+  expect(screen.queryByText(i18n.t("execution.done"))).not.toBeInTheDocument();
+});
+
+it.each(["wrong", "absent", "rejected"] as const)("requires another fresh exact read after a successful history choice when the repeated lookup is %s", async result => {
+  const value = detail(); value.recovery.units[0].actions = [];
+  const record = continuationResult({ ...fixture.continuation, action: { ...fixture.continuation.action, kind: "resume-undispatched", expectedCancellationRevision: "0" } });
+  const later = deferred<ContinuationReceipt | null>();
+  let lookups = 0;
+  invoke.mockImplementation(async (command: string, args: { request: { attemptId?: string; sourceAttemptId?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task];
+    if (command === "read_execution_task_view") return task;
+    if (command === "read_execution_task") return [{ attemptId: value.attemptId, sequence: "1" }, { attemptId: record.attemptId, sequence: record.sequence }];
+    if (command === "read_execution_attempt") return { ...value, attemptId: args.request.attemptId, recovery: { ...value.recovery, attemptId: args.request.attemptId }, items: value.items.map(item => ({ ...item, scope: { ...item.scope, id: args.request.attemptId === record.attemptId ? "Continued item" : "Original item" } })) };
+    if (command === "read_execution_continuations") return { receipts: args.request.sourceAttemptId === value.attemptId ? [record] : [], next: null };
+    if (command === "read_execution_continuation") return ++lookups === 1 ? record : later.promise;
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: "Sample update · Task 1" }));
+  await screen.findByText("Continued item · zh-CN", { selector: "strong" });
+  await user.selectOptions(screen.getByRole("combobox"), value.attemptId);
+  await screen.findByText("Original item · zh-CN", { selector: "strong" });
+  const first = await screen.findByRole("button", { name: "View continued work" });
+  await waitFor(() => expect(first).toBeEnabled()); await user.click(first);
+  await screen.findByText("Continued item · zh-CN", { selector: "strong" });
+  await user.selectOptions(screen.getByRole("combobox"), value.attemptId);
+  const again = await screen.findByRole("button", { name: "View continued work" });
+  await waitFor(() => expect(again).toBeEnabled());
+  await user.click(again);
+  expect(lookups).toBe(2);
+  expect(screen.getByText("Original item · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  const continuedReads = () => invoke.mock.calls.filter(([command, args]) => command === "read_execution_attempt" && args.request.attemptId === record.attemptId).length;
+  const before = continuedReads();
+  await act(async () => {
+    if (result === "rejected") later.reject({ code: "storage-failed" });
+    else later.resolve(result === "absent" ? null : { ...record, requestDigest: "d".repeat(64) });
+    await later.promise.catch(() => undefined);
+  });
+  await screen.findByRole("alert");
+  expect(screen.getByText("Original item · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  expect(continuedReads()).toBe(before);
+  expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "create_execution_identity")).toBe(false);
+});
+
+it("keeps a plugin continuation pending across deferral and rejects saved-build routing without clearing its saved output", async () => {
+  const navigate = vi.fn<(id: string) => boolean>().mockReturnValue(true);
+  const saved = { ...structuredClone(savedPluginBuild), projectId: project.metadata.projectId };
+  saved.locales[0].status.execution = "failed"; saved.locales[0].status.retrySafe = true;
+  saved.locales[0].status.validation = "absent"; saved.locales[0].status.diagnostic = "known-build-failure";
+  saved.locales[0].result!.outcome = "failed"; saved.locales[0].result!.artifacts = [];
+  const value = savedBuildDetail(saved); value.recovery.units[0].actions = ["retry-safe-failure"];
+  value.recovery.units[0].remainingItemIds = [value.items[0].status.itemId];
+  value.recovery.units[0].blockedReason = null;
+  value.progress.succeeded = 0; value.progress.failed = 1;
+  const next = fixtureIdentity(918);
+  let pending: ContinuationRequest | undefined;
+  invoke.mockImplementation(async (command: string, args: { request: ContinuationRequest & { attemptId?: string; sourceAttemptId?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [{ ...task, taskId: saved.taskId, operation: "locale-build" }];
+    if (command === "read_execution_task_view") return { ...task, taskId: saved.taskId, operation: "locale-build" };
+    if (command === "read_execution_task") return [{ attemptId: saved.attemptId, sequence: "1" }];
+    if (command === "read_execution_attempt") return { ...value, attemptId: args.request.attemptId, recovery: { ...value.recovery, attemptId: args.request.attemptId } };
+    if (command === "read_execution_continuations") return { receipts: [], next: null };
+    if (command === "read_saved_plugin_build") return saved;
+    if (command === "create_execution_identity") return fixtureIdentity(919);
+    if (command === "continue_execution") { pending = args.request; throw new Error("lost ACK"); }
+    if (command === "read_execution_continuation") return { ...continuationResult(pending!), attemptId: next, taskId: saved.taskId, operation: "locale-build" };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup(); const handle = createRef<TasksHandle>();
+  render(<ExecutionTasks project={project} disabled={false} onSavedBuild={navigate} ref={handle} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: `${i18n.t("release.title")} · ${i18n.t("execution.taskNumber", { number: "1" })}` }));
+  await user.click(await screen.findByRole("button", { name: i18n.t("execution.failureDetails") }));
+  await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  await user.click(screen.getByRole("button", { name: "Retry eligible failures" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry eligible failures" }));
+  await user.click(await screen.findByRole("button", { name: "Keep request and return" }));
+  const route = screen.getByRole("button", { name: i18n.t("releasePlugin.savedOpen") });
+  expect(route).toBeDisabled(); expect(screen.getByRole("combobox")).toBeDisabled();
+  await user.click(route); expect(navigate).not.toHaveBeenCalled();
+  expect(await handle.current!.allowLeave()).toBe(false);
+  expect(screen.getByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: i18n.t("workbench.backOverview") }));
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: "Check original recovery request" }));
+  await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue(next));
+  expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "continue_execution")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build" || command === "recover_execution")).toBe(false);
+});
+
+it("pages continuation history independently of result items and confirms its full-page terminal cursor", async () => {
+  const value = detail(); value.recovery.units[0].actions = []; value.nextOffset = 100;
+  const records = Array.from({ length: 50 }, (_, index) => {
+    const action: ContinuationRequest["action"] = { ...fixture.continuation.action, kind: "resume-undispatched", actionId: fixtureIdentity(1000 + index), expectedCancellationRevision: "0" };
+    return { ...continuationResult({ ...fixture.session, action }), sequence: String(index + 2), attemptId: fixtureIdentity(1100 + index) };
+  });
+  invoke.mockImplementation(async (command: string, args: { request: { after?: string; offset?: number; sourceAttemptId?: string } }) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [task];
+    if (command === "read_execution_task_view") return task;
+    if (command === "read_execution_task") return [{ attemptId: value.attemptId, sequence: "1" }];
+    if (command === "read_execution_attempt") return args.request.offset === 0 ? value : { ...value, items: [], nextOffset: null };
+    if (command === "read_execution_continuations") return args.request.after === "0" ? { receipts: records, next: "51" } : { receipts: [], next: null };
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup(); render(<ExecutionTasks project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Tasks" }));
+  await user.click(await screen.findByRole("button", { name: "Sample update · Task 1" }));
+  const history = await screen.findByRole("region", { name: "Recorded recovery requests" });
+  await waitFor(() => expect(within(history).getAllByRole("button", { name: "View continued work" })).toHaveLength(50));
+  const nextHistory = within(history).getByRole("button", { name: "Next page" });
+  await waitFor(() => expect(nextHistory).toBeEnabled()); await user.click(nextHistory);
+  await waitFor(() => expect(within(history).queryAllByRole("button", { name: "View continued work" })).toHaveLength(0));
+  expect(invoke).toHaveBeenCalledWith("read_execution_continuations", { request: { ...fixture.session, sourceAttemptId: value.attemptId, after: "51", limit: 50 } });
+  expect(screen.getByText("Sample A · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "read_execution_attempt").every(([, args]) => args.request.offset === 0)).toBe(true);
+  await user.click(within(history).getByRole("button", { name: "First page" }));
+  await waitFor(() => expect(within(history).getAllByRole("button", { name: "View continued work" })).toHaveLength(50));
+  expect(invoke.mock.calls.some(([command]) => command === "read_execution_continuation" || command === "continue_execution" || command === "create_execution_identity")).toBe(false);
 });

@@ -356,14 +356,12 @@ fn arena_retry_uses_one_budget_and_invalid_unknown_outputs_never_become_candidat
                 );
             }
         }
-        assert!(
-            rt.resume(
-                &mut store,
-                input.envelope().attempt_id,
-                &[input.envelope().items[0].item_id]
-            )
-            .is_err()
+        let continuation = crate::execution::test_continuation_action(
+            &store,
+            input.envelope().attempt_id,
+            &[input.envelope().items[0].item_id],
         );
+        assert!(rt.resume(&mut store, &continuation).is_err());
     }
 }
 
@@ -704,6 +702,24 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_current_reop
         Some(merged)
     );
     reopened.close().unwrap();
+    let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    connection.pragma_update(None, "user_version", 10).unwrap();
+    drop(connection);
+    assert_unsupported_snapshot_unchanged(&path, 10);
+    let unchanged = rusqlite::Connection::open_with_flags(
+        path.join("project.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        unchanged
+            .query_row("SELECT COUNT(*) FROM translation_revisions", [], |row| row
+                .get::<_, i64>(
+                0
+            ))
+            .unwrap(),
+        4
+    );
 }
 
 #[test]

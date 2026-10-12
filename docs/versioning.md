@@ -1,5 +1,19 @@
 # Application versioning and changelog maintenance
 
+The combined execution continuation boundary adds exact request/receipt links
+atomically with the existing chunked input, plugin grants, budget and release
+checks. The current-only project format advances from this branch's schema 30
+to schema 32; schema 31 is already used by a distinct development input layout.
+Other development snapshots are refused before application DDL without migration
+or reset. Historical exact receipts remain readable without restoring grants;
+fresh plugin attempts require their own authorization. Experimental Core callers
+must use the typed continuation action, and desktop clients must regenerate the
+execution contracts rather than use anonymous resume/retry. SDK/process/Store
+profiles, dependencies, lockfiles, runtime material and application/SDK version
+sources are unchanged. This remains the same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, without an additional SemVer bump
+or publication. Both Unreleased changelogs describe the behavior.
+
 Experimental Desktop approval-removal and exact-install uninstall IPC are
 additive within the same undistributed application `0.2.0-alpha.1` batch. The
 installation inventory now requires original installation actions and retained

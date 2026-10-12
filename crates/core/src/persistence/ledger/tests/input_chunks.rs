@@ -10,6 +10,123 @@ fn large_input(store: &ProjectStore) -> FixedInput {
     FixedInput::capture(envelope).unwrap()
 }
 
+#[test]
+fn continuation_receipt_chunks_and_attempt_share_one_transaction_and_reopen_exactly() {
+    let _schema = TestSchema::enable();
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = store(&path);
+    install_targets(&store);
+    let original = large_input(&store);
+    store.enqueue_read_only_execution(&original).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        original.envelope().attempt_id,
+        &[original.envelope().items[0].item_id],
+    );
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    assert!(next.bytes().len() > MAX_STORED_INPUT_BYTES);
+    let counts = |store: &ProjectStore| {
+        [
+            "execution_input_chunks",
+            "execution_attempts",
+            "execution_items",
+            "execution_continuations",
+        ]
+        .map(|table| {
+            store
+                .execution_connection()
+                .unwrap()
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap()
+        })
+    };
+    let before_counts = counts(&store);
+    let before_state = store
+        .execution_attempt(action.source_attempt_id, false)
+        .unwrap();
+    store.execution_connection().unwrap().execute_batch(
+        "CREATE TRIGGER fail_continuation BEFORE INSERT ON execution_continuations BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END;"
+    ).unwrap();
+    assert!(
+        store
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .is_err()
+    );
+    assert_eq!(counts(&store), before_counts);
+    assert_eq!(
+        serde_json::to_value(
+            store
+                .execution_attempt(action.source_attempt_id, false)
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::to_value(before_state).unwrap()
+    );
+    assert!(
+        store
+            .execution_input_if_present(next.envelope().attempt_id)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .execution_continuation(action.action_id)
+            .unwrap()
+            .is_none()
+    );
+    store
+        .execution_connection()
+        .unwrap()
+        .execute_batch("DROP TRIGGER fail_continuation")
+        .unwrap();
+    let receipt = store
+        .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+        .unwrap();
+    let stored = metadata(store.execution_connection().unwrap(), &next);
+    assert_eq!(
+        stored["rawBytes"].as_u64().unwrap(),
+        next.bytes().len() as u64
+    );
+    assert!(stored["chunks"].as_array().unwrap().len() > 1);
+    assert_eq!(
+        store.execution_input(receipt.attempt_id).unwrap().bytes(),
+        next.bytes()
+    );
+    let committed_counts = counts(&store);
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.execution_continuation(action.action_id).unwrap(),
+        Some(receipt.clone())
+    );
+    assert_eq!(
+        reopened
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(counts(&reopened), committed_counts);
+    assert_eq!(
+        reopened
+            .execution_input(action.source_attempt_id)
+            .unwrap()
+            .bytes(),
+        original.bytes()
+    );
+    assert_eq!(
+        reopened
+            .execution_input(receipt.attempt_id)
+            .unwrap()
+            .bytes(),
+        next.bytes()
+    );
+}
+
 fn metadata(connection: &Connection, input: &FixedInput) -> serde_json::Value {
     let bytes: Vec<u8> = connection
         .query_row(

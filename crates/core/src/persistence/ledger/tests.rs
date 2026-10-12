@@ -985,9 +985,25 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
         .execution_retry_input(input.envelope().attempt_id, &[failed])
         .unwrap();
     assert_eq!(retry.envelope().reused_results.len(), 2);
-    store.enqueue_read_only_execution(&retry).unwrap();
+    let continuation =
+        crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[failed]);
+    let continuation_receipt = store
+        .enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly)
+        .unwrap();
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .execution_continuation(continuation.action_id)
+            .unwrap(),
+        Some(continuation_receipt.clone())
+    );
+    assert_eq!(
+        reopened
+            .enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly)
+            .unwrap(),
+        continuation_receipt
+    );
     let view = reopened
         .execution_attempt(retry.envelope().attempt_id, false)
         .unwrap();
@@ -1695,4 +1711,159 @@ fn complete_projection_cache_rechecks_current_coverage_bytes_and_dispatch() {
             .code,
         ErrorCode::CorruptLedger,
     );
+}
+
+#[test]
+fn continuation_crash_child() {
+    let Ok(path) = std::env::var("TSUMUGI_CONTINUATION_PROJECT") else {
+        return;
+    };
+    let action: ContinuationAction =
+        serde_json::from_slice(&std::fs::read(Path::new(&path).join("continuation.json")).unwrap())
+            .unwrap();
+    let mut store = ProjectStore::open(&path).unwrap();
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    store
+        .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+        .unwrap();
+    panic!("configured continuation boundary did not terminate");
+}
+
+#[test]
+fn continuation_commit_crashes_preserve_exact_intent_and_one_attempt() {
+    for point in ["before-continuation-commit", "after-continuation-commit"] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("project");
+        let mut store = store(&path);
+        let input = fixture_input(&store, false);
+        store.enqueue_read_only_execution(&input).unwrap();
+        let action = crate::execution::test_continuation_action(
+            &store,
+            input.envelope().attempt_id,
+            &[input.envelope().items[0].item_id],
+        );
+        std::fs::write(
+            path.join("continuation.json"),
+            serde_json::to_vec(&action).unwrap(),
+        )
+        .unwrap();
+        store.close().unwrap();
+        let hook = temp.path().join("hook");
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "persistence::ledger::tests::continuation_crash_child",
+                "--nocapture",
+            ])
+            .env("TSUMUGI_CONTINUATION_PROJECT", &path)
+            .env("TSUMUGI_EXECUTION_CRASH", point)
+            .env("TSUMUGI_EXECUTION_HOOK", &hook)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("owned continuation helper timed out")
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(!status.success());
+        assert_eq!(std::fs::read_to_string(hook).unwrap(), point);
+        let mut reopened = ProjectStore::open(&path).unwrap();
+        let recorded = reopened.execution_continuation(action.action_id).unwrap();
+        assert_eq!(recorded.is_some(), point == "after-continuation-commit");
+        assert_eq!(
+            reopened
+                .execution_attempt_ids(input.envelope().task_id)
+                .unwrap()
+                .len(),
+            if recorded.is_some() { 2 } else { 1 }
+        );
+        let receipt = if let Some(receipt) = recorded {
+            // Confirming the original commit needs no new input, plan or dispatch.
+            assert_eq!(receipt.action, action.canonical().unwrap());
+            receipt
+        } else {
+            let next = reopened
+                .execution_retry_input(action.source_attempt_id, &action.item_ids)
+                .unwrap();
+            reopened
+                .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+                .unwrap()
+        };
+        let original = reopened.execution_input(receipt.attempt_id).unwrap();
+        assert_eq!(
+            reopened
+                .enqueue_continuation(&action, &original, RecoveryPolicy::ReadOnly)
+                .unwrap(),
+            receipt
+        );
+        assert_eq!(
+            reopened
+                .execution_attempt_ids(input.envelope().task_id)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            reopened
+                .execution_continuation_page(action.source_attempt_id, Revision::new(0).unwrap(), 1)
+                .unwrap(),
+            vec![receipt.clone()]
+        );
+        assert!(
+            reopened
+                .execution_continuation_page(action.source_attempt_id, receipt.sequence, 1)
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn current_continuation_shape_and_relationship_corruption_are_rejected_without_repair() {
+    for mutation in [
+        "UPDATE execution_continuations SET digest=printf('%064d',0)",
+        "UPDATE execution_continuations SET unit_id='10000000-0000-4000-8000-000000000003'",
+        "UPDATE execution_attempts SET cancellation_revision=cancellation_revision+1 WHERE previous_attempt_id IS NOT NULL",
+        "ALTER TABLE execution_continuations ADD COLUMN unexpected TEXT",
+        "DROP TABLE execution_continuations",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("project");
+        let mut store = store(&path);
+        let input = fixture_input(&store, false);
+        store.enqueue_read_only_execution(&input).unwrap();
+        let action = crate::execution::test_continuation_action(
+            &store,
+            input.envelope().attempt_id,
+            &[input.envelope().items[0].item_id],
+        );
+        let next = store
+            .execution_retry_input(action.source_attempt_id, &action.item_ids)
+            .unwrap();
+        store
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .unwrap();
+        store.close().unwrap();
+        let database = path.join("project.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection.execute_batch(mutation).unwrap();
+        drop(connection);
+        let bytes = std::fs::read(&database).unwrap();
+        assert_eq!(
+            ProjectStore::open(&path).unwrap_err().code(),
+            PersistenceErrorCode::CorruptProject
+        );
+        assert_eq!(std::fs::read(&database).unwrap(), bytes);
+    }
 }

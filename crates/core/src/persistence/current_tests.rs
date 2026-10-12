@@ -260,7 +260,7 @@ fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
     assert_eq!(store.release_artifact(id, "zh-CN").unwrap().1, bytes);
     let all_facts = facts(store.connection().unwrap());
     // Exercise the existing consistent snapshot mechanism at the current schema.
-    backup_before_migration(store.connection().unwrap(), temp.path(), SCHEMA_VERSION).unwrap();
+    backup_current_schema(store.connection().unwrap(), temp.path()).unwrap();
     let backup_path = fs::read_dir(temp.path())
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -366,4 +366,40 @@ fn current_unsupported_profile_is_distinct_and_never_converted() {
     let error = ProjectStore::open(&path).unwrap_err();
     assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
     assert_eq!(error.found_schema_version(), Some(SCHEMA_VERSION + 1));
+}
+
+#[test]
+fn current_format_reopens_and_every_unsupported_snapshot_preserves_bytes() {
+    for version in (0..SCHEMA_VERSION).chain([SCHEMA_VERSION + 1]) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("project");
+        let store = ProjectStore::create(
+            &path,
+            ProjectMetadata::create("Snapshot", "en-US", ["zh-CN"]).unwrap(),
+        )
+        .unwrap();
+        assert_current(&store);
+        store.close().unwrap();
+        ProjectStore::open(&path).unwrap().close().unwrap();
+        let database = path.join(DATABASE_FILENAME);
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+        drop(connection);
+        let before = fs::read(&database).unwrap();
+        let entries: std::collections::BTreeSet<_> = fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        let error = ProjectStore::open(&path).unwrap_err();
+        assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
+        assert_eq!(error.found_schema_version(), Some(version));
+        assert_eq!(fs::read(&database).unwrap(), before);
+        let after: std::collections::BTreeSet<_> = fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(after, entries);
+    }
 }

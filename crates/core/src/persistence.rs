@@ -73,7 +73,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 30;
+pub(crate) const SCHEMA_VERSION: i64 = 32;
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\
@@ -310,7 +310,7 @@ impl ProjectStore {
         })
     }
 
-    /// Open an existing project with the current supported storage layout.
+    /// Open and validate a current-format project without upgrading unsupported schemas.
     pub fn open<P: AsRef<Path>>(directory: P) -> Result<Self, PersistenceError> {
         let directory = directory.as_ref().to_path_buf();
         if !directory.is_dir() {
@@ -838,15 +838,15 @@ fn validate_existing_connection(
 }
 
 #[cfg(test)]
-fn backup_before_migration(
+fn backup_current_schema(
     connection: &Connection,
     directory: &Path,
-    version: i64,
 ) -> Result<(), PersistenceError> {
     // VACUUM INTO uses SQLite's consistent database snapshot rather than a raw
     // copy of a possibly active rollback-journal database. This test helper
     // checks a current snapshot; it is not an older-schema opening route.
     // Never replace a previous snapshot.
+    let version = SCHEMA_VERSION;
     let filename = format!(
         "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
         uuid::Uuid::new_v4()

@@ -233,6 +233,41 @@ fn config(url: String) -> AiConfig {
         ..Default::default()
     }
 }
+fn assert_unsupported_snapshot_unchanged(path: &std::path::Path, version: i64) {
+    let database = path.join("project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let entries = || {
+        std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<std::collections::BTreeSet<_>>>()
+            .unwrap()
+    };
+    let before_entries = entries();
+    let error = ProjectStore::open(path).unwrap_err();
+    assert_eq!(error.code(), crate::PersistenceErrorCode::UnsupportedSchema);
+    assert_eq!(error.found_schema_version(), Some(version));
+    assert_eq!(std::fs::read(&database).unwrap(), before);
+    assert_eq!(entries(), before_entries);
+    let unchanged = rusqlite::Connection::open_with_flags(
+        &database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        unchanged
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        version
+    );
+    assert_eq!(
+        unchanged
+            .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+}
+
 #[test]
 fn direct_ai_current_reopen_preserves_manual_history() {
     let (temp, mut store, rows) = source_project();
@@ -259,6 +294,11 @@ fn direct_ai_current_reopen_preserves_manual_history() {
         "Preserved manual translation"
     );
     reopened.close().unwrap();
+    let path = temp.path().join("project");
+    let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    connection.pragma_update(None, "user_version", 9).unwrap();
+    drop(connection);
+    assert_unsupported_snapshot_unchanged(&path, 9);
 }
 #[test]
 fn direct_ai_wire_partial_budget_candidates_and_reopen() {
@@ -341,11 +381,9 @@ fn direct_ai_wire_partial_budget_candidates_and_reopen() {
     assert_eq!(history.total, 1);
     assert!(history.current.is_none());
     assert_eq!(history.rows[0].origin_kind, crate::TranslationOrigin::Ai);
-    assert!(
-        runtime
-            .resume(&mut store, view.attempt_id, &[success.item_id])
-            .is_err()
-    );
+    let continuation =
+        crate::execution::test_continuation_action(&store, view.attempt_id, &[success.item_id]);
+    assert!(runtime.resume(&mut store, &continuation).is_err());
     drop(runtime);
     store.close().unwrap();
     let reopened = ProjectStore::open(temp.path().join("project")).unwrap();

@@ -85,6 +85,8 @@ describe("project lifecycle workbench", () => {
       if (command === "execution_status") return executionFixture.status;
       if (command === "list_execution_tasks") return [{ ...executionFixture.task, projectId: saved.projectId, taskId: saved.taskId, operation: "locale-build" }];
       if (command === "read_execution_task") return [{ attemptId: saved.attemptId, sequence: "1" }];
+      if (command === "read_execution_task_view") return { ...executionFixture.task, projectId: saved.projectId, taskId: saved.taskId, operation: "locale-build" };
+      if (command === "read_execution_continuations") return { receipts: [], next: null };
       if (command === "read_execution_attempt") return { ...executionFixture.detail, taskId: saved.taskId, attemptId: saved.attemptId, operation: "locale-build",
         progress: { total: 1, queued: 0, running: 0, succeeded: 1, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
         items: [{ scope: { kind: "locale", id: "zh-CN", locale: "zh-CN" }, status: locale.status, resultId: locale.result!.resultId }],

@@ -3976,6 +3976,92 @@ pub(super) mod tests {
         );
     }
 
+    fn assert_unsupported_review_snapshot(path: &std::path::Path, version: i64) {
+        let database = path.join("project.sqlite3");
+        let before = std::fs::read(&database).unwrap();
+        let entries = || {
+            std::fs::read_dir(path)
+                .unwrap()
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<std::io::Result<std::collections::BTreeSet<_>>>()
+                .unwrap()
+        };
+        let before_entries = entries();
+        let error = ProjectStore::open(path).unwrap_err();
+        assert_eq!(error.code(), crate::PersistenceErrorCode::UnsupportedSchema);
+        assert_eq!(error.found_schema_version(), Some(version));
+        assert_eq!(std::fs::read(&database).unwrap(), before);
+        assert_eq!(entries(), before_entries);
+        let unchanged =
+            Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .unwrap();
+        assert_eq!(
+            unchanged
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            version
+        );
+    }
+
+    #[test]
+    fn schema_six_snapshot_is_refused_without_ddl_or_backup() {
+        let (directory, mut store, _, _) = fixture();
+        let connection = store.connection_mut().unwrap();
+        connection.pragma_update(None, "user_version", 6).unwrap();
+        drop(store);
+        assert_unsupported_review_snapshot(&directory.path().join("project"), 6);
+    }
+
+    #[test]
+    fn schema_six_refusal_child() {
+        let Ok(path) = std::env::var("TSUMUGI_REVIEW_UNSUPPORTED_PROJECT") else {
+            return;
+        };
+        let proof = std::env::var("TSUMUGI_REVIEW_UNSUPPORTED_PROOF").unwrap();
+        assert_unsupported_review_snapshot(std::path::Path::new(&path), 6);
+        std::fs::write(proof, b"unsupported-schema:6").unwrap();
+    }
+
+    #[test]
+    fn schema_six_process_reopen_refuses_old_snapshot_without_changes() {
+        let (directory, mut store, _, _) = fixture();
+        let path = directory.path().join("project");
+        let connection = store.connection_mut().unwrap();
+        connection.pragma_update(None, "user_version", 6).unwrap();
+        drop(store);
+        let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+        for replay in 0..2 {
+            let proof = directory.path().join(format!("refusal-{replay}.txt"));
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "persistence::review::tests::schema_six_refusal_child",
+                ])
+                .env("TSUMUGI_REVIEW_UNSUPPORTED_PROJECT", &path)
+                .env("TSUMUGI_REVIEW_UNSUPPORTED_PROOF", &proof)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("unsupported snapshot child timed out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert!(status.success());
+            assert_eq!(std::fs::read(&proof).unwrap(), b"unsupported-schema:6");
+            assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), before);
+            assert_unsupported_review_snapshot(&path, 6);
+        }
+    }
+
     #[test]
     fn current_views_do_not_write_project_state() {
         let (_directory, mut store, project, units) = fixture();
