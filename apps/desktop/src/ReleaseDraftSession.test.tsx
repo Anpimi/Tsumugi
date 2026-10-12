@@ -324,3 +324,12 @@ it("does not cancel a dispatched native export or apply its late receipt to anot
   expect(owner.result).toBeNull(); expect(owner.chosen).toBeNull(); expect(owner.pending).toBeNull();
   expect(calls("export_release")).toHaveLength(1); expect(invoke.mock.calls.some(([command]) => command.includes("cancel"))).toBe(false);
 });
+
+it("releases an accepted read proof immediately on owner destruction and only once when identity later returns", async () => {
+  const view=mount();await prepare();const identity=deferred<string>(),original=invoke.getMockImplementation()!,dispose=vi.fn();
+  invoke.mockImplementation((command:string,args)=>command==="create_execution_identity"?identity.promise:original(command,args));
+  let running!:Promise<void>;act(()=>{running=owner.build({current:()=>true,dispose});});
+  await waitFor(()=>expect(calls("create_execution_identity")).toHaveLength(1));view.unmount();expect(dispose).toHaveBeenCalledTimes(1);
+  await act(async()=>{identity.resolve(releaseFixture.requests.build.attemptId);await running;});
+  expect(dispose).toHaveBeenCalledTimes(1);expect(calls("start_locale_build")).toHaveLength(0);
+});

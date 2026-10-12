@@ -21,6 +21,7 @@ interface ReconcilePending {
 }
 type Pending = BuildPending | ExportPending | ReconcilePending;
 interface Assessment { editSeq: number; version: number; scope: ContentScope; integration: IntegrationDescriptor; sourceLocale: string; targetLocales: string[] }
+export interface ReleaseReadProof { current: () => boolean; dispose: () => void }
 interface State {
   languages: string[]; names: Record<string, string>; editedNames: string[]; integration: IntegrationDescriptor | null;
   editSeq: number; buildDirty: boolean; deliveryDirty: boolean; stale: boolean;
@@ -50,7 +51,10 @@ function useReleaseOwner(project: ProjectView) {
   const [state, setState] = useState<State>(() => freeze(initial(project)));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive();
   const flight = useRef<object | null>(null), version = useRef(0);
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; flight.current = null; }; }, []);
+  const readCleanup = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => { mounted.current = true; return () => {
+    mounted.current = false; flight.current = null; readCleanup.current?.(); readCleanup.current = null;
+  }; }, []);
   useLayoutEffect(() => {
     const old = projectRef.current;
     projectRef.current = project;
@@ -96,14 +100,22 @@ function useReleaseOwner(project: ProjectView) {
     }); }
     finally { if (live() && flight.current === ticket) { flight.current = null; update(before => ({ ...before, busy: false })); } }
   }
-  async function assess() {
-    if (!available() || !current().integration?.available) return;
+  async function withReadProof(proof: ReleaseReadProof | undefined, work: () => Promise<void>) {
+    if (!live() || flight.current || current().pending || proof?.current() === false) { proof?.dispose(); return; }
+    let disposed = false;
+    const dispose = () => { if (!disposed) { disposed = true; proof?.dispose(); } };
+    readCleanup.current = dispose;
+    try { await work(); }
+    finally { dispose(); if (readCleanup.current === dispose) readCleanup.current = null; }
+  }
+  async function assess(proof?: ReleaseReadProof) {
+    if (!available() || !current().integration?.available) { proof?.dispose(); return; }
     const before = current(), generation = version.current, sourceLocale = projectRef.current.metadata.sourceLocale,
       targetLocales = [...projectRef.current.metadata.targetLocales];
-    await run(async () => {
+    await withReadProof(proof, () => run(async () => {
       update(value => ({ ...value, eligibility: null, assessment: null }));
       const [scope, integration, eligibility] = await Promise.all([sourceCommands.scope(session), sourceCommands.integration(session), reviewCommands.eligibility({ ...session, locales: [...before.languages] })]);
-      if (!live() || current().editSeq !== before.editSeq || generation !== version.current || !available()
+      if (!live() || proof?.current() === false || current().editSeq !== before.editSeq || generation !== version.current || !available()
         || sourceLocale !== projectRef.current.metadata.sourceLocale
         || JSON.stringify(targetLocales) !== JSON.stringify(projectRef.current.metadata.targetLocales)) return;
       if (JSON.stringify(integration) !== JSON.stringify(before.integration)) { observeIntegration(integration); return; }
@@ -112,7 +124,7 @@ function useReleaseOwner(project: ProjectView) {
         || eligibility.locales.some(value => !before.languages.includes(value.locale))) invalidAck();
       update(value => ({ ...value, eligibility: fixed(eligibility), assessment: fixed({ editSeq: before.editSeq, version: generation,
         scope, integration: before.integration!, sourceLocale, targetLocales }), stale: false }));
-    });
+    }));
   }
   function samePreparation(before: State, assessment: Assessment) {
     return live() && available() && current().editSeq === before.editSeq && version.current === assessment.version
@@ -135,24 +147,24 @@ function useReleaseOwner(project: ProjectView) {
       throw failure;
     } finally { if (live()) { update(before => ({ ...before, eligibility: null, assessment: null })); reads.invalidate(["execution", "release"], false); } }
   }
-  async function build() {
+  async function build(proof?: ReleaseReadProof) {
     const before = current(), assessment = before.assessment;
-    if (!assessment || !before.eligibility?.ready || !samePreparation(before, assessment) || before.languages.some(locale => !before.names[locale]?.trim())) return;
+    if (!assessment || !before.eligibility?.ready || !samePreparation(before, assessment) || before.languages.some(locale => !before.names[locale]?.trim())) { proof?.dispose(); return; }
     const choices = fixed(before.languages.map(locale => ({ locale, fileName: before.integration?.id === "webvtt"
       ? before.names[locale].trim() : `i18n/${before.names[locale].trim()}` })));
     const expectedEligibilityBasis = before.eligibility.basis;
-    await run(async () => {
+    await withReadProof(proof, () => run(async () => {
       const [scope, integration] = await Promise.all([sourceCommands.scope(session), sourceCommands.integration(session)]);
-      if (!samePreparation(before, assessment) || !sameScope(scope, assessment.scope)
+      if (proof?.current() === false || !samePreparation(before, assessment) || !sameScope(scope, assessment.scope)
         || JSON.stringify(integration) !== JSON.stringify(assessment.integration)) { if (live()) { observeIntegration(integration); revoke(); } return; }
       const attemptId = await executionCommands.identity(session);
-      if (!samePreparation(before, assessment)) return;
+      if (proof?.current() === false || !samePreparation(before, assessment)) return;
       const [latest, latestIntegration] = await Promise.all([sourceCommands.scope(session), sourceCommands.integration(session)]);
-      if (!samePreparation(before, assessment) || !sameScope(latest, assessment.scope)
+      if (proof?.current() === false || !samePreparation(before, assessment) || !sameScope(latest, assessment.scope)
         || JSON.stringify(latestIntegration) !== JSON.stringify(assessment.integration)) { if (live()) { observeIntegration(latestIntegration); revoke(); } return; }
       await submitBuild({ kind: "build", request: fixed({ ...session, attemptId, choices, expectedEligibilityBasis }), editSeq: before.editSeq,
         version: assessment.version, retryAllowed: false, uncertain: false });
-    });
+    }));
   }
   async function checkBuild() {
     const pending = current().pending;

@@ -10,6 +10,7 @@ import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourceIntegrationFixture, captionIntegrationFixture } from "./testSupport/sourceFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import { createRef } from "react";
+import { WorkbenchCommands } from "./workbenchCommands";
 import type { ReleaseHandle } from "./ReleaseWorkbench";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -436,4 +437,21 @@ it("revokes replacement consent as soon as a new destination preview is requeste
   expect(screen.queryByRole("button", { name: "Export these files" })).not.toBeInTheDocument();
   expect(screen.queryByRole("checkbox", { name: /Replace the existing conflicting files/ })).not.toBeInTheDocument();
   expect(invoke.mock.calls.filter(([command]) => command === "export_release")).toHaveLength(0);
+});
+
+
+it("routes destination consent and immutable export through scoped Registry without rechecking current build readiness", async () => {
+  const dispatch=vi.spyOn(WorkbenchCommands.prototype,"dispatch");
+  try {
+    const {user}=await readyExport();await user.click(screen.getByRole("button",{name:"Export these files"}));
+    expect(await screen.findByText("Export verified")).toBeInTheDocument();
+    expect(dispatch.mock.calls.map(([id])=>id)).toEqual(expect.arrayContaining([
+      "release.choose-release","release.choose-destination","release.preview-destination","release.confirm-overwrite","release.export",
+    ]));
+    const exported=dispatch.mock.calls.find(([id])=>id==="release.export");
+    expect(exported?.[1]).toEqual({projectId:project.metadata.projectId,sessionToken:project.sessionToken,area:"release"});
+    expect(exported?.[2]).toMatchObject({kind:"release-preview",releaseId:release.releaseId,manifestSha256:release.manifestSha256,
+      selectionId:fixtureIdentity(704),previewId:fixtureIdentity(705),overwrite:true});
+    expect(invoke.mock.calls.filter(([name])=>name==="read_review_eligibility"||name==="start_locale_build")).toHaveLength(0);
+  } finally {dispatch.mockRestore();}
 });

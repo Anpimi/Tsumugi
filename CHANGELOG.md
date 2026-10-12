@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Build and export actions share scoped commands with exact mappings, saved release identities and destination consent. Original uncertain requests remain recoverable across view changes; historical release export stays available when current readiness or history reads fail.
+
 - Task recovery, saved-result application, cancellation and preview navigation verify the exact workspace and original scope through the shared command context. Confirmed requests retain their identities across view changes; uncertain results require an exact lookup before explicit replay, and changed or failed reads cannot authorize new task actions.
 
 - Arena actions verify their exact workspace scope, comparison basis, draft or saved candidate through the shared command context. Original uncertain requests remain recoverable, checked Task cancellation stays available during view refreshes, and captured work survives view changes without accepting a replaced or failed read.

@@ -3,6 +3,8 @@ import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
 import type { CancellationTarget } from "./ExecutionTaskSession";
 import type { RecoveryAction } from "./executionCommands";
+import type { BuildLocaleChoice, DeliveryView } from "./releaseCommands";
+import { validateResponseDelivery } from "./generated/release.validators";
 
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
@@ -81,6 +83,25 @@ export type ArenaPendingCommandPayload = { kind: "arena-pending" } & (
   | { pendingKind: "select" | "merge"; actionId: string; unitId: string; locale: string }
   | { pendingKind: "adopt"; actionId: string; attemptId: string; recoveryUnitId: string; resultId: string }
 );
+export interface ReleasePreparationCommandPayload {
+  kind: "release-preparation"; editSeq: number; locales: string[]; fileNames: string[]; sourceLocale: string; targetLocales: string[];
+  integrationId: string; integrationVersion: string; eligibilityBasis: string | null;
+}
+export interface ReleaseBuildPendingCommandPayload {
+  kind: "release-build-pending"; attemptId: string; choices: BuildLocaleChoice[]; expectedEligibilityBasis: string;
+}
+interface ReleaseCommandTarget { releaseId: string; releaseActionId: string; attemptId: string; manifestSha256: string }
+export interface ReleaseRecordCommandPayload extends ReleaseCommandTarget { kind: "release-record" }
+export interface ReleaseDestinationCommandPayload extends ReleaseCommandTarget { kind: "release-destination"; selectionId: string | null }
+export interface ReleasePreviewCommandPayload extends ReleaseCommandTarget { kind: "release-preview"; selectionId: string; previewId: string; overwrite: boolean }
+export interface ReleaseDeliveryPendingCommandPayload {
+  kind: "release-delivery-pending"; pendingKind: "export" | "reconcile"; actionId: string; releaseId: string; selectionId: string;
+  previewId: string | null; overwriteConflicts: boolean; recoverySelectionId: string | null; delivery: DeliveryView | null;
+}
+export interface ReleaseDeliveryCommandPayload extends ReleaseCommandTarget { kind: "release-delivery"; selectionId: string; delivery: DeliveryView }
+export interface ReleaseBlockerCommandPayload {
+  kind: "release-blocker"; editSeq: number; eligibilityBasis: string; sourceSnapshotId: string; unitId: string; locale: string;
+}
 interface TaskCommandTarget { taskId: string; attemptId: string; operation: string; unitId: string }
 interface TaskActionTarget extends TaskCommandTarget {
   action: Exclude<RecoveryAction, "view-receipt">; itemIds: string[]; remainingItemIds: string[]; resultIds: string[]; itemId: string | null;
@@ -100,6 +121,19 @@ export interface TaskReceiptCommandPayload extends TaskCommandTarget { kind: "ta
 export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string; attemptId: string; operation: string; itemId: string; resultId: string }
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 interface WorkbenchCommandPayloads {
+  "release.assess-build": ReleasePreparationCommandPayload;
+  "release.start-build": ReleasePreparationCommandPayload;
+  "release.check-build": ReleaseBuildPendingCommandPayload;
+  "release.retry-build": ReleaseBuildPendingCommandPayload;
+  "release.choose-release": ReleaseRecordCommandPayload;
+  "release.choose-destination": ReleaseDestinationCommandPayload;
+  "release.preview-destination": ReleaseDestinationCommandPayload;
+  "release.confirm-overwrite": ReleasePreviewCommandPayload;
+  "release.export": ReleasePreviewCommandPayload;
+  "release.check-export": ReleaseDeliveryPendingCommandPayload;
+  "release.reauthorize-destination": ReleaseDeliveryPendingCommandPayload;
+  "release.reconcile-delivery": ReleaseDeliveryCommandPayload;
+  "release.open-blocker": ReleaseBlockerCommandPayload;
   "tasks.adopt-result": TaskActionCommandPayload;
   "tasks.resume-undispatched": TaskActionCommandPayload;
   "tasks.retry-safe-failure": TaskActionCommandPayload;
@@ -193,7 +227,7 @@ export interface CommandAvailability {
 }
 interface CommandMetadata {
   nameKey: TranslationKey;
-  category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena" | "tasks";
+  category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena" | "tasks" | "release";
   scope: CommandScope;
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
@@ -202,7 +236,8 @@ interface CommandMetadata {
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
     | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"
     | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
-    | "captures-execution-action" | "writes-execution" | "reads-execution" | "opens-execution-preview";
+    | "captures-execution-action" | "writes-execution" | "reads-execution" | "opens-execution-preview"
+    | "captures-release" | "runs-release-build" | "exports-release" | "reconciles-release" | "opens-release";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -229,6 +264,14 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"release-preparation", "release.assess-build" | "release.start-build">
+  | ResourceCommand<"release-build-pending", "release.check-build" | "release.retry-build">
+  | ResourceCommand<"release-record", "release.choose-release">
+  | ResourceCommand<"release-destination", "release.choose-destination" | "release.preview-destination">
+  | ResourceCommand<"release-preview", "release.confirm-overwrite" | "release.export">
+  | ResourceCommand<"release-delivery-pending", "release.check-export" | "release.reauthorize-destination">
+  | ResourceCommand<"release-delivery", "release.reconcile-delivery">
+  | ResourceCommand<"release-blocker", "release.open-blocker">
   | ResourceCommand<"task-action", "tasks.adopt-result" | "tasks.resume-undispatched" | "tasks.retry-safe-failure" | "tasks.validate-output" | "tasks.query-outcome">
   | ResourceCommand<"task-confirmed", "tasks.submit-action">
   | ResourceCommand<"task-pending", "tasks.reconcile-adoption" | "tasks.retry-adoption" | "tasks.reconcile-continuation" | "tasks.retry-continuation">
@@ -282,6 +325,19 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind?.startsWith("release-")) {
+    if (!validReleasePayload(payload)) return unavailable;
+    switch (command.payloadKind) {
+      case "release-preparation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-build-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-record": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-destination": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-preview": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-delivery-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-delivery": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "release-blocker": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+    }
+  }
   if (command.payloadKind?.startsWith("task-")) {
     if (!validTaskPayload(payload)) return unavailable;
     switch (command.payloadKind) {
@@ -374,6 +430,29 @@ function identities(value: unknown, nonempty = false): value is string[] {
   return Array.isArray(value) && (!nonempty || value.length > 0) && value.every(validIdentity) && new Set(value).size === value.length;
 }
 function taskRevision(value: unknown): value is string { return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value); }
+function releaseTarget(value: ReleaseCommandTarget) { return [value.releaseId,value.releaseActionId,value.attemptId,value.manifestSha256].every(validIdentity); }
+function deliveryEvidence(value: unknown) { return validateResponseDelivery(value) && value.files.length > 0; }
+function validReleasePayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload,{kind:`release-${string}`}> {
+  if (!payload || typeof payload !== "object") return false;
+  switch (payload.kind) {
+    case "release-preparation": return editSequence(payload.editSeq) && identities(payload.locales,true) && identities(payload.targetLocales)
+      && Array.isArray(payload.fileNames) && payload.fileNames.length === payload.locales.length && payload.fileNames.every(value=>typeof value === "string")
+      && [payload.sourceLocale,payload.integrationId,payload.integrationVersion].every(validIdentity) && nullableIdentity(payload.eligibilityBasis);
+    case "release-build-pending": return validIdentity(payload.attemptId) && validIdentity(payload.expectedEligibilityBasis)
+      && Array.isArray(payload.choices) && payload.choices.length > 0 && payload.choices.every(value=>value && validIdentity(value.locale) && validIdentity(value.fileName))
+      && new Set(payload.choices.map(value=>value.locale)).size === payload.choices.length;
+    case "release-record": return releaseTarget(payload);
+    case "release-destination": return releaseTarget(payload) && nullableIdentity(payload.selectionId);
+    case "release-preview": return releaseTarget(payload) && validIdentity(payload.selectionId) && validIdentity(payload.previewId) && typeof payload.overwrite === "boolean";
+    case "release-delivery-pending": return [payload.actionId,payload.releaseId,payload.selectionId].every(validIdentity)
+      && nullableIdentity(payload.recoverySelectionId) && typeof payload.overwriteConflicts === "boolean"
+      && (payload.delivery === null || deliveryEvidence(payload.delivery))
+      && (payload.pendingKind === "export" ? validIdentity(payload.previewId) : payload.pendingKind === "reconcile" && payload.previewId === null && payload.delivery !== null);
+    case "release-delivery": return releaseTarget(payload) && validIdentity(payload.selectionId) && deliveryEvidence(payload.delivery);
+    case "release-blocker": return editSequence(payload.editSeq) && [payload.eligibilityBasis,payload.sourceSnapshotId,payload.unitId,payload.locale].every(validIdentity);
+    default: return false;
+  }
+}
 function taskTarget(value: TaskCommandTarget) { return [value.taskId,value.attemptId,value.operation,value.unitId].every(validIdentity); }
 function taskActionTarget(value: TaskActionTarget) {
   return taskTarget(value) && ["adopt-result","resume-undispatched","retry-safe-failure","validate-output","query-outcome"].includes(value.action)
@@ -525,7 +604,15 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "task-action" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "release-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-build-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-record" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-destination" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-preview" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-delivery-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-delivery" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-blocker" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "task-action" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "task-confirmed" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "task-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "task-history" && payload?.kind === command.payloadKind) command.handler(payload);

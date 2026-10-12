@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
+import { validateResponseDelivery } from "./generated/release.validators";
 import { WorkbenchCommands, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
@@ -304,5 +306,44 @@ describe("Tasks command payloads", () => {
     expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledWith(payload);
     enabled = false; expect(dispatch(payload)).toBe(false); expect(handler).toHaveBeenCalledTimes(1);
     remove(); expect(dispatch(payload)).toBe(false);
+  });
+});
+
+
+describe("Release command payloads",()=>{
+  const releaseScope={...scope,area:"release" as const},metadata={nameKey:"release.build" as const,category:"release" as const,scope:releaseScope,
+    binding:null,risk:"captures-release" as const,confirmation:"none" as const};
+  const target={releaseId:"release",releaseActionId:"release-action",attemptId:"attempt",manifestSha256:"manifest"};
+  const preparation={kind:"release-preparation" as const,editSeq:1,locales:["zh-CN"],fileNames:["zh.json"],sourceLocale:"en",targetLocales:["zh-CN"],integrationId:"format",integrationVersion:"1",eligibilityBasis:"basis"};
+  const build={kind:"release-build-pending" as const,attemptId:"attempt",choices:[{locale:"zh-CN",fileName:"i18n/zh.json"}],expectedEligibilityBasis:"basis"};
+  const preview={kind:"release-preview" as const,...target,selectionId:"selection",previewId:"preview",overwrite:true};
+  const pending={kind:"release-delivery-pending" as const,pendingKind:"export" as const,actionId:"action",releaseId:"release",selectionId:"selection",
+    previewId:"preview",overwriteConflicts:true,recoverySelectionId:null,delivery:null};
+  const checked:unknown=structuredClone(releaseFixture.responses.delivery);if(!validateResponseDelivery(checked))throw new Error("Invalid original delivery fixture");
+  it.each([
+    ["release.assess-build",preparation,[{locales:[]},{fileNames:[]},{editSeq:-1}]],
+    ["release.start-build",preparation,[{integrationVersion:""},{eligibilityBasis:undefined}]],
+    ["release.check-build",build,[{choices:[]},{attemptId:null}]],
+    ["release.retry-build",build,[{choices:[{locale:"zh-CN",fileName:""}]}]],
+    ["release.choose-release",{kind:"release-record",...target},[{manifestSha256:null}]],
+    ["release.choose-destination",{kind:"release-destination",...target,selectionId:null},[{selectionId:undefined}]],
+    ["release.preview-destination",{kind:"release-destination",...target,selectionId:"selection"},[{releaseActionId:""}]],
+    ["release.confirm-overwrite",preview,[{overwrite:"yes"},{previewId:null}]],
+    ["release.export",preview,[{selectionId:null},{overwrite:undefined}]],
+    ["release.check-export",pending,[{previewId:null},{pendingKind:"other"}]],
+    ["release.reauthorize-destination",pending,[{recoverySelectionId:undefined},{delivery:{}}]],
+    ["release.reconcile-delivery",{kind:"release-delivery",...target,selectionId:"selection",delivery:checked},[{delivery:{...checked,files:[]}}]],
+    ["release.open-blocker",{kind:"release-blocker",editSeq:1,eligibilityBasis:"basis",sourceSnapshotId:"snapshot",unitId:"unit",locale:"zh-CN"},[{unitId:""},{editSeq:NaN}]],
+  ] as const)("validates %s before invoking its owner and keeps describe and dispatch on the same scope",(id,payload,malformed)=>{
+    const commands=new WorkbenchCommands(),handler=vi.fn();let enabled=true;
+    const remove=commands.register({...metadata,id,payloadKind:payload.kind,availability:()=>({enabled}),handler} as WorkbenchCommand);
+    const dispatch=(value?:unknown,targetScope=releaseScope)=>Reflect.apply(commands.dispatch,commands,[id,targetScope,value]);
+    expect(dispatch()).toBe(false);expect(dispatch(null)).toBe(false);expect(dispatch({...payload,kind:"other"})).toBe(false);
+    malformed.forEach(change=>expect(dispatch({...payload,...change})).toBe(false));
+    expect(dispatch(payload,{...releaseScope,projectId:"other"})).toBe(false);expect(dispatch(payload,{...releaseScope,sessionToken:"other"})).toBe(false);
+    expect(Reflect.apply(commands.dispatch,commands,[id,{...releaseScope,area:"tasks"},payload])).toBe(false);
+    expect(Reflect.apply(commands.describe,commands,[id,releaseScope,payload])?.availability.enabled).toBe(true);expect(handler).not.toHaveBeenCalled();
+    expect(dispatch(payload)).toBe(true);expect(handler).toHaveBeenCalledExactlyOnceWith(payload);enabled=false;expect(dispatch(payload)).toBe(false);
+    remove();expect(dispatch(payload)).toBe(false);
   });
 });
