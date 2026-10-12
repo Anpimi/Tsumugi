@@ -687,6 +687,90 @@ pub enum RecoveryAction {
     ViewReceipt,
 }
 
+/// Fresh continuation authority is fixed before submission. Replaying a recorded
+/// action reads its original receipt; it never refreshes this cancellation basis.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub enum ContinuationKind {
+    ResumeUndispatched,
+    RetrySafeFailure,
+}
+impl ContinuationKind {
+    pub fn recovery_action(self) -> RecoveryAction {
+        match self {
+            Self::ResumeUndispatched => RecoveryAction::ResumeUndispatched,
+            Self::RetrySafeFailure => RecoveryAction::RetrySafeFailure,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ContinuationAction {
+    pub action_id: ExecutionId,
+    pub project_id: ExecutionId,
+    pub source_attempt_id: ExecutionId,
+    pub unit_id: ExecutionId,
+    pub kind: ContinuationKind,
+    pub item_ids: Vec<ExecutionId>,
+    pub expected_cancellation_revision: Revision,
+}
+impl ContinuationAction {
+    pub fn canonical(&self) -> Result<Self, ExecutionError> {
+        let mut action = self.clone();
+        action.item_ids.sort();
+        if action.item_ids.is_empty()
+            || action.item_ids.len() > MAX_ITEMS
+            || action.item_ids.windows(2).any(|ids| ids[0] == ids[1])
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "continuation-scope",
+            ));
+        }
+        Ok(action)
+    }
+    pub(crate) fn request_digest(&self, input: &FixedInput) -> Result<String, ExecutionError> {
+        let action = self.canonical()?;
+        let envelope = input.envelope();
+        let unit = envelope
+            .units
+            .iter()
+            .find(|unit| unit.unit_id == action.unit_id)
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "continuation-unit"))?;
+        if action.project_id != envelope.project_id
+            || action.source_attempt_id != envelope.attempt_id
+            || action.item_ids.iter().any(|id| !unit.item_ids.contains(id))
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "continuation-scope",
+            ));
+        }
+        Ok(codec::digest(&codec::encode(
+            &(action, input.digest()),
+            MAX_INPUT_BYTES,
+        )?))
+    }
+}
+
+/// Complete immutable evidence associating the original intent with one attempt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ContinuationReceipt {
+    pub sequence: Revision,
+    pub action: ContinuationAction,
+    pub request_digest: String,
+    pub source_input_digest: String,
+    pub attempt_id: ExecutionId,
+    pub input_digest: String,
+    pub task_id: ExecutionId,
+    pub operation: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -1059,3 +1143,39 @@ fn label(value: &str) -> Result<(), ExecutionError> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn test_continuation_action(
+    store: &crate::ProjectStore,
+    attempt: ExecutionId,
+    items: &[ExecutionId],
+) -> ContinuationAction {
+    let input = store.execution_input(attempt).unwrap();
+    let unit = input
+        .envelope()
+        .units
+        .iter()
+        .find(|u| u.item_ids.contains(&items[0]))
+        .unwrap();
+    let state = store.execution_attempt(attempt, false).unwrap();
+    ContinuationAction {
+        action_id: ExecutionId::new(),
+        project_id: input.envelope().project_id,
+        source_attempt_id: attempt,
+        unit_id: unit.unit_id,
+        kind: if state
+            .items
+            .iter()
+            .any(|item| items.contains(&item.item_id) && item.execution == ExecutionState::Failed)
+        {
+            ContinuationKind::RetrySafeFailure
+        } else {
+            ContinuationKind::ResumeUndispatched
+        },
+        item_ids: items.to_vec(),
+        expected_cancellation_revision: store
+            .execution_task(input.envelope().task_id)
+            .unwrap()
+            .cancellation_revision,
+    }
+}

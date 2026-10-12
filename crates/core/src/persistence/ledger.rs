@@ -43,6 +43,11 @@ pub(super) const TABLES: &[(&str, &str)] = &[
         action_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL REFERENCES execution_attempts(attempt_id),
         unit_id TEXT NOT NULL, request BLOB NOT NULL CHECK(length(request) BETWEEN 1 AND 1048576),
         digest TEXT NOT NULL CHECK(length(digest) = 64), UNIQUE(action_id,attempt_id,unit_id))"),
+    ("execution_continuations", "CREATE TABLE execution_continuations (
+        action_id TEXT PRIMARY KEY NOT NULL, source_attempt_id TEXT NOT NULL REFERENCES execution_attempts(attempt_id),
+        unit_id TEXT NOT NULL, attempt_id TEXT NOT NULL UNIQUE REFERENCES execution_attempts(attempt_id),
+        receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1048576),
+        digest TEXT NOT NULL CHECK(length(digest) = 64))"),
     ("adoption_receipts", "CREATE TABLE adoption_receipts (
         action_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, unit_id TEXT NOT NULL,
         receipt BLOB NOT NULL CHECK(length(receipt) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest) = 64),
@@ -189,7 +194,246 @@ fn validate_schema(connection: &Connection) -> Result<(), ExecutionError> {
             }
         }
     }
+    let mut continuations = connection
+        .prepare("SELECT action_id FROM execution_continuations")
+        .map_err(sql_error)?;
+    let ids = continuations
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(sql_error)?;
+    for id in ids {
+        read_continuation(connection, parse_id(id.map_err(sql_error)?)?)?
+            .ok_or_else(|| error(ErrorCode::CorruptLedger, "continuation-association"))?;
+    }
     Ok(())
+}
+
+fn enqueue_input(
+    tx: &Connection,
+    input: &FixedInput,
+    policy: RecoveryPolicy,
+    parent: Option<ExecutionId>,
+    prepared_input: &input_storage::PreparedInput,
+    fresh_delegation: bool,
+) -> Result<bool, ExecutionError> {
+    let envelope = input.envelope();
+    let existing: Option<String> = tx
+        .query_row(
+            "SELECT digest FROM execution_attempts WHERE attempt_id=?1",
+            [envelope.attempt_id.to_string()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    if let Some(digest) = existing {
+        if fresh_delegation {
+            return Err(error(ErrorCode::ResultMismatch, "work-plan-tool-attempt"));
+        }
+        return if digest == input.digest()
+            && provider::recovery_policy(tx, envelope.attempt_id)? == policy
+            && provider::matches_parent(tx, envelope.task_id, parent)?
+        {
+            check_stored_input(tx, input)?;
+            Ok(false)
+        } else {
+            Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
+        };
+    }
+    let task: Option<(String, String)> = tx
+        .query_row(
+            "SELECT project_id,operation FROM execution_tasks WHERE task_id=?1",
+            [envelope.task_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(sql_error)?;
+    if let Some((project, operation)) = task {
+        if project != envelope.project_id.to_string()
+            || operation != envelope.operation
+            || envelope.previous_attempt_id.is_none()
+        {
+            return Err(error(ErrorCode::ResultMismatch, "task-identity"));
+        }
+    } else {
+        if envelope.previous_attempt_id.is_some() {
+            return Err(error(ErrorCode::InvalidInput, "previous-attempt"));
+        }
+        tx.execute("INSERT INTO execution_tasks VALUES (?1,?2,?3,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_tasks))", params![envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.operation]).map_err(sql_error)?;
+    }
+    if let Some(previous) = envelope.previous_attempt_id {
+        let old = load_input(tx, previous)?;
+        if provider::recovery_policy(tx, previous)? != policy || !policy.allows_replay() {
+            return Err(error(ErrorCode::Unauthorized, "effect-policy"));
+        }
+        if old.envelope().task_id != envelope.task_id {
+            return Err(error(ErrorCode::ResultMismatch, "previous-attempt"));
+        }
+        if envelope
+            .units
+            .iter()
+            .any(|unit| !old.envelope().units.contains(unit))
+        {
+            return Err(error(ErrorCode::Unauthorized, "retry-unit"));
+        }
+        let state = read_attempt(tx, previous, false)?;
+        for item in &envelope.items {
+            let newer: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON a.attempt_id=i.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![envelope.task_id.to_string(),item.item_id.to_string(),previous.to_string()],|r|r.get(0)).map_err(sql_error)?;
+            if newer {
+                return Err(error(ErrorCode::Unauthorized, "retry-already-created"));
+            }
+            let status = state
+                .items
+                .iter()
+                .find(|old| old.item_id == item.item_id)
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "retry-item"))?;
+            if let Some(reference) = envelope
+                .reused_results
+                .iter()
+                .find(|reference| reference.item_id == item.item_id)
+            {
+                let current:Option<String>=tx.query_row("SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![previous.to_string(),item.item_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
+                let output = load_result(tx, &old, reference.result_id)?;
+                load_result(tx, input, reference.result_id)?;
+                if status.adoption == AdoptionState::Committed
+                    || status.validation != ValidationState::Valid
+                    || status.execution != ExecutionState::Succeeded
+                    || current != Some(reference.result_id.to_string())
+                    || output.envelope().attempt_id != reference.source_attempt_id
+                    || old.item(item.item_id)? != item
+                {
+                    return Err(error(ErrorCode::Unauthorized, "reuse-eligibility"));
+                }
+                continue;
+            }
+            if status.adoption == AdoptionState::Committed
+                || !matches!(
+                    status.execution,
+                    ExecutionState::Queued
+                        | ExecutionState::CancelledBeforeDispatch
+                        | ExecutionState::Failed
+                )
+                || status.validation == ValidationState::Invalid
+                || (status.execution == ExecutionState::Failed && !status.retry_safe)
+            {
+                return Err(error(ErrorCode::Unauthorized, "retry-eligibility"));
+            }
+            tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='continued-in-new-attempt' WHERE attempt_id=?1 AND item_id=?2 AND execution='queued'",params![previous.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
+        }
+    }
+    let cancelled = cancel_revision(tx, envelope.task_id)?;
+    let stored_input = prepared_input.insert(tx)?;
+    tx.execute("INSERT INTO execution_attempts VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_attempts))", params![envelope.attempt_id.to_string(),envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.previous_attempt_id.map(|id|id.to_string()),stored_input,input.digest(),cancelled.get() as i64]).map_err(sql_error)?;
+    for item in &envelope.items {
+        if let Some(reference) = envelope
+            .reused_results
+            .iter()
+            .find(|reference| reference.item_id == item.item_id)
+        {
+            tx.execute("INSERT INTO execution_items VALUES (?1,?2,'succeeded','valid','unapplied',NULL,?3,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string(),reference.result_id.to_string()]).map_err(sql_error)?;
+        } else {
+            tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
+        }
+    }
+    provider::record_input(tx, input, policy, parent)?;
+    super::content::record_input(tx, input)?;
+    super::translation::record_input(tx, input)?;
+    Ok(true)
+}
+
+fn read_continuation(
+    connection: &Connection,
+    action_id: ExecutionId,
+) -> Result<Option<ContinuationReceipt>, ExecutionError> {
+    let row: Option<(String, String, String, Vec<u8>, String)> = connection.query_row(
+        "SELECT source_attempt_id,unit_id,attempt_id,receipt,digest FROM execution_continuations WHERE action_id=?1",
+        [action_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))
+        .optional().map_err(sql_error)?;
+    let Some((source, unit, attempt, bytes, digest)) = row else {
+        return Ok(None);
+    };
+    let receipt: ContinuationReceipt = codec::decode(&bytes, MAX_INPUT_BYTES)
+        .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-receipt"))?;
+    let original = load_input(connection, parse_id(source.clone())?)?;
+    let next = load_input(connection, parse_id(attempt.clone())?)?;
+    let action = &receipt.action;
+    let expected_digest = action
+        .request_digest(&original)
+        .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-request"))?;
+    let expected_unit = original
+        .envelope()
+        .units
+        .iter()
+        .find(|u| u.unit_id == action.unit_id)
+        .ok_or_else(|| error(ErrorCode::CorruptLedger, "continuation-unit"))?;
+    let dispatched: std::collections::BTreeSet<_> = next
+        .envelope()
+        .items
+        .iter()
+        .filter(|i| {
+            !next
+                .envelope()
+                .reused_results
+                .iter()
+                .any(|r| r.item_id == i.item_id)
+        })
+        .map(|i| i.item_id)
+        .collect();
+    let (captured, sequence): (i64, i64) = connection
+        .query_row(
+            "SELECT cancellation_revision,sequence FROM execution_attempts WHERE attempt_id=?1",
+            [attempt.clone()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(sql_error)?;
+    let mut expected = original.envelope().clone();
+    expected.previous_attempt_id = Some(expected.attempt_id);
+    expected.attempt_id = receipt.attempt_id;
+    expected.units = vec![expected_unit.clone()];
+    expected
+        .items
+        .retain(|item| expected_unit.item_ids.contains(&item.item_id));
+    expected.reused_results = next.envelope().reused_results.clone();
+    let reconstructed = FixedInput::capture(expected)
+        .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-input"))?;
+    if action.action_id != action_id
+        || action.source_attempt_id.to_string() != source
+        || action.unit_id.to_string() != unit
+        || receipt.attempt_id.to_string() != attempt
+        || action
+            .canonical()
+            .map_err(|_| error(ErrorCode::CorruptLedger, "continuation-request"))?
+            != *action
+        || receipt.request_digest != expected_digest
+        || receipt.request_digest != digest
+        || receipt.source_input_digest != original.digest()
+        || receipt.input_digest != next.digest()
+        || reconstructed.digest() != next.digest()
+        || receipt.task_id != original.envelope().task_id
+        || receipt.operation != original.envelope().operation
+        || dispatched != action.item_ids.iter().copied().collect()
+        || sequence < 1
+        || receipt.sequence.get() != sequence as u64
+        || captured < 0
+        || captured as u64 != action.expected_cancellation_revision.get()
+        || provider::recovery_policy(connection, action.source_attempt_id)?
+            != provider::recovery_policy(connection, receipt.attempt_id)?
+        || !provider::recovery_policy(connection, receipt.attempt_id)?.allows_replay()
+        || connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_actions WHERE action_id=?1)",
+                [action_id.to_string()],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(sql_error)?
+    {
+        return Err(error(ErrorCode::CorruptLedger, "continuation-association"));
+    }
+    for reference in &next.envelope().reused_results {
+        let result = load_result(connection, &next, reference.result_id)?;
+        if result.envelope().outcome != ExecutionState::Succeeded {
+            return Err(error(ErrorCode::CorruptLedger, "continuation-reuse"));
+        }
+    }
+    Ok(Some(receipt))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1736,126 +1980,16 @@ impl ProjectStore {
         };
         super::application::check_service_input(&tx, input, &authority)?;
         check_translation_projection(&tx, input, Some(&authority))?;
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT digest FROM execution_attempts WHERE attempt_id=?1",
-                [envelope.attempt_id.to_string()],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(sql_error)?;
-        if let Some(digest) = existing {
-            if delegated.as_ref().is_some_and(|(_, fresh)| *fresh) {
-                return Err(error(ErrorCode::ResultMismatch, "work-plan-tool-attempt"));
-            }
-            return if digest == input.digest()
-                && provider::recovery_policy(&tx, envelope.attempt_id)? == policy
-                && provider::matches_parent(&tx, envelope.task_id, parent)?
-            {
-                check_stored_input(&tx, input)?;
-                Ok(())
-            } else {
-                Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
-            };
+        if !enqueue_input(
+            &tx,
+            input,
+            policy,
+            parent,
+            &prepared_input,
+            delegated.as_ref().is_some_and(|(_, fresh)| *fresh),
+        )? {
+            return Ok(());
         }
-        let task: Option<(String, String)> = tx
-            .query_row(
-                "SELECT project_id,operation FROM execution_tasks WHERE task_id=?1",
-                [envelope.task_id.to_string()],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()
-            .map_err(sql_error)?;
-        if let Some((project, operation)) = task {
-            if project != envelope.project_id.to_string()
-                || operation != envelope.operation
-                || envelope.previous_attempt_id.is_none()
-            {
-                return Err(error(ErrorCode::ResultMismatch, "task-identity"));
-            }
-        } else {
-            if envelope.previous_attempt_id.is_some() {
-                return Err(error(ErrorCode::InvalidInput, "previous-attempt"));
-            }
-            tx.execute("INSERT INTO execution_tasks VALUES (?1,?2,?3,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_tasks))", params![envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.operation]).map_err(sql_error)?;
-        }
-        if let Some(previous) = envelope.previous_attempt_id {
-            let old = load_input(&tx, previous)?;
-            if provider::recovery_policy(&tx, previous)? != policy || !policy.allows_replay() {
-                return Err(error(ErrorCode::Unauthorized, "effect-policy"));
-            }
-            if old.envelope().task_id != envelope.task_id {
-                return Err(error(ErrorCode::ResultMismatch, "previous-attempt"));
-            }
-            if envelope
-                .units
-                .iter()
-                .any(|unit| !old.envelope().units.contains(unit))
-            {
-                return Err(error(ErrorCode::Unauthorized, "retry-unit"));
-            }
-            let state = read_attempt(&tx, previous, false)?;
-            for item in &envelope.items {
-                let newer: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_items i JOIN execution_attempts a ON a.attempt_id=i.attempt_id WHERE a.task_id=?1 AND i.item_id=?2 AND a.sequence>(SELECT sequence FROM execution_attempts WHERE attempt_id=?3))",params![envelope.task_id.to_string(),item.item_id.to_string(),previous.to_string()],|r|r.get(0)).map_err(sql_error)?;
-                if newer {
-                    return Err(error(ErrorCode::Unauthorized, "retry-already-created"));
-                }
-                let status = state
-                    .items
-                    .iter()
-                    .find(|old| old.item_id == item.item_id)
-                    .ok_or_else(|| error(ErrorCode::InvalidInput, "retry-item"))?;
-                if let Some(reference) = envelope
-                    .reused_results
-                    .iter()
-                    .find(|reference| reference.item_id == item.item_id)
-                {
-                    let current:Option<String>=tx.query_row("SELECT current_result_id FROM execution_items WHERE attempt_id=?1 AND item_id=?2",params![previous.to_string(),item.item_id.to_string()],|r|r.get(0)).map_err(sql_error)?;
-                    let output = load_result(&tx, &old, reference.result_id)?;
-                    load_result(&tx, input, reference.result_id)?;
-                    if status.adoption == AdoptionState::Committed
-                        || status.validation != ValidationState::Valid
-                        || status.execution != ExecutionState::Succeeded
-                        || current != Some(reference.result_id.to_string())
-                        || output.envelope().attempt_id != reference.source_attempt_id
-                        || old.item(item.item_id)? != item
-                    {
-                        return Err(error(ErrorCode::Unauthorized, "reuse-eligibility"));
-                    }
-                    continue;
-                }
-                if status.adoption == AdoptionState::Committed
-                    || !matches!(
-                        status.execution,
-                        ExecutionState::Queued
-                            | ExecutionState::CancelledBeforeDispatch
-                            | ExecutionState::Failed
-                    )
-                    || status.validation == ValidationState::Invalid
-                    || (status.execution == ExecutionState::Failed && !status.retry_safe)
-                {
-                    return Err(error(ErrorCode::Unauthorized, "retry-eligibility"));
-                }
-                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='continued-in-new-attempt' WHERE attempt_id=?1 AND item_id=?2 AND execution='queued'",params![previous.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
-            }
-        }
-        let cancelled = cancel_revision(&tx, envelope.task_id)?;
-        let stored_input = prepared_input.insert(&tx)?;
-        tx.execute("INSERT INTO execution_attempts VALUES (?1,?2,?3,?4,?5,?6,?7,(SELECT COALESCE(MAX(sequence),0)+1 FROM execution_attempts))", params![envelope.attempt_id.to_string(),envelope.task_id.to_string(),envelope.project_id.to_string(),envelope.previous_attempt_id.map(|id|id.to_string()),stored_input,input.digest(),cancelled.get() as i64]).map_err(sql_error)?;
-        for item in &envelope.items {
-            if let Some(reference) = envelope
-                .reused_results
-                .iter()
-                .find(|reference| reference.item_id == item.item_id)
-            {
-                tx.execute("INSERT INTO execution_items VALUES (?1,?2,'succeeded','valid','unapplied',NULL,?3,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string(),reference.result_id.to_string()]).map_err(sql_error)?;
-            } else {
-                tx.execute("INSERT INTO execution_items VALUES (?1,?2,'queued','absent','unapplied',NULL,NULL,0,NULL)",params![envelope.attempt_id.to_string(),item.item_id.to_string()]).map_err(sql_error)?;
-            }
-        }
-        provider::record_input(&tx, input, policy, parent)?;
-        super::content::record_input(&tx, input)?;
-        super::translation::record_input(&tx, input)?;
         super::release::record_input(&tx, input, verified_build.as_ref())?;
         if let Some((delegation, _)) = &delegated {
             super::application::record_tool_input(&tx, input, delegation)?;
@@ -1893,6 +2027,211 @@ impl ProjectStore {
                 .map_err(|_| error(ErrorCode::OutcomeUnknown, "work-plan-tool-activation"))?;
         }
         Ok(())
+    }
+    pub fn execution_continuation(
+        &self,
+        action_id: ExecutionId,
+    ) -> Result<Option<ContinuationReceipt>, ExecutionError> {
+        read_continuation(self.execution_connection()?, action_id)
+    }
+    pub fn execution_continuation_page(
+        &self,
+        source: ExecutionId,
+        after: Revision,
+        limit: u32,
+    ) -> Result<Vec<ContinuationReceipt>, ExecutionError> {
+        if !(1..=50).contains(&limit) {
+            return Err(error(ErrorCode::LimitExceeded, "continuation-page"));
+        }
+        let connection = self.execution_connection()?;
+        load_input(connection, source)?;
+        let mut statement = connection.prepare("SELECT c.action_id FROM execution_continuations c JOIN execution_attempts a ON a.attempt_id=c.attempt_id WHERE c.source_attempt_id=?1 AND a.sequence>?2 ORDER BY a.sequence LIMIT ?3").map_err(sql_error)?;
+        let ids = statement
+            .query_map(
+                params![source.to_string(), after.get() as i64, limit],
+                |r| r.get::<_, String>(0),
+            )
+            .map_err(sql_error)?;
+        ids.map(|id| {
+            read_continuation(connection, parse_id(id.map_err(sql_error)?)?)?
+                .ok_or_else(|| error(ErrorCode::CorruptLedger, "continuation-association"))
+        })
+        .collect()
+    }
+    pub(crate) fn enqueue_continuation(
+        &mut self,
+        action: &ContinuationAction,
+        input: &FixedInput,
+        policy: RecoveryPolicy,
+    ) -> Result<ContinuationReceipt, ExecutionError> {
+        let action = action.canonical()?;
+        if let Some(receipt) = self.execution_continuation(action.action_id)? {
+            return if receipt.action == action {
+                Ok(receipt)
+            } else {
+                Err(error(ErrorCode::ResultMismatch, "continuation-identity"))
+            };
+        }
+        let prepared_build = super::release::prepare_input(self, input)?;
+        let prepared_input = input_storage::PreparedInput::capture(input)?;
+        let authority = self.plugin_authority.clone();
+        let tx = self.execution_write()?;
+        if let Some(receipt) = read_continuation(&tx, action.action_id)? {
+            return if receipt.action == action {
+                Ok(receipt)
+            } else {
+                Err(error(ErrorCode::ResultMismatch, "continuation-identity"))
+            };
+        }
+        if tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_actions WHERE action_id=?1)",
+                [action.action_id.to_string()],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(sql_error)?
+        {
+            return Err(error(ErrorCode::ResultMismatch, "action-identity"));
+        }
+        let original = load_input(&tx, action.source_attempt_id)?;
+        let request_digest = action.request_digest(&original)?;
+        let metadata = super::read_metadata_from(&tx)
+            .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
+        if action.project_id.to_string() != metadata.project_id().to_string() {
+            return Err(error(ErrorCode::Unauthorized, "project"));
+        }
+        if cancel_revision(&tx, original.envelope().task_id)?
+            != action.expected_cancellation_revision
+        {
+            return Err(error(
+                ErrorCode::Cancelled,
+                "continuation-cancellation-basis",
+            ));
+        }
+        let unit = original
+            .envelope()
+            .units
+            .iter()
+            .find(|u| u.unit_id == action.unit_id)
+            .ok_or_else(|| error(ErrorCode::InvalidInput, "continuation-unit"))?;
+        let next = input.envelope();
+        let selected: std::collections::BTreeSet<_> = action.item_ids.iter().copied().collect();
+        let remaining: std::collections::BTreeSet<_> = next
+            .items
+            .iter()
+            .filter(|item| {
+                !next
+                    .reused_results
+                    .iter()
+                    .any(|r| r.item_id == item.item_id)
+            })
+            .map(|item| item.item_id)
+            .collect();
+        if next.previous_attempt_id != Some(action.source_attempt_id)
+            || next.units != vec![unit.clone()]
+            || selected != remaining
+        {
+            return Err(error(ErrorCode::ResultMismatch, "continuation-input"));
+        }
+        let mut expected = original.envelope().clone();
+        expected.previous_attempt_id = Some(expected.attempt_id);
+        expected.attempt_id = next.attempt_id;
+        expected.units = vec![unit.clone()];
+        expected
+            .items
+            .retain(|item| unit.item_ids.contains(&item.item_id));
+        expected.reused_results = next.reused_results.clone();
+        if FixedInput::capture(expected)?.digest() != input.digest() {
+            return Err(error(ErrorCode::ResultMismatch, "continuation-input"));
+        }
+        if next
+            .items
+            .iter()
+            .filter_map(|item| item.scope.locale.as_ref())
+            .any(|locale| {
+                !metadata
+                    .target_locales()
+                    .iter()
+                    .any(|target| target.as_str() == locale)
+            })
+        {
+            return Err(error(ErrorCode::Unauthorized, "locale-scope"));
+        }
+        let state = read_attempt(&tx, action.source_attempt_id, false)?;
+        let has_failure = state.items.iter().any(|item| {
+            selected.contains(&item.item_id) && item.execution == ExecutionState::Failed
+        });
+        if has_failure != (action.kind == ContinuationKind::RetrySafeFailure) {
+            return Err(error(ErrorCode::Unauthorized, "continuation-action"));
+        }
+        // Existing enqueue checks scope, current results, cancellation, effect policy,
+        // ancestor budget and domain records inside this same writer transaction.
+        let verified_build =
+            super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        super::plugin_execution::check_input_in(&tx, input, &authority)?;
+        super::application::check_enqueue(&tx, input, None)?;
+        super::application::check_service_input(&tx, input, &authority)?;
+        check_translation_projection(&tx, input, Some(&authority))?;
+        if !enqueue_input(&tx, input, policy, None, &prepared_input, false)? {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "continuation-attempt-identity",
+            ));
+        }
+        super::release::record_input(&tx, input, verified_build.as_ref())?;
+        super::application::record_input(&tx, input)?;
+        let sequence: i64 = tx
+            .query_row(
+                "SELECT sequence FROM execution_attempts WHERE attempt_id=?1",
+                [next.attempt_id.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql_error)?;
+        let receipt = ContinuationReceipt {
+            sequence: Revision::new(sequence as u64)?,
+            action,
+            request_digest,
+            source_input_digest: original.digest().to_owned(),
+            attempt_id: next.attempt_id,
+            input_digest: input.digest().to_owned(),
+            task_id: original.envelope().task_id,
+            operation: original.envelope().operation.clone(),
+        };
+        tx.execute(
+            "INSERT INTO execution_continuations VALUES (?1,?2,?3,?4,?5,?6)",
+            params![
+                receipt.action.action_id.to_string(),
+                receipt.action.source_attempt_id.to_string(),
+                receipt.action.unit_id.to_string(),
+                receipt.attempt_id.to_string(),
+                codec::encode(&receipt, MAX_INPUT_BYTES)?,
+                receipt.request_digest
+            ],
+        )
+        .map_err(sql_error)?;
+        #[cfg(test)]
+        crash_hook("before-continuation-commit");
+        commit(tx)?;
+        #[cfg(test)]
+        crash_hook("after-continuation-commit");
+        Ok(receipt)
+    }
+    pub fn execution_task(&self, task_id: ExecutionId) -> Result<TaskView, ExecutionError> {
+        let connection = self.execution_connection()?;
+        let (project, operation, sequence): (String, String, i64) = connection
+            .query_row(
+                "SELECT project_id,operation,sequence FROM execution_tasks WHERE task_id=?1",
+                [task_id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(sql_error)?;
+        Ok(TaskView {
+            task_id,
+            project_id: parse_id(project)?,
+            operation,
+            sequence: Revision::new(sequence as u64)?,
+            cancellation_revision: cancel_revision(connection, task_id)?,
+        })
     }
     pub fn execution_input(&self, attempt: ExecutionId) -> Result<FixedInput, ExecutionError> {
         load_input(self.execution_connection()?, attempt)
@@ -2499,6 +2838,9 @@ impl ProjectStore {
         parameters: serde_json::Value,
     ) -> Result<AdoptionAction, ExecutionError> {
         let tx = self.execution_write()?;
+        if read_continuation(&tx, action_id)?.is_some() {
+            return Err(error(ErrorCode::ResultMismatch, "action-identity"));
+        }
         let input = load_input_cached(&tx, attempt)?;
         result_ids.sort();
         let existing: Option<Vec<u8>> = tx

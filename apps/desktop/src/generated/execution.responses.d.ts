@@ -7,6 +7,11 @@ export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | 
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
+/**
+ * Fresh continuation authority is fixed before submission. Replaying a recorded
+ * action reads its original receipt; it never refreshes this cancellation basis.
+ */
+export type ContinuationKind = "resume-undispatched" | "retry-safe-failure";
 export type InvocationOutcome =
   | {
       kind: "succeeded";
@@ -193,11 +198,15 @@ export interface Responses {
   attempt: AttemptDetail;
   attempts: AttemptSummary[];
   cancellation: Revision;
+  continuation: ContinuationReceipt;
+  continuationReceipt: ContinuationReceipt | null;
+  continuations: ContinuationPage;
   identity: ExecutionId;
   output: ResultEnvelope;
   receipt: AdoptionReceipt | null;
   recovery: RecoveryView;
   status: RuntimeStatus;
+  taskView: TaskView;
   tasks: TaskView[];
   toolDiscarded: boolean;
   toolPreflight: PluginToolPreflight;
@@ -280,6 +289,32 @@ export interface RecoveryUnit {
 export interface AttemptSummary {
   attemptId: ExecutionId;
   sequence: Revision;
+}
+/**
+ * Complete immutable evidence associating the original intent with one attempt.
+ */
+export interface ContinuationReceipt {
+  action: ContinuationAction;
+  attemptId: ExecutionId;
+  inputDigest: string;
+  operation: string;
+  requestDigest: string;
+  sequence: Revision;
+  sourceInputDigest: string;
+  taskId: ExecutionId;
+}
+export interface ContinuationAction {
+  actionId: ExecutionId;
+  expectedCancellationRevision: Revision;
+  itemIds: ExecutionId[];
+  kind: ContinuationKind;
+  projectId: ExecutionId;
+  sourceAttemptId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ContinuationPage {
+  next: Revision | null;
+  receipts: ContinuationReceipt[];
 }
 export interface ResultEnvelope {
   attemptId: ExecutionId;

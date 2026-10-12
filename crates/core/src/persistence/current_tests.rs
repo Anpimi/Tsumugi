@@ -260,7 +260,7 @@ fn current_failed_delivery_preserves_release_receipts_and_complete_snapshot() {
     assert_eq!(store.release_artifact(id, "zh-CN").unwrap().1, bytes);
     let all_facts = facts(store.connection().unwrap());
     // Exercise the existing consistent snapshot mechanism at the current schema.
-    backup_before_migration(store.connection().unwrap(), temp.path(), SCHEMA_VERSION).unwrap();
+    backup_current_schema(store.connection().unwrap(), temp.path()).unwrap();
     let backup_path = fs::read_dir(temp.path())
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -366,4 +366,117 @@ fn current_unsupported_profile_is_distinct_and_never_converted() {
     let error = ProjectStore::open(&path).unwrap_err();
     assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
     assert_eq!(error.found_schema_version(), Some(SCHEMA_VERSION + 1));
+}
+
+#[test]
+fn current_layout_reopens_and_every_unsupported_snapshot_preserves_bytes() {
+    for version in (0..SCHEMA_VERSION).chain([SCHEMA_VERSION + 1]) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("project");
+        let store = ProjectStore::create(
+            &path,
+            ProjectMetadata::create("Snapshot", "en-US", ["zh-CN"]).unwrap(),
+        )
+        .unwrap();
+        assert_current(&store);
+        store.close().unwrap();
+        ProjectStore::open(&path).unwrap().close().unwrap();
+        let database = path.join(DATABASE_FILENAME);
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+        drop(connection);
+        let before = fs::read(&database).unwrap();
+        let entries: std::collections::BTreeSet<_> = fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        let error = ProjectStore::open(&path).unwrap_err();
+        assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
+        assert_eq!(error.found_schema_version(), Some(version));
+        assert_eq!(fs::read(&database).unwrap(), before);
+        let after: std::collections::BTreeSet<_> = fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(after, entries);
+    }
+}
+
+#[test]
+fn current_layout_keeps_application_service_and_continuation_owners_on_reopen() {
+    fn assert_layout(store: &ProjectStore) {
+        assert_current(store);
+        let connection = store.connection().unwrap();
+        for (table, expected) in [
+            (
+                "application_executions",
+                &[
+                    "attempt_id",
+                    "plan_id",
+                    "generation",
+                    "kind",
+                    "delegation",
+                    "root_task",
+                ][..],
+            ),
+            (
+                "application_service_calls",
+                &[
+                    "child_attempt",
+                    "outer_attempt",
+                    "outer_item",
+                    "outer_dispatch",
+                    "grant_id",
+                    "handle_id",
+                    "call_id",
+                    "origin",
+                    "origin_digest",
+                    "call",
+                    "call_digest",
+                ][..],
+            ),
+            (
+                "execution_continuations",
+                &[
+                    "action_id",
+                    "source_attempt_id",
+                    "unit_id",
+                    "attempt_id",
+                    "receipt",
+                    "digest",
+                ][..],
+            ),
+        ] {
+            let columns = connection
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(
+                columns,
+                expected
+                    .iter()
+                    .map(|column| (*column).to_owned())
+                    .collect::<Vec<_>>(),
+                "{table}"
+            );
+        }
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create("Current owners", "en-US", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    assert_layout(&store);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_layout(&reopened);
+    reopened.close().unwrap();
 }

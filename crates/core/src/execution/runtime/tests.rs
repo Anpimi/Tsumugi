@@ -572,9 +572,15 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
         .cancel(&mut store, fixed.envelope().task_id, cancellation_id)
         .unwrap();
     let selected = fixed.envelope().items[0].item_id;
+    let continuation = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[selected],
+    );
     let attempt = runtime
-        .resume(&mut store, fixed.envelope().attempt_id, &[selected])
-        .unwrap();
+        .resume(&mut store, &continuation)
+        .unwrap()
+        .attempt_id;
     runtime.tick(&mut store).unwrap();
     let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(call.request.input.envelope().attempt_id, attempt);
@@ -594,6 +600,206 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
         runtime.attempt(&store, attempt).unwrap().progress.succeeded,
         1
     );
+}
+
+#[test]
+fn committed_cancellation_projection_failure_reconciles_the_original_request() {
+    let (temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    let task = fixed.envelope().task_id;
+    let attempt = fixed.envelope().attempt_id;
+    let request = ExecutionId::new();
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let first = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(runtime.workers.len(), 1);
+    let database = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    let mut corrupt_digest = fixed.digest().to_owned();
+    let replacement = if corrupt_digest.starts_with('0') {
+        "1"
+    } else {
+        "0"
+    };
+    corrupt_digest.replace_range(..1, replacement);
+    assert_eq!(corrupt_digest.len(), 64);
+    assert_ne!(corrupt_digest, fixed.digest());
+    assert_eq!(
+        database
+            .execute(
+                "UPDATE execution_attempts SET digest=?1 WHERE attempt_id=?2",
+                rusqlite::params![corrupt_digest, attempt.to_string()],
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store.execution_attempt(attempt, true).unwrap_err(),
+        ExecutionError::new(ErrorCode::CorruptLedger, "input-digest")
+    );
+    assert_eq!(
+        runtime.cancel(&mut store, task, request).unwrap_err(),
+        ExecutionError::new(ErrorCode::OutcomeUnknown, "input-digest")
+    );
+    let cancellation_record = || {
+        database
+            .query_row(
+                "SELECT task_id,revision,(SELECT COUNT(*) FROM execution_cancellations WHERE task_id=?1) FROM execution_cancellations WHERE request_id=?2",
+                rusqlite::params![task.to_string(), request.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        u64::try_from(row.get::<_, i64>(1)?).unwrap(),
+                        row.get::<_, u32>(2)?,
+                    ))
+                },
+            )
+            .unwrap()
+    };
+    let recorded = cancellation_record();
+    assert_eq!(recorded, (task.to_string(), 1, 1));
+    for item in &fixed.envelope().items {
+        let state: (String, Option<String>) = database
+            .query_row(
+                "SELECT execution,dispatch_token FROM execution_items WHERE attempt_id=?1 AND item_id=?2",
+                rusqlite::params![attempt.to_string(), item.item_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        if item.item_id == first.request.item_id {
+            assert_eq!(
+                state,
+                (
+                    "dispatched".into(),
+                    Some(first.request.dispatch_token.to_string())
+                )
+            );
+        } else {
+            assert_eq!(state, ("cancelled-before-dispatch".into(), None));
+        }
+    }
+    assert!(!store.is_reconciling());
+    assert_eq!(runtime.workers.len(), 1);
+    assert!(runtime.is_active(attempt));
+    assert!(!runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_none());
+    assert!(calls.try_recv().is_err());
+    assert_eq!(
+        database
+            .execute(
+                "UPDATE execution_attempts SET digest=?1 WHERE attempt_id=?2",
+                rusqlite::params![fixed.digest(), attempt.to_string()],
+            )
+            .unwrap(),
+        1
+    );
+    let revision = runtime.cancel(&mut store, task, request).unwrap();
+    assert_eq!(revision.get(), recorded.1);
+    assert_eq!(cancellation_record(), recorded);
+    assert!(runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_some());
+    first.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(first.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.is_active(attempt)
+    });
+    let view = runtime.attempt(&store, attempt).unwrap();
+    assert_eq!((view.progress.succeeded, view.progress.cancelled), (1, 2));
+    assert_eq!(view.progress.adopted, 0);
+    assert!(view.items.iter().all(|item| item.cancellation_requested));
+    assert!(calls.try_recv().is_err());
+    let selected = view
+        .items
+        .iter()
+        .find(|item| item.execution == ExecutionState::CancelledBeforeDispatch)
+        .unwrap()
+        .item_id;
+    let continuation = crate::execution::test_continuation_action(&store, attempt, &[selected]);
+    let resumed = runtime
+        .resume(&mut store, &continuation)
+        .unwrap()
+        .attempt_id;
+    runtime.tick(&mut store).unwrap();
+    let second = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_ne!(resumed, attempt);
+    assert_eq!(second.request.input.envelope().attempt_id, resumed);
+    assert_eq!(second.request.item_id, selected);
+    assert_eq!(runtime.workers.len(), 1);
+    assert_eq!(runtime.cancel(&mut store, task, request).unwrap(), revision);
+    assert_eq!(cancellation_record(), recorded);
+    assert!(!runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_none());
+    assert!(
+        runtime
+            .attempt(&store, resumed)
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| !item.cancellation_requested)
+    );
+    second.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(
+        second
+            .finished
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+    );
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.is_active(resumed)
+    });
+    let resumed_view = runtime.attempt(&store, resumed).unwrap();
+    assert_eq!(resumed_view.progress.succeeded, 1);
+    assert_eq!(resumed_view.progress.adopted, 0);
+    assert_eq!(cancellation_record(), recorded);
+    assert!(calls.try_recv().is_err());
+}
+
+#[test]
+fn cancellation_write_lock_rejects_without_recording_or_signalling_workers() {
+    let (temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    let task = fixed.envelope().task_id;
+    let attempt = fixed.envelope().attempt_id;
+    let request = ExecutionId::new();
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let first = calls.recv_timeout(Duration::from_secs(5)).unwrap();
+    let before = serde_json::to_value(runtime.attempt(&store, attempt).unwrap()).unwrap();
+    let blocker = rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    assert_eq!(
+        runtime.cancel(&mut store, task, request).unwrap_err(),
+        ExecutionError::new(ErrorCode::Busy, "execution-storage")
+    );
+    assert_eq!(
+        blocker
+            .query_row("SELECT COUNT(*) FROM execution_cancellations", [], |row| {
+                row.get::<_, u32>(0)
+            })
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        serde_json::to_value(runtime.attempt(&store, attempt).unwrap()).unwrap(),
+        before
+    );
+    assert!(!store.is_reconciling());
+    assert_eq!(runtime.workers.len(), 1);
+    assert!(runtime.is_active(attempt));
+    assert!(!runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_none());
+    assert!(calls.try_recv().is_err());
+    blocker.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(runtime.cancel(&mut store, task, request).unwrap().get(), 1);
+    assert!(runtime.workers[0].cancellation.is_requested());
+    assert!(runtime.workers[0].cancellation_started.is_some());
+    first.release.send(ExecutionState::Succeeded).unwrap();
+    assert!(first.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        !runtime.is_active(attempt)
+    });
+    let view = runtime.attempt(&store, attempt).unwrap();
+    assert_eq!((view.progress.succeeded, view.progress.cancelled), (1, 2));
+    assert!(calls.try_recv().is_err());
 }
 
 #[test]
@@ -826,15 +1032,12 @@ fn runtime_effect_policy_is_host_owned_and_not_operation_name_based() {
             .iter()
             .all(|u| !u.actions.contains(&RecoveryAction::ResumeUndispatched))
     );
-    assert!(
-        external
-            .resume(
-                &mut store,
-                input.envelope().attempt_id,
-                &[input.envelope().items[0].item_id]
-            )
-            .is_err()
+    let continuation = crate::execution::test_continuation_action(
+        &store,
+        input.envelope().attempt_id,
+        &[input.envelope().items[0].item_id],
     );
+    assert!(external.resume(&mut store, &continuation).is_err());
     assert_eq!(
         store.enqueue_read_only_execution(&input).unwrap_err().code,
         ErrorCode::ResultMismatch
@@ -1327,4 +1530,221 @@ fn plugin_environment_restore_retry_and_current_store_reopen_remain_exact() {
     assert_eq!(loaded.envelope().plugin.as_ref().unwrap(), &binding);
     assert!(reopened.plugin_permit(&loaded).is_err());
     reopened.close().unwrap();
+}
+
+#[test]
+fn continuation_lost_ack_replays_original_intent_without_dispatch_after_reopen() {
+    let (_temp, mut store, mut runtime, calls) = setup();
+    let input = input(&store);
+    let source = input.envelope().attempt_id;
+    let task = input.envelope().task_id;
+    runtime.submit(&mut store, &input).unwrap();
+    runtime
+        .cancel(&mut store, task, ExecutionId::new())
+        .unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        source,
+        &[input.envelope().items[0].item_id],
+    );
+    let receipt = runtime.resume(&mut store, &action).unwrap();
+    assert_eq!(runtime.resume(&mut store, &action).unwrap(), receipt);
+    assert_eq!(store.execution_attempt_ids(task).unwrap().len(), 2);
+    runtime.tick(&mut store).unwrap();
+    // Only the selected cancelled unit receives a new dispatch.
+    let mut dispatched = Vec::new();
+    while let Ok(call) = calls.recv_timeout(Duration::from_millis(100)) {
+        dispatched.push((
+            call.request.input.envelope().attempt_id,
+            call.request.item_id,
+        ));
+        call.release.send(ExecutionState::Succeeded).unwrap();
+        assert!(call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+        runtime.tick(&mut store).unwrap();
+    }
+    pump_until(&mut runtime, &mut store, |runtime, store| {
+        !runtime.has_active_work(store).unwrap()
+    });
+    assert_eq!(
+        dispatched
+            .iter()
+            .filter(|(id, _)| *id == receipt.attempt_id)
+            .count(),
+        1
+    );
+    runtime
+        .cancel(&mut store, task, ExecutionId::new())
+        .unwrap();
+    assert_eq!(runtime.resume(&mut store, &action).unwrap(), receipt);
+    let mut different = action.clone();
+    different.expected_cancellation_revision =
+        different.expected_cancellation_revision.next().unwrap();
+    assert_eq!(
+        runtime.resume(&mut store, &different).unwrap_err().code,
+        ErrorCode::ResultMismatch
+    );
+    drop(runtime);
+    let path = store.directory().to_path_buf();
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    let mut new_runtime = ExecutionRuntime::new(&reopened).unwrap();
+    // No registered runner and current cancellation cannot erase old facts.
+    assert_eq!(new_runtime.resume(&mut reopened, &action).unwrap(), receipt);
+    new_runtime.tick(&mut reopened).unwrap();
+    assert!(!new_runtime.has_active_work(&reopened).unwrap());
+    assert_eq!(reopened.execution_attempt_ids(task).unwrap().len(), 2);
+}
+
+#[test]
+fn fresh_plugin_continuation_cannot_inherit_the_original_attempt_grant() {
+    let (_temp, mut store, mut runtime, _) = setup();
+    let (sent, calls) = mpsc::channel();
+    let binding = plugin_binding("b");
+    let original = plugin_input(&store, binding.clone());
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, sent)))
+        .unwrap();
+    authorize(&runtime, &mut store, &original);
+    runtime.submit(&mut store, &original).unwrap();
+    let source = original.envelope().attempt_id;
+    let task = original.envelope().task_id;
+    let action = crate::execution::test_continuation_action(
+        &store,
+        source,
+        &[original.envelope().items[0].item_id],
+    );
+
+    for _ in 0..2 {
+        let error = runtime.resume(&mut store, &action).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert_eq!(error.stage, "plugin-grant");
+        assert!(
+            store
+                .execution_continuation(action.action_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.execution_attempt_ids(task).unwrap(), vec![source]);
+        assert_eq!(
+            store.execution_input(source).unwrap().bytes(),
+            original.bytes()
+        );
+        assert_eq!(
+            store
+                .execution_attempt(source, false)
+                .unwrap()
+                .progress
+                .queued,
+            1
+        );
+        assert!(store.plugin_permit(&original).unwrap().matches(&original));
+        assert!(calls.try_recv().is_err());
+    }
+}
+
+#[test]
+fn fresh_continuation_rejects_stale_cancel_and_scope_inside_writer_transaction() {
+    let (_temp, mut store, mut runtime, _calls) = setup();
+    let input = input(&store);
+    runtime.submit(&mut store, &input).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        input.envelope().attempt_id,
+        &[input.envelope().items[0].item_id],
+    );
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    runtime
+        .cancel(&mut store, input.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            store
+                .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+                .unwrap_err()
+                .code,
+            ErrorCode::Cancelled
+        );
+        assert!(
+            store
+                .execution_continuation(action.action_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .execution_attempt_ids(input.envelope().task_id)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    let mut fresh = action.clone();
+    fresh.action_id = ExecutionId::new();
+    fresh.expected_cancellation_revision = store
+        .execution_task(input.envelope().task_id)
+        .unwrap()
+        .cancellation_revision;
+    let mut changed = next.envelope().clone();
+    changed.items[0].payload = json!("changed");
+    let changed = FixedInput::capture(changed).unwrap();
+    assert_eq!(
+        store
+            .enqueue_continuation(&fresh, &changed, RecoveryPolicy::ReadOnly)
+            .unwrap_err()
+            .code,
+        ErrorCode::ResultMismatch
+    );
+    assert!(
+        store
+            .execution_continuation(fresh.action_id)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn replay_of_recorded_queued_continuation_never_renews_authority_on_reopen() {
+    let (_temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime
+        .cancel(&mut store, fixed.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        fixed.envelope().attempt_id,
+        &[fixed.envelope().items[0].item_id],
+    );
+    let receipt = runtime.resume(&mut store, &action).unwrap();
+    let path = store.directory().to_path_buf();
+    drop(runtime);
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
+    let (new_calls, observed) = mpsc::channel();
+    runtime
+        .register_read_only(Arc::new(Controlled { calls: new_calls }))
+        .unwrap();
+    assert_eq!(runtime.resume(&mut reopened, &action).unwrap(), receipt);
+    runtime.tick(&mut reopened).unwrap();
+    assert_eq!(
+        reopened
+            .execution_attempt(receipt.attempt_id, false)
+            .unwrap()
+            .progress
+            .queued,
+        1
+    );
+    assert!(!runtime.has_active_work(&reopened).unwrap());
+    assert!(observed.try_recv().is_err());
+    assert!(calls.try_recv().is_err());
+    assert_eq!(
+        reopened
+            .execution_attempt_ids(fixed.envelope().task_id)
+            .unwrap()
+            .len(),
+        2
+    );
 }

@@ -2,6 +2,11 @@
 
 export type ExecutionId = string;
 export type Revision = string;
+/**
+ * Fresh continuation authority is fixed before submission. Replaying a recorded
+ * action reads its original receipt; it never refreshes this cancellation basis.
+ */
+export type ContinuationKind = "resume-undispatched" | "retry-safe-failure";
 export type RecoveryAction =
   "resume-undispatched" | "retry-safe-failure" | "validate-output" | "adopt-result" | "query-outcome" | "view-receipt";
 export type UnsignedDecimal = string;
@@ -10,12 +15,16 @@ export interface Requests {
   adopt: AdoptRequest;
   attempt: AttemptRequest;
   cancel: CancelRequest;
+  continuation: ContinuationRequest;
+  continuationList: ContinuationListRequest;
+  continuationRead: ContinuationReadRequest;
   list: ListRequest;
   output: OutputRequest;
   prepare: PrepareRequest;
   recovery: RecoveryRequest;
   session: SessionRequest;
   task: TaskRequest;
+  taskView: TaskViewRequest;
   toolDiscard: PluginToolDiscardRequest;
   toolPrepare: PluginToolPrepareRequest;
   toolStart: PluginStartRequest;
@@ -37,6 +46,32 @@ export interface CancelRequest {
   requestId: ExecutionId;
   sessionToken: string;
   taskId: ExecutionId;
+}
+export interface ContinuationRequest {
+  action: ContinuationAction;
+  projectId: ExecutionId;
+  sessionToken: string;
+}
+export interface ContinuationAction {
+  actionId: ExecutionId;
+  expectedCancellationRevision: Revision;
+  itemIds: ExecutionId[];
+  kind: ContinuationKind;
+  projectId: ExecutionId;
+  sourceAttemptId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface ContinuationListRequest {
+  after: Revision;
+  limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+  sourceAttemptId: ExecutionId;
+}
+export interface ContinuationReadRequest {
+  actionId: ExecutionId;
+  projectId: ExecutionId;
+  sessionToken: string;
 }
 export interface ListRequest {
   after: Revision;
@@ -73,6 +108,11 @@ export interface SessionRequest {
 export interface TaskRequest {
   after: Revision;
   limit: number;
+  projectId: ExecutionId;
+  sessionToken: string;
+  taskId: ExecutionId;
+}
+export interface TaskViewRequest {
   projectId: ExecutionId;
   sessionToken: string;
   taskId: ExecutionId;

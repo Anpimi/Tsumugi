@@ -27,7 +27,7 @@ macro_rules! handlers {
         super::plugins::runtimes::install_plugin_runtime, super::plugins::runtimes::lookup_plugin_runtime,
         super::plugins::runtimes::set_plugin_native_host_approval,
         list_execution_tasks,read_execution_task,read_execution_attempt,read_execution_output,
-        cancel_execution_task,recover_execution,prepare_execution_adoption,adopt_execution,
+        cancel_execution_task,recover_execution,continue_execution,read_execution_continuation,read_execution_continuations,read_execution_task_view,prepare_execution_adoption,adopt_execution,
         read_execution_receipt,execution_status,quiesce_execution,create_execution_identity,
         tools::prepare_plugin_tool,tools::start_plugin_tool,tools::discard_plugin_tool_preflight,
         source::plugin::select_plugin_source,source::plugin::preflight_plugin_source,source::plugin::start_plugin_source,
@@ -636,6 +636,42 @@ request!(
     }
 );
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] RecoveryRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action:RecoveryAction, item_ids:Vec<ExecutionId> });
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContinuationRequest {
+        action: ContinuationAction
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContinuationReadRequest {
+        action_id: ExecutionId
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    ContinuationListRequest {
+        source_attempt_id: ExecutionId,
+        after: Revision,
+        #[cfg_attr(feature = "wire-schema", schemars(range(max = 4294967295u64)))]
+        limit: u32
+    }
+);
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    TaskViewRequest {
+        task_id: ExecutionId
+    }
+);
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+pub struct ContinuationPage {
+    pub receipts: Vec<ContinuationReceipt>,
+    pub next: Option<Revision>,
+}
+
 request!(#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))] PrepareRequest { attempt_id:ExecutionId, unit_id:ExecutionId, action_id:ExecutionId, result_ids:Vec<ExecutionId> });
 request!(
     #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
@@ -1004,6 +1040,140 @@ pub async fn cancel_execution_task(
         .await
 }
 #[tauri::command]
+pub async fn read_execution_task_view(
+    state: State<'_, AppState>,
+    request: TaskViewRequest,
+) -> Result<TaskView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_task_view",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .execution_task(request.task_id)
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_execution_continuation(
+    state: State<'_, AppState>,
+    request: ContinuationReadRequest,
+) -> Result<Option<ContinuationReceipt>, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_continuation",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                active
+                    .store
+                    .execution_continuation(request.action_id)
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn read_execution_continuations(
+    state: State<'_, AppState>,
+    request: ContinuationListRequest,
+) -> Result<ContinuationPage, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_execution_continuations",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let receipts = active
+                    .store
+                    .execution_continuation_page(
+                        request.source_attempt_id,
+                        request.after,
+                        request.limit,
+                    )
+                    .map_err(map_read)?;
+                // A full page always offers a cursor; an empty final page confirms completion.
+                let next = if receipts.len() == request.limit as usize {
+                    receipts.last().map(|receipt| receipt.sequence)
+                } else {
+                    None
+                };
+                Ok(ContinuationPage { receipts, next })
+            },
+        )
+        .await
+}
+#[tauri::command]
+pub async fn continue_execution(
+    state: State<'_, AppState>,
+    request: ContinuationRequest,
+) -> Result<ContinuationReceipt, CommandError> {
+    state
+        .sessions
+        .run(
+            "continue_execution",
+            CommandStage::ExecutionRecover,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRecover,
+                )?;
+                if request.action.project_id != request.project_id {
+                    return Err(map_recover(ExecutionError::new(
+                        ErrorCode::Unauthorized,
+                        "continuation-project",
+                    )));
+                }
+                // A historical receipt is readable even when fresh mutation is unavailable.
+                // Keep session/project read authorization, without renewing run authority.
+                if let Some(receipt) = active
+                    .store
+                    .execution_continuation(request.action.action_id)
+                    .map_err(map_recover)?
+                {
+                    return if receipt.action == request.action.canonical().map_err(map_recover)? {
+                        Ok(receipt)
+                    } else {
+                        Err(map_recover(ExecutionError::new(
+                            ErrorCode::ResultMismatch,
+                            "continuation-identity",
+                        )))
+                    };
+                }
+                let (host, store) = active.execution_parts()?;
+                host.allow_mutation()?;
+                host.runtime
+                    .resume(store, &request.action)
+                    .map_err(map_recover)
+            },
+        )
+        .await
+}
+#[tauri::command]
 pub async fn recover_execution(
     state: State<'_, AppState>,
     request: RecoveryRequest,
@@ -1020,6 +1190,15 @@ pub async fn recover_execution(
                     request.project_id,
                     CommandStage::ExecutionRecover,
                 )?;
+                if matches!(
+                    request.action,
+                    RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure
+                ) {
+                    return Err(map_recover(ExecutionError::new(
+                        ErrorCode::InvalidInput,
+                        "continuation-identity-required",
+                    )));
+                }
                 let (host, store) = active.execution_parts()?;
                 host.allow_mutation()?;
                 let plan = store
@@ -1059,10 +1238,10 @@ pub async fn recover_execution(
                 };
                 match request.action {
                     RecoveryAction::ResumeUndispatched | RecoveryAction::RetrySafeFailure => {
-                        response.attempt_id = host
-                            .runtime
-                            .resume(store, request.attempt_id, &selected)
-                            .map_err(map_recover)?
+                        return Err(map_recover(ExecutionError::new(
+                            ErrorCode::InvalidInput,
+                            "continuation-identity-required",
+                        )));
                     }
                     RecoveryAction::ValidateOutput => {
                         for item in selected {

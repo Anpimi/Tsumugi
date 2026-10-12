@@ -1,5 +1,18 @@
 # Application versioning and changelog maintenance
 
+The current combined development format is project schema 33. It retains the
+original six-column application execution associations, work-plan service calls,
+captured input chunks and ancestor budgets, and adds exact continuation identities
+with the new attempt in one ledger transaction. Earlier development formats are
+refused before application DDL without upgrade, rebuild, reset or fallback.
+Internal execution consumers must regenerate the typed continuation contracts;
+work-plan controls, service consents, SDK process2 and dependencies remain distinct
+and unchanged. Bilingual Unreleased entries describe this compatibility change.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` are the same undistributed batch,
+so this integration does not require an additional bump. The individual entries
+below retain their original format boundaries and do not define alternate current
+profiles. Native and full product acceptance remain separate.
+
 The AI workbench supports explicit multiple reference-provider choices, each with
 independent query options and captured provenance under the existing total tool
 allowance. This additive frontend flow changes no Core/Host/SDK contract,
@@ -79,7 +92,7 @@ cannot restore the old signal; fresh capture rereads actual settings without
 renewing Core grants. This adds no persistent settings field, dependency or
 wire shape, and is covered by the same Unreleased entries and version boundary.
 
-The combined current development profile is project schema 31, internal WorkPlan
+The combined current development profile is project schema 33, internal WorkPlan
 format 2, process protocol 2, installed settings 2 and receipt format 1. The
 individual assessments below retain the format boundaries at which each change
 was introduced; they do not create alternate current profiles.

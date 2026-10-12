@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+The combined development build opens project schema 33 only. Earlier entries
+retain the format boundaries introduced during this undistributed batch; they
+do not define alternate current project formats.
+
+- Tasks retain the complete original cancellation request when its outcome cannot
+  be confirmed. Explicit retry uses the same request identity; a missing, malformed
+  or zero revision cannot clear recovery. Deferred recovery preserves the request
+  and blocks project closure until its result is confirmed.
+
 - The AI workbench can explicitly add, configure and remove multiple reference
   providers. Each keeps its own target, options and captured source while all
   providers share the plan's total tool allowance. Duplicate or unavailable
@@ -267,8 +276,11 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Changed
 
-- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 23 and refuse earlier development directories unchanged.
-- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 23 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
+- Current development projects use schema 33, combining exact recovery intent and cancellation associations with the original work-plan service children, captured input chunks and ancestor budgets. Other development formats are refused before application schema changes, without an upgrade, rebuild or reset. Keep their directories and reimport source files into a new project. Internal execution consumers regenerate the typed continuation requests; stored receipt replay does not renew a grant, lease or scheduling authority.
+
+
+- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 33 and refuse earlier development directories unchanged.
+- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 33 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
 
 - Desktop translation imports use declared installed plugin capabilities only. Production omits the built-in file listing, preflight and import commands and no longer registers their extractor runner; regenerate earlier development IPC consumers. Normal Core builds also exclude the built-in translation parser and runner and reject its former captured inputs without recording an attempt. Experimental Rust consumers must use the checked plugin projection workflow; the former importer is available only for tests or the explicit `execution-test-host` feature. Generic editing, history, preview and adoption remain available.
 
@@ -276,7 +288,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically. Experimental plugin source adoption fixes mandatory semantic checks to the original source, proposal and selected checker, stores their exact result link and rechecks both permissions at commit. Core maps generic SDK units to project identities and derives revisions from the captured policy's opaque evidence. Source history displays original names and encoded references, with local retry when file details are unavailable.
 - Manual translation saves and selections now persist unit protection. The translation editor confirms persistent protection before enabling draft input, keeps uncertain actions for reconciliation, and releases protection only after confirming the current entry, language, source, selection and protection revision. Dirty or pending saves block release; old acknowledgements cannot clear newer protection.
-- Project storage now uses schema 23 for durable work-plan authorization, human control, checked-selection policy receipts, plugin execution grants, complete captured runtime-environment bindings, generic source-unit mappings, mandatory source/artifact-check provenance and immutable multi-artifact releases. This development build opens schema 23 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
+- Project storage now uses schema 33 for durable work-plan authorization, human control, checked-selection policy receipts, plugin execution grants, complete captured runtime-environment bindings, generic source-unit mappings, mandatory source/artifact-check provenance and immutable multi-artifact releases. This development build opens schema 33 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
@@ -311,6 +323,10 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 - Saved source warnings remain available after preview, adoption and reopening; successful task outputs no longer display failure retry guidance. Adopted plugin snapshots refuse missing mandatory check evidence even when stored validation flags are downgraded. Invocation result budgets count original JSON frame bytes, including whitespace and escaping.
 
 - Continued AI work plans display the original shared budget, including prior requests and unresolved exposure, rather than only the new child attempt.
+
+- Resuming undispatched work and retrying safe failures retain the original action, selected items and cancellation basis after a lost confirmation. Exact lookup or replay returns the recorded attempt without another enqueue or dispatch. Modified requests conflict; an unrecorded request cannot refresh its cancellation basis. The Tasks view can inspect the original recovery history. Anonymous resume/retry IPC calls are now refused; outcome queries and output validation keep their existing behavior.
+
+- A recorded task cancellation remains unconfirmed if reading a running worker's state fails. Rechecking the original request preserves its cancellation revision and does not cancel explicitly resumed work.
 
 - Unsupported SQLite storage settings now have a distinct refusal instead of being reported as corrupt project data. The original project and its settings are preserved. Core Rust callers with exhaustive error matches must handle `UnsupportedStorage`; the desktop wire uses `unsupported-schema` with `reason: "storage-mode"`.
 
