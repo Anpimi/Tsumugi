@@ -1,5 +1,20 @@
 # Application versioning and changelog maintenance
 
+The experimental SDK now defines bounded work-plan generation-service input,
+child-identity receipts and finite errors from one Rust source. The new service,
+input, receipt and error contract references each use schema/behavior 1/1.
+The existing generator emits their JavaScript types and standalone validators;
+the SDK's declared text-query payload helper checks exact text, explicit options,
+fixed template paths and complete encoded input bounds. These data helpers do
+not supply application scopes, execution grants, model access or new budgets.
+Process protocol 2, existing shared contract versions, project schema 32,
+Core/Host/desktop IPC, dependencies and lockfiles remain unchanged. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` stay in the same undistributed batch,
+without an additional SemVer bump or publication. Regenerate contracts before
+packaging a new fixed SDK snapshot; earlier archives and consumer selections
+remain unchanged until an explicit artifact update. Both Unreleased changelogs
+describe this SDK source alignment.
+
 The combined execution continuation boundary adds exact request/receipt links
 atomically with the existing chunked input, plugin grants, budget and release
 checks. The current-only project format advances from this branch's schema 30

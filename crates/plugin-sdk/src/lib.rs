@@ -12,6 +12,7 @@ mod checks;
 mod content;
 mod declaration;
 mod environment;
+mod generation;
 mod invocation;
 #[cfg(feature = "native-worker")]
 mod native_worker;
@@ -32,6 +33,7 @@ pub use checks::*;
 pub use content::*;
 pub use declaration::*;
 pub use environment::*;
+pub use generation::*;
 pub use invocation::*;
 #[cfg(feature = "native-worker")]
 pub use native_worker::*;

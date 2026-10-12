@@ -149,6 +149,84 @@ impl ToolQuerySelection {
 }
 
 impl ToolQueryDeclaration {
+    /// Build only the declared text query. Values are preserved exactly; this
+    /// helper neither authenticates a package nor grants execution permission.
+    pub fn prepare_payload(
+        &self,
+        text: &str,
+        target: &str,
+        selections: &[String],
+        max_input_bytes: u32,
+    ) -> Result<Value, ContractError> {
+        self.validate()?;
+        if text.chars().all(|ch| matches!(ch, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}')) || text.len() > self.max_text_bytes as usize {
+            return Err(invalid("tool.query.text"));
+        }
+        if !self
+            .target
+            .options
+            .iter()
+            .any(|option| option.value == target)
+            || selections.len() < self.selections.min_selected as usize
+            || selections.len() > self.selections.max_selected as usize
+            || selections
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != selections.len()
+            || selections.iter().any(|value| {
+                !self
+                    .selections
+                    .options
+                    .iter()
+                    .any(|option| &option.value == value)
+            })
+        {
+            return Err(invalid("tool.query.selection"));
+        }
+        fn replace(
+            value: &mut Value,
+            path: &[ToolQueryPathPart],
+            replacement: Value,
+        ) -> Result<(), ContractError> {
+            let mut current = value;
+            for part in path {
+                current = match part {
+                    ToolQueryPathPart::Key(key) => current
+                        .as_object_mut()
+                        .and_then(|object| object.get_mut(key)),
+                    ToolQueryPathPart::Index(index) => current
+                        .as_array_mut()
+                        .and_then(|array| array.get_mut(*index as usize)),
+                }
+                .ok_or_else(|| invalid("tool.query.path"))?;
+            }
+            *current = replacement;
+            Ok(())
+        }
+        let mut payload = self.input_template.clone();
+        replace(&mut payload, &self.text_path, Value::String(text.into()))?;
+        replace(
+            &mut payload,
+            &self.target.path,
+            Value::String(target.into()),
+        )?;
+        replace(
+            &mut payload,
+            &self.selections.path,
+            serde_json::to_value(selections).map_err(|_| invalid("tool.query.selection"))?,
+        )?;
+        if max_input_bytes == 0
+            || serde_json::to_vec(&payload)
+                .map_err(|_| invalid("tool.query.input"))?
+                .len()
+                > max_input_bytes as usize
+        {
+            return Err(invalid("tool.query.input"));
+        }
+        Ok(payload)
+    }
+
     pub fn validate(&self) -> Result<(), ContractError> {
         reference(&self.input_schema, "tool.query.inputSchema")?;
         reference(&self.output_schema, "tool.query.outputSchema")?;
@@ -232,5 +310,71 @@ impl ToolQueryDeclaration {
             }
         }
         encoded_limit(self, MAX_TOOL_DECLARATION_BYTES, "tool.query")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn query() -> ToolQueryDeclaration {
+        serde_json::from_slice::<CapabilityToolDeclaration>(include_bytes!(
+            "../../tests/fixtures/tool.query.json"
+        ))
+        .unwrap()
+        .query
+        .unwrap()
+    }
+
+    #[test]
+    fn query_payload_preserves_text_template_and_explicit_options() {
+        let query = query();
+        let text = "\u{feff}中文\r\n👩🏽‍💻 e\u{301}";
+        let payload = query
+            .prepare_payload(text, "ja", &["other".into(), "term".into()], 4096)
+            .unwrap();
+        assert_eq!(payload["rows"][0]["text"], text);
+        assert_eq!(
+            payload["rows"][0]["selected"],
+            serde_json::json!(["other", "term"])
+        );
+        assert_eq!(payload["rows"][0]["id"], "original-query");
+        assert_eq!(payload["basis"], query.input_template["basis"]);
+        assert_eq!(query.input_template["rows"][0]["text"], "");
+    }
+
+    #[test]
+    fn query_payload_refuses_missing_options_utf8_limits_and_path_creation() {
+        let mut query = query();
+        for (text, target, selected) in [
+            (" ", "ja", vec!["term".into()]),
+            ("text", "JA", vec!["term".into()]),
+            ("text", "ja", Vec::new()),
+            ("text", "ja", vec!["term".into(), "term".into()]),
+            ("text", "ja", vec!["unknown".into()]),
+        ] {
+            assert!(
+                query
+                    .prepare_payload(text, target, &selected, 4096)
+                    .is_err()
+            );
+        }
+        query.max_text_bytes = 3;
+        assert!(
+            query
+                .prepare_payload("👩", "ja", &["term".into()], 4096)
+                .is_err()
+        );
+        assert!(
+            query
+                .prepare_payload("a", "ja", &["term".into()], 1)
+                .is_err()
+        );
+        query.text_path = vec![ToolQueryPathPart::Key("absent".into())];
+        assert!(
+            query
+                .prepare_payload("a", "ja", &["term".into()], 4096)
+                .is_err()
+        );
     }
 }

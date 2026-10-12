@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The experimental standalone SDK defines bounded work-plan generation-service
+  input, child-identity receipts and finite errors at schema/behavior 1/1, with
+  Rust receivers and generated JavaScript contracts. Configuration, model
+  destinations, consent and cumulative budgets remain application-owned; a
+  valid payload supplies no execution authority. The SDK also constructs declared
+  text-query payloads from exact text and explicit options, retaining fixed
+  template fields and checking complete encoded input limits. Process protocol 2
+  and the undistributed SDK alpha.1 version remain unchanged.
+
 - Tasks now shows saved plugin build plans and every artifact's allowed path,
   role, byte count and SHA-256, with the original plan's target count. An exact
   read-only route opens the same build in Build and export without replacing an
