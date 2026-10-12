@@ -1,6 +1,9 @@
 //! Explicit installed knowledge choices through ordinary and scoped Agent IPC.
 use super::*;
 
+#[path = "multi_reference_delivery.rs"]
+mod multi_reference_delivery;
+
 fn consent(preflight: &Value) -> Value {
     json!({
         "attemptId":preflight["attemptId"],"inputDigest":preflight["inputDigest"],
