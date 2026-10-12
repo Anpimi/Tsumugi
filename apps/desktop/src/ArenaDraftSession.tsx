@@ -7,7 +7,7 @@ import { validateResponseIdentity, validateResponseAction, validateResponseAdopt
 import { validateResponsePrepared, validateResponseView, validateResponseComparison } from "./generated/arena.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
-import { useSessionReads } from "./SessionReadProvider";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import type { AiConfig, AiItem } from "./aiCommands";
@@ -131,7 +131,7 @@ function useArenaOwner(project: ProjectView) {
   const [state,setState] = useState<State>(() => freeze({config:defaultArenaConfig(),locale:project.metadata.targetLocales[0] ?? "",selected:[],prepared:null,consent:false,
     dirty:false,editSeq:0,sourceGeneration:0,staleReason:null,unit:"",references:[],comparisonBlind:false,comparisonId:null,draft:null,
     attempt:null,started:null,pending:null,saved:{},busy:false,failure:null,notice:null}));
-  const stateRef = useRef(state), projectRef = useRef(project), draftsRef = useRef(translations), tasksRef = useRef(tasks), mounted = useRef(false);
+  const stateRef = useRef(state), projectRef = useRef(project), draftsRef = useRef(translations), tasksRef = useRef(tasks), mounted = useSessionAlive();
   const version = useRef(0), flight = useRef<object | null>(null), mutation = useRef<symbol | null>(null);
   useLayoutEffect(() => {
     const sourceChanged = projectRef.current.metadata.sourceLocale !== project.metadata.sourceLocale;
@@ -227,6 +227,7 @@ function useArenaOwner(project: ProjectView) {
       || (entry.receipt && (entry.receipt.requestDigest !== receipt.requestDigest || JSON.stringify(entry.receipt.changes) !== JSON.stringify(receipt.changes)))) invalidAck();
   }
   async function dispatch(entry: Pending, replay = false, proof: () => boolean = live) {
+    if (!live()) return;
     update(before => ({...before,pending:{...entry,retryAllowed:false},notice:null}));
     try {
       if (entry.kind === "start") { await arenaCommands.start(entry.request); if (matches(entry)) settle(entry,null); }

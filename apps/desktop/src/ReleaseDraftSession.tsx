@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands } from "./executionCommands";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
-import { useSessionReads } from "./SessionReadProvider";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { reviewCommands, type Eligibility } from "./reviewCommands";
 import { sourceCommands } from "./sourceCommands";
 import type { ContentScope, IntegrationDescriptor } from "./generated/source.responses";
@@ -48,7 +48,7 @@ function useReleaseOwner(project: ProjectView) {
   const reads = useSessionReads();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state, setState] = useState<State>(() => freeze(initial(project)));
-  const stateRef = useRef(state), projectRef = useRef(project), mounted = useRef(false);
+  const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive();
   const flight = useRef<object | null>(null), version = useRef(0);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; flight.current = null; }; }, []);
   useLayoutEffect(() => {

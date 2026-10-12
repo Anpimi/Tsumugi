@@ -39,6 +39,8 @@ export class SessionReads {
   private life = 0;
   private reconciliation = 0;
   private running = false;
+  private closed = false;
+  private stopBridge: (() => void) | undefined;
   private epoch: string | null = null;
   private retiredEpochs = new Set<string>();
   private sequence = "0";
@@ -57,6 +59,15 @@ export class SessionReads {
   private statusListeners = new Set<() => void>();
   private changeListeners = new Set<(scopes: readonly ChangeScope[]) => void>();
   constructor(readonly context: SessionRequest, private readonly wire = transport) {}
+  get retired() { return this.closed; }
+  /** Keep local draft owners for recovery after Core has closed or replaced this session. */
+  retire() {
+    if (this.closed) return;
+    this.closed = true;
+    this.stopBridge?.();
+    void this.client.cancelQueries();
+    this.client.clear();
+  }
   key(key: QueryKey): QueryKey { return [this.context.projectId, this.context.sessionToken, ...key]; }
   status = () => this.failed;
   subscribeStatus = (receive: () => void) => { this.statusListeners.add(receive); return () => { this.statusListeners.delete(receive); }; };
@@ -65,6 +76,7 @@ export class SessionReads {
   private report(failed: boolean) { if (this.failed !== failed) { this.failed = failed; this.statusListeners.forEach(receive => receive()); } }
 
   start(): () => void {
+    if (this.closed) return () => {};
     this.running = true;
     const life = ++this.life;
     this.uncache = this.client.getQueryCache().subscribe(event => {
@@ -87,7 +99,7 @@ export class SessionReads {
     void beat();
     const focus = () => { void this.synchronize(true); };
     window.addEventListener("focus", focus);
-    return () => {
+    const stop = () => {
       window.removeEventListener("focus", focus);
       if (this.life !== life) return;
       this.running = false; this.life++;
@@ -100,9 +112,12 @@ export class SessionReads {
       void this.client.cancelQueries(); this.client.clear();
       this.sequence = this.progress = this.verified = this.verifiedProgress = "0";
     };
+    this.stopBridge = stop;
+    return stop;
   }
 
   invalidate(affected: readonly ChangeScope[], semanticChange = true) {
+    if (this.closed) return;
     if (semanticChange) this.notifyChanges(affected);
     const queries = this.client.getQueryCache().findAll({ predicate: query => depends(query, affected) });
     for (const query of queries) {

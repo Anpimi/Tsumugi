@@ -18,6 +18,12 @@ commandError: {
   },
 },
 workbench: {
+  retiredDraftTitle: "Local work from the previous project",
+  retiredDraftHelp: "The previous project session has ended. Its local work is read-only and kept in this window so you can copy it. No more operations will run from it. Copy what you need before discarding it or closing this window. This recovery view does not save changes to the project.",
+  retiredDraftData: "Preserved local work and original recovery details",
+  retiredDraftDiscard: "Discard local work and continue",
+  openingDestination: "Opening the requested workspace…",
+  navigationBlocked: "The destination is unavailable or has unfinished work. Keep your current work and resolve it before trying again.",
   overview: "Project overview", backOverview: "Back to overview", nextStep: "Next step",
   importTitle: "Bring in your source", importHelp: "Import a supported source to start translating. Your originals stay unchanged.",
   sourceFailed: "Could not read the source state. Open Sources to inspect or retry.", import: "Import source",

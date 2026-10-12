@@ -4,16 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { sourceIntegrationFixture, sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import { sourceIntegrationFixture, sourcePageFixture, sourceRowFixture, sourceImpactFixture } from "./testSupport/sourceFixture";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
-import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from "./testSupport/reviewFixture";
+import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture, reviewCheckFixture } from "./testSupport/reviewFixture";
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 import { defaultAiConfig, type AiItem, type AiPrepared, type AiView } from "./aiCommands";
 import { aiViewFixture, arenaViewFixture } from "./testSupport/aiFixture";
 import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
 import type { AttemptDetail } from "./executionCommands";
+import type { ProjectView } from "./projectCommands";
+import type { Eligibility } from "./reviewCommands";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 
@@ -25,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   close: vi.fn(),
   destroy: vi.fn(),
   reads: null as SessionReads | null,
+  drafts: new Map<string, ReturnType<typeof import("./TranslationDraftSession").useTranslationDraftSession>>(),
 }));
 
 // Composition tests isolate native notifications; the bridge has its own race tests.
@@ -33,6 +36,14 @@ vi.mock("./SessionReadProvider", async importOriginal => {
   function CaptureReads() { mocks.reads = actual.useSessionReads(); return null; }
   return { ...actual, SessionReadProvider: (props: React.ComponentProps<typeof actual.SessionReadProvider>) =>
     <actual.SessionReadProvider {...props} bridge={false}><CaptureReads />{props.children}</actual.SessionReadProvider> };
+});
+vi.mock("./TranslationDraftSession", async importOriginal => {
+  const actual = await importOriginal<typeof import("./TranslationDraftSession")>();
+  function CaptureDraft({ sessionToken }: { sessionToken: string }) {
+    mocks.drafts.set(sessionToken, actual.useTranslationDraftSession()); return null;
+  }
+  return { ...actual, TranslationDraftSession: (props: React.ComponentProps<typeof actual.TranslationDraftSession>) =>
+    <actual.TranslationDraftSession {...props}><CaptureDraft sessionToken={props.project.sessionToken} />{props.children}</actual.TranslationDraftSession> };
 });
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/path", () => ({ join: mocks.join }));
@@ -202,6 +213,251 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("settles a same-session open acknowledgement while preserving metadata entered during the RPC", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const nameInput = screen.getByRole("textbox", { name: "Project name" });
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), "C:\\Projects\\alias");
+    const original = mocks.invoke.getMockImplementation()!;
+    let finish!: (view: ProjectView) => void;
+    mocks.invoke.mockImplementation((command: string, args) => command === "open_project"
+      ? new Promise<ProjectView>(resolve => { finish = resolve; }) : original(command, args));
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    fireEvent.change(nameInput, { target: { value: "Newer metadata" } });
+    const acknowledged = { ...projectView("Confirmed name", "2"), locator: "C:\\Projects\\canonical-demo" };
+    await act(async () => finish(acknowledged));
+    await screen.findByRole("heading", { name: "Confirmed name" });
+    expect(nameInput).toHaveValue("Newer metadata"); expect(nameInput).toBeEnabled();
+    expect(readRecentProjects()[0].locator).toBe(acknowledged.locator);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(0);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+  });
+  it("settles a same-session open acknowledgement without clearing a late original owner draft", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installTranslationEditor();
+    const owner = mocks.drafts.get("session-1"); if (!owner) throw new Error("No translation owner");
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), "C:\\Projects\\alias");
+    const original = mocks.invoke.getMockImplementation()!;
+    let finish!: (view: ProjectView) => void;
+    mocks.invoke.mockImplementation((command: string, args) => command === "open_project"
+      ? new Promise<ProjectView>(resolve => { finish = resolve; }) : original(command, args));
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    await act(async () => {
+      expect(owner.begin({ unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502), key: "first", sourceText: "Hello" }, null, null)).toBe(true);
+      owner.edit("Late original draft");
+    });
+    await act(async () => finish(projectView("Confirmed name", "2")));
+    await screen.findByRole("heading", { name: "Confirmed name" });
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Late original draft");
+    expect(owner.current()?.text).toBe("Late original draft");
+    expect(mocks.drafts.get("session-1")?.current()?.text).toBe("Late original draft");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision")).toHaveLength(0);
+  });
+  it.each(["open", "close"] as const)("settles a deferred %s acknowledgement and retains newer metadata without permitting another lifecycle RPC", async kind => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const input = screen.getByRole("textbox", { name: "Project name" });
+    const replacement = { ...projectView("Other"), sessionToken: "session-2", locator: "C:\\Projects\\other",
+      metadata: { ...metadata("Other"), projectId: fixtureIdentity(900) } };
+    const original = mocks.invoke.getMockImplementation()!;
+    let finish!: (value: ProjectView | { closed: boolean }) => void;
+    mocks.invoke.mockImplementation((command: string, args) => command === `${kind}_project`
+      ? new Promise<ProjectView | { closed: boolean }>(resolve => { finish = resolve; }) : original(command, args));
+    let nativeRequest: Promise<void> | undefined;
+    if (kind === "open") {
+      await user.click(screen.getByRole("button", { name: "Open another" }));
+      await user.type(screen.getByRole("textbox", { name: /Project folder/ }), replacement.locator);
+      await user.click(screen.getByRole("button", { name: "Open project" }));
+    } else {
+      const nativeClose = mocks.onCloseRequested.mock.calls.at(-1)?.[0]; if (!nativeClose) throw new Error("No native close handler");
+      await act(async () => { nativeRequest = nativeClose({ preventDefault: vi.fn() }); });
+    }
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    fireEvent.change(input, { target: { value: "Metadata after dispatch" } });
+    await act(async () => { finish(kind === "open" ? replacement : { closed: true }); await nativeRequest; });
+    await screen.findByRole("heading", { name: kind === "open" ? "Other" : "No project open" });
+    const retained = screen.getByRole("textbox", { name: "Project name" });
+    expect(retained).toHaveValue("Metadata after dispatch"); expect(retained).toHaveAttribute("readonly");
+    expect(mocks.drafts.has("session-2")).toBe(false);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === `${kind}_project`)).toHaveLength(1);
+    if (kind === "close") expect(mocks.invoke).toHaveBeenCalledWith("close_project", { request: { sessionToken: "session-1" } });
+    await user.keyboard("{Control>}s{/Control}");
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === `${kind}_project`)).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "rename_project")).toHaveLength(0);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: i18n.t("workbench.retiredDraftDiscard") }));
+    expect(screen.queryByDisplayValue("Metadata after dispatch")).not.toBeInTheDocument();
+    if (kind === "open") {
+      await waitFor(() => expect(mocks.drafts.get("session-2")).toBeDefined());
+      await user.click(screen.getByRole("button", { name: "Rename" }));
+      expect(screen.getByRole("textbox", { name: "Project name" })).toHaveValue("Other");
+    } else {
+      await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+      expect(mocks.destroy).toHaveBeenCalledOnce();
+      expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+    }
+  });
+  it.each(["open", "close"] as const)("settles a deferred %s acknowledgement while preserving and retiring the original owner", async kind => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installTranslationEditor();
+    const owner = mocks.drafts.get("session-1"); if (!owner) throw new Error("No translation owner");
+    const replacement = { ...projectView("Other"), sessionToken: "session-2", locator: "C:\\Projects\\other",
+      metadata: { ...metadata("Other"), projectId: fixtureIdentity(900) } };
+    const original = mocks.invoke.getMockImplementation()!;
+    let finish!: (value: ProjectView | { closed: boolean }) => void;
+    mocks.invoke.mockImplementation((command: string, args) => command === `${kind}_project`
+      ? new Promise<ProjectView | { closed: boolean }>(resolve => { finish = resolve; }) : original(command, args));
+    let nativeRequest: Promise<void> | undefined;
+    if (kind === "open") {
+      await user.click(screen.getByRole("button", { name: "Open another" }));
+      await user.type(screen.getByRole("textbox", { name: /Project folder/ }), replacement.locator);
+      await user.click(screen.getByRole("button", { name: "Open project" }));
+    } else {
+      const nativeClose = mocks.onCloseRequested.mock.calls.at(-1)?.[0]; if (!nativeClose) throw new Error("No native close handler");
+      await act(async () => { nativeRequest = nativeClose({ preventDefault: vi.fn() }); });
+    }
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    await act(async () => {
+      expect(owner.begin({ unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502), key: "first", sourceText: "Hello" }, null, null)).toBe(true);
+      owner.edit("Late original draft");
+    });
+    const originalDraft = structuredClone(owner.current());
+    await act(async () => { finish(kind === "open" ? replacement : { closed: true }); await nativeRequest; });
+    await screen.findByRole("heading", { name: kind === "open" ? "Other" : "No project open" });
+    const recovery = screen.getByRole("textbox", { name: i18n.t("workbench.retiredDraftData") });
+    expect(recovery).toHaveAttribute("readonly");
+    if (!(recovery instanceof HTMLTextAreaElement)) throw new Error("Recovery details must be copyable text");
+    const preserved = JSON.parse(recovery.value);
+    expect(preserved.translation).toEqual(originalDraft);
+    expect(preserved.translation).toMatchObject({ unitId: fixtureIdentity(501), locale: "zh-CN", sourceRevisionId: fixtureIdentity(502),
+      key: "first", sourceText: "Hello", text: "Late original draft", baseSelectionId: null, baseRevisionId: null,
+      baseText: null, pending: null, pendingSelection: null });
+    expect(mocks.reads?.context).toMatchObject({ projectId: metadata().projectId, sessionToken: "session-1" });
+    expect(owner.current()?.text).toBe("Late original draft");
+    expect(mocks.drafts.get("session-1")?.current()?.text).toBe("Late original draft");
+    expect(mocks.drafts.has("session-2")).toBe(false);
+    await act(async () => { expect((await owner.save()).saved).toBe(false); });
+    await act(async () => { await mocks.onCloseRequested.mock.calls.at(-1)![0]({ preventDefault: vi.fn() }); });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === `${kind}_project`)).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision" || command === "create_execution_identity")).toHaveLength(0);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: i18n.t("workbench.retiredDraftDiscard") }));
+    expect(recovery).not.toBeInTheDocument();
+    await act(async () => { expect((await owner.save()).saved).toBe(false); });
+    if (kind === "open") {
+      await waitFor(() => expect(mocks.drafts.get("session-2")).toBeDefined());
+      expect(mocks.drafts.get("session-2")?.current()).toBeNull();
+    }
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision" || command === "create_execution_identity")).toHaveLength(0);
+  });
+  it("opens a fixed source-impact destination before the translation consumer exists and releases the source consumer", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); installTranslationEditor();
+    const original = mocks.invoke.getMockImplementation()!, base = sourceImpactFixture();
+    mocks.invoke.mockImplementation((command: string, args) => {
+      if (command === "read_source_integration") return Promise.resolve(sourceIntegrationFixture);
+      if (command === "read_source_impact") return Promise.resolve(sourceImpactFixture({ snapshotId: fixtureIdentity(500), rows: base.rows.map(row => ({ ...row,
+        current: { ...row.current, unitId: fixtureIdentity(501), sourceRevisionId: fixtureIdentity(502), occurrence: { ...row.current.occurrence, key: "first", text: "Hello" } } })) }));
+      return original(command, args);
+    });
+    await user.click(screen.getByRole("button", { name: i18n.t("source.title") }));
+    await user.click(await screen.findByRole("button", { name: "Edit this key" }));
+    expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("");
+    expect(mocks.invoke).toHaveBeenCalledWith("read_review_editor_snapshot", { request: {
+      projectId: projectView().metadata.projectId, sessionToken: "session-1", unitId: fixtureIdentity(501), locale: "zh-CN",
+    } });
+    const reads = mocks.reads; if (!reads) throw new Error("No project reads");
+    expect(reads.client.getQueryCache().find({ queryKey: reads.key(["source-scope"]), exact: true })?.getObserversCount()).toBe(0);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "save_translation_revision" || command === "create_execution_identity")).toHaveLength(0);
+  });
+  it("unmounts the actual hidden translation consumer, releases its query observer, and restores its scoped inputs", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const fixture = installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    const editor = await screen.findByRole("textbox", { name: "Your draft" });
+    await user.type(editor, "A");
+    await user.type(screen.getByRole("textbox", { name: "Find by key, source or translation" }), "retained range");
+    let finish!: () => void;
+    fixture.setSave(async (_request, commit) => { await new Promise<void>(resolve => { finish = resolve; }); return commit(); });
+    await user.click(screen.getByRole("button", { name: "Save revision" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    await user.type(editor, "B");
+    const reads = mocks.reads; if (!reads) throw new Error("The App session reads were not captured");
+    const query = reads.client.getQueryCache().find({ queryKey: reads.key(["translation-files", null]), exact: true });
+    expect(query?.getObserversCount()).toBe(1);
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await screen.findByText(/No tasks in this project/);
+    expect(query?.getObserversCount()).toBe(0);
+    await act(async () => finish());
+    await user.keyboard("{Control>}s{/Control}");
+    expect(fixture.saves()).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("AB");
+    expect(screen.getByRole("textbox", { name: "Find by key, source or translation" })).toHaveValue("retained range");
+    await waitFor(() => expect(query?.getObserversCount()).toBe(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+    await user.keyboard("{Control>}s{/Control}");
+    await waitFor(() => expect(fixture.saves()).toHaveLength(2));
+    expect(fixture.saves()[0][1].request).toMatchObject({ text: "A", unitId: fixtureIdentity(501), locale: "zh-CN" });
+    expect(fixture.saves()[1][1].request).toMatchObject({ text: "AB", expectedSelectionId: fixtureIdentity(503) });
+  });
+  it("blocks both project replacement and native close on a hidden original unknown save without allocating another action", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); const fixture = installTranslationEditor();
+    await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Original request");
+    fixture.setSave(async () => { throw { code: "outcome-unknown", outcome: "unknown", stage: "save", recoveryRequired: true }; });
+    await user.click(screen.getByRole("button", { name: "Save revision" })); await screen.findByRole("button", { name: "Retry the same action" });
+    const original = structuredClone(fixture.saves()[0][1].request);
+    const identities = mocks.invoke.mock.calls.filter(([command]) => command === "create_execution_identity").length;
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), "C:\\Projects\\other");
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Original request");
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    const nativeClose = mocks.onCloseRequested.mock.calls.at(-1)?.[0]; if (!nativeClose) throw new Error("No native close handler");
+    await act(async () => { await nativeClose({ preventDefault: vi.fn() }); });
+    await screen.findByRole("button", { name: "Retry the same action" });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    expect(mocks.destroy).not.toHaveBeenCalled(); expect(fixture.saves()).toHaveLength(1);
+    expect(fixture.saves()[0][1].request).toEqual(original);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(identities);
+  });
+  it("keeps newer input after an explicit save-and-exit and permits a fresh exit intent after cancellation", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user); const fixture = installTranslationEditor();
+    const originalInvoke = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "close_project" ? Promise.resolve({ closed: true }) : originalInvoke(command, args));
+    await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "A");
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close project" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    const dialog = await screen.findByRole("dialog", { name: "Leave with an unsaved translation?" });
+    let finish!: () => void;
+    fixture.setSave(async (_request, commit) => { await new Promise<void>(resolve => { finish = resolve; }); return commit(); });
+    await user.click(within(dialog).getByRole("button", { name: "Save and continue" }));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    fireEvent.change(screen.getByLabelText("Your draft"), { target: { value: "B" } });
+    await act(async () => finish());
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    expect(screen.getByLabelText("Your draft")).toHaveValue("B");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Keep editing" })).toBeEnabled());
+    await user.click(within(dialog).getByRole("button", { name: "Keep editing" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Project overview" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close project" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Leave with an unsaved translation?" })).getByRole("button", { name: "Discard draft and continue" }));
+    await screen.findByRole("heading", { name: "No project open" });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+  });
   it("assembles the existing shared translation reservation above Tasks and settles the original application through real App navigation", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     const original = mocks.invoke.getMockImplementation()!;
@@ -462,6 +718,107 @@ describe("project lifecycle workbench", () => {
       query.queryKey[0] === otherProject.metadata.projectId && query.queryKey[1] === otherProject.sessionToken)).toBe(true);
   });
 
+  it("revokes a hidden Review assessment when a language is removed and does not revive or expand it when restored", async () => {
+    const user = userEvent.setup();
+    const original = mocks.invoke.getMockImplementation()!;
+    let current = { ...projectView(), metadata: { ...metadata(), targetLocales: ["zh-CN", "ja"] } };
+    let assessments = 0;
+    mocks.invoke.mockImplementation(async (command: string, args: { request: { targetLocales?: string[]; locales?: string[] } }) => {
+      if (command === "create_project") return current;
+      if (command === "set_target_locales") {
+        if (!args.request.targetLocales) throw new Error("Missing target languages");
+        current = { ...current, metadata: { ...current.metadata, metadataRevision: String(Number(current.metadata.metadataRevision) + 1),
+          targetLocales: [...args.request.targetLocales] } };
+        return { ...current, outcome: "changed", directoryChanged: false };
+      }
+      if (command === "read_review_summary_page") return reviewSummaryPageFixture([]);
+      if (command === "read_review_eligibility") {
+        if (!args.request.locales) throw new Error("Missing assessed languages");
+        const marker = `explicit-${++assessments}`;
+        return { policyVersion: "balanced-1", sourceSnapshotId: fixtureIdentity(600), basis: marker, ready: false,
+          locales: args.request.locales.map(locale => ({ locale, ready: false, checkedUnits: 1, blockerCount: 1, exceptionCount: 0,
+            blockers: [{ unitId: fixtureIdentity(501), nativeKey: marker, code: "qa-missing-or-stale", reference: null }], exceptions: [] })) } satisfies Eligibility;
+      }
+      return original(command, args);
+    });
+    await renderApp(); await createProject(user);
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+    await user.click(await screen.findByRole("tab", { name: "Build readiness" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Assess build readiness" })).toBeEnabled());
+    expect(screen.getByRole("checkbox", { name: "zh-CN" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "ja" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+    expect(await screen.findAllByText("explicit-1: Run the current checks")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit target languages" })).toBeEnabled());
+    expect(screen.queryByRole("tab", { name: "Build readiness" })).not.toBeInTheDocument();
+    for (const locales of ["zh-CN", "zh-CN, ja"]) {
+      await user.click(screen.getByRole("button", { name: "Edit target languages" }));
+      const input = screen.getByRole("textbox", { name: "Target locales" });
+      await user.clear(input); await user.type(input, locales);
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(screen.queryByRole("textbox", { name: "Target locales" })).not.toBeInTheDocument());
+      expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
+    }
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "set_target_locales").map(([, payload]) => payload.request))
+      .toEqual([{ sessionToken: "session-1", expectedRevision: "1", targetLocales: ["zh-CN"] },
+        { sessionToken: "session-1", expectedRevision: "2", targetLocales: ["zh-CN", "ja"] }]);
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+    await user.click(await screen.findByRole("tab", { name: "Build readiness" }));
+    expect(await screen.findByText("Assess the selected languages to see their current build readiness.")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "zh-CN" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "ja" })).not.toBeChecked();
+    expect(screen.queryByText("explicit-1: Run the current checks")).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_review_eligibility")).toHaveLength(1);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Assess build readiness" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Assess build readiness" }));
+    expect(await screen.findByText("explicit-2: Run the current checks")).toBeVisible();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_review_eligibility").map(([, payload]) => payload.request))
+      .toEqual([{ projectId: metadata().projectId, sessionToken: "session-1", locales: ["zh-CN", "ja"] },
+        { projectId: metadata().projectId, sessionToken: "session-1", locales: ["zh-CN"] }]);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "create_execution_identity" || command === "write_review_decision")).toHaveLength(0);
+  });
+  it("returns hidden Review history to the current page after a semantic notification through actual App assembly", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const original = mocks.invoke.getMockImplementation()!;
+    const target = reviewTargetFixture({ unitId: fixtureIdentity(501), nativeKey: "first", sourceSnapshotId: fixtureIdentity(500),
+      sourceRevisionId: fixtureIdentity(502), sourceText: "Hello", selectionId: null, revisionId: null, translationText: null, basis: "basis" });
+    let currentHistory = "initial-current-history";
+    mocks.invoke.mockImplementation(async (command: string, args: { request: { offset?: number } }) => {
+      if (command === "read_review_summary_page") return reviewSummaryPageFixture([reviewSummaryFor(target)]);
+      if (command === "read_review_target") return target;
+      if (command === "read_review_history") return { decisions: [],
+        checks: [reviewCheckFixture(target, fixtureIdentity(650), "completed", { runId: fixtureIdentity(651),
+          validatorVersion: args.request.offset === 20 ? "older-history-page" : currentHistory })],
+        waivers: [], fallbacks: [], nextOffset: args.request.offset === 20 ? null : 20 };
+      return original(command, args);
+    });
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.click(await screen.findByText("Decision and check history"));
+    expect(await screen.findByText(/initial-current-history/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "More history" }));
+    expect(await screen.findByText(/older-history-page/)).toBeVisible();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_review_history").map(([, payload]) => payload.request.offset))
+      .toEqual([0, 20]);
+    await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close project" })).toBeEnabled());
+    expect(screen.queryByText("Decision and check history")).not.toBeInTheDocument();
+    const reads = mocks.reads; if (!reads) throw new Error("No App session reads");
+    const beforeNotification = mocks.invoke.mock.calls.length;
+    await act(async () => { currentHistory = "latest-current-history"; reads.invalidate(["review"]); });
+    expect(mocks.invoke.mock.calls.slice(beforeNotification).filter(([command]) => command === "read_review_history")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Review and QA" }));
+    await user.click(await screen.findByText("Decision and check history"));
+    expect(await screen.findByText(/latest-current-history/)).toBeVisible();
+    expect(screen.queryByText(/older-history-page/)).not.toBeInTheDocument();
+    const returnedReads = mocks.invoke.mock.calls.slice(beforeNotification).filter(([command]) => command === "read_review_history");
+    expect(returnedReads.length).toBeGreaterThan(0);
+    expect(returnedReads.map(([, payload]) => payload.request)).toEqual(returnedReads.map(() => ({
+      projectId: metadata().projectId, sessionToken: "session-1", unitId: target.unitId, locale: "zh-CN", offset: 0, limit: 20,
+    })));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "create_execution_identity" || command === "write_review_decision")).toHaveLength(0);
+  });
   it("rebases a clean translation selection after the project's target language changes in the same session", async () => {
     const user = userEvent.setup(); await renderApp(); await createProject(user);
     const fixture = installTranslationEditor();
@@ -717,6 +1074,7 @@ describe("project lifecycle workbench", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Project overview" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close project" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Close project" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("Leave with an unsaved translation?");
@@ -1186,6 +1544,7 @@ describe("project lifecycle workbench", () => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
     localStorage.clear();
     mocks.reads = null;
+    mocks.drafts.clear();
     await i18n.changeLanguage("en-US");
     mocks.join.mockResolvedValue("C:\\Projects\\demo");
     mocks.open.mockResolvedValue(null);

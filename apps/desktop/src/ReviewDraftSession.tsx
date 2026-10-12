@@ -1,3 +1,4 @@
+import { useSessionAlive } from "./SessionReadProvider";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext } from "./executionCommands";
@@ -78,7 +79,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }));
   const currentState = useRef(state);
   const projectRef = useRef(project);
-  const mounted = useRef(false);
+  const mounted = useSessionAlive();
   const running = useRef(false);
   const cancelBatch = useRef(false);
   const targetScope = project.metadata.targetLocales.join("\u0000");
@@ -198,6 +199,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
     });
   }
   async function dispatch(action: ReviewPending) {
+    if (!mounted.current) return;
     update(before => ({ ...before, pending: action, notice: null,
       activeCheckId: action.kind === "check" ? action.request.actionId : null }));
     try {
@@ -215,7 +217,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function fresh(target: ReviewTarget, makeAction: (actionId: string, before: ReviewDraftState) => ReviewPending) {
     const before = current();
-    if (running.current || before.pending || !localeAvailable(target.locale)
+    if (!mounted.current || running.current || before.pending || !localeAvailable(target.locale)
       || (before.projection?.unitId === target.unitId && before.projection.locale === target.locale
         && before.projection.basis !== target.basis)) return;
     running.current = true;
@@ -276,7 +278,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function retryPending() {
     const action = current().pending;
-    if (!action || running.current) return;
+    if (!mounted.current || !action || running.current) return;
     running.current = true;
     update(before => ({ ...before, busyMutation: true, notice: null }));
     try { if (current().pending === action) await dispatch(action); }
@@ -284,7 +286,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   }
   async function cancelCheck() {
     const actionId = current().activeCheckId;
-    if (!actionId) return;
+    if (!mounted.current || !actionId) return;
     try {
       if (await reviewCommands.cancelCheck({ ...executionContext(projectRef.current), actionId })) setNotice("cancelRequested");
     } catch (error) { fail(error); }
@@ -292,7 +294,7 @@ export function ReviewDraftSession({ project, children }: { project: ProjectView
   async function approveBatch() {
     const before = current();
     const frozen = Object.values(before.chosen), batchActor = before.actor.trim();
-    if (running.current || before.pending || !batchActor || frozen.length === 0) return;
+    if (!mounted.current || running.current || before.pending || !batchActor || frozen.length === 0) return;
     running.current = true; cancelBatch.current = false;
     update(value => ({ ...value, busyMutation: true, batchRunning: true, batchStatus: null, notice: null }));
     const result = { applied: 0, conflicted: 0, failed: 0 };

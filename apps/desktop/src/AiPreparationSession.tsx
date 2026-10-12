@@ -4,7 +4,7 @@ import { executionCommands, type AdoptionAction, type PrepareRequest, type Recei
 import { validateResponseIdentity } from "./generated/execution.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
-import { useSessionReads } from "./SessionReadProvider";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 
 type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; uncertain: boolean };
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
@@ -60,7 +60,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<State>(() => freeze({ presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],prepared:null,consent:false,
     staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null }));
-  const stateRef = useRef(state), mounted = useRef(false), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
+  const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useLayoutEffect(() => { locales.current = targetLocales; }, [targetLocales]);
   function current() { return stateRef.current; }

@@ -1,5 +1,6 @@
+import { useWorkbenchState } from "./WorkbenchFrame";
 import { reviewReasonKey } from "./reviewLabels";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { QueryKey } from "@tanstack/react-query";
 import type { ProjectView } from "./projectCommands";
@@ -36,9 +37,9 @@ export function SourceHistoryPanel({ project, disabled, active = true, onHistory
 }) {
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const session = executionContext(project), commandScope = { ...session, area: "source" as const };
-  const [offset, setOffset] = useState<number | null>(null), [snapshotId, setSnapshotId] = useState<string | null>(null);
-  const [query, setQuery] = useState(""), [appliedQuery, setAppliedQuery] = useState(""), [after, setAfter] = useState(0);
-  const [ordinal, setOrdinal] = useState<number | null>(null);
+  const [offset, setOffset] = useWorkbenchState<number | null>("source", "history.offset", null), [snapshotId, setSnapshotId] = useWorkbenchState<string | null>("source", "history.snapshot", null);
+  const [query, setQuery] = useWorkbenchState("source", "history.query", ""), [appliedQuery, setAppliedQuery] = useWorkbenchState("source", "history.appliedQuery", ""), [after, setAfter] = useWorkbenchState("source", "history.after", 0);
+  const [ordinal, setOrdinal] = useWorkbenchState<number | null>("source", "history.ordinal", null);
   const alive = useRef(false), committed = useRef({ active, disabled, project });
   useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useLayoutEffect(() => { committed.current = { active, disabled, project }; });
@@ -74,9 +75,6 @@ export function SourceHistoryPanel({ project, disabled, active = true, onHistory
     else { setSnapshotId(input.snapshotId); setAppliedQuery(input.query); setAfter(input.after); }
     setOrdinal(null);
   }
-  useEffect(() => reads.subscribeChanges(scopes => {
-    if (scopes.includes("source") && offset !== null) { setOffset(0); onHistoryCursor?.(0); }
-  }), [reads, offset, onHistoryCursor]);
   useLayoutEffect(() => {
     const metadata = { category: "source" as const, binding: null, risk: "reads-source" as const, confirmation: "none" as const, scope: commandScope };
     const removals = [
@@ -117,12 +115,12 @@ export function SourceHistoryPanel({ project, disabled, active = true, onHistory
 }
 
 export function SourceImpactPanel({ project, snapshotId, active = true, disabled = false, onOpenWork, onOpenTranslation }: {
-  project: ProjectView; snapshotId: string; active?: boolean; disabled?: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean;
+  project: ProjectView; snapshotId: string; active?: boolean; disabled?: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean | Promise<boolean>;
 }) {
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const session = executionContext(project), commandScope = { ...session, area: "source" as const };
-  const [locale, setLocale] = useState(project.metadata.targetLocales[0] ?? ""), [requestedLocale, setRequestedLocale] = useState(locale);
-  const [after, setAfter] = useState(0), [navigationFailed, setNavigationFailed] = useState(false);
+  const [locale, setLocale] = useWorkbenchState("source", `impact.${snapshotId}.locale`, project.metadata.targetLocales[0] ?? ""), [requestedLocale, setRequestedLocale] = useWorkbenchState("source", `impact.${snapshotId}.requestedLocale`, locale);
+  const [after, setAfter] = useWorkbenchState("source", `impact.${snapshotId}.after`, 0), [navigationFailed, setNavigationFailed] = useState(false);
   const alive = useRef(false), committed = useRef({ active, disabled, project, snapshotId, locale });
   useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useLayoutEffect(() => { committed.current = { active, disabled, project, snapshotId, locale }; });
@@ -169,7 +167,17 @@ export function SourceImpactPanel({ project, snapshotId, active = true, disabled
         availability: input => { const allowed = common(); return allowed.enabled && onOpenWork && input && input.snapshotId === snapshotId && input.locale === locale && input.after === after ? allowed : allowed.enabled ? unavailable : allowed; },
         handler: () => onOpenWork?.() }),
       registry.register({ ...metadata, id: "source.open-translation", nameKey: "translation.openEditor", risk: "opens-translation", payloadKind: "source-impact-target",
-        availability: targetAvailability, handler: input => { setNavigationFailed(!onOpenTranslation?.(input.target, input.locale)); } }),
+        availability: targetAvailability, handler: async input => {
+          const captured = { ...committed.current }, available = targetAvailability(input);
+          if (!available.enabled || !onOpenTranslation) return;
+          const settle = (opened: boolean) => {
+            const value = committed.current;
+            if (alive.current && value.active && value.project.sessionToken === captured.project.sessionToken
+              && value.project.metadata.projectId === captured.project.metadata.projectId && value.snapshotId === captured.snapshotId && value.locale === captured.locale) setNavigationFailed(!opened);
+          };
+          try { settle(await onOpenTranslation({ ...input.target }, input.locale)); }
+          catch { settle(false); }
+        } }),
     ];
     return () => removals.forEach(remove => remove());
   });

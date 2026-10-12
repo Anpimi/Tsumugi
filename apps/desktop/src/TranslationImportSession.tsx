@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type AdoptionAction, type AttemptDetail, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
-import { useSessionReads } from "./SessionReadProvider";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { sourceCommands, type SourceSelection } from "./sourceCommands";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { translationCommands, confirmTranslationAction, confirmTranslationReceipt, type TranslationAdoptRequest, type TranslationDecision,
@@ -98,7 +98,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
     attempt: null, preview: null, selectIfEmpty: false, rowAction: null, batchCapture: null, batchProgress: null,
     batchOutcome: null, batchDetails: [], uncertain: [], receiptMessage: null, busy: false, stale: false,
     editSeq: 0, completionVersion: 0, failure: null }));
-  const stateRef = useRef(state), projectRef = useRef(project), mounted = useRef(false), flight = useRef(false);
+  const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(false);
   const version = useRef(0), mutation = useRef<symbol | null>(null), currentMeta = useRef(metadata(project, state.targetLocale));
   function current() { return stateRef.current; }
   function live() { return mounted.current && projectRef.current.sessionToken === session.sessionToken && projectRef.current.metadata.projectId === session.projectId; }

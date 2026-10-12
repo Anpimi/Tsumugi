@@ -17,11 +17,12 @@ const errorReasons = {
   "invalid-input": "release.errorInput", "permission-denied": "release.errorPermission",
   "session-invalid": "release.errorSession", "limit-exceeded": "release.errorLimit", "outcome-unknown": "release.errorOutcomeUnknown",
 } as const;
-export interface ReleaseHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
-export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: { project: ProjectView; disabled: boolean; ref?: Ref<ReleaseHandle>; onOpenTranslation?: (target: import("./TranslationWorkbench").EditorTarget, locale: string) => boolean }) {
+export interface ReleaseHandle { allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean> }
+export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: { project: ProjectView; disabled: boolean; ref?: Ref<ReleaseHandle>; onOpenTranslation?: (target: import("./TranslationWorkbench").EditorTarget, locale: string) => boolean | Promise<boolean> }) {
   const { t } = useTranslation(), session = executionContext(project), owner = useReleaseDraftSession();
   const [open, setOpen] = useWorkbenchView("release"), [leaving, setLeaving] = useState(false);
   const { languages, names, integration, eligibility, chosen, selection, preview, overwrite, attempt, result, pending, busy, exportMissing } = owner;
+  const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolve = useRef<((value: boolean) => void) | null>(null), errorRegion = useRef<HTMLDivElement>(null), mounted = useRef(false), viewVersion = useRef(0);
   const releasesRead = useSessionQuery({ key: ["release-list"], scopes: ["release", "execution"], enabled: open,
     read: () => releaseCommands.releases(session) });
@@ -40,7 +41,8 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
   useLayoutEffect(() => { viewVersion.current++; }, [open, project.sessionToken]);
   useEffect(() => { if (integrationRead.data) owner.observeIntegration(integrationRead.data); }, [integrationRead.data]);
   useEffect(() => { if (error || historyError) { errorRegion.current?.focus(); errorRegion.current?.scrollIntoView({ block: "nearest" }); } }, [error, historyError]);
-  function allowLeave(): Promise<boolean> {
+  function allowLeave(current: () => boolean = () => true): Promise<boolean> {
+    leaveProof.current = current;
     viewVersion.current++;
     if (owner.reserved()) { setOpen(true); owner.reportFailure("outcome-unknown"); return Promise.resolve(false); }
     if (!owner.current().buildDirty && !owner.current().deliveryDirty) return Promise.resolve(true);
@@ -48,9 +50,10 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
     return new Promise(resolve => { leaveResolve.current?.(false); leaveResolve.current = resolve; });
   }
   function settleLeave(value: boolean) {
+    if (value && leaveProof.current && !leaveProof.current()) value = false;
     setLeaving(false);
     if (value && !owner.reset()) value = false;
-    leaveResolve.current?.(value); leaveResolve.current = null;
+    leaveResolve.current?.(value); leaveResolve.current = null; leaveProof.current = null;
   }
   // Ordinary workspace navigation keeps the project session owner alive.
   useImperativeHandle(ref, () => ({ allowLeave, allowNavigate: () => Promise.resolve(true) }));
@@ -58,7 +61,7 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
     const ticket = ++viewVersion.current;
     try {
       const target = await reviewCommands.target({ ...session, unitId, locale });
-      if (mounted.current && ticket === viewVersion.current && onOpenTranslation?.({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, locale)) setOpen(false);
+      if (mounted.current && ticket === viewVersion.current) await onOpenTranslation?.({ unitId: target.unitId, sourceRevisionId: target.sourceRevisionId, key: target.nativeKey, sourceText: target.sourceText }, locale);
     } catch (failure) { if (mounted.current && ticket === viewVersion.current) owner.reportFailure(commandFailure(failure, "storage-failed")); }
   }
   const mappingReady = owner.available() && languages.every(locale => names[locale]?.trim());

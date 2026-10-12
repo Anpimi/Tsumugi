@@ -1,4 +1,4 @@
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { QueryKey } from "@tanstack/react-query";
@@ -23,8 +23,8 @@ function cueTiming(basis: string): string | null {
   try { const value = JSON.parse(basis) as { policy?: unknown; timing?: unknown }; return value.policy === "webvtt-cue/1" && typeof value.timing === "string" ? value.timing : null; } catch { return null; }
 }
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
-export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
-export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean; ref?: Ref<SourceHandle> }) {
+export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean> }
+export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean | Promise<boolean>; ref?: Ref<SourceHandle> }) {
   const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const context = executionContext(project), commandScope = { ...context, area: "source" as const };
   const [open, setOpen] = useWorkbenchView("source");
@@ -32,14 +32,16 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   const { domain, selection, declared, preflight, attempt, comparison: fixedComparison, updating, lineage, actor, filter, appliedFilter,
     manualOrdinal, historicalQuery, estimate, confirmed, pendingStart, pendingApply, receiptChecked, busyMutation } = owner.state;
   const fixedPreview = owner.state.preview;
-  const [readIntent, setReadIntent] = useState<"auto" | "current" | "applied">(() => owner.current().receipt ? "applied" : "auto");
-  const [contentCursor, setContentCursor] = useState<{ snapshotId: string; revision: string; after: number } | null>(null);
-  const [historyOffset, setHistoryOffset] = useState<number | null>(null);
+  const lastCompletion = useWorkbenchRef("source", "lastCompletion", owner.state.completionVersion);
+  const [readIntent, setReadIntent] = useWorkbenchState<"auto" | "current" | "applied">("source", "readIntent", () => owner.current().receipt ? "applied" : "auto");
+  const [contentCursor, setContentCursor] = useWorkbenchState<{ snapshotId: string; revision: string; after: number } | null>("source", "contentCursor", null);
+  const [historyOffset, setHistoryOffset] = useWorkbenchState<number | null>("source", "historyOffset", null);
   const [captureBusy, setCaptureBusy] = useState(false), [captureFailure, setCaptureFailure] = useState<CommandFailure | null>(null);
   const [captureVersion, setCaptureVersion] = useState(0);
   const [leave, setLeave] = useState(false);
   const mounted = useRef(false), sequence = useRef(0), captureRunning = useRef(false);
   const committed = useRef({ open, disabled, leave, project });
+  const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
   const first = useRef<HTMLHeadingElement>(null), errorRegion = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
@@ -243,7 +245,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
   useImperativeHandle(ref, () => ({
     showAttempt(id) { if (owner.showAttempt(id)) { sequence.current++; captureRunning.current = false; setCaptureBusy(false); setReadIntent("auto"); setContentCursor(null); setCaptureFailure(null); } setOpen(true); },
     allowNavigate() { return Promise.resolve(!busy && !owner.inFlight() && !owner.current().pendingApply && !owner.current().pendingStart); },
-    allowLeave() { const value = owner.current(); if (value.pendingApply || value.pendingStart) { setOpen(true); return Promise.resolve(false); }
+    allowLeave(current: () => boolean = () => true) {
+      leaveProof.current = current; const value = owner.current(); if (value.pendingApply || value.pendingStart) { setOpen(true); return Promise.resolve(false); }
       if (!value.selection && !Object.keys(value.lineage).length && !value.actor.trim() && !busy && !owner.inFlight()) return Promise.resolve(true);
       setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
   }));
@@ -277,6 +280,8 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
     return () => { stopped = true; };
   }, [open, busyMutation, attempt, fixedPreview, fixedComparison, detail, detailRead.fetchStatus, detailRead.error, captureVersion, project.sessionToken]);
   useEffect(() => {
+    if (lastCompletion.current === owner.state.completionVersion) return;
+    lastCompletion.current = owner.state.completionVersion;
     if (owner.state.receipt) { setReadIntent("applied"); setContentCursor(null); }
   }, [owner.state.completionVersion]);
   useEffect(() => { if (fixedPreview || fixedComparison) first.current?.focus(); }, [fixedPreview, fixedComparison]);
@@ -399,16 +404,16 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
             <button className="text-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.keep-output", commandScope, pendingPayload("apply"))}>{t("execution.keepOutput")}</button>
           </section> : null}
           <button className="text-button" disabled={!common(false, true).enabled || !!Object.keys(lineage).length} onClick={() => registry.dispatch("source.show-current", commandScope)}>{t("source.viewCurrent")}</button>
-          {contentPage?.snapshotId && contentPage.snapshotId === contentPage.scope.currentSnapshot ? <SourceImpactPanel key={contentPage.snapshotId} project={project} snapshotId={contentPage.snapshotId} active={open} disabled={locked} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork ? () => { setOpen(false); onOpenWork(); } : undefined} /> : null}
+          {contentPage?.snapshotId && contentPage.snapshotId === contentPage.scope.currentSnapshot ? <SourceImpactPanel key={contentPage.snapshotId} project={project} snapshotId={contentPage.snapshotId} active={open} disabled={locked} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork} /> : null}
           <p>{t("source.correctionHelp")}</p><SourceHistoryPanel project={project} disabled={locked} active={open} onHistoryCursor={setHistoryOffset} />
           <p>{t("source.draftHelp")}</p>
         </div>
       </WorkbenchPanel>
-    <Dialog.Root open={leave} onOpenChange={next => { if (!next) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; } }}>
+    <Dialog.Root open={leave} onOpenChange={next => { if (!next) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; } }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}>
         <Dialog.Title>{t("source.leaveTitle")}</Dialog.Title><Dialog.Description>{t("source.leaveHelp")}</Dialog.Description>
-        <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; }}>{t("source.keep")}</button>
-          <button className="primary-button" onClick={() => { sequence.current++; captureRunning.current = false; setCaptureBusy(false); void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; }); }}>{t("source.leave")}</button></div>
+        <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; }}>{t("source.keep")}</button>
+          <button className="primary-button" onClick={() => { if (leaveProof.current && !leaveProof.current()) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; } sequence.current++; captureRunning.current = false; setCaptureBusy(false); void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; leaveProof.current = null; }); }}>{t("source.leave")}</button></div>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
   </>;

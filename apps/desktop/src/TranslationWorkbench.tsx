@@ -1,6 +1,6 @@
 import { useSessionQuery } from "./SessionReadProvider";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { reviewCommands, type ReviewSummaryPage, type ReviewSummary, type ReviewTarget } from "./reviewCommands";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -19,7 +19,7 @@ type LeaveIntent = { kind: "close" } | { kind: "project" } | { kind: "switch"; t
 export interface TranslationHandle {
   showAttempt: (id: string) => void;
   openUnit: (target: EditorTarget, locale: string, suggestedText?: string) => boolean;
-  allowLeave: () => Promise<boolean>;
+  allowLeave: (current?: () => boolean) => Promise<boolean>;
   allowNavigate: () => Promise<boolean>;
   saveCurrent: () => void;
 }
@@ -62,18 +62,18 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const commandRegistry = useWorkbenchCommands();
   const editorDraft = draftSession.draft;
   const [open, setOpen] = useWorkbenchView("translation");
-  const [tab, setTab] = useState<"import" | "edit">(importState.attempt || importState.folder || importState.pendingStart || importState.uncertain.length ? "import" : "edit");
+  const [tab, setTab] = useWorkbenchState<"import" | "edit">("translation", "tab", importState.attempt || importState.folder || importState.pendingStart || importState.uncertain.length ? "import" : "edit");
   const [sourcePage, setSourcePage] = useState<ContentPage | null>(null);
   const [sourceMissing, setSourceMissing] = useState(false);
   const [list, setList] = useState<ReviewSummaryPage | null>(null);
-  const listScope = useRef<{ id: string; locale: string; query: string } | null>(null);
-  const [navigationEnd, setNavigationEnd] = useState(false);
-  const [query, setQuery] = useState("");
-  const [appliedQuery, setAppliedQuery] = useState("");
-  const [listAfter, setListAfter] = useState(0);
-  const listBasis = useRef<string | null>(null);
-  const listPosition = useRef({ query: "", after: 0 });
-  const [targetLocale, setTargetLocale] = useState(editorDraft?.locale ?? importState.targetLocale);
+  const listScope = useWorkbenchRef<{ id: string; locale: string; query: string } | null>("translation", "listScope", null);
+  const [navigationEnd, setNavigationEnd] = useWorkbenchState("translation", "navigationEnd", false);
+  const [query, setQuery] = useWorkbenchState("translation", "query", "");
+  const [appliedQuery, setAppliedQuery] = useWorkbenchState("translation", "appliedQuery", "");
+  const [listAfter, setListAfter] = useWorkbenchState("translation", "listAfter", 0);
+  const listBasis = useWorkbenchRef<string | null>("translation", "listBasis", null);
+  const listPosition = useWorkbenchRef("translation", "listPosition", { query: "", after: 0 });
+  const [targetLocale, setTargetLocale] = useWorkbenchState("translation", "targetLocale", editorDraft?.locale ?? importState.targetLocale);
   const { folder, fileName, preflight, confirmed, pendingStart, attempt, preview, selectIfEmpty,
     batchProgress, batchOutcome, batchDetails, uncertain, receiptMessage, rowAction, batchCapture } = importState;
   const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null);
@@ -85,6 +85,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   const effectiveFailureValue = editorDraft?.failure ?? importState.failure ?? failureValue;
   const failure = failureReason(effectiveFailureValue);
   const [leaveIntent, setLeaveIntent] = useState<LeaveIntent | null>(null);
+  const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((value: boolean) => void) | null>(null);
   const mounted = useRef(false);
   const generation = useRef(0);
@@ -294,10 +295,15 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       void perform(current => openEditor(target, current, locale, suggestedText));
       return true;
     },
-    allowLeave() {
-      if (running.current || importSession.current().busy || draftSession.current()?.saving || draftSession.current()?.selecting) { setOpen(true); return Promise.resolve(false); }
-      if (pendingSave || pendingSelection || pendingStart || uncertain.length) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
-      if (!dirty) return Promise.resolve(true);
+    allowLeave(current: () => boolean = () => true) {
+      leaveProof.current = current;
+      const manual = draftSession.current(), imported = importSession.current();
+      if (imported.busy || manual?.saving || manual?.selecting) { setOpen(true); return Promise.resolve(false); }
+      if (manual?.pending || manual?.pendingSelection || imported.pendingStart || imported.uncertain.length) { setOpen(true); setFailure("outcome-unknown"); return Promise.resolve(false); }
+      // Remounting starts view reads. Stop their UI continuation, while the
+      // independent owners above retain authority over actual business work.
+      generation.current++; running.current = false; setBusy(false);
+      if (!manual || (manual.text === (manual.baseText ?? "") && !manual.newerDraftSaved)) return Promise.resolve(true);
       setOpen(true);
       setLeaveIntent({ kind: "project" });
       return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
@@ -315,7 +321,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     const current = () => mounted.current && generation.current === ticket;
     setBusy(true); setFailure(null);
     try { await work(current); } catch (error) { if (current()) setFailure(commandFailure(error)); }
-    finally { running.current = false; if (mounted.current) setBusy(false); }
+    finally { if (generation.current === ticket) { running.current = false; if (mounted.current) setBusy(false); } }
   }
   function changeTarget(locale: string) {
     if (locale && !localeAvailable(locale)) return;
@@ -455,27 +461,29 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
   }
   function resolveLeave(discard: boolean) {
     const intent = leaveIntent;
+    if (discard && intent?.kind === "project" && leaveProof.current && !leaveProof.current()) { setFailure("navigation-edited"); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; setLeaveIntent(null); return; }
     setLeaveIntent(null);
-    if (!discard) { leaveResolver.current?.(false); leaveResolver.current = null; return; }
+    if (!discard) { leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; return; }
     setHistory(null); setEditorTarget(null); draftSession.clear();
-    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; }
+    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; leaveProof.current = null; }
     if (intent?.kind === "close") setOpen(false);
     if (intent?.kind === "switch") void perform(current => switchEditor(intent, current));
   }
   async function saveAndLeave(current: () => boolean) {
     if (!targetAvailable) return;
+    if (leaveProof.current && !leaveProof.current()) { setFailure("navigation-edited"); return; }
     const intent = leaveIntent;
     const result = await saveDraft(current);
     if (!result.savedCurrent) return;
-    if (!current()) return;
+    if (!current() || (leaveProof.current && !leaveProof.current())) return;
     if (!currentLocale(targetLocale)) {
       setLeaveIntent(null);
-      leaveResolver.current?.(false); leaveResolver.current = null;
+      leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null;
       return;
     }
     if (!draftSession.unchanged(result.submittedSeq, result.submittedText)) return;
     setLeaveIntent(null);
-    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; }
+    if (intent?.kind === "project") { leaveResolver.current?.(true); leaveResolver.current = null; leaveProof.current = null; }
     if (intent?.kind === "close") setOpen(false);
     if (intent?.kind === "switch") await switchEditor(intent, current);
   }

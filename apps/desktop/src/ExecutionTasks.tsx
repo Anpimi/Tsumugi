@@ -2,7 +2,7 @@ import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { TaskCancellationFeedback, useExecutionTaskSession, type CancellationTarget } from "./ExecutionTaskSession";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, useWorkspaceView } from "./WorkbenchFrame";
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ProjectView } from "./projectCommands";
@@ -13,17 +13,18 @@ export interface TasksHandle { allowLeave: () => Promise<boolean>; allowNavigate
 export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; ref?: Ref<TasksHandle> }) {
   const { t } = useTranslation();
   const [open, setOpen] = useWorkbenchView("tasks");
+  const { memory } = useWorkspaceView();
   const cancellations = useExecutionTaskSession();
   const [dismissBlocked, setDismissBlocked] = useState(false);
-  const [visited, setVisited] = useState(false);
+  const [visited, setVisited] = useWorkbenchState("tasks", "visited", false);
   useEffect(() => { if (open) setVisited(true); }, [open]);
   useImperativeHandle(ref, () => ({ allowNavigate: () => Promise.resolve(true), allowLeave: () => {
-    if (cancellations.unresolved()) { setVisited(true); setOpen(true); return Promise.resolve(false); }
+    if (cancellations.unresolved()) { memory.write("tasks", "showOwnerDialog", true); setVisited(true); setOpen(true); return Promise.resolve(false); }
     return Promise.resolve(!dismissBlocked);
   } }));
   return <WorkbenchPanel open={open} title={t("execution.title")} description={project.metadata.displayName}
     onBack={() => setOpen(false)} backDisabled={disabled}>
-    {visited ? <TaskContent active={open} disabled={disabled} onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
+    {visited ? <TaskContent active={open} disabled={disabled} onArenaPreview={onArenaPreview} onAiPreview={onAiPreview} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={onSourcePreview} onTranslationPreview={onTranslationPreview} /> : null}
   </WorkbenchPanel>;
 }
 
@@ -31,26 +32,27 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const { t } = useTranslation();
   const context = executionContext(project);
   const cancellations = useExecutionTaskSession();
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [attemptId, setAttemptId] = useState<string | null>(null);
-  const [cursor, setCursor] = useState("0");
-  const [attemptCursor, setAttemptCursor] = useState("0");
-  const [offset, setOffset] = useState(0);
+  const [taskId, setTaskId] = useWorkbenchState<string | null>("tasks", "taskId", null);
+  const [attemptId, setAttemptId] = useWorkbenchState<string | null>("tasks", "attemptId", null);
+  const [cursor, setCursor] = useWorkbenchState("tasks", "cursor", "0");
+  const [attemptCursor, setAttemptCursor] = useWorkbenchState("tasks", "attemptCursor", "0");
+  const [offset, setOffset] = useWorkbenchState("tasks", "offset", 0);
   const busy = cancellations.busy;
   const activity = cancellations.activity;
   const pendingAction = activity?.phase === "unknown" || cancellations.busy ? activity : null;
-  const [showOwnerDialog, setShowOwnerDialog] = useState(true);
+  const [showOwnerDialog, setShowOwnerDialog] = useWorkbenchState("tasks", "showOwnerDialog", true);
   const [failureValue, setFailure] = useState<CommandFailure | null>(null);
   const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | null>(null);
-  const [localConfirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const [localConfirmation, setConfirmation] = useWorkbenchState<Confirmation | null>("tasks", "confirmation", null);
   const ownerConfirmation = activity && showOwnerDialog && activity.phase !== "recorded" && activity.phase !== "rejected"
     ? { action: activity.intent.action, unit: activity.intent.unit, itemId: activity.intent.itemId } : null;
   const confirmation: Confirmation | null = localConfirmation ?? ownerConfirmation;
-  const [outputSelection, setOutput] = useState<{ attemptId: string; itemId: string; resultId: string } | null>(null);
-  const [receiptSelection, setReceipt] = useState<{ attemptId: string; unitId: string; actionId: string } | null>(null);
+  const [outputSelection, setOutput] = useWorkbenchState<{ attemptId: string; itemId: string; resultId: string } | null>("tasks", "outputSelection", null);
+  const [receiptSelection, setReceipt] = useWorkbenchState<{ attemptId: string; unitId: string; actionId: string } | null>("tasks", "receiptSelection", null);
 
   const actionTrigger = useRef<HTMLElement | null>(null);
   const outputRegion = useRef<HTMLDivElement | null>(null);
+  const handledRecovery = useWorkbenchRef<string | null>("tasks", "handledRecovery", null);
   useEffect(() => { onDismissBlockedChange?.(busy || cancellations.unresolved()); return () => onDismissBlockedChange?.(false); }, [busy, activity, cancellations.state, onDismissBlockedChange]);
   function confirm(choice: Confirmation) {
     actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -107,6 +109,9 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const recovered = activity?.phase === "recorded" ? activity.recovery : null;
   useEffect(() => {
     if (recovered && activity) {
+      const marker = `${activity.intent.attemptId}:${activity.prepare?.actionId ?? ""}:${recovered.attemptId}`;
+      if (handledRecovery.current === marker) return;
+      handledRecovery.current = marker;
       setTaskId(activity.intent.taskId);
       setAttemptId(recovered.attemptId); setOffset(0); setOutput(null); setReceipt(null);
       setMessage(recovered.queryStarted ? "queryStarted" : "done");

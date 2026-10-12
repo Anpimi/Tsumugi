@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type AdoptionAction, type AttemptDetail, type Receipt } from "./executionCommands";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
-import { useSessionReads } from "./SessionReadProvider";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
 import { sourceCommands, confirmSourceAction, confirmSourceReceipt, sameSourceConfirmation, type ContentPage, type ContentScope, type LineageChoice,
   type Preflight, type SourceAdoptRequest, type SourceChangePage, type SourceImpactSummary, type SourceSelection, type StartRequest } from "./sourceCommands";
@@ -91,7 +91,7 @@ export function SourceDraftSession({ project, children }: { project: ProjectView
     comparison: null, updating: false, lineage: {}, actor: "", filter: "", appliedFilter: "", manualOrdinal: null,
     historicalQuery: "", previewAfter: 0, comparisonAfter: 0, historicalSearch: null, estimate: null, confirmed: false, stale: false, editSeq: 0, pendingStart: null,
     pendingApply: null, preparedAction: null, receiptChecked: false, busyMutation: false, failure: null, receipt: null, completionVersion: 0 }));
-  const stateRef = useRef(state), projectRef = useRef(project), mounted = useRef(false), flight = useRef(0);
+  const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(0);
   const captureFlight = useRef(0), pendingReceipt = useRef<{ request: SourceAdoptRequest; receipt: Receipt } | null>(null);
   const basisVersion = useRef(0), identity = useRef<ReadyIdentity | null>(null), submittedSeq = useRef(0);
   const metadata = metadataKey(project), committedMetadata = useRef(metadata);

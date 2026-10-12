@@ -1,7 +1,7 @@
 import { useSessionInfiniteQuery, useSessionQuery } from "./SessionReadProvider";
 import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
 import { commandFailure, failureReason, CommandFailureDetails } from "./CommandFailure";
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -18,10 +18,11 @@ import type { EditorTarget } from "./TranslationWorkbench";
 
 const letter = (i: number) => String.fromCharCode(65 + i);
 export interface ArenaHandle extends AttemptWorkbenchHandle { allowNavigate: () => Promise<boolean> }
-export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project:ProjectView;disabled:boolean;ref?:Ref<ArenaHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean}) {
+export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project:ProjectView;disabled:boolean;ref?:Ref<ArenaHandle>;onOpenTranslation:(target:EditorTarget,locale:string)=>boolean | Promise<boolean>}) {
  const {t}=useTranslation(),context=executionContext(project),tasks=useExecutionTaskSession(),owner=useArenaDraftSession();
- const [open,setOpen]=useWorkbenchView("arena"),[after,setAfter]=useState(0),[leaving,setLeaving]=useState(false);
+ const [open,setOpen]=useWorkbenchView("arena"),[after,setAfter]=useWorkbenchState("arena", "after", 0),[leaving,setLeaving]=useState(false);
  const {config,locale,selected,unit,prepared,consent,attempt,references,comparisonBlind,draft,busy,pending,notice}=owner;
+ const leaveProof = useRef<(() => boolean) | null>(null);
  const leaveResolve=useRef<((value:boolean)=>void)|null>(null),errorRef=useRef<HTMLDivElement>(null);
  const scopeRead=useSessionQuery({key:["arena-source-scope",owner.sourceGeneration],scopes:["source","project"],enabled:open,
   read:()=>sourceCommands.scope(context)});
@@ -50,16 +51,16 @@ export function ArenaWorkbench({project,disabled,ref,onOpenTranslation}:{project
  const displayedFailure=failureReason(displayedFailureValue);
  useEffect(()=>{if(displayedFailure)errorRef.current?.focus();},[displayedFailure]);
  useEffect(()=>()=>leaveResolve.current?.(false),[]);
- function allowLeave():Promise<boolean>{if(cancelUnresolved){setOpen(true);return Promise.resolve(false);}if(owner.reserved()){setOpen(true);owner.reportFailure("outcome-unknown");return Promise.resolve(false);}if(!owner.current().dirty&&!owner.current().draft)return Promise.resolve(true);setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});}
+ function allowLeave(current:()=>boolean=()=>true):Promise<boolean>{leaveProof.current=current;if(cancelUnresolved){setOpen(true);return Promise.resolve(false);}if(owner.reserved()){setOpen(true);owner.reportFailure("outcome-unknown");return Promise.resolve(false);}if(!owner.current().dirty&&!owner.current().draft)return Promise.resolve(true);setOpen(true);setLeaving(true);return new Promise(resolve=>{leaveResolve.current?.(false);leaveResolve.current=resolve;});}
  function allowNavigate():Promise<boolean>{if(owner.reserved()||cancelUnresolved){setOpen(true);return Promise.resolve(false);}return Promise.resolve(true);}
- function settleLeave(value:boolean){setLeaving(false);if(value&&owner.reset())setOpen(false);else if(value)value=false;leaveResolve.current?.(value);leaveResolve.current=null;}
+ function settleLeave(value:boolean){if(value&&leaveProof.current&&!leaveProof.current())value=false;setLeaving(false);if(value&&!owner.reset())value=false;leaveResolve.current?.(value);leaveResolve.current=null;leaveProof.current=null;}
  useImperativeHandle(ref,()=>({allowLeave,allowNavigate,showAttempt(id){setOpen(true);if(!owner.showAttempt(id))owner.reportFailure("arena-draft");}}));
  function changed(next:ArenaConfig){owner.setConfig(next);}
  function variant(slot:number,key:keyof AiConfig,value:string|number|boolean){changed({...config,variants:config.variants.map((v,i)=>i===slot?{...v,[key]:value}:v)});}
  async function refreshPage(cursor=after){setAfter(cursor);await Promise.all([scopeRead.refetch(),...(snapshot?[pageRead.refetch()]:[]),listRead.refetch()]);}
  async function loadHistory(id:string,afterOrdinal="0"){if(id!==unit){owner.setUnit(id);return;}if(afterOrdinal!=="0")await historyRead.fetchNextPage();else await historyRead.refetch();}
  async function refreshResult(){await Promise.all([...(attempt?[viewRead.refetch()]:[]),...(owner.comparisonId?[comparisonRead.refetch()]:[])]);}
- function editor(target:EditorTarget,targetLocale:string){void allowLeave().then(ok=>{if(ok&&onOpenTranslation(target,targetLocale))setOpen(false);});}
+ function editor(target:EditorTarget,targetLocale:string){void allowLeave().then(async ok=>{if(ok)await onOpenTranslation(target,targetLocale);});}
  const fields=[['endpoint','url'],['model','text'],['credentialEnv','text']] as const,numeric=[['maxOutputTokens',1,16384],['maxRetries',0,2],['timeoutSeconds',1,120]] as const;
  return <><WorkbenchPanel open={open} title={t("arena.title")} description={t("arena.description")} className="arena-dialog" onBack={()=>void allowLeave().then(ok=>{if(ok)setOpen(false);})} backDisabled={disabled || busy || !!pending || cancelUnresolved}>
  <TaskCancellationFeedback origin="arena" taskId={view?.detail.taskId} disabled={busy} visible={open} />

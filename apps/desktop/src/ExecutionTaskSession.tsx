@@ -4,7 +4,7 @@ import { commandFailure, failureReason, CommandFailureDetails, type CommandFailu
 import { executionCommands, executionContext, confirmExecutionAction, confirmExecutionReceipt, sameExecutionIds, type CancelRequest, type AttemptDetail, type RecoveryAction, type RecoveryUnit, type ItemView, type PrepareRequest, type AdoptionAction, type Receipt, type RecoveryRequest, type RecoveryView } from "./executionCommands";
 import { validateRequestCancel, validateRequestPrepare, validateRequestRecovery, validateResponseIdentity, validateResponseAttempt } from "./generated/execution.validators";
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
-import { useSessionReads } from "./SessionReadProvider";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 
 type Origin = "tasks" | "source" | "ai" | "arena";
@@ -84,7 +84,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
   const translation = useTranslationDraftSession();
   const [session] = useState(() => Object.freeze(executionContext(project)));
   const [state, setState] = useState<Cancellations>(() => Object.freeze({}));
-  const stateRef = useRef(state), projectRef = useRef(project), mounted = useRef(false);
+  const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive();
   const [activity, setActivity] = useState<TaskActivity | null>(null);
   const activityRef = useRef<TaskActivity | null>(null);
   const reservation = useRef<symbol | null>(null);

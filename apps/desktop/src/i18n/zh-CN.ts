@@ -20,6 +20,12 @@ commandError: {
   },
 },
 workbench: {
+  retiredDraftTitle: "上一个项目的本地工作",
+  retiredDraftHelp: "上一个项目会话已结束。本地工作以只读方式保留在此窗口，便于复制，不会继续执行操作。请在丢弃这些内容或关闭窗口前复制需要的内容。恢复界面不会将修改写回项目。",
+  retiredDraftData: "保留的本地工作与原始恢复资料",
+  retiredDraftDiscard: "丢弃本地工作并继续",
+  openingDestination: "正在打开指定的工作位置…",
+  navigationBlocked: "目标位置不可用或仍有未完成的工作。当前内容已保留，请先处理后再重试。",
   overview: "项目概览", backOverview: "返回概览", nextStep: "下一步",
   importTitle: "导入需要翻译的原文", importHelp: "导入支持的源内容后开始翻译，原始文件保持不变。",
   sourceFailed: "未能读取源内容状态，请进入源内容检查或重试。", import: "导入源内容",

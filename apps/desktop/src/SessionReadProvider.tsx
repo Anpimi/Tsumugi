@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { QueryClientProvider, useQuery, useInfiniteQuery, type InfiniteData, type QueryKey } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { SessionReads, type ChangeScope } from "./sessionReads";
@@ -11,6 +11,12 @@ export function SessionReadProvider({ context, children, bridge = true }: { cont
   return <ReadsContext.Provider value={reads}><QueryClientProvider client={reads.client}>{children}</QueryClientProvider></ReadsContext.Provider>;
 }
 export function useSessionReads() { const reads = useContext(ReadsContext); if (!reads) throw new Error("Reads require a project session owner"); return reads; }
+/** Owners may remain mounted for copying local work after their Core session has ended. */
+export function useSessionAlive(): { current: boolean } {
+  const reads = useSessionReads(), mounted = useRef(false);
+  return useMemo(() => ({ get current() { return mounted.current && !reads.retired; },
+    set current(value: boolean) { mounted.current = value; } }), [reads]);
+}
 function useReadVisibility(reads: SessionReads, queryKey: QueryKey, enabled: boolean) {
   const identity = JSON.stringify(queryKey);
   useEffect(() => {

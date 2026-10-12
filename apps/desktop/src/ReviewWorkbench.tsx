@@ -1,6 +1,6 @@
 import { reviewReasonKey } from "./reviewLabels";
 import { commandFailure, failureReason, CommandFailureDetails } from "./CommandFailure";
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -16,7 +16,7 @@ import type { ChangeScope } from "./sessionReads";
 
 type Tab = "review" | "work" | "eligibility";
 const MAX_BATCH = 100;
-export interface ReviewHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean>; showWork: () => void }
+export interface ReviewHandle { allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean>; showWork: () => void }
 
 const errorReason = commandFailure;
 const draftKey = reviewDraftKey;
@@ -27,7 +27,7 @@ const HISTORY_FIRST_SCOPES: ChangeScope[] = ["source", "translation", "resources
 const HISTORY_LATER_SCOPES: ChangeScope[] = ["source", "translation", "resources"];
 
 export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
-  project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean;
+  project: ProjectView; disabled: boolean; onOpenTranslation: (target: EditorTarget, locale: string) => boolean | Promise<boolean>;
   ref?: Ref<ReviewHandle>;
 }) {
   const { t } = useTranslation();
@@ -46,21 +46,22 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   const check = owner.check;
   const cancelCheck = owner.cancelCheck;
   const [open, setOpen] = useWorkbenchView("review");
-  const [tab, setTab] = useState<Tab>("review");
+  const [tab, setTab] = useWorkbenchState<Tab>("review", "tab", "review");
   const [page, setPage] = useState<ReviewSummaryPage | null>(null);
-  const [pageAfter, setPageAfter] = useState(0);
-  const [historyCursor, setHistoryCursor] = useState({ unitId: "", locale: "", offset: 0 });
-  const [workCursor, setWorkCursor] = useState({ locale, offset: 0 });
-  const [languages, setLanguages] = useState<string[]>(project.metadata.targetLocales);
-  const [assessment, setAssessment] = useState<{ projectId: string; sessionToken: string; reviewLocale: string; locales: string[] } | null>(null);
+  const [pageAfter, setPageAfter] = useWorkbenchState("review", "pageAfter", 0);
+  const [historyCursor, setHistoryCursor] = useWorkbenchState("review", "historyCursor", { unitId: "", locale: "", offset: 0 });
+  const [workCursor, setWorkCursor] = useWorkbenchState("review", "workCursor", { locale, offset: 0 });
+  const [languages, setLanguages] = useWorkbenchState<string[]>("review", "languages", project.metadata.targetLocales);
+  const [assessment, setAssessment] = useWorkbenchState<{ projectId: string; sessionToken: string; reviewLocale: string; locales: string[] } | null>("review", "assessment", null);
   const reason = failureReason(reasonValue) ?? "";
   const [readBusy, setReadBusy] = useState(false);
   const [leavePrompt, setLeavePrompt] = useState(false);
-  const [batchPrompt, setBatchPrompt] = useState(false);
+  const [batchPrompt, setBatchPrompt] = useWorkbenchState("review", "batchPrompt", false);
   // This modal capture also blocks another dispatch before its open state commits.
-  const batchConfirmation = useRef<{ chosen: typeof chosen; actor: string } | null>(null);
+  const batchConfirmation = useWorkbenchRef<{ chosen: typeof chosen; actor: string } | null>("review", "batchConfirmation", null);
   const alive = useRef(false);
   const generation = useRef(0);
+  const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((allowed: boolean) => void) | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const hasDraft = Object.values(drafts).some(value => value.length > 0);
@@ -317,9 +318,6 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     setHistoryCursor(current => current.unitId === selected?.unitId && current.locale === selected?.locale
       ? current : { unitId: selected?.unitId ?? "", locale: selected?.locale ?? "", offset: 0 });
   }, [selected?.unitId, selected?.locale]);
-  useEffect(() => reads.subscribeChanges(scopes => {
-    if (scopes.includes("review") || scopes.includes("project")) setHistoryCursor(current => current.offset === 0 ? current : { ...current, offset: 0 });
-  }), [reads]);
 
   useEffect(() => {
     alive.current = true;
@@ -363,7 +361,8 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
   }, [owner.state.completionVersion]);
   useImperativeHandle(ref, () => ({
     showWork() { setTab("work"); setOpen(true); if (open && tab === "work" && targetAvailable) void workRead.refetch(); },
-    allowLeave() {
+    allowLeave(current: () => boolean = () => true) {
+      leaveProof.current = current;
       if (owner.inFlight() || batchRunning || pending) { setOpen(true); setNotice("unknown"); return Promise.resolve(false); }
       if (!hasDraft && Object.keys(chosen).length === 0) return Promise.resolve(true);
       setOpen(true); setLeavePrompt(true);
@@ -449,9 +448,10 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
     setOpen(false);
   }
   function finishLeave(discard: boolean) {
+    if (discard && leaveProof.current && !leaveProof.current()) { setLeavePrompt(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; }
     setLeavePrompt(false);
     if (discard) { owner.clear(); setOpen(false); }
-    leaveResolver.current?.(discard); leaveResolver.current = null;
+    leaveResolver.current?.(discard); leaveResolver.current = null; leaveProof.current = null;
   }
   function queueReason(code: string) { return t(reviewReasonKey(code)); }
   function eligibilityReasonLabel(value: EligibilityReason) {
@@ -521,10 +521,9 @@ export function ReviewWorkbench({ project, disabled, onOpenTranslation, ref }: {
                 {selectedStale ? <strong>{t("review.currentContent")}</strong> : null}
                 <h3>{displayTarget.nativeKey}</h3><p><strong>{t("review.source")}</strong> {displayTarget.sourceText}</p>
                 <p><strong>{t("review.translation")}</strong> {displayTarget.translationText ?? t("review.missingTranslation")}</p>
-                <button className="text-button" disabled={!targetAvailable} onClick={() => {
+                <button className="text-button" disabled={!targetAvailable} onClick={async () => {
                   const destination = { target: { unitId: displayTarget.unitId, sourceRevisionId: displayTarget.sourceRevisionId, key: displayTarget.nativeKey, sourceText: displayTarget.sourceText }, locale: displayTarget.locale };
-                  if (onOpenTranslation(destination.target, destination.locale)) setOpen(false);
-                  else { setNotice("error"); setReason("editor-unavailable"); }
+                  if (!await onOpenTranslation(destination.target, destination.locale) && alive.current) { setNotice("error"); setReason("editor-unavailable"); }
                 }}>{t("review.openTranslation")}</button>
                 <p>{displayTarget.currentDecision?.kind === "approve" ? t("review.currentApproval") : displayTarget.currentDecision?.kind === "request-changes" ? t("review.changesRequested") : t("review.approvalMissing")}</p>
                 {displayTarget.currentFallback ? <p>{t("review.fallbackActive")}</p> : null}

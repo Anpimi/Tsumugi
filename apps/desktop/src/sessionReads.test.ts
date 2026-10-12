@@ -118,3 +118,19 @@ it("reports semantic scopes without revoking preparation for unchanged focus che
   expect(changes).toHaveBeenCalledWith(["project"]);
   unsubscribe();
 });
+
+it("permanently retires the bridge and ignores delayed registration, hints and attempts to restart", async () => {
+  let registered!: (stop: () => void) => void;
+  const fixture = setup({ listen: () => new Promise(resolve => { registered = resolve; }) });
+  const changes = vi.fn(), stop = vi.fn(); fixture.reads.subscribeChanges(changes);
+  await settle(); const snapshots = fixture.wire.snapshot.mock.calls.length; changes.mockClear();
+  fixture.reads.retire(); fixture.reads.retire();
+  registered(stop); await settle();
+  fixture.reads.invalidate(["source"]);
+  fixture.reads.receive({ ...context, epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["source"] });
+  const cleanup = fixture.reads.start(); await fixture.reads.synchronize(true);
+  await vi.advanceTimersByTimeAsync(3000); await settle(); cleanup();
+  expect(fixture.reads.retired).toBe(true);
+  expect(stop).toHaveBeenCalledOnce(); expect(changes).not.toHaveBeenCalled();
+  expect(fixture.wire.listen).toHaveBeenCalledOnce(); expect(fixture.wire.snapshot).toHaveBeenCalledTimes(snapshots);
+});

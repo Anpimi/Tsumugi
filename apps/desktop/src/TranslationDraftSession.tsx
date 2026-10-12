@@ -1,3 +1,4 @@
+import { useSessionAlive } from "./SessionReadProvider";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext } from "./executionCommands";
@@ -56,7 +57,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   const [draft, setDraft] = useState<TranslationDraft | null>(null);
   const currentDraft = useRef<TranslationDraft | null>(null);
   const projectRef = useRef(project);
-  const mounted = useRef(false);
+  const mounted = useSessionAlive();
   const inFlight = useRef(false);
   const mutation = useRef<symbol | null>(null);
   const selectionReservation = useRef<symbol | null>(null);
@@ -81,6 +82,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   }
 
   function update(change: (current: TranslationDraft | null) => TranslationDraft | null) {
+    if (!mounted.current) return currentDraft.current;
     const next = change(currentDraft.current);
     currentDraft.current = next;
     if (mounted.current) setDraft(next);
@@ -89,7 +91,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   function current() { return currentDraft.current; }
   function begin(identity: DraftIdentity, selection: TranslationSelection | null, baseText: string | null, suggestedText?: string) {
     const existing = currentDraft.current;
-    if (inFlight.current || existing?.selecting || existing?.pending || existing?.pendingSelection || (existing && (existing.text !== (existing.baseText ?? "") || existing.newerDraftSaved))) return false;
+    if (!mounted.current || inFlight.current || existing?.selecting || existing?.pending || existing?.pendingSelection || (existing && (existing.text !== (existing.baseText ?? "") || existing.newerDraftSaved))) return false;
     update(() => ({ ...identity, baseSelectionId: selection?.eventId ?? null, baseRevisionId: selection?.revisionId ?? null,
       baseText, text: suggestedText ?? baseText ?? "", editSeq: 0, pending: null, pendingSelection: null, selecting: false, saving: false,
       outcomeUnknown: false, receiptCheck: null, receiptKind: null, newerDraftSaved: false, failure: null }));
@@ -128,7 +130,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   async function save(): Promise<SaveResult> {
     const start = currentDraft.current;
     const empty = { saved: false, savedCurrent: false, submittedSeq: start?.editSeq ?? 0, submittedText: start?.text ?? "" };
-    if (!start || inFlight.current || mutation.current || start.pendingSelection || !projectRef.current.metadata.targetLocales.includes(start.locale)) return empty;
+    if (!mounted.current || !start || inFlight.current || mutation.current || start.pendingSelection || !projectRef.current.metadata.targetLocales.includes(start.locale)) return empty;
     inFlight.current = true;
     const submittedSeq = start.pending?.submittedSeq ?? start.editSeq;
     const submittedText = start.pending?.request.text ?? start.text;
@@ -157,7 +159,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     const pending = currentDraft.current?.pending;
     const empty = { saved: false, savedCurrent: false, submittedSeq: pending?.submittedSeq ?? 0,
       submittedText: pending?.request.text ?? "" };
-    if (!pending || inFlight.current) return empty;
+    if (!mounted.current || !pending || inFlight.current) return empty;
     inFlight.current = true;
     update(value => value ? { ...value, saving: true, failure: null } : value);
     const request = pending.request;
@@ -200,6 +202,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     return true;
   }
   async function dispatchSelection(pending: SelectionPending) {
+    if (!mounted.current) return false;
     update(value => value ? { ...value, pendingSelection: { ...pending, receiptChecked: false }, selecting: true, failure: null, receiptCheck: null, receiptKind: "selection" } : value);
     const original = currentDraft.current?.pendingSelection;
     if (!original) return false;
