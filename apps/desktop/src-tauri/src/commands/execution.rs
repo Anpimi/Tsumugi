@@ -56,6 +56,7 @@ macro_rules! handlers {
         release::preview_delivery,release::export_release,release::list_deliveries,
         release::reconcile_delivery,ai::preview_ai_translation,ai::start_ai_translation,ai::read_ai_translation,ai::retry_work_plan_effect,
         release::plugin::prepare_plugin_build,release::plugin::start_plugin_build,
+        release::plugin::read_saved_plugin_build,
         release::plugin::prepare_artifact_check,release::plugin::start_artifact_check,
         release::plugin::finish_artifact_check,release::plugin::cancel_plugin_build_preparation,
         arena::preview_arena_translation,arena::start_arena_translation,arena::read_arena_translation,

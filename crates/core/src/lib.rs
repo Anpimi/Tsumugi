@@ -43,6 +43,9 @@ pub use persistence::{
     ComparisonView, MergeBasis,
 };
 pub use persistence::{PluginBuildLocaleChoice, ReleaseBuildEnvironment, ReleasePlan};
+pub use persistence::{
+    SavedBuildArtifact, SavedBuildLocale, SavedBuildResult, SavedPluginBuildView,
+};
 
 #[cfg(test)]
 pub use persistence::StorageFault;

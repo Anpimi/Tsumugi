@@ -9,6 +9,7 @@ export declare function validateRequestPluginStart(value: unknown): value is Req
 export declare function validateRequestPreview(value: unknown): value is Requests["preview"];
 export declare function validateRequestReconcile(value: unknown): value is Requests["reconcile"];
 export declare function validateRequestRelease(value: unknown): value is Requests["release"];
+export declare function validateRequestSavedPluginBuild(value: unknown): value is Requests["savedPluginBuild"];
 export declare function validateRequestSession(value: unknown): value is Requests["session"];
 export declare function validateResponseArtifactCheck(value: unknown): value is Responses["artifactCheck"];
 export declare function validateResponseCancelPluginBuild(value: unknown): value is Responses["cancelPluginBuild"];
@@ -20,4 +21,5 @@ export declare function validateResponseIdentity(value: unknown): value is Respo
 export declare function validateResponsePluginBuild(value: unknown): value is Responses["pluginBuild"];
 export declare function validateResponsePreview(value: unknown): value is Responses["preview"];
 export declare function validateResponseReleases(value: unknown): value is Responses["releases"];
+export declare function validateResponseSavedPluginBuild(value: unknown): value is Responses["savedPluginBuild"];
 export declare function validateResponseSelection(value: unknown): value is Responses["selection"];

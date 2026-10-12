@@ -447,6 +447,22 @@ ai: {
 },
 
     releasePlugin: {
+      "savedOpen": "在构建与导出中查看已保存构建",
+      "savedView": "已保存构建查看",
+      "savedTitle": "已保存构建计划与产物",
+      "savedReadOnly": "这是只读记录，不会恢复执行授权，也不会创建发布。新的检查或构建需要各自捕获输入并明确授权；此前授权已结束时，请准备新的构建。",
+      "savedInput": "已保存输入摘要",
+      "savedTargets": "原构建计划包含 {{count, number}} 个目标",
+      "savedPaths": "原构建计划允许的路径",
+      "savedNoResult": "此语言尚无已保存结果。",
+      "savedFailed": "此已保存结果未产生成功的构建文件。",
+      "savedEmpty": "原构建计划暂无可显示的语言结果。",
+      "savedArtifacts": "{{locale}} 的已保存文件",
+      "savedRole": "用途：{{role}}",
+      "savedSha": "{{path}} 的 SHA-256",
+      "savedReadFailed": "无法读取已保存构建或核验其原始引用。已保留原输入与产物。",
+      "savedRefresh": "重新读取已保存构建",
+      "savedBack": "返回构建准备",
       "refresh": "刷新已安装的构建选项",
       "builder": "已安装的构建能力",
       "chooseBuilder": "选择已安装的构建器",
@@ -990,6 +1006,7 @@ ai: {
   }
 },
     execution: {
+    "savedBuildBlocked": "构建与导出中仍有未完成的草稿、准备或操作。已保留当前工作，请先完成或明确放弃，再查看另一条已保存构建。",
         "updatesUnavailable": "暂时无法更新任务状态。已有工作仍保留，可刷新核对工程。",
       "operation": "项目操作",
       "sampleOperation": "示例更新",

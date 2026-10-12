@@ -257,6 +257,7 @@ struct ReviewResponses {
 #[allow(dead_code)]
 struct ReleaseRequests {
     session: execution::SessionRequest,
+    saved_plugin_build: execution::release::plugin::SavedPluginBuildRequest,
     plugin_build: execution::release::plugin::PluginBuildPrepareRequest,
     plugin_start: execution::PluginStartRequest,
     artifact_check: execution::release::plugin::ArtifactCheckPrepareRequest,
@@ -270,6 +271,7 @@ struct ReleaseRequests {
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ReleaseResponses {
+    saved_plugin_build: tsumugi_core::SavedPluginBuildView,
     plugin_build: execution::release::plugin::PluginBuildReview,
     artifact_check: execution::release::plugin::ArtifactCheckReview,
     finish_artifact_check: (),

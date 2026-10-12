@@ -9,6 +9,8 @@ import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from 
 import { LAST_OPEN_PROJECT_STORAGE_KEY, readRecentProjects } from "./recentProjects";
 import pluginInventory from "../test/fixtures/pluginInventory.contract.json";
 import pluginCandidate from "../test/fixtures/pluginPackage.contract.json";
+import { savedPluginBuild } from "./testSupport/pluginBuildFixture";
+import executionFixture from "../test/fixtures/executionCommands.contract.json";
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -73,6 +75,46 @@ async function createProject(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it.each([false, true])("routes the exact saved plugin build through the App owner while preserving a dirty mapping: %s", async dirty => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const saved = { ...structuredClone(savedPluginBuild), projectId: metadata().projectId };
+    const locale = saved.locales[0];
+    mocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "read_plugin_inventory") return pluginInventory.empty;
+      if (command === "list_releases") return [];
+      if (command === "execution_status") return executionFixture.status;
+      if (command === "list_execution_tasks") return [{ ...executionFixture.task, projectId: saved.projectId, taskId: saved.taskId, operation: "locale-build" }];
+      if (command === "read_execution_task") return [{ attemptId: saved.attemptId, sequence: "1" }];
+      if (command === "read_execution_attempt") return { ...executionFixture.detail, taskId: saved.taskId, attemptId: saved.attemptId, operation: "locale-build",
+        progress: { total: 1, queued: 0, running: 0, succeeded: 1, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
+        items: [{ scope: { kind: "locale", id: "zh-CN", locale: "zh-CN" }, status: locale.status, resultId: locale.result!.resultId }],
+        recovery: { attemptId: saved.attemptId, units: [] } };
+      if (command === "read_saved_plugin_build") return saved;
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    if (dirty) {
+      await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+      await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+      await user.type(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) }), "deliverables/original-draft.txt");
+    }
+    await user.click(screen.getByRole("button", { name: i18n.t("execution.title") }));
+    await user.click(await screen.findByRole("button", { name: `${i18n.t("release.title")} · ${i18n.t("execution.taskNumber", { number: executionFixture.task.sequence })}` }));
+    await user.click(await screen.findByRole("button", { name: i18n.t("releasePlugin.savedOpen") }));
+    if (dirty) {
+      expect(await screen.findByText(i18n.t("execution.savedBuildBlocked"))).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: i18n.t("execution.title") })).toBeVisible();
+      expect(mocks.invoke.mock.calls.some(([command]) => command === "read_saved_plugin_build")).toBe(false);
+      await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+      expect(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) })).toHaveValue("deliverables/original-draft.txt");
+    } else {
+      expect(await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).toHaveTextContent(i18n.t("releasePlugin.savedReadOnly"));
+      expect(screen.getByRole("heading", { name: i18n.t("release.title") })).toBeVisible();
+      expect(mocks.invoke).toHaveBeenCalledWith("read_saved_plugin_build", { request: { sessionToken: "session-1", projectId: saved.projectId, attemptId: saved.attemptId } });
+      expect(screen.queryByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") })).not.toBeInTheDocument();
+    }
+    expect(mocks.invoke.mock.calls.some(([command]) => ["prepare_plugin_build", "start_plugin_build", "prepare_artifact_check", "start_artifact_check", "adopt_execution", "create_execution_identity"].includes(command))).toBe(false);
+  });
+
   it.each([["/", "/synthetic/projects/", "/synthetic/projects/demo"], ["/", "/", "/demo"], ["\\", "C:\\Projects\\", "C:\\Projects\\demo"]])("previews a new project with the native separator %s under %s", async (separator, parent, destination) => {
     mocks.sep.mockReturnValue(separator);
     const user = userEvent.setup();

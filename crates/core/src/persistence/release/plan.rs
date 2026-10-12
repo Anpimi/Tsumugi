@@ -23,6 +23,7 @@ pub struct PluginBuildLocaleChoice {
 /// selection neither authenticates package provenance nor authorizes execution.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct ReleaseBuildEnvironment {
     binding: sdk::BuildBinding,
     environment: sdk::ExecutionEnvironmentDescriptor,
@@ -201,6 +202,9 @@ impl ReleasePlan {
     }
     pub fn eligibility_basis(&self) -> &str {
         &self.eligibility_basis
+    }
+    pub fn policy_version(&self) -> &str {
+        &self.policy_version
     }
     pub fn build_environment(&self) -> &ReleaseBuildEnvironment {
         &self.build

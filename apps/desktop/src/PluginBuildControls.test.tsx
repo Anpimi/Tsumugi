@@ -275,6 +275,60 @@ it("protects an unfinished mapping on project leave while navigation retains it"
   expect(screen.queryByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) })).not.toBeInTheDocument();
 });
 
+it("refuses saved-build inspection while an original mapping is dirty and accepts only after explicit discard", async () => {
+  const user = userEvent.setup(), ref = createRef<ReleaseHandle>();
+  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await screen.findByText(/Example text artifact/);
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  const path = screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) });
+  await user.type(path, "deliverables/retained.txt");
+  await user.click(screen.getByRole("button", { name: i18n.t("workbench.backOverview") }));
+  await act(async () => { expect(ref.current!.showSavedBuild(pluginBuildWorkflow.review.attemptId)).toBe(false); });
+  expect(screen.queryByRole("heading", { name: i18n.t("release.title") })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command === "read_saved_plugin_build")).toBe(false);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  expect(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) })).toHaveValue("deliverables/retained.txt");
+  let leaving!: Promise<boolean>;
+  await act(async () => { leaving = ref.current!.allowLeave(); });
+  await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: i18n.t("source.leave") }));
+  expect(await leaving).toBe(true);
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command, args) => command === "read_saved_plugin_build" ? Promise.reject({ code: "storage-failed" }) : original(command, args));
+  await act(async () => { expect(ref.current!.showSavedBuild(pluginBuildWorkflow.review.attemptId)).toBe(true); });
+  await screen.findByText(i18n.t("releasePlugin.savedReadFailed"));
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.savedBack") }));
+  expect(screen.getByRole("checkbox", { name: "zh-CN" })).not.toBeChecked();
+  expect(screen.queryByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "cancel_plugin_build_preparation")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_plugin_build" || command === "start_plugin_build" || command === "create_execution_identity")).toBe(false);
+});
+
+it.each(["prepared", "consented", "busy", "unknown"] as const)("preserves the original %s build owner when saved inspection is requested", async phase => {
+  const { user, ref } = await ready();
+  const request = structuredClone(captured);
+  let resolveStart!: (attemptId: string) => void;
+  const deferred = new Promise<string>(resolve => { resolveStart = resolve; });
+  if (phase !== "prepared") await user.click(screen.getByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") }));
+  if (phase === "busy" || phase === "unknown") {
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command, args) => command === "start_plugin_build"
+      ? phase === "busy" ? deferred : Promise.reject({ code: "outcome-unknown" }) : original(command, args));
+    await user.click(screen.getByRole("button", { name: i18n.t("release.build") }));
+    await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(true));
+    if (phase === "unknown") await screen.findByRole("button", { name: i18n.t("releasePlugin.reconcile") });
+  }
+  await act(async () => { expect(ref.current!.showSavedBuild(fixtureIdentity(890))).toBe(false); });
+  expect(captured).toEqual(request);
+  expect(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) })).toHaveValue("deliverables/zh-CN/captions.txt\ndeliverables/zh-CN/metadata.txt");
+  expect(screen.getByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") })).toHaveProperty("checked", phase !== "prepared");
+  expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedView") })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command === "read_saved_plugin_build")).toBe(false);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_plugin_build")).toHaveLength(1);
+  if (phase === "busy") await act(async () => { resolveStart(request!.attemptId); await deferred; });
+  if (phase === "unknown") expect(await ref.current!.allowLeave()).toBe(false);
+});
+
 it("refuses an unrelated runtime acknowledgement and retains the entered mapping", async () => {
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command, args) => command === "read_plugin_build" ? { ...pluginBuildView, environmentDigest: "f".repeat(64) } : original(command, args));

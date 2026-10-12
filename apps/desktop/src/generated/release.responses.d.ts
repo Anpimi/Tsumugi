@@ -72,6 +72,9 @@ export type DeliveryFileState = "pending" | "succeeded" | "failed" | "unknown";
 export type DeliveryState = "pending" | "succeeded" | "partial" | "failed" | "unknown";
 export type DeliveryPreviewState = "absent" | "same" | "conflict";
 export type ReleaseExceptionKind = "source-fallback" | "qa-waiver";
+export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
+export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
+export type ValidationState = "absent" | "pending" | "valid" | "invalid";
 
 export interface Responses {
   artifactCheck: ArtifactCheckReview;
@@ -84,6 +87,7 @@ export interface Responses {
   pluginBuild: PluginBuildReview;
   preview: DeliveryPreview;
   releases: ReleaseView[];
+  savedPluginBuild: SavedPluginBuildView;
   selection: DeliverySelection | null;
 }
 export interface ArtifactCheckReview {
@@ -331,6 +335,59 @@ export interface ReleaseException {
 export interface BuildSourceFile {
   logicalPath: string;
   sha256: string;
+}
+export interface SavedPluginBuildView {
+  attemptId: ExecutionId;
+  build: ReleaseBuildEnvironment;
+  eligibilityBasis: string;
+  inputDigest: string;
+  locales: SavedBuildLocale[];
+  policyVersion: string;
+  projectId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  taskId: ExecutionId;
+}
+/**
+ * Installed immutable metadata supplied by the trusted Host. Constructing this
+ * selection neither authenticates package provenance nor authorizes execution.
+ */
+export interface ReleaseBuildEnvironment {
+  binding: BuildBinding;
+  environment: ExecutionEnvironmentDescriptor;
+}
+export interface BuildBinding {
+  builder: CapabilityBinding;
+  checker: CapabilityBinding;
+  declaration: BuildDeclaration;
+}
+export interface SavedBuildLocale {
+  choice: PluginBuildLocaleChoice;
+  itemId: ExecutionId;
+  result: SavedBuildResult | null;
+  status: ItemStatus;
+  targetCount: number;
+}
+export interface SavedBuildResult {
+  artifacts: SavedBuildArtifact[];
+  outcome: ExecutionState;
+  resultDigest: string;
+  resultId: ExecutionId;
+}
+export interface SavedBuildArtifact {
+  byteLength: number;
+  id: string;
+  logicalPath: string;
+  role: string;
+  sha256: string;
+}
+export interface ItemStatus {
+  adoption: AdoptionState;
+  cancellationRequested: boolean;
+  diagnostic: string | null;
+  execution: ExecutionState;
+  itemId: ExecutionId;
+  retrySafe: boolean;
+  validation: ValidationState;
 }
 export interface DeliverySelection {
   folderName: string;

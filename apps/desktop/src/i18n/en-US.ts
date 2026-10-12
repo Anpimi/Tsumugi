@@ -457,6 +457,22 @@ ai: {
 },
 
     releasePlugin: {
+      "savedOpen": "View saved build in Build and export",
+      "savedView": "Saved build inspection",
+      "savedTitle": "Saved build plan and output",
+      "savedReadOnly": "This is a read-only record. It does not restore execution approval or create a release. New checks and builds need their own captured inputs and explicit approval; if the earlier approval has ended, prepare a new build.",
+      "savedInput": "Saved input digest",
+      "savedTargets": "{{count, number}} targets in the saved plan",
+      "savedPaths": "Paths allowed by the saved plan",
+      "savedNoResult": "No result has been saved for this language.",
+      "savedFailed": "This saved result did not produce successful build files.",
+      "savedEmpty": "The saved plan has no language results to display.",
+      "savedArtifacts": "Saved files for {{locale}}",
+      "savedRole": "Role: {{role}}",
+      "savedSha": "SHA-256 for {{path}}",
+      "savedReadFailed": "The saved build could not be read or its original references could not be verified. The stored input and output have been kept.",
+      "savedRefresh": "Read saved build again",
+      "savedBack": "Return to build setup",
       "refresh": "Refresh installed build choices",
       "builder": "Installed build capability",
       "chooseBuilder": "Choose an installed builder",
@@ -1000,6 +1016,7 @@ ai: {
   }
 },
     execution: {
+    "savedBuildBlocked": "Build and export has an unfinished draft, preparation or action. Your current work has been kept; finish it or explicitly discard it before viewing another saved build.",
         "updatesUnavailable": "Live updates are unavailable. Your work is preserved. Refresh to check the project again.",
       "operation": "Project operation",
       "sampleOperation": "Sample update",

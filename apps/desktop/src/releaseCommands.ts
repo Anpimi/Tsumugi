@@ -1,10 +1,11 @@
 import { checkedInvoke } from "./ipc";
-import type { SessionRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest, PluginBuildPrepareRequest, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest } from "./generated/release.requests";
+import type { SessionRequest, ReleaseRequest, PreviewRequest, ExportRequest, ReconcileRequest, PluginBuildPrepareRequest, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest, SavedPluginBuildRequest } from "./generated/release.requests";
 import * as validators from "./generated/release.validators";
 
 export type { ExportRequest } from "./generated/release.requests";
 export type { PluginBuildPrepareRequest, PluginBuildLocaleChoice, PluginStartRequest, ArtifactCheckPrepareRequest, ArtifactCheckFinishRequest } from "./generated/release.requests";
 export type { PluginBuildReview, ArtifactCheckReview, CheckedArtifact } from "./generated/release.responses";
+export type { SavedPluginBuildView, SavedBuildLocale } from "./generated/release.responses";
 export type { ReleaseView, ReleasedArtifact, ReleaseException, ReleaseExceptionKind, BuildSourceFile as ReleaseSourceFile, DeliverySelection, PreviewFile, DeliveryPreview, DeliveryPreviewState, DeliveryFile, DeliveryFileState, DeliveryView, DeliveryState } from "./generated/release.responses";
 
 function requireConfirmation(condition: boolean) {
@@ -12,6 +13,21 @@ function requireConfirmation(condition: boolean) {
 }
 
 export const releaseCommands = {
+  savedBuild: async (request: SavedPluginBuildRequest) => {
+    const result = await checkedInvoke("read_saved_plugin_build", request, validators.validateResponseSavedPluginBuild);
+    requireConfirmation(result.projectId === request.projectId && result.attemptId === request.attemptId
+      && new Set(result.locales.map(locale => locale.choice.locale)).size === result.locales.length
+      && new Set(result.locales.map(locale => locale.itemId)).size === result.locales.length
+      && new Set(result.locales.flatMap(locale => locale.result ? [locale.result.resultId] : [])).size === result.locales.filter(locale => locale.result).length
+      && result.locales.every(locale => locale.status.itemId === locale.itemId && (!locale.result
+        || (locale.result.outcome === locale.status.execution && (locale.result.outcome === "succeeded"
+          ? locale.result.artifacts.length === locale.choice.outputPaths.length
+            && new Set(locale.result.artifacts.map(artifact => artifact.id)).size === locale.result.artifacts.length
+            && new Set(locale.result.artifacts.map(artifact => artifact.logicalPath)).size === locale.result.artifacts.length
+            && locale.result.artifacts.every(artifact => locale.choice.outputPaths.includes(artifact.logicalPath))
+          : locale.result.artifacts.length === 0)))));
+    return result;
+  },
   preparePlugin: async (request: PluginBuildPrepareRequest) => {
     const result = await checkedInvoke("prepare_plugin_build", request, validators.validateResponsePluginBuild);
     requireConfirmation(result.attemptId === request.attemptId && result.eligibilityBasis === request.expectedEligibilityBasis

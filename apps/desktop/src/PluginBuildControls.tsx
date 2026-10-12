@@ -13,10 +13,11 @@ import { readCompleteAttempt } from "./executionRead";
 import { reviewReasonKey } from "./reviewLabels";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import type { EditorTarget } from "./TranslationWorkbench";
+import { SavedPluginBuildSummary } from "./SavedPluginBuildSummary";
 
 interface BuildChoice { key: string; label: string; package: PluginBuildRequest["package"]; resourceId: string; runtimeKinds: PluginComponentRuntime[] }
 export interface PluginBuildState { busy: boolean; pending: boolean }
-export interface PluginBuildHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
+export interface PluginBuildHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean>; showSavedBuild: (attemptId: string) => boolean }
 type Intent =
   | { kind: "prepare-build"; request: PluginBuildPrepareRequest }
   | { kind: "prepare-check"; request: ArtifactCheckPrepareRequest }
@@ -66,6 +67,7 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   const [prepared, setPrepared] = useState<{ request: PluginBuildPrepareRequest; review: PluginBuildReview } | null>(null);
   const [buildConsent, setBuildConsent] = useState<string | null>(null);
   const [attempt, setAttempt] = useState<string | null>(null);
+  const [savedAttempt, setSavedAttempt] = useState<string | null>(null);
   const [checkReview, setCheckReview] = useState<ArtifactCheckReview | null>(null);
   const [checkConsent, setCheckConsent] = useState<string | null>(null);
   const [checkAttempt, setCheckAttempt] = useState<string | null>(null);
@@ -81,13 +83,17 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   const restoreLeaveFocus = useRef(false);
   const running = useRef(false), mounted = useRef(true), sequence = useRef(0);
   const errorRegion = useRef<HTMLDivElement>(null);
+  const savedErrorRegion = useRef<HTMLDivElement>(null);
   const choice = choices.find(item => item.key === choiceKey);
+  const setupOpen = open && !savedAttempt;
   const runtimes = matchingPluginEnvironments(environments, choice?.runtimeKinds ?? []);
   const environmentAvailable = runtimes.some(item => item.environmentDigest === runtimeDigest);
   const buildChoice: PluginBuildRequest | null = choice && runtimeDigest ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest } : null;
-  const buildRead = useSessionQuery({ key: ["release-plugin-build", attempt], scopes: ["execution"], enabled: open && !!attempt && !busy,
+  const buildRead = useSessionQuery({ key: ["release-plugin-build", attempt], scopes: ["execution"], enabled: setupOpen && !!attempt && !busy,
     read: () => attempt ? readCompleteAttempt(context, attempt, "locale-build") : Promise.resolve(null) });
-  const checkRead = useSessionQuery({ key: ["release-artifact-check", checkAttempt], scopes: ["execution"], enabled: open && !!checkAttempt && !busy,
+  const savedRead = useSessionQuery({ key: ["saved-plugin-build", savedAttempt], scopes: ["execution", "release"], enabled: open && !!savedAttempt,
+    read: () => { if (!savedAttempt) throw new Error("No saved build selected"); return releaseCommands.savedBuild({ ...context, attemptId: savedAttempt }); } });
+  const checkRead = useSessionQuery({ key: ["release-artifact-check", checkAttempt], scopes: ["execution"], enabled: setupOpen && !!checkAttempt && !busy,
     read: () => checkAttempt ? readCompleteAttempt(context, checkAttempt, "artifact-semantic-check") : Promise.resolve(null) });
   const detail = buildRead.data, checkDetail = checkRead.data, checkItem = checkDetail?.items[0];
   const checkActive = !!checkAttempt && (!checkDetail || checkDetail.items.some(item => item.status.execution === "queued" || item.status.execution === "dispatched"));
@@ -108,9 +114,10 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
   useEffect(() => { onState({ busy, pending: !!pending }); }, [busy, !!pending, onState]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
+  useEffect(() => { if (savedRead.error && open) savedErrorRegion.current?.focus(); }, [savedRead.error, open]);
   useEffect(() => { const error = buildRead.error ?? checkRead.error; if (error) setFailure(commandFailure(error)); }, [buildRead.error, checkRead.error]);
   useEffect(() => {
-    if (!open) { setInventoryReadyAt(null); setLoading(false); return; }
+    if (!setupOpen) { setInventoryReadyAt(null); setLoading(false); return; }
     let stale = false;
     setLoading(true); setInventoryReadyAt(null);
     void (async () => {
@@ -124,10 +131,10 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
       finally { if (!stale) setLoading(false); }
     })();
     return () => { stale = true; };
-  }, [open, project.sessionToken, refresh]);
+  }, [setupOpen, project.sessionToken, refresh]);
   useEffect(() => {
     setEnvironment(null);
-    if (!open || !inventoryReady || loading || !choice || !environmentAvailable || unavailable) { setEnvironmentLoading(false); return; }
+    if (!setupOpen || !inventoryReady || loading || !choice || !environmentAvailable || unavailable) { setEnvironmentLoading(false); return; }
     let stale = false;
     setEnvironmentLoading(true);
     void pluginCommands.build({ package: choice.package, resourceId: choice.resourceId, environmentDigest: runtimeDigest }).then(value => {
@@ -136,7 +143,7 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
     }).catch(error => { if (!stale) setFailure(commandFailure(error)); })
       .finally(() => { if (!stale) setEnvironmentLoading(false); });
     return () => { stale = true; };
-  }, [open, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, inventoryReady, loading, refresh, unavailable]);
+  }, [setupOpen, project.sessionToken, choice?.key, runtimeDigest, environmentAvailable, inventoryReady, loading, refresh, unavailable]);
 
   function updatePending(value: Intent | null) { pendingRef.current = value; setPending(value); setReceiptChecked(false); }
   async function perform(work: (current: () => boolean) => Promise<void>) {
@@ -213,6 +220,13 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   }
   function answerLeave(answer: boolean) { restoreLeaveFocus.current = !answer; setLeave(false); leaveResolver.current?.(answer); leaveResolver.current = null; }
   useImperativeHandle(ref, () => ({
+    showSavedBuild(id) {
+      if (disabled || running.current || pendingRef.current || hasDraft || prepared || buildConsent || checkConsent || checkReview || attempt || checkAttempt || leave) {
+        return false;
+      }
+      setSavedAttempt(id);
+      return true;
+    },
     allowNavigate: () => Promise.resolve(!running.current && !pendingRef.current),
     allowLeave() {
       if (running.current || pendingRef.current) { onAttention(); return Promise.resolve(false); }
@@ -228,7 +242,14 @@ export function PluginBuildControls({ project, open, disabled, onState, onRecord
   }
 
   return <>
-    <section aria-label={t("release.prepare")} aria-busy={busy || loading || environmentLoading}>
+    {savedAttempt ? <section aria-label={t("releasePlugin.savedView")} aria-busy={savedRead.isFetching}>
+      {savedRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
+      {savedRead.error ? <div role="alert" ref={savedErrorRegion} tabIndex={-1}><p>{t("releasePlugin.savedReadFailed")}</p><CommandFailureDetails failure={commandFailure(savedRead.error)} /></div> : null}
+      {!savedRead.error && savedRead.data?.attemptId === savedAttempt ? <SavedPluginBuildSummary build={savedRead.data} /> : null}
+      <div className="execution-actions"><button className="secondary-button" disabled={savedRead.isFetching} onClick={() => void savedRead.refetch()}>{t("releasePlugin.savedRefresh")}</button>
+        <button className="text-button" onClick={() => setSavedAttempt(null)}>{t("releasePlugin.savedBack")}</button></div>
+    </section> : null}
+    <section hidden={!!savedAttempt} aria-label={t("release.prepare")} aria-busy={busy || loading || environmentLoading}>
       <h3>{t("release.prepare")}</h3><p>{t("release.scope")}</p>
       {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("releasePlugin.failed")}</p><CommandFailureDetails failure={failure} />{typeof failure === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
       {busy || loading || environmentLoading ? <p role="status">{t("execution.working")}</p> : null}

@@ -82,6 +82,44 @@ request!(
         result_id: ExecutionId
     }
 );
+request!(
+    #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
+    SavedPluginBuildRequest {
+        attempt_id: ExecutionId
+    }
+);
+
+/// A historical projection grants no execution and never consults or repairs
+/// installation state. The Core owner validates original immutable references.
+#[tauri::command]
+pub async fn read_saved_plugin_build(
+    state: State<'_, AppState>,
+    request: SavedPluginBuildRequest,
+) -> Result<tsumugi_core::SavedPluginBuildView, CommandError> {
+    state
+        .sessions
+        .run(
+            "read_saved_plugin_build",
+            CommandStage::ExecutionRead,
+            move |sessions| {
+                let active = authorized(
+                    sessions,
+                    &request.session_token,
+                    request.project_id,
+                    CommandStage::ExecutionRead,
+                )?;
+                let running = active
+                    .execution
+                    .as_ref()
+                    .is_some_and(|host| host.runtime.is_active(request.attempt_id));
+                active
+                    .store
+                    .read_saved_plugin_build(request.project_id, request.attempt_id, running)
+                    .map_err(map_read)
+            },
+        )
+        .await
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]

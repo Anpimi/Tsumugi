@@ -1377,7 +1377,13 @@ impl ProjectStore {
                 .iter()
                 .any(|item| item.validation == ValidationState::Pending)
             {
-                entry.actions.push(RecoveryAction::ValidateOutput);
+                if input.envelope().plugin.is_some() {
+                    // Plugin output requires its independently authorized
+                    // semantic checker. The generic mutation refuses it.
+                    entry.blocked_reason = Some("external-new-consent".into());
+                } else {
+                    entry.actions.push(RecoveryAction::ValidateOutput);
+                }
                 entry.remaining_item_ids = statuses
                     .iter()
                     .filter(|item| item.validation == ValidationState::Pending)

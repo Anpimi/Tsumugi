@@ -17,7 +17,7 @@ const errorReasons = {
   "outcome-unknown": "release.errorOutcomeUnknown",
 } as const;
 
-export interface ReleaseHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
+export interface ReleaseHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean>; showSavedBuild: (attemptId: string) => boolean }
 type PendingRelease = { kind: "export"; request: ExportRequest };
 export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: { project: ProjectView; disabled: boolean; ref?: Ref<ReleaseHandle>; onOpenTranslation?: (target: import("./TranslationWorkbench").EditorTarget, locale: string) => boolean }) {
   const { t } = useTranslation();
@@ -44,6 +44,11 @@ export function ReleaseWorkbench({ project, disabled, ref, onOpenTranslation }: 
   const mounted = useRef(false);
   const mutating = useRef(false);
   useImperativeHandle(ref, () => ({
+    showSavedBuild(id) {
+      if (disabled || mutating.current || pendingRef.current || !buildControls.current?.showSavedBuild(id)) return false;
+      setOpen(true);
+      return true;
+    },
     allowLeave() {
       if (mutating.current || pendingRef.current) { setOpen(true); return Promise.resolve(false); }
       return buildControls.current?.allowLeave() ?? Promise.resolve(true);

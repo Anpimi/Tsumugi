@@ -3,10 +3,46 @@ import fixture from "../test/fixtures/releaseCommands.contract.json";
 import { releaseCommands } from "./releaseCommands";
 import * as validators from "./generated/release.validators";
 import { hasUnknownOutcome } from "./projectCommands";
+import { pluginBuildWorkflow, savedPluginBuild } from "./testSupport/pluginBuildFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 beforeEach(() => invoke.mockReset());
+
+it("reads the typed saved build with its exact original identity and without execution calls", async () => {
+  expect(validators.validateRequestSavedPluginBuild(pluginBuildWorkflow.savedRead)).toBe(true);
+  expect(validators.validateResponseSavedPluginBuild(savedPluginBuild)).toBe(true);
+  invoke.mockResolvedValue(savedPluginBuild);
+  expect(await releaseCommands.savedBuild(pluginBuildWorkflow.savedRead)).toEqual(savedPluginBuild);
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(invoke).toHaveBeenLastCalledWith("read_saved_plugin_build", { request: pluginBuildWorkflow.savedRead });
+  expect(savedPluginBuild.locales[0].result?.artifacts.map(file => file.logicalPath)).toEqual(pluginBuildWorkflow.review.choices[0].outputPaths);
+});
+
+it("bounds saved build counts and refuses artifact bytes in the read-only projection", () => {
+  const locale = savedPluginBuild.locales[0], artifact = locale.result!.artifacts[0];
+  for (const count of [-1, 4294967296, 0.5, "2"]) {
+    expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, locales: [{ ...locale, targetCount: count }] })).toBe(false);
+    expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, locales: [{ ...locale,
+      result: { ...locale.result, artifacts: [{ ...artifact, byteLength: count }] } }] })).toBe(false);
+  }
+  expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, locales: [{ ...locale,
+    result: { ...locale.result, artifacts: [{ ...artifact, utf8: "unrequested output bytes" }] } }] })).toBe(false);
+});
+
+it.each(["project", "attempt", "item", "paths", "artifact-id", "status", "non-success"] as const)("rejects a saved build projection with mismatched %s without retry", async mismatch => {
+  const value = structuredClone(savedPluginBuild), other = pluginBuildWorkflow.prepareCheck.attemptId;
+  if (mismatch === "project") value.projectId = other;
+  if (mismatch === "attempt") value.attemptId = other;
+  if (mismatch === "item") value.locales[0].status.itemId = other;
+  if (mismatch === "paths") value.locales[0].choice.outputPaths = ["unrequested.txt"];
+  if (mismatch === "artifact-id") value.locales[0].result!.artifacts[1].id = value.locales[0].result!.artifacts[0].id;
+  if (mismatch === "status") value.locales[0].status.execution = "failed";
+  if (mismatch === "non-success" && value.locales[0].result) value.locales[0].result.outcome = "failed";
+  invoke.mockResolvedValue(value);
+  await expect(releaseCommands.savedBuild(pluginBuildWorkflow.savedRead)).rejects.toThrow();
+  expect(invoke).toHaveBeenCalledTimes(1);
+});
 
 it("round trips the shared delivery contracts through all seven adapters", async () => {
   const requestChecks = { session: validators.validateRequestSession,

@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Tasks now shows saved plugin build plans and every artifact's allowed path,
+  role, byte count and SHA-256, with the original plan's target count. An exact
+  read-only route opens the same build in Build and export without replacing an
+  unfinished mapping, preparation, consent or pending action. Historical reads
+  verify the original immutable plan and results without requiring an installed
+  builder or restoring execution approval. Unsupported generic semantic checks
+  are no longer offered for plugin output; fresh execution still requires its
+  separately prepared input and explicit approval.
+
 - Experimental desktop IPC can independently withdraw approval and remove one
   exact installation. Accepted continuations retain the original request after
   a lost waiter, stop dependent work before removal, and keep project switching

@@ -98,6 +98,13 @@ fn build_workflow_wire_preserves_exact_scope_and_separate_consents() {
     round::<ArtifactCheckReview>(&fixture["checkReview"]);
     round::<PluginStartRequest>(&fixture["startCheck"]);
     round::<ArtifactCheckFinishRequest>(&fixture["finishCheck"]);
+    round::<SavedPluginBuildRequest>(&fixture["savedRead"]);
+    round::<tsumugi_core::SavedPluginBuildView>(&fixture["savedBuild"]);
+    for property in ["build", "resourceId", "grantId", "unsandboxedExecution"] {
+        let mut forged = fixture["savedRead"].clone();
+        forged[property] = json!(true);
+        assert!(serde_json::from_value::<SavedPluginBuildRequest>(forged).is_err());
+    }
     for property in ["directory", "approved", "environment", "renewGrant"] {
         let mut forged = fixture["start"].clone();
         forged[property] = json!(true);
@@ -474,6 +481,31 @@ fn actual_installed_build_and_checker_ipc_commit_a_complete_release() {
         attempt
     );
     let detail = completed(&window, &context, &attempt, 2);
+    let saved_request = json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":attempt});
+    let saved_build = call(&window, "read_saved_plugin_build", saved_request.clone()).unwrap();
+    assert_eq!(saved_build["attemptId"], attempt);
+    assert_eq!(saved_build["locales"].as_array().unwrap().len(), 2);
+    assert!(
+        saved_build["locales"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|locale| locale["targetCount"] == 1
+                && locale["result"]["artifacts"].as_array().unwrap().len() == 2)
+    );
+    assert!(
+        detail["recovery"]["units"][0]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|action| action != "validate-output")
+    );
+    let mut wrong = saved_request.clone();
+    wrong["projectId"] = json!(ExecutionId::new());
+    assert!(call(&window, "read_saved_plugin_build", wrong).is_err());
+    let mut wrong = saved_request;
+    wrong["attemptId"] = json!(ExecutionId::new());
+    assert!(call(&window, "read_saved_plugin_build", wrong).is_err());
     assert_eq!(
         call(&window, "start_plugin_build", start.clone()).unwrap(),
         attempt
@@ -728,6 +760,29 @@ fn actual_installed_build_and_checker_ipc_commit_a_complete_release() {
         releases
     );
     state.plugins.close();
+    let historical = call(&window, "read_saved_plugin_build", json!({"sessionToken":context["sessionToken"],"projectId":context["projectId"],"attemptId":attempt})).unwrap();
+    assert_eq!(historical["inputDigest"], saved_build["inputDigest"]);
+    assert_eq!(
+        historical["sourceSnapshotId"],
+        saved_build["sourceSnapshotId"]
+    );
+    assert_eq!(historical["build"], saved_build["build"]);
+    for (current, original) in historical["locales"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(saved_build["locales"].as_array().unwrap())
+    {
+        assert_eq!(current["choice"], original["choice"]);
+        assert_eq!(current["targetCount"], original["targetCount"]);
+        assert_eq!(current["result"], original["result"]);
+    }
+    state.sessions.with(|sessions| {
+        assert!(
+            sessions.active.as_ref().unwrap().execution.is_none(),
+            "history must not initialize an execution epoch"
+        );
+    });
     // Release export has no dependency on the current package/runtime manager.
     let held = selected;
     let selection_id = ExecutionId::new();

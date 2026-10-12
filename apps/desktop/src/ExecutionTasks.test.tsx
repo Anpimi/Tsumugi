@@ -8,11 +8,38 @@ import fixture from "../test/fixtures/executionCommands.contract.json";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import type { ProjectView } from "./projectCommands";
 import type { AttemptDetail } from "./executionCommands";
+import { savedPluginBuild } from "./testSupport/pluginBuildFixture";
+import type { SavedPluginBuildView } from "./releaseCommands";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "session-1", locator: "C:\\isolated\\project", metadata: { projectId: fixture.session.projectId, displayName: "Demo", sourceLocale: "en-US", targetLocales: ["zh-CN"], metadataRevision: "1" }, reconciliationState: "settled" };
 const task = { taskId: fixture.detail.taskId, projectId: fixture.session.projectId, operation: "sample-update", sequence: "1", cancellationRevision: "0" };
 function detail(): AttemptDetail { return structuredClone(fixture.detail) as AttemptDetail; }
+function savedBuildDetail(saved: SavedPluginBuildView): AttemptDetail {
+  return { attemptId: saved.attemptId, taskId: saved.taskId, operation: "locale-build", nextOffset: null,
+    items: saved.locales.map(locale => ({ scope: { kind: "locale", id: locale.choice.locale, locale: locale.choice.locale }, status: locale.status, resultId: locale.result?.resultId ?? null })),
+    progress: { total: saved.locales.length, queued: 0, running: 0, succeeded: saved.locales.length, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
+    recovery: { attemptId: saved.attemptId, units: [{ unitId: fixtureIdentity(830), itemIds: saved.locales.map(locale => locale.itemId), scopes: saved.locales.map(locale => ({ kind: "locale", id: locale.choice.locale, locale: locale.choice.locale })),
+      resultIds: saved.locales.flatMap(locale => locale.result ? [locale.result.resultId] : []), remainingItemIds: [], actions: [], blockedReason: "external-new-consent", receiptId: null }] } };
+}
+async function openSavedBuild(options: { saved?: SavedPluginBuildView; onSavedBuild?: (id: string) => boolean; read?: () => Promise<SavedPluginBuildView> } = {}) {
+  const saved = { ...structuredClone(options.saved ?? savedPluginBuild), projectId: project.metadata.projectId };
+  const value = savedBuildDetail(saved);
+  invoke.mockImplementation(async (command: string) => {
+    if (command === "execution_status") return fixture.status;
+    if (command === "list_execution_tasks") return [{ ...task, taskId: saved.taskId, operation: "locale-build" }];
+    if (command === "read_execution_task") return [{ attemptId: saved.attemptId, sequence: "1" }];
+    if (command === "read_execution_attempt") return value;
+    if (command === "read_saved_plugin_build") return options.read ? options.read() : saved;
+    throw new Error(`Unexpected command: ${command}`);
+  });
+  const user = userEvent.setup();
+  render(<ExecutionTasks project={project} disabled={false} onSavedBuild={options.onSavedBuild} />);
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.title") }));
+  await user.click(await screen.findByRole("button", { name: `${i18n.t("release.title")} · ${i18n.t("execution.taskNumber", { number: "1" })}` }));
+  await screen.findByRole("button", { name: i18n.t("execution.output") });
+  return { user, saved };
+}
 beforeEach(async () => { await i18n.changeLanguage("en-US"); invoke.mockReset(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 async function openTasks(value = detail()) {
@@ -167,4 +194,73 @@ it("confirms only the selected unknown item and describes checking without gener
   expect(within(dialog).getByText(/these 1 selected items/)).toBeInTheDocument();
   expect(within(dialog).getByText(/does not generate results again/)).toBeInTheDocument();
   expect(within(dialog).queryByText("Other item")).not.toBeInTheDocument();
+});
+
+it.each(["en-US", "zh-CN"])("shows every saved plugin artifact and original target count without generic checking in %s", async language => {
+  await i18n.changeLanguage(language);
+  const { user, saved } = await openSavedBuild();
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.output") }));
+  const summary = await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  expect(within(summary).getByText(i18n.t("releasePlugin.savedTargets", { count: 2 }))).toBeInTheDocument();
+  expect(within(summary).getByText(i18n.t("releasePlugin.savedReadOnly"))).toBeInTheDocument();
+  const artifacts = within(summary).getByRole("list", { name: i18n.t("releasePlugin.savedArtifacts", { locale: "zh-CN" }) });
+  expect(within(artifacts).getAllByRole("listitem")).toHaveLength(2);
+  for (const artifact of saved.locales[0].result!.artifacts) {
+    expect(within(artifacts).getByText(artifact.logicalPath, { selector: "strong" })).toBeInTheDocument();
+    expect(within(artifacts).getByText(`${i18n.t("releasePlugin.savedRole", { role: artifact.role })} · ${i18n.t("releasePlugin.bytes", { count: artifact.byteLength })}`)).toBeInTheDocument();
+    expect(within(artifacts).getByLabelText(i18n.t("releasePlugin.savedSha", { path: artifact.logicalPath }))).toHaveTextContent(artifact.sha256);
+  }
+  expect(screen.queryByRole("button", { name: i18n.t("execution.actions.validate-output") })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.every(([command]) => ["execution_status", "list_execution_tasks", "read_execution_task", "read_execution_attempt", "read_saved_plugin_build"].includes(command))).toBe(true);
+  expect(invoke).toHaveBeenCalledWith("read_saved_plugin_build", { request: { sessionToken: project.sessionToken, projectId: project.metadata.projectId, attemptId: saved.attemptId } });
+});
+
+it.each(["task", "item", "result"] as const)("refuses a saved build with a different %s and recovers by reading the same selection", async mismatch => {
+  const correct = { ...structuredClone(savedPluginBuild), projectId: project.metadata.projectId };
+  const wrong = structuredClone(correct);
+  if (mismatch === "task") wrong.taskId = fixtureIdentity(888);
+  if (mismatch === "item") { wrong.locales[0].itemId = fixtureIdentity(888); wrong.locales[0].status.itemId = fixtureIdentity(888); }
+  if (mismatch === "result") wrong.locales[0].result!.resultId = fixtureIdentity(888);
+  let response = wrong;
+  const { user } = await openSavedBuild({ read: async () => response });
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.output") }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(i18n.t("releasePlugin.savedReadFailed"));
+  expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).not.toBeInTheDocument();
+  expect(screen.getByText("zh-CN · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  response = correct;
+  await user.click(within(alert).getByRole("button", { name: i18n.t("releasePlugin.savedRefresh") }));
+  await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_saved_plugin_build").map(([, args]) => args.request.attemptId)).toEqual([correct.attemptId, correct.attemptId]);
+});
+
+it("shows a continued build's reused result through its logical saved attempt without requiring a rewritten output frame", async () => {
+  const continued = { ...structuredClone(savedPluginBuild), attemptId: fixtureIdentity(891) };
+  const originalResult = continued.locales[0].result!.resultId;
+  const { user, saved } = await openSavedBuild({ saved: continued });
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.output") }));
+  const summary = await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  const artifacts = within(summary).getByRole("list", { name: i18n.t("releasePlugin.savedArtifacts", { locale: "zh-CN" }) });
+  expect(within(artifacts).getAllByRole("listitem")).toHaveLength(2);
+  for (const artifact of saved.locales[0].result!.artifacts) {
+    expect(within(artifacts).getByLabelText(i18n.t("releasePlugin.savedSha", { path: artifact.logicalPath }))).toHaveTextContent(artifact.sha256);
+  }
+  expect(saved.locales[0].result!.resultId).toBe(originalResult);
+  expect(invoke).toHaveBeenCalledWith("read_saved_plugin_build", { request: { sessionToken: project.sessionToken, projectId: project.metadata.projectId, attemptId: continued.attemptId } });
+  expect(invoke.mock.calls.some(([command]) => command === "read_execution_output" || command === "start_plugin_build" || command === "create_execution_identity")).toBe(false);
+});
+
+it("keeps Tasks open when the saved-build owner refuses navigation and forwards the exact attempt on acceptance", async () => {
+  const navigate = vi.fn<(id: string) => boolean>().mockReturnValue(false);
+  const { user, saved } = await openSavedBuild({ onSavedBuild: navigate });
+  const route = screen.getByRole("button", { name: i18n.t("releasePlugin.savedOpen") });
+  await user.click(route);
+  expect(navigate).toHaveBeenLastCalledWith(saved.attemptId);
+  expect(await screen.findByText(i18n.t("execution.savedBuildBlocked"))).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: i18n.t("execution.title") })).toBeVisible();
+  navigate.mockReturnValue(true);
+  await user.click(route);
+  expect(navigate.mock.calls).toEqual([[saved.attemptId], [saved.attemptId]]);
+  expect(screen.queryByRole("heading", { name: i18n.t("execution.title") })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.every(([command]) => command.startsWith("read_") || command === "execution_status" || command === "list_execution_tasks")).toBe(true);
 });

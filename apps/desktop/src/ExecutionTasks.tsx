@@ -6,11 +6,13 @@ import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { CommandError, ProjectView } from "./projectCommands";
 import { projectCommands } from "./projectCommands";
+import { releaseCommands } from "./releaseCommands";
+import { SavedPluginBuildSummary } from "./SavedPluginBuildSummary";
 import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type PrepareRequest, type ResultEnvelope } from "./executionCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string };
 export interface TasksHandle { allowLeave: () => Promise<boolean> }
-export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; ref?: Ref<TasksHandle> }) {
+export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, onSavedBuild, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; onSavedBuild?: (id: string) => boolean; ref?: Ref<TasksHandle> }) {
   const { t } = useTranslation();
   const [open, setOpen] = useWorkbenchView("tasks");
   const [dismissBlocked, setDismissBlocked] = useState(false);
@@ -19,11 +21,11 @@ export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslati
   useImperativeHandle(ref, () => ({ allowLeave: () => Promise.resolve(!dismissBlocked) }));
   return <WorkbenchPanel open={open} title={t("execution.title")} description={project.metadata.displayName}
     onBack={() => { if (!dismissBlocked) setOpen(false); }} backDisabled={disabled || dismissBlocked}>
-    {visited ? <TaskContent active={open} onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
+    {visited ? <TaskContent active={open} onSavedBuild={onSavedBuild ? id => { const accepted = onSavedBuild(id); if (accepted) setOpen(false); return accepted; } : undefined} onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
   </WorkbenchPanel>;
 }
 
-export function TaskContent({ project, active = true, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview }: { project: ProjectView; active?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void }) {
+export function TaskContent({ project, active = true, onDismissBlockedChange, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, onSavedBuild }: { project: ProjectView; active?: boolean; onDismissBlockedChange?: (blocked: boolean) => void; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; onSavedBuild?: (id: string) => boolean }) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -34,16 +36,17 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
   const [busy, setBusy] = useState(false);
   const [failureValue, setFailure] = useState<CommandFailure | null>(null);
   const failure = typeof failureValue === "string" ? failureValue : failureValue?.code ?? null;
-  const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | null>(null);
+  const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | "savedBuildBlocked" | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [output, setOutput] = useState<ResultEnvelope | null>(null);
+  const [savedOutput, setSavedOutput] = useState<{ attemptId: string; itemId: string; resultId: string } | null>(null);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [pendingAction, setPendingAction] = useState<PrepareRequest | null>(null);
   const [receiptChecked, setReceiptChecked] = useState(false);
   const actionTrigger = useRef<HTMLElement | null>(null);
   const outputRegion = useRef<HTMLDivElement | null>(null);
   useEffect(() => { onDismissBlockedChange?.(busy || pendingAction !== null); return () => onDismissBlockedChange?.(false); }, [busy, pendingAction, onDismissBlockedChange]);
-  useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
+  useEffect(() => { if (output || savedOutput) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output, savedOutput]);
   function confirm(choice: Confirmation) { actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFailure(null); setMessage(null); setConfirmation(choice); }
   const mounted = useRef(true);
   const mutating = useRef(false);
@@ -69,10 +72,23 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
   });
   const tasks = projection.data?.tasks ?? [], attempts = projection.data?.attempts ?? [], detail = projection.data?.detail ?? null;
   const loading = projection.isPending && active && !busy;
+  const savedOutputRead = useSessionQuery({ key: ["saved-plugin-build-output", savedOutput?.attemptId ?? null, savedOutput?.itemId ?? null, savedOutput?.resultId ?? null],
+    scopes: ["execution", "release"], enabled: active && detail?.operation === "locale-build" && !!savedOutput,
+    read: async () => {
+      if (!detail || !savedOutput) throw new Error("No saved build result selected");
+      const selected = detail, expected = savedOutput;
+      const saved = await releaseCommands.savedBuild({ ...context, attemptId: selected.attemptId });
+      const locale = saved.locales.find(locale => locale.itemId === expected.itemId);
+      const item = selected.items.find(item => item.status.itemId === expected.itemId);
+      if (saved.taskId !== selected.taskId || expected.attemptId !== selected.attemptId
+        || !locale || !item || locale.choice.locale !== item.scope.locale || locale.result?.resultId !== expected.resultId
+        || item.resultId !== expected.resultId || locale.result.outcome !== item.status.execution) throw new Error("Saved build result identity changed");
+      return saved;
+    } });
   useEffect(() => { const error = projection.error ?? projection.data?.runtime.error; if (error) showError(error); }, [projection.error, projection.data?.runtime.error]);
 
   function selectTask(id: string | null) {
-    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setFailure(null); setPendingAction(null);
+    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setOffset(0); setOutput(null); setSavedOutput(null); setReceipt(null); setFailure(null); setMessage(null); setPendingAction(null);
   }
   async function perform(work: () => Promise<void>) {
     if (mutating.current) return;
@@ -100,7 +116,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
           if (mounted.current) setReceipt(result);
         } else {
           const result = await commands.recover({ ...context, attemptId: selected.attemptId, unitId: unit.unitId, action: choice.action, itemIds: choice.itemId ? [choice.itemId] : unit.remainingItemIds });
-          if (mounted.current && result.attemptId !== selected.attemptId) { setAttemptId(result.attemptId); setOffset(0); setOutput(null); setReceipt(null); }
+          if (mounted.current && result.attemptId !== selected.attemptId) { setAttemptId(result.attemptId); setOffset(0); setOutput(null); setSavedOutput(null); setReceipt(null); }
           if (mounted.current && result.queryStarted) setMessage("queryStarted");
         }
       }
@@ -147,7 +163,7 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
     </> : <>
       <label className="field execution-attempt">{t("execution.attempt")}
         <select disabled={busy || pendingAction !== null} value={attemptId ?? detail?.attemptId ?? ""} onChange={event => {
-          setAttemptId(event.target.value); setOffset(0); setOutput(null); setReceipt(null);
+          setAttemptId(event.target.value); setOffset(0); setOutput(null); setSavedOutput(null); setReceipt(null);
         }}>
           {attempts.map(attempt => <option key={attempt.attemptId} value={attempt.attemptId}>{t("execution.attemptNumber", { number: attempt.sequence })}</option>)}
           {detail && !attempts.some(attempt => attempt.attemptId === detail.attemptId) ? <option value={detail.attemptId}>{t("execution.currentAttempt")}</option> : null}
@@ -182,32 +198,39 @@ export function TaskContent({ project, active = true, onDismissBlockedChange, on
           </section>)}
         </section>
         <h3>{t("execution.itemResults")}</h3>{detail.operation === "arena-translation" ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onArenaPreview?.(detail.attemptId)}>{t("arena.open")}</button> : null}{detail.operation === "ai-translation" ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onAiPreview?.(detail.attemptId)}>{t("ai.results")}</button> : null}
+        {detail.operation === "locale-build" && onSavedBuild ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => {
+          if (mutating.current || pendingAction) return;
+          setMessage(onSavedBuild(detail.attemptId) ? null : "savedBuildBlocked");
+        }}>{t("releasePlugin.savedOpen")}</button> : null}
         {detail.operation === "source-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onSourcePreview?.(detail.attemptId)}>{t("source.preview")}</button> : null}
         {detail.operation === "translation-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onTranslationPreview?.(detail.attemptId)}>{t("translation.preview")}</button> : null}
         <ul className="execution-list">{detail.items.map(item => <li key={item.status.itemId}>
           <div className="execution-item-heading"><strong>{item.scope.id}{item.scope.locale ? ` · ${item.scope.locale}` : ""}</strong>
-            {item.resultId ? <button className="text-button" disabled={busy} onClick={() => void perform(async () => {
-              const result = await commands.output({ ...context, attemptId: detail.attemptId, resultId: item.resultId! });
-              if (mounted.current) setOutput(result);
-            })}>{t(item.status.execution === "succeeded" ? "execution.output" : "execution.failureDetails")}</button> : null}
+            {item.resultId ? <button className="text-button" disabled={busy} onClick={() => {
+              if (detail.operation === "locale-build") { setSavedOutput({ attemptId: detail.attemptId, itemId: item.status.itemId, resultId: item.resultId! }); return; }
+              void perform(async () => {
+                const result = await commands.output({ ...context, attemptId: detail.attemptId, resultId: item.resultId! });
+                if (mounted.current) setOutput(result);
+              });
+            }}>{t(item.status.execution === "succeeded" ? "execution.output" : "execution.failureDetails")}</button> : null}
           </div>
           <p>{t(`execution.states.${item.status.execution}`)} · {t(`execution.adoption.${item.status.adoption}`)}</p>
           {item.status.validation === "invalid" ? <p>{t("execution.errors.invalid")}</p> : null}
           {item.status.cancellationRequested ? <small>{t("execution.cancellationRequested")}</small> : null}
-          {output?.itemId === item.status.itemId && output.resultId === item.resultId ? <div className="execution-result" ref={outputRegion} tabIndex={-1} role="region" aria-label={t("execution.resultFor", { name: item.scope.id })}>
+          {(detail.operation === "locale-build" ? savedOutput?.attemptId === detail.attemptId && savedOutput.itemId === item.status.itemId && savedOutput.resultId === item.resultId : output?.itemId === item.status.itemId && output.resultId === item.resultId) ? <div className="execution-result" ref={outputRegion} tabIndex={-1} role="region" aria-label={t("execution.resultFor", { name: item.scope.id })}>
             <h4>{t("execution.resultFor", { name: item.scope.id })}</h4>
-            {output.output !== null ? detail.operation === "locale-build" ? <p>{t("release.outputSummary", {
-              file: (output.output as { fileName: string }).fileName,
-              count: (output.output as { entryCount: number }).entryCount,
-              digest: (output.output as { sha256: string }).sha256,
-            })}</p> : <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
-            {output.diagnostic ? <>{output.outcome !== "succeeded" ? <p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p> : null}
+            {detail.operation === "locale-build" ? <>
+              {savedOutputRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
+              {savedOutputRead.error ? <div role="alert"><p>{t("releasePlugin.savedReadFailed")}</p><CommandFailureDetails failure={commandFailure(savedOutputRead.error)} /><button disabled={savedOutputRead.isFetching} onClick={() => void savedOutputRead.refetch()}>{t("releasePlugin.savedRefresh")}</button></div> : null}
+              {!savedOutputRead.error && savedOutputRead.data ? <SavedPluginBuildSummary build={savedOutputRead.data} itemId={item.status.itemId} /> : null}
+            </> : output && output.output !== null ? <pre className="execution-output">{JSON.stringify(output.output, null, 2)}</pre> : <p>{t("execution.noOutput")}</p>}
+            {detail.operation !== "locale-build" && output?.diagnostic ? <>{output.outcome !== "succeeded" ? <p>{t(output.diagnostic.retrySafe ? "execution.safeFailure" : "execution.unsafeFailure")}</p> : null}
               <details><summary>{t("execution.diagnostic")}</summary><code>{output.diagnostic.code}</code></details></> : null}
           </div> : null}
         </li>)}</ul>
         {offset > 0 || detail.nextOffset !== null ? <div className="execution-actions">
-          <button className="text-button" disabled={offset === 0 || busy} onClick={() => { setOffset(Math.max(0, offset - 100)); setOutput(null); }}>{t("execution.previousPage")}</button>
-          <button className="text-button" disabled={detail.nextOffset === null || busy} onClick={() => { setOffset(detail.nextOffset!); setOutput(null); }}>{t("execution.nextPage")}</button>
+          <button className="text-button" disabled={offset === 0 || busy} onClick={() => { setOffset(Math.max(0, offset - 100)); setOutput(null); setSavedOutput(null); }}>{t("execution.previousPage")}</button>
+          <button className="text-button" disabled={detail.nextOffset === null || busy} onClick={() => { setOffset(detail.nextOffset!); setOutput(null); setSavedOutput(null); }}>{t("execution.nextPage")}</button>
         </div> : null}
       </> : null}
     </>}

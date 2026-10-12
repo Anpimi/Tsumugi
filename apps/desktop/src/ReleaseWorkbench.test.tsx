@@ -1,13 +1,13 @@
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
-import { act, cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReleaseWorkbench } from "./ReleaseWorkbench";
 import type { ProjectView } from "./projectCommands";
-import type { DeliveryView, ReleaseView } from "./releaseCommands";
+import type { DeliveryView, ReleaseView, SavedPluginBuildView } from "./releaseCommands";
 import { i18n } from "./i18n";
 import { fixtureIdentity } from "./testSupport/executionFixture";
-import { pluginBuildInventory } from "./testSupport/pluginBuildFixture";
+import { pluginBuildInventory, savedPluginBuild } from "./testSupport/pluginBuildFixture";
 import { createRef } from "react";
 import type { ReleaseHandle } from "./ReleaseWorkbench";
 
@@ -61,6 +61,120 @@ async function readyExport() {
   await user.click(screen.getByRole("checkbox", { name: /Replace the existing conflicting files/ }));
   return { user, ref };
 }
+
+function historicalBuild(): SavedPluginBuildView { return { ...structuredClone(savedPluginBuild), projectId: project.metadata.projectId }; }
+function savedBuildReads(read: (attemptId: string) => Promise<SavedPluginBuildView>) {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: { attemptId?: string } }) => command === "read_saved_plugin_build"
+    ? read(args.request.attemptId!) : original(command, args));
+}
+function expectHistoricalReadsOnly() {
+  expect(invoke.mock.calls.every(([command]) => ["read_plugin_inventory", "list_releases", "read_saved_plugin_build"].includes(command))).toBe(true);
+}
+
+it.each(["en-US", "zh-CN"])("inspects a historical plugin build without an installed builder or renewed approval in %s", async language => {
+  await i18n.changeLanguage(language);
+  const saved = historicalBuild(), ref = createRef<ReleaseHandle>();
+  savedBuildReads(async () => saved);
+  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
+  await act(async () => { expect(ref.current!.showSavedBuild(saved.attemptId)).toBe(true); });
+  const summary = await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  expect(summary).toHaveTextContent(i18n.t("releasePlugin.savedReadOnly"));
+  expect(summary).toHaveTextContent(i18n.t("releasePlugin.savedTargets", { count: 2 }));
+  for (const artifact of saved.locales[0].result!.artifacts) {
+    expect(screen.getByLabelText(i18n.t("releasePlugin.savedSha", { path: artifact.logicalPath }))).toHaveTextContent(artifact.sha256);
+  }
+  expect(screen.getByRole("button", { name: i18n.t("releasePlugin.savedBack") })).toBeEnabled();
+  expect(invoke.mock.calls.some(([command]) => command === "read_plugin_inventory" || command === "read_plugin_package" || command === "read_plugin_build")).toBe(false);
+  expect(screen.queryByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.startCheck") })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.recordRelease") })).not.toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("read_saved_plugin_build", { request: { sessionToken: project.sessionToken, projectId: project.metadata.projectId, attemptId: saved.attemptId } });
+  expectHistoricalReadsOnly();
+});
+
+it.each(["absent", "failed"] as const)("distinguishes %s saved build output without fabricating files", async state => {
+  const saved = historicalBuild(), locale = saved.locales[0], ref = createRef<ReleaseHandle>();
+  if (state === "absent") { locale.result = null; locale.status.execution = "queued"; }
+  else { locale.result!.outcome = "failed"; locale.result!.artifacts = []; locale.status.execution = "failed"; }
+  savedBuildReads(async () => saved);
+  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
+  await act(async () => { expect(ref.current!.showSavedBuild(saved.attemptId)).toBe(true); });
+  await screen.findByText(i18n.t(state === "absent" ? "releasePlugin.savedNoResult" : "releasePlugin.savedFailed"));
+  expect(screen.queryByRole("list", { name: i18n.t("releasePlugin.savedArtifacts", { locale: "zh-CN" }) })).not.toBeInTheDocument();
+  expectHistoricalReadsOnly();
+});
+
+it("discards another saved attempt's late read and recovers an exact identity error without a grant", async () => {
+  // The canonical input and package fingerprints share bytes. This case needs
+  // a distinct input marker while preserving both attempts' original builder.
+  const first = { ...historicalBuild(), inputDigest: "c".repeat(64) }, second = { ...historicalBuild(), attemptId: fixtureIdentity(890), inputDigest: "f".repeat(64) };
+  let resolveFirst!: (value: SavedPluginBuildView) => void;
+  const deferred = new Promise<SavedPluginBuildView>(resolve => { resolveFirst = resolve; });
+  let correct = false;
+  savedBuildReads(async id => id === first.attemptId ? deferred : correct ? second : first);
+  const ref = createRef<ReleaseHandle>(), user = userEvent.setup();
+  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
+  await act(async () => { expect(ref.current!.showSavedBuild(first.attemptId)).toBe(true); });
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_saved_plugin_build")).toBe(true));
+  await act(async () => { expect(ref.current!.showSavedBuild(second.attemptId)).toBe(true); });
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(i18n.t("releasePlugin.savedReadFailed"));
+  expect(alert).toHaveFocus();
+  await act(async () => { resolveFirst(first); await deferred; });
+  expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).not.toBeInTheDocument();
+  correct = true;
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.savedRefresh") }));
+  const summary = await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  await user.click(screen.getByText(i18n.t("sourcePlugin.fixedDetails")));
+  expect(screen.getByText(second.inputDigest)).toBeVisible();
+  expect(screen.queryByText(first.inputDigest)).not.toBeInTheDocument();
+  expect(within(summary).getByText(i18n.t("sourcePlugin.packageDigest"), { selector: "dt" }).nextElementSibling)
+    .toHaveTextContent(second.build.binding.builder.provider.packageDigest);
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.savedBack") }));
+  expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedView") })).not.toBeInTheDocument();
+  expectHistoricalReadsOnly();
+});
+
+it("reads the same saved build afresh after a consumer remount without restoring prepared consent", async () => {
+  const saved = historicalBuild(), ref = createRef<ReleaseHandle>(), user = userEvent.setup();
+  let reads = 0, resolveFresh!: (value: SavedPluginBuildView) => void;
+  const fresh = new Promise<SavedPluginBuildView>(resolve => { resolveFresh = resolve; });
+  savedBuildReads(async () => ++reads === 1 ? saved : fresh);
+  const view = render(<ReleaseWorkbench key="first" ref={ref} project={project} disabled={false} />);
+  await act(async () => { expect(ref.current!.showSavedBuild(saved.attemptId)).toBe(true); });
+  await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  await user.click(screen.getByRole("button", { name: i18n.t("workbench.backOverview") }));
+  view.rerender(<ReleaseWorkbench key="second" ref={ref} project={project} disabled={false} />);
+  await act(async () => { expect(ref.current!.showSavedBuild(saved.attemptId)).toBe(true); });
+  await waitFor(() => expect(reads).toBe(2));
+  expect(screen.getByRole("region", { name: i18n.t("releasePlugin.savedView") })).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") })).not.toBeInTheDocument();
+  await act(async () => { resolveFresh(saved); await fresh; });
+  await waitFor(() => expect(screen.getByRole("region", { name: i18n.t("releasePlugin.savedView") })).toHaveAttribute("aria-busy", "false"));
+  expect(screen.getByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).toHaveTextContent(i18n.t("releasePlugin.savedReadOnly"));
+  expect(invoke.mock.calls.filter(([command]) => command === "read_saved_plugin_build").map(([, args]) => args.request.attemptId)).toEqual([saved.attemptId, saved.attemptId]);
+  expectHistoricalReadsOnly();
+});
+
+it("cancels a pending saved inspection without creating authority or reopening it from a late result", async () => {
+  const saved = historicalBuild(), ref = createRef<ReleaseHandle>(), user = userEvent.setup();
+  let resolve!: (value: SavedPluginBuildView) => void;
+  const deferred = new Promise<SavedPluginBuildView>(done => { resolve = done; });
+  savedBuildReads(async () => deferred);
+  render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
+  await act(async () => { expect(ref.current!.showSavedBuild(saved.attemptId)).toBe(true); });
+  await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "read_saved_plugin_build")).toBe(true));
+  expect(screen.getByRole("region", { name: i18n.t("releasePlugin.savedView") })).toHaveAttribute("aria-busy", "true");
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.savedBack") }));
+  await act(async () => { resolve(saved); await deferred; });
+  expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedView") })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).not.toBeInTheDocument();
+  await act(async () => { expect(ref.current!.showSavedBuild(saved.attemptId)).toBe(true); });
+  await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });
+  expect(invoke.mock.calls.filter(([command]) => command === "read_saved_plugin_build").map(([, args]) => args.request.attemptId)).toEqual([saved.attemptId, saved.attemptId]);
+  expectHistoricalReadsOnly();
+});
 
 it("preserves a confirmed export and refreshes only its history after a read failure", async () => {
   const { user, ref } = await readyExport();
