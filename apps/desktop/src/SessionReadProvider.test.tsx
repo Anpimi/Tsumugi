@@ -24,6 +24,50 @@ it("ignores a pending response after hiding the view and rereads when it is open
   view.rerender(ui(true)); await screen.findByText("Reopened result");
 });
 
+it("observes an explicit fresh read without duplicating it and still refreshes on semantic invalidation", async () => {
+  const read = vi.fn<() => Promise<string>>().mockResolvedValueOnce("Explicit current facts").mockResolvedValue("Changed current facts");
+  let reads!: SessionReads;
+  function Control() { reads = useSessionReads(); return null; }
+  function ExplicitProbe() {
+    const query = useSessionQuery({ key: ["explicit-editor"], scopes: ["translation"], enabled: true, refetchOnMount: false, read });
+    return <p>{query.data ?? "Loading editor"}</p>;
+  }
+  const ui = (visible: boolean) => <SessionReadProvider context={context} bridge={false}><Control />{visible ? <ExplicitProbe /> : null}</SessionReadProvider>;
+  const view = render(ui(false));
+  await act(async () => { await reads.client.fetchQuery({ queryKey: reads.key(["explicit-editor"]), meta: { scopes: ["translation"] }, queryFn: read, staleTime: 0 }); });
+  view.rerender(ui(true)); await screen.findByText("Explicit current facts");
+  expect(read).toHaveBeenCalledTimes(1);
+  await act(async () => { reads.invalidate(["translation"]); });
+  await screen.findByText("Changed current facts"); expect(read).toHaveBeenCalledTimes(2);
+  view.rerender(ui(false)); view.rerender(ui(true));
+  await screen.findByText("Changed current facts"); expect(read).toHaveBeenCalledTimes(2);
+});
+
+it("uses live invalidation at observer mount without refetching a confirmed seed", async () => {
+  let finish!: (value: string) => void;
+  const read = vi.fn<() => Promise<string>>().mockResolvedValueOnce("Confirmed seed")
+    .mockImplementation(() => new Promise<string>(resolve => { finish = resolve; }));
+  let reads!: SessionReads;
+  function Control() { reads = useSessionReads(); return null; }
+  function InvalidatedProbe() {
+    const query = useSessionQuery({ key: ["fixed-scope"], scopes: ["translation"], enabled: true,
+      refetchOnMount: current => current.state.isInvalidated, read });
+    return <><p>{query.data ?? "Loading fixed scope"}</p>{query.isFetching ? <p>Refreshing fixed scope</p> : null}</>;
+  }
+  const ui = (visible: boolean) => <SessionReadProvider context={context} bridge={false}><Control />{visible ? <InvalidatedProbe /> : null}</SessionReadProvider>;
+  const view = render(ui(false));
+  await act(async () => { await reads.client.fetchQuery({ queryKey: reads.key(["fixed-scope"]), meta: { scopes: ["translation"] }, queryFn: read, staleTime: 0 }); });
+  view.rerender(ui(true)); await screen.findByText("Confirmed seed"); expect(read).toHaveBeenCalledTimes(1);
+  view.rerender(ui(false));
+  await act(async () => { reads.invalidate(["translation"]); });
+  expect(read).toHaveBeenCalledTimes(1);
+  view.rerender(ui(true)); await screen.findByText("Refreshing fixed scope");
+  expect(read).toHaveBeenCalledTimes(2); expect(screen.getByText("Confirmed seed")).toBeVisible();
+  await act(async () => finish("Current fixed scope"));
+  await screen.findByText("Current fixed scope"); expect(screen.queryByText("Refreshing fixed scope")).not.toBeInTheDocument();
+  expect(read).toHaveBeenCalledTimes(2);
+});
+
 it("keeps a slow project A response out of project B's view and cache", async () => {
   let resolveA!: (value: string) => void;
   const readA = vi.fn(() => new Promise<string>(resolve => { resolveA = resolve; }));

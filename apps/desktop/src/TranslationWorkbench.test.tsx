@@ -1,4 +1,4 @@
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { createRef, useLayoutEffect } from "react";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -14,7 +14,11 @@ import { reviewTargetFixture, reviewSummaryFor, reviewSummaryPageFixture } from 
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
 import errorFixture from "../test/fixtures/commandErrors.contract.json";
 import { sourcePageFixture } from "./testSupport/sourceFixture";
+import { useSessionReads } from "./SessionReadProvider";
+import { useTranslationDraftSession } from "./TranslationDraftSession";
+import type { ReviewSummaryPage } from "./reviewCommands";
 import { useWorkbenchCommands, type WorkbenchCommands } from "./workbenchCommands";
+import { useWorkspaceView } from "./WorkbenchFrame";
 
 function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => void }) {
   const commands = useWorkbenchCommands();
@@ -60,17 +64,21 @@ beforeEach(async () => {
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
     if (command === "read_source_content") return content;
-    if (command === "read_review_summary_page") return reviewSummaryPageFixture(content.rows.map(row => reviewSummaryFor(reviewTargetFixture({ unitId: row.unitId!, nativeKey: row.occurrence.key, sourceText: row.occurrence.text, sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: row.sourceRevisionId!, selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" }))));
+    if (command === "read_review_summary_page") return reviewSummaryPageFixture(content.rows.map(row => reviewSummaryFor(reviewTargetFixture({ unitId: row.unitId!, locale: String(args.request.locale), nativeKey: row.occurrence.key, sourceText: row.occurrence.text, sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: row.sourceRevisionId!, selectionId: history.locale === args.request.locale ? history.current?.eventId ?? null : null, revisionId: history.locale === args.request.locale ? history.current?.revisionId ?? null : null, translationText: history.locale === args.request.locale ? history.currentText : null, basis: "basis" }))));
     if (command === "read_review_target") return reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" });
-    if (command === "read_review_editor_snapshot") return {
-      target: reviewTargetFixture({ unitId: String(args.request.unitId), nativeKey: args.request.unitId === fixtureIdentity(217) ? "second" : "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: history.current?.eventId ?? null, revisionId: history.current?.revisionId ?? null, translationText: history.currentText, basis: "basis" }),
-      translations: history,
-      terms: { unitId: args.request.unitId, locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] },
-      context: { revisionId: fixtureIdentity(225), unitId: args.request.unitId, locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null },
+    if (command === "read_review_editor_snapshot") {
+      const scoped = history.unitId === args.request.unitId && history.locale === args.request.locale ? history
+        : { ...emptyHistory, unitId: String(args.request.unitId), locale: String(args.request.locale) };
+      return {
+      target: reviewTargetFixture({ locale: String(args.request.locale), unitId: String(args.request.unitId), nativeKey: args.request.unitId === fixtureIdentity(217) ? "second" : "first", sourceText: "Original", sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), selectionId: scoped.current?.eventId ?? null, revisionId: scoped.current?.revisionId ?? null, translationText: scoped.currentText, basis: "basis" }),
+      translations: scoped,
+      terms: { unitId: args.request.unitId, locale: String(args.request.locale), sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: String(args.request.locale), source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] },
+      context: { revisionId: fixtureIdentity(225), unitId: args.request.unitId, locale: String(args.request.locale), text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null },
       readVersion: "view",
-    };
+    }; }
     if (command === "read_review_neighbor") return { unitId: fixtureIdentity(217), afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) };
-    if (command === "read_translation_history") return history;
+    if (command === "read_translation_history") return history.unitId === args.request.unitId && history.locale === args.request.locale ? history
+      : { ...emptyHistory, unitId: String(args.request.unitId), locale: String(args.request.locale) };
     if (command === "resolve_terms") return { unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
     if (command === "read_context_revision") return { revisionId: fixtureIdentity(225), unitId: fixtureIdentity(204), locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
     if (command === "select_source") return { selectionId: fixtureIdentity(207), folderName: "Example Mod" };
@@ -894,6 +902,46 @@ it.each(["editor", "list"])("keeps save-and-next unavailable without a %s naviga
   expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(0);
 });
 
+it("keeps a cached list from granting navigation while its fresh confirmation is pending or rejected", async () => {
+  const user = userEvent.setup(); let commands!: WorkbenchCommands;
+  const consumer = () => <><TranslationWorkbench project={project} disabled={false} />
+    <CommandsProbe capture={value => { commands = value; }} /></>;
+  const { rerender } = render(consumer(), project);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), "Retained draft");
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
+  const capturedScope = invoke.mock.calls.find(([name]) => name === "read_review_summary_page")![1].request.scopeId;
+  expect(capturedScope).toBeNull();
+  rerender(null);
+  const original = invoke.getMockImplementation()!;
+  let rejectList!: (reason: unknown) => void;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_review_summary_page") return new Promise((_resolve, reject) => { rejectList = reject; });
+    const result = await original(command, args);
+    return command === "read_review_editor_snapshot" ? { ...result, context: { ...result.context, text: "Fresh editor reference confirmed" } } : result;
+  });
+  rerender(consumer());
+  await waitFor(() => expect(rejectList).toBeDefined());
+  await screen.findByText(/Fresh editor reference confirmed/);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled());
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
+  const assertBlocked = () => {
+    expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Retained draft");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+    expect(commands.list(scope).find(value => value.id === "translation.save-and-next")?.availability)
+      .toMatchObject({ enabled: false, reason: "unavailable" });
+    expect(commands.dispatch("translation.save-and-next", scope)).toBe(false);
+  };
+  assertBlocked();
+  await act(async () => rejectList(new Error("Fresh fixed list unavailable")));
+  await screen.findByRole("alert"); assertBlocked();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_summary_page").map(([, payload]) => payload.request.scopeId))
+    .toEqual([null, fixtureIdentity(609)]);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "read_review_neighbor")).toBe(false);
+});
+
 it.each(["leave", "leave-and-return", "remove-and-restore", "import", "import-and-return"])("settles the original save without advancing after the committed view changes (%s)", async change => {
   const original = invoke.getMockImplementation()!;
   let releaseSave!: () => Promise<void>;
@@ -1366,4 +1414,321 @@ it("shows Chinese import labels and an actionable missing-source state", async (
   render(<TranslationWorkbench project={project} disabled={false} />);
   await userEvent.setup().click(screen.getByRole("button", { name: "译文" }));
   expect(await screen.findByText("请先导入源内容，再回来匹配译文。")) .toBeInTheDocument();
+});
+
+function QueryProbe({ capture }: { capture: (reads: ReturnType<typeof useSessionReads>, owner: ReturnType<typeof useTranslationDraftSession>) => void }) {
+  const reads = useSessionReads(), owner = useTranslationDraftSession();
+  useLayoutEffect(() => { capture(reads, owner); });
+  return null;
+}
+
+it.each(["read_content_scope", "read_source_content"])("recovers a failed %s through an explicit source refresh without dispatching a business write", async failedCommand => {
+  const original = invoke.getMockImplementation()!;
+  let fail = true;
+  invoke.mockImplementation((command: string, args: unknown) => command === failedCommand && fail
+    ? Promise.reject(new Error("Source read unavailable")) : original(command, args));
+  const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await screen.findByRole("alert");
+  expect(screen.queryByRole("button", { name: "first" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Back to overview" })).toBeEnabled();
+  fail = false;
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  await screen.findByRole("button", { name: "first" });
+  expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null)).toHaveLength(1);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
+});
+
+it.each(["wrong-unit", "null", "rejected"] as const)("requires a fresh same-unit editor read despite cached success and keeps newer input after %s", async result => {
+  seedSelectedTranslation();
+  let reads!: ReturnType<typeof useSessionReads>, owner!: ReturnType<typeof useTranslationDraftSession>;
+  const ref = createRef<TranslationHandle>(), user = userEvent.setup();
+  render(<><QueryProbe capture={(value, draft) => { reads = value; owner = draft; }} /><TranslationWorkbench ref={ref} project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" });
+  expect(editor).toHaveValue("Saved base");
+  const cached = reads.client.getQueryCache().findAll({ queryKey: reads.key(["translation-editor"]) }).find(query => query.state.status === "success");
+  expect(cached?.state.data).toBeDefined();
+  const savedCache = cached!.state.data, captured = owner.current()!;
+  let finish!: (value: unknown) => void, reject!: (value: unknown) => void;
+  const deferred = new Promise<unknown>((resolve, fail) => { finish = resolve; reject = fail; });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: unknown) => command === "read_review_editor_snapshot" ? deferred : original(command, args));
+  act(() => { expect(ref.current!.openUnit({ unitId: captured.unitId, sourceRevisionId: captured.sourceRevisionId, key: captured.key, sourceText: captured.sourceText }, captured.locale, "Unconfirmed suggestion")).toBe(true); });
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot")).toHaveLength(2));
+  expect(editor).toHaveValue("Saved base");
+  await user.type(editor, " newer B");
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+  const newer = owner.current();
+  await act(async () => {
+    if (result === "wrong-unit") {
+      const response = await original("read_review_editor_snapshot", { request: { unitId: captured.unitId, locale: captured.locale } });
+      finish({ ...response, target: { ...response.target, unitId: fixtureIdentity(1800) } });
+    } else if (result === "null") finish(null);
+    else reject({ code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false });
+    await deferred.catch(() => {});
+  });
+  await screen.findByRole("alert");
+  expect(editor).toHaveValue("Saved base newer B"); expect(owner.current()).toBe(newer);
+  expect(reads.client.getQueryData(cached!.queryKey)).toEqual(savedCache);
+  expect(screen.getByText("Original", { selector: ".editor-source pre" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_editor_snapshot").map(([, payload]) => payload.request))
+    .toEqual(Array(2).fill({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, unitId: captured.unitId, locale: captured.locale }));
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision")).toBe(false);
+});
+
+it("refreshes resource and translation projections on semantic invalidation without rebasing the dirty owner", async () => {
+  seedSelectedTranslation();
+  let owner!: ReturnType<typeof useTranslationDraftSession>;
+  const user = userEvent.setup();
+  render(<><QueryProbe capture={(_reads, draft) => { owner = draft; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(editor, " local B");
+  const originalDraft = owner.current();
+  await user.click(screen.getByText("Terms, context and history"));
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    const value = await original(command, args);
+    return command === "read_review_editor_snapshot" ? { ...value, context: { ...value.context, text: "Current resource context" } } : value;
+  });
+  await refreshWorkbenchReads(["resources"]);
+  expect(await screen.findByText(/Current resource context/)).toBeVisible();
+  seedSelectedTranslation("External selection C");
+  await refreshWorkbenchReads(["translation"]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "first" })).toHaveTextContent("External selection C"));
+  expect(await screen.findByText(i18n.t("translation.historyStale"))).toBeVisible();
+  expect(editor).toHaveValue("Saved base local B"); expect(owner.current()).toBe(originalDraft);
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
+});
+
+it("keeps the fixed list scope and draft through a hidden semantic source change until an explicit recapture", async () => {
+  seedSelectedTranslation();
+  let reads!: ReturnType<typeof useSessionReads>, owner!: ReturnType<typeof useTranslationDraftSession>;
+  const ui = <><QueryProbe capture={(value, draft) => { reads = value; owner = draft; }} /><TranslationWorkbench project={project} disabled={false} /></>;
+  const user = userEvent.setup(), view = render(ui, project);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), " hidden B");
+  const captured = owner.current();
+  const captures = invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null).length;
+  const original = invoke.getMockImplementation()!, nextSnapshot = fixtureIdentity(1810), nextScope = fixtureIdentity(1811);
+  view.rerender(null, project);
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command === "read_content_scope") return { revision: "3", currentSnapshot: nextSnapshot };
+    if (command === "read_source_content") return { ...content, snapshotId: nextSnapshot, scope: { revision: "3", currentSnapshot: nextSnapshot } };
+    if (command === "read_review_summary_page") {
+      if (args.request.scopeId !== null && args.request.scopeId !== nextScope) throw { code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false, reason: "review-scope-source-changed" };
+      return reviewSummaryPageFixture([reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "current entry", sourceText: "Current source",
+        sourceSnapshotId: nextSnapshot, sourceRevisionId: fixtureIdentity(1812), translationText: "External fact" }))], { scopeId: nextScope, sourceSnapshotId: nextSnapshot });
+    }
+    const value = await original(command, args);
+    return command === "read_review_editor_snapshot" ? { ...value, target: reviewTargetFixture({ ...value.target, sourceRevisionId: fixtureIdentity(1812), sourceSnapshotId: nextSnapshot, sourceText: "Current source", basisEvidence: undefined }),
+      context: { ...value.context, text: "Current hidden resource" } } : value;
+  });
+  await act(async () => { reads.invalidate(["source", "translation", "resources"]); });
+  view.rerender(ui, project);
+  await screen.findByRole("alert");
+  await user.click(screen.getByText("Terms, context and history"));
+  expect(await screen.findByText(/Current hidden resource/)).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Saved base hidden B"); expect(owner.current()).toBe(captured);
+  expect(screen.getByText("Original", { selector: ".editor-source pre" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null)).toHaveLength(captures);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Find" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Find" }));
+  expect(await screen.findByRole("button", { name: "current entry" })).toBeVisible();
+  expect(owner.current()).toBe(captured);
+  expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null)).toHaveLength(captures + 1);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
+});
+
+it("keeps pure neighbor waiting separate from save availability and cancels only its view continuation on return", async () => {
+  const original = invoke.getMockImplementation()!;
+  let finish!: (value: unknown) => void;
+  invoke.mockImplementation(async (command: string, args: unknown) => {
+    if (command === "read_review_summary_page") {
+      const page = await original(command, args);
+      return { ...page, rows: [...page.rows, { ...page.rows[0], unitId: fixtureIdentity(217), nativeKey: "second" }], total: 2 };
+    }
+    if (command === "read_review_neighbor") return new Promise(resolve => { finish = resolve; });
+    return original(command, args);
+  });
+  const ref = createRef<TranslationHandle>(), user = userEvent.setup(); render(<TranslationWorkbench ref={ref} project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(editor, "Local B");
+  await user.click(screen.getByRole("button", { name: "Next entry" })); await waitFor(() => expect(finish).toBeDefined());
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled(); expect(await ref.current!.allowNavigate()).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Back to overview" }));
+  await act(async () => { finish({ unitId: fixtureIdentity(217), afterOrdinal: 1, sourceSnapshotId: fixtureIdentity(200) }); });
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Local B");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "first" })).toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_neighbor")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision")).toBe(false);
+});
+
+it("retries a failed history range at its exact cursor while keeping ordinary draft save available", async () => {
+  const selected = seedSelectedTranslation(), original = invoke.getMockImplementation()!;
+  const revisions = Array.from({ length: 201 }, (_, index) => ({ ...selected.revision, ordinal: String(index + 1),
+    revisionId: fixtureIdentity(2000 + index), actionId: fixtureIdentity(2300 + index), text: `Revision ${index + 1}` }));
+  let failEarlier = true;
+  invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+    if (command !== "read_translation_history") return original(command, args);
+    const after = Number(args.request.afterOrdinal), limit = Number(args.request.limit);
+    if (after === 1 && failEarlier) throw new Error("Earlier history range unavailable");
+    const rows = revisions.slice(after, after + limit);
+    return { ...history, total: "201", rows, nextOrdinal: after + rows.length < revisions.length ? rows.at(-1)!.ordinal : null };
+  });
+  let owner!: ReturnType<typeof useTranslationDraftSession>;
+  const user = userEvent.setup();
+  render(<><QueryProbe capture={(_reads, draft) => { owner = draft; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  const editor = await screen.findByRole("textbox", { name: "Your draft" }); await user.type(editor, " retained B");
+  const captured = owner.current();
+  await user.click(screen.getByText("Terms, context and history"));
+  await user.click(screen.getByRole("button", { name: "Refresh history" }));
+  const region = screen.getByRole("region", { name: i18n.t("translation.history") });
+  await within(region).findByText("201: Revision 201");
+  await user.click(within(region).getByRole("button", { name: i18n.t("translation.earlier") }));
+  await screen.findByRole("alert");
+  expect(editor).toHaveValue("Saved base retained B"); expect(owner.current()).toBe(captured);
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  failEarlier = false;
+  await user.click(within(region).getByRole("button", { name: "Refresh" }));
+  expect(await within(region).findByText("2: Revision 2")).toBeVisible();
+  expect(owner.current()).toBe(captured); expect(editor).toHaveValue("Saved base retained B");
+  expect(invoke.mock.calls.filter(([name]) => name === "read_translation_history").map(([, payload]) => payload.request))
+    .toEqual(["0", "101", "1", "1"].map((afterOrdinal, index) => ({ sessionToken: project.sessionToken, projectId: project.metadata.projectId,
+      unitId: selected.revision.unitId, locale: selected.revision.locale, afterOrdinal, limit: index === 0 ? 1 : 100 })));
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
+});
+
+it.each(["translation", "source"] as const)("rechecks the original fixed scope when %s changes before a null-scope capture returns", async changed => {
+  const original = invoke.getMockImplementation()!;
+  const captured: ReviewSummaryPage = await original("read_review_summary_page", { request: { locale: "zh-CN", query: "", scopeId: null } });
+  const stale = { ...captured, rows: captured.rows.map((row: typeof captured.rows[number]) => ({ ...row, translationPreview: "Stale captured translation" })) };
+  const current = { ...captured, rows: captured.rows.map((row: typeof captured.rows[number]) => ({ ...row, translationPreview: "Current fixed translation" })) };
+  let releaseCapture!: (value: unknown) => void, releaseRead!: (value: unknown) => void, rejectRead!: (reason: unknown) => void;
+  const capture = new Promise<unknown>(resolve => { releaseCapture = resolve; });
+  const fixedRead = new Promise<unknown>((resolve, reject) => { releaseRead = resolve; rejectRead = reject; });
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_review_summary_page"
+    ? args.request.scopeId === null ? capture : fixedRead : original(command, args));
+  const user = userEvent.setup(); render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_review_summary_page")).toHaveLength(1));
+  await refreshWorkbenchReads([changed]);
+  await act(async () => { releaseCapture(stale); await capture; });
+  await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "read_review_summary_page")).toHaveLength(2));
+  expect(screen.queryByRole("button", { name: "first" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Stale captured translation")).not.toBeInTheDocument();
+  await act(async () => {
+    if (changed === "source") rejectRead({ code: "dependency-conflict", outcome: "rejected", stage: "execution-read", recoveryRequired: false, reason: "review-scope-source-changed" });
+    else releaseRead(current);
+    await fixedRead.catch(() => {});
+  });
+  if (changed === "source") {
+    expect(await screen.findByRole("alert")).toHaveTextContent("The source range changed");
+    expect(screen.queryByRole("button", { name: "first" })).not.toBeInTheDocument();
+  } else expect(await screen.findByRole("button", { name: "first" })).toHaveTextContent("Current fixed translation");
+  expect(screen.queryByText("Stale captured translation")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([name]) => name === "read_review_summary_page").map(([, payload]) => payload.request.scopeId)).toEqual([null, captured.scopeId]);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
+});
+
+it("rereads the fixed scope when a semantic change follows its seed before observer subscription without granting navigation from the seed", async () => {
+  seedSelectedTranslation(); const original = invoke.getMockImplementation()!;
+  const initial: ReviewSummaryPage = await original("read_review_summary_page", { request: { locale: "zh-CN", query: "", scopeId: null } });
+  const second = reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(217), nativeKey: "second", sourceText: "Second source",
+    sourceSnapshotId: initial.sourceSnapshotId, sourceRevisionId: fixtureIdentity(218), selectionId: null, revisionId: null, translationText: null }));
+  const page = { ...initial, total: 2, rows: [...initial.rows, second] };
+  const stale = { ...page, scopeId: fixtureIdentity(810), rows: page.rows.map(row => ({ ...row, translationPreview: "Seed before notification" })) };
+  const current = { ...stale, rows: stale.rows.map(row => ({ ...row, translationPreview: "Current fixed scope projection" })) };
+  let recapturing = false, releaseCapture!: (value: ReviewSummaryPage) => void, releaseFixed!: (value: ReviewSummaryPage) => void;
+  const capture = new Promise<ReviewSummaryPage>(resolve => { releaseCapture = resolve; });
+  const fixed = new Promise<ReviewSummaryPage>(resolve => { releaseFixed = resolve; });
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => {
+    if (command !== "read_review_summary_page") return original(command, args);
+    if (recapturing && args.request.scopeId === null) return capture;
+    if (args.request.scopeId === stale.scopeId) return fixed;
+    return Promise.resolve(page);
+  });
+  let reads!: ReturnType<typeof useSessionReads>, owner!: ReturnType<typeof useTranslationDraftSession>, commands!: WorkbenchCommands;
+  let notified = false, observersAtNotification = -1, registeredScopes: unknown;
+  function SeedWindowProbe() {
+    const { memory } = useWorkspaceView();
+    useLayoutEffect(() => memory.subscribe("translation", "listReadIntent", () => {
+      const intent = memory.read<{ scopeId: string }>("translation", "listReadIntent");
+      if (notified || intent?.scopeId !== stale.scopeId) return;
+      const seeded = reads.client.getQueryCache().find({ queryKey: reads.key(["translation-list", intent]), exact: true });
+      if (!seeded) throw new Error("Published fixed scope has no Query owner");
+      notified = true; observersAtNotification = seeded.getObserversCount(); registeredScopes = seeded.meta?.scopes;
+      // Publishing the view input follows seeding but precedes observer
+      // subscription. Deliver a real semantic invalidation at that boundary.
+      reads.invalidate(["translation"]);
+    }), [memory]);
+    return null;
+  }
+  const user = userEvent.setup();
+  render(<><QueryProbe capture={(value, draft) => { reads = value; owner = draft; }} />
+    <SeedWindowProbe /><TranslationWorkbench project={project} disabled={false} /><CommandsProbe capture={value => { commands = value; }} /></>, project);
+  await user.click(screen.getByRole("button", { name: "Translations" })); await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), " retained B");
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Next entry" })).toBeEnabled();
+  const retained = owner.current();
+  recapturing = true; await user.click(screen.getByRole("button", { name: "Find" }));
+  await act(async () => { releaseCapture(stale); await capture; });
+  await waitFor(() => expect(invoke.mock.calls.some(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === stale.scopeId)).toBe(true));
+  expect(observersAtNotification).toBe(0);
+  expect(registeredScopes).toEqual(["source", "translation", "resources", "review"]);
+  const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
+  const assertRetainedAndBlocked = () => {
+    expect(owner.current()).toBe(retained);
+    expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Saved base retained B");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+    expect(commands.dispatch("translation.save-and-next", scope)).toBe(false);
+  };
+  assertRetainedAndBlocked();
+  await act(async () => { releaseFixed(current); await fixed; });
+  await waitFor(() => expect(screen.getByRole("button", { name: "first" })).toHaveTextContent("Current fixed scope projection"));
+  assertRetainedAndBlocked();
+  expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === stale.scopeId).map(([, payload]) => payload.request))
+    .toEqual([{ sessionToken: project.sessionToken, projectId: project.metadata.projectId, locale: "zh-CN", query: "", afterOrdinal: 0, limit: 50, scopeId: stale.scopeId }]);
+  expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_summary_page" && payload.request.scopeId === null)).toHaveLength(2);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision" || name === "read_review_neighbor")).toBe(false);
+});
+
+it.each(["hidden", "import", "different locale"] as const)("confirms an explicit editor activation from %s only after its committed view and fresh read", async from => {
+  const original = invoke.getMockImplementation()!, locale = from === "different locale" ? "ja" : "zh-CN";
+  const expanded = { ...project, metadata: { ...project.metadata, targetLocales: ["zh-CN", "ja"] } };
+  let releaseEditor!: () => void;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_review_editor_snapshot" && args.request.unitId === fixtureIdentity(217)
+    ? new Promise(resolve => { releaseEditor = () => resolve(original(command, args)); }) : original(command, args));
+  const ref = createRef<TranslationHandle>(); let owner!: ReturnType<typeof useTranslationDraftSession>;
+  const user = userEvent.setup();
+  render(<><QueryProbe capture={(_reads, draft) => { owner = draft; }} /><TranslationWorkbench ref={ref} project={expanded} disabled={false} /></>, expanded);
+  if (from !== "hidden") {
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await screen.findByRole("button", { name: "first" });
+    if (from === "import") await user.click(screen.getByRole("button", { name: "Import file" }));
+    else { await user.click(screen.getByRole("button", { name: "first" })); await screen.findByRole("textbox", { name: "Your draft" }); }
+  }
+  const target = { unitId: fixtureIdentity(217), sourceRevisionId: fixtureIdentity(218), key: "Requested entry", sourceText: "Unconfirmed source" };
+  act(() => {
+    expect(ref.current!.openUnit(target, locale, "Explicit suggested draft")).toBe(true);
+    expect(ref.current!.openUnit(target, locale, "Duplicate suggestion")).toBe(false);
+  });
+  await waitFor(() => expect(releaseEditor).toBeDefined());
+  expect(screen.queryByRole("textbox", { name: "Your draft" })).not.toBeInTheDocument();
+  expect(owner.current()?.unitId).not.toBe(target.unitId);
+  await act(async () => releaseEditor());
+  expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Explicit suggested draft");
+  expect(screen.getByRole("heading", { name: "second" })).toBeInTheDocument();
+  expect(owner.current()).toMatchObject({ unitId: target.unitId, locale, sourceRevisionId: fixtureIdentity(205), key: "second", sourceText: "Original", text: "Explicit suggested draft" });
+  expect(invoke.mock.calls.filter(([name, payload]) => name === "read_review_editor_snapshot" && payload.request.unitId === target.unitId).map(([, payload]) => payload.request))
+    .toEqual([{ sessionToken: expanded.sessionToken, projectId: expanded.metadata.projectId, unitId: target.unitId, locale }]);
+  expect(invoke.mock.calls.some(([name]) => name === "create_execution_identity" || name === "save_translation_revision" || name === "select_translation_revision")).toBe(false);
 });

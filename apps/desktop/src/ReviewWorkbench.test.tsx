@@ -1393,6 +1393,9 @@ it.each(["source", "translation", "resources", "review", "project"] as ChangeSco
   expect(screen.getByRole("textbox", { name: "Reviewer name" })).toHaveValue("Reviewer A");
   expect(screen.getByRole("textbox", { name: "Reason or evidence" })).toHaveValue("AB");
   expect(screen.getByRole("checkbox", { name: "Approve selected entries: first" })).toBeChecked();
+  await waitFor(() => expect(invoke.mock.calls.slice(beforeChange).some(([name]) => name === "read_review_target")).toBe(true));
+  await waitFor(() => expect(screen.queryAllByText("Reading current review information…")).toHaveLength(0));
+  expect(screen.getByText("Hello")).toBeVisible();
   expect(screen.queryByText("Changed source")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Retry the same action" }));
   await waitFor(() => expect(invoke.mock.calls.filter(([name]) => name === "write_review_decision")).toHaveLength(2));

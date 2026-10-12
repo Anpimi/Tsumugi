@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { QueryClientProvider, useQuery, useInfiniteQuery, type InfiniteData, type QueryKey } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery, useInfiniteQuery, type InfiniteData, type QueryKey, type UseQueryOptions } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { SessionReads, type ChangeScope } from "./sessionReads";
 import type { SessionRequest } from "./executionCommands";
@@ -29,10 +29,10 @@ function useReadVisibility(reads: SessionReads, queryKey: QueryKey, enabled: boo
     }
   }, [reads, enabled, identity]);
 }
-export function useSessionQuery<T>({ key, scopes, enabled, read }: { key: QueryKey; scopes: ChangeScope[]; enabled: boolean; read: () => Promise<T> }) {
+export function useSessionQuery<T>({ key, scopes, enabled, read, refetchOnMount }: { key: QueryKey; scopes: ChangeScope[]; enabled: boolean; read: () => Promise<T>; refetchOnMount?: UseQueryOptions<T>["refetchOnMount"] }) {
   const reads = useSessionReads();
   const queryKey = reads.key(key);
-  const query = useQuery({ queryKey, enabled, meta: { scopes }, queryFn: async ({ signal }) => {
+  const query = useQuery({ queryKey, enabled, meta: { scopes }, ...(refetchOnMount === undefined ? {} : { refetchOnMount }), queryFn: async ({ signal }) => {
     const result = await read();
     if (signal.aborted) throw new Error("Read cancelled");
     return result;

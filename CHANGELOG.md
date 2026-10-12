@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Translation and review workspaces refresh their current references and history through the project session while preserving drafts and captured scopes. Failed reads keep completed saves distinct from uncertain writes; returning to a workspace does not restore stale editing or navigation permission.
+
 - Keep workspace positions and unsaved work when inactive views unmount. Project close and replacement check unfinished work in every workspace, retain unknown operations for recovery, and reject stale navigation or newer input after saving. Confirmed project changes still settle when newer input arrives during opening or closing; local work from the ended session stays read-only for copying until explicitly discarded, and its operations cannot continue into the new session.
 
 - Tasks preserve complete application decisions and original requests across view remounts, including groups spanning result pages. Shared translation writes and same-task cancellation are coordinated before application starts. Uncertain applications require matching preparation and receipt evidence before settling; keeping output or refreshing progress cannot discard an unknown outcome. Recovery actions without a provable original result retain their scope and uncertainty.
