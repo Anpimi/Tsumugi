@@ -2,7 +2,7 @@ import { createRef, useLayoutEffect } from "react";
 import { act, cleanup, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/executionCommands.contract.json";
-import { TaskCancellationFeedback, useExecutionTaskSession, type CancellationTarget } from "./ExecutionTaskSession";
+import { TaskCancellationFeedback, useExecutionTaskSession, type CancellationTarget, type CancellationRetryIntent } from "./ExecutionTaskSession";
 import type { ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -716,4 +716,34 @@ it.each(["identity", "ack"] as const)("ignores late %s after the actual session 
   expect(owner.current(target.taskId)).toBeUndefined();
   expect(previous).not.toBe(owner);
   expect(owner.unresolved()).toBe(false);
+});
+
+
+it("routes cancellation recovery using the original origin and request through the current command bridge", async () => {
+  const available = vi.fn(() => false), dispatch = vi.fn();
+  function CommandFeedbackProbe() {
+    const value = useExecutionTaskSession();
+    useLayoutEffect(() => { owner = value; });
+    return <TaskCancellationFeedback origin="ai" retryCommand={{ available, dispatch }} />;
+  }
+  const view = render(<CommandFeedbackProbe />, project);
+  const original = { ...target, origin: "source" as const };
+  // Preserve a known identity before the uncertain native cancellation.
+  invoke.mockImplementation(command => command === "create_execution_identity" ? Promise.resolve(fixtureIdentity(899))
+    : command === "cancel_execution_task" ? Promise.reject(new Error("Transport disconnected")) : Promise.reject(new Error(command)));
+  await act(async () => { await owner.cancel(original); });
+  const value = owner.current(original.taskId);
+  expect(value?.phase).toBe("unknown");
+  if (!value?.request) throw new Error("Original cancellation request is missing");
+  const intent: CancellationRetryIntent = { ...original, requestId: value.request.requestId };
+  expect(available).toHaveBeenCalledWith(intent);
+  const button = screen.getByRole("button", { name: "Retry the original cancellation" });
+  expect(button).toBeDisabled();
+  await act(async () => { button.click(); });
+  expect(dispatch).not.toHaveBeenCalled();
+  available.mockReturnValue(true); view.rerender(<CommandFeedbackProbe />, project);
+  expect(button).toBeEnabled(); await act(async () => { button.click(); });
+  expect(dispatch).toHaveBeenCalledExactlyOnceWith(intent);
+  expect(calls("cancel_execution_task")).toHaveLength(1);
+  expect(owner.current(original.taskId)?.request).toBe(value.request);
 });

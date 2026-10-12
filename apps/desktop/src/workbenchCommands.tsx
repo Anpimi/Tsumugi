@@ -1,6 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
+import type { CancellationTarget } from "./ExecutionTaskSession";
 
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
@@ -48,7 +49,29 @@ export interface SourceImpactCommandPayload { kind: "source-impact"; snapshotId:
 export interface SourceImpactTargetCommandPayload { kind: "source-impact-target"; snapshotId: string; locale: string; occurrenceId: string;
   target: { unitId: string; sourceRevisionId: string; key: string; sourceText: string };
   selectionId: string | null; translationRevisionId: string | null; reviewBasis: string }
+export interface AiPreparationCommandPayload { kind: "ai-preparation"; editSeq: number; locale: string; unitIds: string[] }
+export interface AiStartCommandPayload { kind: "ai-start"; attemptId: string; editSeq: number }
+interface AiItemCommandTarget {
+  attemptId: string; taskId: string; itemId: string; translationUnitId: string;
+  locale: string; sourceRevisionId: string; sourceSnapshotId: string;
+}
+export interface AiCandidateCommandPayload extends AiItemCommandTarget { kind: "ai-candidate"; resultId: string; recoveryUnitId: string }
+export interface AiTranslationCommandPayload extends AiItemCommandTarget { kind: "ai-translation-target" }
+export interface AiStartPendingCommandPayload { kind: "ai-start-pending"; attemptId: string; editSeq: number }
+export interface AiAdoptionPendingCommandPayload { kind: "ai-adoption-pending"; attemptId: string; actionId: string; recoveryUnitId: string; resultId: string }
+export interface ExecutionCancellationCommandPayload extends CancellationTarget { kind: "execution-cancellation" }
+export interface ExecutionCancellationRetryCommandPayload extends CancellationTarget { kind: "execution-cancellation-retry"; requestId: string }
 interface WorkbenchCommandPayloads {
+  "ai.preview": AiPreparationCommandPayload;
+  "ai.start": AiStartCommandPayload;
+  "ai.adopt-result": AiCandidateCommandPayload;
+  "ai.reconcile-start": AiStartPendingCommandPayload;
+  "ai.retry-start": AiStartPendingCommandPayload;
+  "ai.reconcile-adoption": AiAdoptionPendingCommandPayload;
+  "ai.retry-adoption": AiAdoptionPendingCommandPayload;
+  "ai.cancel-task": ExecutionCancellationCommandPayload;
+  "ai.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "ai.open-translation": AiTranslationCommandPayload;
   "review.allow-fallback": ReviewFallbackCommandPayload;
   "review.withdraw-fallback": ReviewFallbackCommandPayload;
   "review.grant-waiver": ReviewWaiverCommandPayload;
@@ -98,13 +121,14 @@ export interface CommandAvailability {
 }
 interface CommandMetadata {
   nameKey: TranslationKey;
-  category: "project" | "translation" | "review" | "resources" | "source";
+  category: "project" | "translation" | "review" | "resources" | "source" | "ai";
   scope: CommandScope;
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
     | "cancels-review-checks" | "retries-review-action" | "stops-review-batch"
     | "writes-resources" | "captures-resources" | "reads-resources" | "retries-resource-action" | "opens-translation"
-    | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task";
+    | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
+    | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -131,6 +155,14 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"ai-preparation", "ai.preview">
+  | ResourceCommand<"ai-start", "ai.start">
+  | ResourceCommand<"ai-candidate", "ai.adopt-result">
+  | ResourceCommand<"ai-start-pending", "ai.reconcile-start" | "ai.retry-start">
+  | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
+  | ResourceCommand<"execution-cancellation", "ai.cancel-task">
+  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation">
+  | ResourceCommand<"ai-translation-target", "ai.open-translation">
   | ResourceCommand<"resource-term", "resource.save-term">
   | ResourceCommand<"resource-context", "resource.save-context" | "resource.capture-context">
   | ResourceCommand<"resource-locale", "resource.choose-file">
@@ -157,6 +189,19 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind?.startsWith("ai-") || command.payloadKind?.startsWith("execution-cancellation")) {
+    if (!validAiPayload(payload)) return unavailable;
+    switch (command.payloadKind) {
+      case "ai-preparation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "ai-start": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "ai-candidate": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "ai-start-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "ai-adoption-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "execution-cancellation": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "execution-cancellation-retry": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "ai-translation-target": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+    }
+  }
   if (command.payloadKind?.startsWith("source-")) {
     if (!validSourcePayload(payload)) return unavailable;
     switch (command.payloadKind) {
@@ -203,6 +248,27 @@ function validTarget(payload: ReviewFallbackCommandPayload | ReviewWaiverCommand
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 function nullableIdentity(value: unknown) { return value === null || validIdentity(value); }
 function editSequence(value: unknown) { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
+type AiCommandPayload = Extract<CommandPayload, { kind: `ai-${string}` | `execution-cancellation${string}` }>;
+function validAiItemTarget(payload: AiItemCommandTarget) {
+  return [payload.attemptId, payload.taskId, payload.itemId, payload.translationUnitId, payload.locale,
+    payload.sourceRevisionId, payload.sourceSnapshotId].every(validIdentity);
+}
+function validAiPayload(payload: CommandPayload | undefined): payload is AiCommandPayload {
+  if (!payload || typeof payload !== "object") return false;
+  switch (payload.kind) {
+    case "ai-preparation": return editSequence(payload.editSeq) && validIdentity(payload.locale) && Array.isArray(payload.unitIds)
+      && payload.unitIds.length > 0 && payload.unitIds.every(validIdentity) && new Set(payload.unitIds).size === payload.unitIds.length;
+    case "ai-start": case "ai-start-pending": return validIdentity(payload.attemptId) && editSequence(payload.editSeq);
+    case "ai-candidate": return validAiItemTarget(payload) && validIdentity(payload.resultId) && validIdentity(payload.recoveryUnitId);
+    case "ai-translation-target": return validAiItemTarget(payload);
+    case "ai-adoption-pending": return [payload.attemptId, payload.actionId, payload.recoveryUnitId, payload.resultId].every(validIdentity);
+    case "execution-cancellation": return validIdentity(payload.taskId) && validIdentity(payload.attemptId)
+      && ["tasks", "source", "ai", "arena"].includes(payload.origin);
+    case "execution-cancellation-retry": return validIdentity(payload.taskId) && validIdentity(payload.attemptId)
+      && validIdentity(payload.requestId) && ["tasks", "source", "ai", "arena"].includes(payload.origin);
+    default: return false;
+  }
+}
 function validResourcePayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload, { kind: `resource-${string}` }> {
   if (!payload || typeof payload !== "object") return false;
   switch (payload.kind) {
@@ -277,7 +343,15 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "review-fallback") {
+    if (command.payloadKind === "ai-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-start" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-candidate" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-start-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-adoption-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "execution-cancellation" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "execution-cancellation-retry" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "ai-translation-target" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "review-fallback") {
       if (payload?.kind !== "review-fallback") return false;
       command.handler(payload);
     } else if (command.payloadKind === "review-waiver") {

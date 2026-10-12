@@ -475,6 +475,11 @@ it.each(["checked-start", "unknown-start"] as const)("accepts item-identity read
     await act(async () => { await owner.checkStart(); });
   }
   let read!: AiView; await act(async () => { read = await owner.readView(aiAttempt); });
+  if (origin === "unknown-start") {
+    // Recovery invalidates the inactive cache. This newly checked owner read
+    // still supplies the fixed original evidence without changing UI freshness.
+    expect(reads.client.getQueryState(reads.key(["aiCommands", aiAttempt]))).toMatchObject({ status: "success", isInvalidated: true });
+  }
   expect(owner.pendingStart).toBeNull(); expect(owner.attempt).toBe(aiAttempt);
   expect(owner.selected).toEqual(selection);
   expect(owner.started?.prepared).toBe(capture);

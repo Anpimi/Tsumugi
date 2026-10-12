@@ -5,6 +5,8 @@ import { validateResponseIdentity } from "./generated/execution.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
+import { useExecutionTaskSession } from "./ExecutionTaskSession";
+import { matchQuery } from "@tanstack/react-query";
 
 type StartCapture = { request: AiStart; prepared: AiPrepared; editSeq: number; uncertain: boolean };
 type Candidate = { taskId: string; item: AiItem; resultId: string; unitId: string; text: string };
@@ -56,12 +58,15 @@ function confirmView(view: AiView, attemptId: string, prepared?: AiPrepared, tas
 }
 
 function usePreparation(initialLocale: string, targetLocales: readonly string[]) {
-  const reads = useSessionReads();
+  const reads = useSessionReads(), tasks = useExecutionTaskSession();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<State>(() => freeze({ presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],prepared:null,consent:false,
     staleReason:null,dirty:false,editSeq:0,sourceGeneration:0,busy:false,attempt:null,started:null,pendingStart:null,pendingAdopt:null,saved:{},failure:null,notice:null }));
   const stateRef = useRef(state), mounted = useSessionAlive(), locales = useRef(targetLocales), basis = useRef(0), flight = useRef<object | null>(null);
-  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const candidateReadCleanup = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => { mounted.current = true; return () => {
+    mounted.current = false; candidateReadCleanup.current?.(); candidateReadCleanup.current = null;
+  }; }, []);
   useLayoutEffect(() => { locales.current = targetLocales; }, [targetLocales]);
   function current() { return stateRef.current; }
   function live() { return mounted.current && reads.context.projectId === session.projectId && reads.context.sessionToken === session.sessionToken; }
@@ -92,8 +97,15 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads]);
   const targetAvailable = state.locale !== "" && targetLocales.includes(state.locale);
   useLayoutEffect(() => { if (!targetAvailable) invalidatePreview(); }, [targetAvailable]);
+  function canPreview() {
+    const before = current();
+    // Presentation follows this render's props. Mutation entry points below
+    // separately require the committed locale ref before any dispatch.
+    return live() && !reserved() && before.locale !== "" && targetLocales.includes(before.locale)
+      && validateResponseIdentity(session.projectId) && !!session.sessionToken && before.selected.length > 0;
+  }
   async function preview() {
-    if (reserved() || !available() || !validateResponseIdentity(session.projectId) || !session.sessionToken || !current().selected.length) return;
+    if (!canPreview() || !available()) return;
     const before = current(), version = basis.current;
     const request = fixed({ ...session,config:before.config,locale:before.locale,unitIds:before.selected });
     await run(async () => {
@@ -123,10 +135,14 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       throw error;
     }
   }
-  async function start() {
+  function canStart() {
     const before = current(), prepared = before.prepared;
-    if (reserved() || !available() || !prepared || !before.consent || !sameConfig(before.config,prepared.preview.config)
-      || prepared.preview.items.length !== before.selected.length || prepared.preview.items.some((item,index) => item.unitId !== before.selected[index] || item.targetLocale !== before.locale)) return;
+    return live() && !reserved() && before.locale !== "" && targetLocales.includes(before.locale) && !!prepared && before.consent && sameConfig(before.config,prepared.preview.config)
+      && prepared.preview.items.length === before.selected.length && prepared.preview.items.every((item,index) => item.unitId === before.selected[index] && item.targetLocale === before.locale);
+  }
+  async function start() {
+    if (!canStart() || !available()) return;
+    const before = current(), prepared = before.prepared!;
     const entry: StartCapture = { request:fixed({ ...session,attemptId:prepared.attemptId,digest:prepared.preview.digest,confirmed:true }),prepared,editSeq:before.editSeq,uncertain:false };
     await run(() => dispatchStart(entry));
   }
@@ -163,7 +179,42 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       || !available(row.item.targetLocale) || current().saved[resultId]) return null;
     return {taskId:view.detail.taskId,item:row.item,resultId,unitId:unit.unitId,text:row.output.text};
   }
-  function canAdopt(view: AiView, resultId: string) { return live() && !reserved() && !!candidate(view,resultId); }
+  function candidateReadProof(value: Candidate, attemptId: string) {
+    const cache = reads.client.getQueryCache(), filters = {queryKey:reads.key(["aiCommands",attemptId]),exact:true};
+    const capturedQuery = cache.find(filters);
+    const capturedState = capturedQuery?.state;
+    let witness = capturedQuery, listening = true;
+    // Keep the latest exact record through replacement and removal while this
+    // business flight awaits identity/prepare. Removal must not revive Q1 after
+    // a newer Q2 supplied contradictory evidence and was itself collected.
+    const unsubscribe = cache.subscribe(event => {
+      if (!matchQuery(filters,event.query) || !["added","updated","removed"].includes(event.type)) return;
+      if (event.type === "added" || event.query === witness || cache.find(filters) === event.query) witness = event.query;
+    });
+    // Direct owner callers can supply checked fixed evidence. The consumer must
+    // additionally prove a current Query before dispatch. Once captured, hiding
+    // its view only invalidates that read; it does not revoke the business intent.
+    return {
+      current() {
+        const projection = witness?.state.data as AiView | null | undefined;
+        // A checked direct-owner read may be newer than an inactive cache entry.
+        // Only that unchanged original record retains this initial exception;
+        // production fresh entry points still require a successful current Query.
+        return !witness || (witness === capturedQuery && witness.state === capturedState)
+          || (witness.state.status === "success" && witness.state.error === null
+            && !!projection && JSON.stringify(candidate(projection,value.resultId)) === JSON.stringify(value));
+      },
+      dispose() { if (listening) { listening = false; unsubscribe(); } },
+    };
+  }
+  function cancellationPending(taskId: string) {
+    const value = tasks.current(taskId);
+    return value?.phase === "preparing" || value?.phase === "pending" || value?.phase === "unknown";
+  }
+  function canAdopt(view: AiView, resultId: string) {
+    const value = candidate(view,resultId);
+    return live() && !reserved() && !!value && !cancellationPending(value.taskId);
+  }
   function confirmAction(entry: AdoptCapture, action: AdoptionAction) {
     const request = entry.request;
     if (action.projectId !== request.projectId || action.attemptId !== request.attemptId || action.actionId !== request.actionId || action.unitId !== request.unitId
@@ -206,13 +257,21 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     const value = candidate(view,resultId);
     if (!value) return;
     const captured = fixed(value), version = basis.current, editSeq = current().editSeq, attemptId = view.detail.attemptId;
-    const proof = () => live() && version === basis.current && current().attempt === attemptId && available(captured.item.targetLocale);
     await run(async () => {
-      const actionId = await executionCommands.identity(session);
-      if (!proof()) return;
-      const entry: AdoptCapture = {request:fixed({...session,attemptId,unitId:captured.unitId,actionId,resultIds:[captured.resultId]}),candidate:captured,editSeq,
-        action:null,receipt:null,uncertain:false,retryAllowed:false};
-      await dispatchAdopt(entry,false,proof);
+      const readProof = candidateReadProof(captured,attemptId);
+      candidateReadCleanup.current = readProof.dispose;
+      const proof = () => live() && version === basis.current && current().attempt === attemptId && available(captured.item.targetLocale)
+        && !cancellationPending(captured.taskId) && readProof.current();
+      try {
+        const actionId = await executionCommands.identity(session);
+        if (!proof()) return;
+        const entry: AdoptCapture = {request:fixed({...session,attemptId,unitId:captured.unitId,actionId,resultIds:[captured.resultId]}),candidate:captured,editSeq,
+          action:null,receipt:null,uncertain:false,retryAllowed:false};
+        await dispatchAdopt(entry,false,proof);
+      } finally {
+        readProof.dispose();
+        if (candidateReadCleanup.current === readProof.dispose) candidateReadCleanup.current = null;
+      }
     });
   }
   async function checkAdoption() {
@@ -250,7 +309,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     update(before => ({ ...before,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],prepared:null,consent:false,staleReason:null,
       dirty:false,editSeq:before.editSeq+1,attempt:null,started:null,failure:null,notice:null })); return true;
   }
-  return { ...state,current,reserved,targetAvailable,preview,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,
+  return { ...state,current,reserved,targetAvailable,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,
     setPresetName:(value:SetStateAction<string>) => edit("presetName",typeof value === "function" ? value(current().presetName) : value),
     setConfig:(value:SetStateAction<AiConfig>) => edit("config",typeof value === "function" ? value(current().config) : value),
     setLocale:(value:SetStateAction<string>) => edit("locale",typeof value === "function" ? value(current().locale) : value),

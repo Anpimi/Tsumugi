@@ -167,3 +167,43 @@ describe("source command payloads", () => {
     remove(); expect(dispatch(payload)).toBe(false);
   });
 });
+
+
+describe("AI command payloads", () => {
+  const aiScope = { ...scope, area: "ai" as const };
+  const metadata = { nameKey: "ai.preview" as const, category: "ai" as const, scope: aiScope,
+    binding: null, risk: "captures-ai" as const, confirmation: "none" as const };
+  const item = { attemptId: "attempt", taskId: "task", itemId: "item", translationUnitId: "unit", locale: "zh-CN",
+    sourceRevisionId: "revision", sourceSnapshotId: "snapshot" };
+  it.each([
+    ["ai.preview", { kind: "ai-preparation", editSeq: 1, locale: "zh-CN", unitIds: ["later-page", "first-page"] },
+      [{ editSeq: -1 }, { editSeq: 1.5 }, { locale: "" }, { unitIds: [] }, { unitIds: ["same", "same"] }, { unitIds: ["valid", null] }]],
+    ["ai.start", { kind: "ai-start", attemptId: "attempt", editSeq: 2 }, [{ attemptId: "" }, { editSeq: NaN }]],
+    ["ai.adopt-result", { kind: "ai-candidate", ...item, resultId: "result", recoveryUnitId: "recovery" },
+      [{ resultId: null }, { recoveryUnitId: "" }, { itemId: "" }, { translationUnitId: null }, { sourceSnapshotId: undefined }]],
+    ["ai.reconcile-start", { kind: "ai-start-pending", attemptId: "attempt", editSeq: 3 }, [{ attemptId: null }, { editSeq: undefined }]],
+    ["ai.retry-start", { kind: "ai-start-pending", attemptId: "attempt", editSeq: 3 }, [{ editSeq: -1 }]],
+    ["ai.reconcile-adoption", { kind: "ai-adoption-pending", attemptId: "attempt", actionId: "action", recoveryUnitId: "recovery", resultId: "result" },
+      [{ actionId: null }, { recoveryUnitId: "" }]],
+    ["ai.retry-adoption", { kind: "ai-adoption-pending", attemptId: "attempt", actionId: "action", recoveryUnitId: "recovery", resultId: "result" },
+      [{ resultId: undefined }, { attemptId: "" }]],
+    ["ai.cancel-task", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "ai" }, [{ origin: "other" }, { taskId: "" }]],
+    ["ai.retry-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "source", requestId: "original" },
+      [{ requestId: "" }, { origin: undefined }]],
+    ["ai.open-translation", { kind: "ai-translation-target", ...item }, [{ sourceRevisionId: null }, { locale: false }]],
+  ] as const)("rejects malformed and obsolete UI intent for %s before invoking its owner", (id, payload, malformed) => {
+    const commands = new WorkbenchCommands(), handler = vi.fn();
+    let enabled = true;
+    const remove = commands.register({ ...metadata, id, payloadKind: payload.kind,
+      availability: () => ({ enabled }), handler } as WorkbenchCommand);
+    const dispatch = (value?: unknown, target = aiScope) => Reflect.apply(commands.dispatch, commands, [id, target, value]);
+    expect(dispatch()).toBe(false); expect(dispatch(null)).toBe(false); expect(dispatch({ ...payload, kind: "unknown" })).toBe(false);
+    malformed.forEach(change => expect(dispatch({ ...payload, ...change })).toBe(false));
+    expect(dispatch(payload, { ...aiScope, projectId: "other" })).toBe(false);
+    expect(dispatch(payload, { ...aiScope, sessionToken: "other" })).toBe(false);
+    expect(Reflect.apply(commands.dispatch, commands, [id, { ...aiScope, area: "arena" }, payload])).toBe(false);
+    expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledWith(payload);
+    enabled = false; expect(dispatch(payload)).toBe(false); expect(handler).toHaveBeenCalledTimes(1);
+    remove(); expect(dispatch(payload)).toBe(false);
+  });
+});

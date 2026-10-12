@@ -9,6 +9,7 @@ import { useTranslationDraftSession } from "./TranslationDraftSession";
 
 type Origin = "tasks" | "source" | "ai" | "arena";
 export interface CancellationTarget { readonly taskId: string; readonly attemptId: string; readonly origin: Origin }
+export interface CancellationRetryIntent extends CancellationTarget { readonly requestId: string }
 type Cancellation = { target: CancellationTarget } & (
   | { phase: "preparing"; request: null; revision: null; failure: null }
   | { phase: "pending"; request: CancelRequest; revision: null; failure: null }
@@ -390,13 +391,17 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
 }
 
 /** All recovery buttons use the owner's original request, never the current projection. */
-export function TaskCancellationFeedback({ origin, taskId, disabled = false, visible = true }: { origin: Origin; taskId?: string; disabled?: boolean; visible?: boolean }) {
+export function TaskCancellationFeedback({ origin, taskId, disabled = false, visible = true, retryCommand }: {
+  origin: Origin; taskId?: string; disabled?: boolean; visible?: boolean;
+  retryCommand?: { available: (intent: CancellationRetryIntent) => boolean; dispatch: (intent: CancellationRetryIntent) => void };
+}) {
   const owner = useExecutionTaskSession(), { t } = useTranslation(), errorRegion = useRef<HTMLDivElement>(null);
   const entries = Object.values(owner.state).filter(value => origin === "tasks" || unresolved(value) || value.target.taskId === taskId || value.target.origin === origin);
   const failure = entries.find(value => value.failure !== null);
   useLayoutEffect(() => { if (visible && failure) errorRegion.current?.focus(); }, [visible, failure]);
   if (!visible) return null;
   return <>{entries.map(value => {
+    const retryIntent = value.phase === "unknown" ? { ...value.target, requestId: value.request.requestId } : null;
     const reason = failureReason(value.failure);
     const errorKey = reason === "busy" ? "busy" : reason === "session-invalid" ? "session" : reason === "dependency-conflict" ? "conflict" : reason === "outcome-unknown" ? "unknown" : "failed";
     return <section key={value.target.taskId} aria-label={t("execution.cancelStatus")}>
@@ -405,7 +410,8 @@ export function TaskCancellationFeedback({ origin, taskId, disabled = false, vis
       </div> : null}
       <p role="status">{t(value.phase === "recorded" ? "execution.cancelRecorded" : value.phase === "unknown" ? "execution.cancelUnknown"
         : value.phase === "rejected" ? value.request ? "execution.cancelRejected" : "execution.cancelPreparationFailed" : "execution.cancelPending")}</p>
-      {value.phase === "unknown" ? <button className="secondary-button" disabled={disabled} onClick={() => void owner.retry(value.request.taskId)}>{t("execution.retryCancellation")}</button> : null}
+      {retryIntent ? <button className="secondary-button" disabled={disabled || (!!retryCommand && !retryCommand.available(retryIntent))}
+        onClick={() => { if (retryCommand) retryCommand.dispatch(retryIntent); else void owner.retry(retryIntent.taskId); }}>{t("execution.retryCancellation")}</button> : null}
       <details><summary>{t("execution.diagnostic")}</summary>
         <p>{t("execution.cancelTaskIdentity")} <code>{value.target.taskId}</code></p>
         {value.request ? <p>{t("execution.cancelRequestIdentity")} <code>{value.request.requestId}</code></p> : null}
