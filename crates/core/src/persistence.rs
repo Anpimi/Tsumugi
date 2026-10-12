@@ -60,7 +60,7 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 #[cfg(test)]
 pub(crate) fn restore_legacy_translation_fixture(connection: &Connection) -> rusqlite::Result<()> {
     arena::drop_for_legacy_fixture(connection)?;
@@ -301,7 +301,7 @@ impl ProjectStore {
         })
     }
 
-    /// Open an existing project and apply supported, transactional schema upgrades.
+    /// Open and validate a current-format project without upgrading unsupported schemas.
     pub fn open<P: AsRef<Path>>(directory: P) -> Result<Self, PersistenceError> {
         let directory = directory.as_ref().to_path_buf();
         if !directory.is_dir() {
@@ -773,7 +773,7 @@ fn configure_new_connection(connection: &Connection) -> Result<(), PersistenceEr
 
 fn validate_existing_connection(
     connection: &mut Connection,
-    directory: &Path,
+    _directory: &Path,
 ) -> Result<(), PersistenceError> {
     connection
         .pragma_update(None, "foreign_keys", true)
@@ -792,6 +792,9 @@ fn validate_existing_connection(
     let user_version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
+    if user_version != SCHEMA_VERSION {
+        return Err(PersistenceError::UnsupportedSchema { found_version: user_version, stage: PersistenceStage::Open });
+    }
     let journal_mode: String = connection
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
@@ -808,129 +811,19 @@ fn validate_existing_connection(
             stage: PersistenceStage::Open,
         });
     }
-    match user_version {
-        SCHEMA_VERSION => validate_schema_shape(connection, false, true, true, true, true, true),
-        11 => validate_schema_shape(connection, false, true, true, true, true, true),
-        10 => validate_schema_shape(connection, false, true, true, true, true, true),
-        9 => {
-            validate_schema_shape(connection, false, true, true, true, true, true)?;
-            backup_before_migration(connection, directory, 9)?;
-            translation::migrate_v9(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true, true)
-        }
-        8 => {
-            validate_schema_shape(connection, false, true, true, true, true, false)?;
-            backup_before_migration(connection, directory, 8)?;
-            content::migrate_v8(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true, true)
-        }
-        7 => {
-            validate_schema_shape(connection, false, true, true, true, false, false)?;
-            backup_before_migration(connection, directory, 7)?;
-            release::migrate_v7(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            content::migrate_v8(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true, true)
-        }
-        6 => {
-            validate_schema_shape(connection, false, true, true, false, false, false)?;
-            backup_before_migration(connection, directory, 6)?;
-            review::migrate_v6(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            release::migrate_v7(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            content::migrate_v8(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true, true)
-        }
-        5 => {
-            validate_schema_shape(connection, false, true, false, false, false, false)?;
-            backup_before_migration(connection, directory, 5)?;
-            resources::migrate_v5(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            review::migrate_v6(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            release::migrate_v7(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            content::migrate_v8(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true, true)
-        }
-        4 => {
-            validate_schema_shape(connection, false, false, false, false, false, false)?;
-            backup_before_migration(connection, directory, 4)?;
-            translation::migrate_v4(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false, false, false, false)?;
-            resources::migrate_v5(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            review::migrate_v6(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            release::migrate_v7(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            content::migrate_v8(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true, true)
-        }
-        3 => {
-            validate_schema_shape(connection, true, false, false, false, false, false)?;
-            backup_before_migration(connection, directory, 3)?;
-            ledger::migrate_v3_result_limit(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, false, false, false, false, false)?;
-            translation::migrate_v4(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, false, false, false, false)?;
-            resources::migrate_v5(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            review::migrate_v6(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            release::migrate_v7(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            content::migrate_v8(connection)
-                .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-            validate_schema_shape(connection, false, true, true, true, true, true)
-        }
-        found_version => Err(PersistenceError::UnsupportedSchema {
-            found_version,
-            stage: PersistenceStage::Open,
-        }),
-    }?;
-    if user_version < 9 && user_version >= 3 {
-        translation::migrate_v9(connection)
-            .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        validate_schema_shape(connection, false, true, true, true, true, true)?;
-    }
-    if user_version < 11 {
-        if user_version == 10 {
-            backup_before_migration(connection, directory, 10)?;
-        }
-        arena::migrate(connection).map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-        validate_schema_shape(connection, false, true, true, true, true, true)?;
-    }
-    if user_version < 12 {
-        if user_version == 11 {
-            backup_before_migration(connection, directory, 11)?;
-        }
-        ledger::provider::migrate(connection).map_err(|e| map_sqlite(e, PersistenceStage::Open))?;
-        validate_schema_shape(connection, false, true, true, true, true, true)?;
-    }
-    Ok(())
+    validate_schema_shape(connection, false, true, true, true, true, true)
 }
 
-fn backup_before_migration(
+#[cfg(test)]
+fn backup_current_schema(
     connection: &Connection,
     directory: &Path,
-    version: i64,
 ) -> Result<(), PersistenceError> {
     // VACUUM INTO uses SQLite's consistent database snapshot rather than a raw
     // copy of a possibly active rollback-journal database. Keep the backup for
     // explicit recovery; never replace a previous one.
     let filename = format!(
-        "{DATABASE_FILENAME}.pre-v{version}-{}.backup",
+        "{DATABASE_FILENAME}.snapshot-{}.backup",
         uuid::Uuid::new_v4()
     );
     let path = directory.join(filename);
@@ -945,7 +838,7 @@ fn backup_before_migration(
     let check: String = backup
         .query_row("PRAGMA quick_check", [], |row| row.get(0))
         .map_err(|error| map_sqlite(error, PersistenceStage::Open))?;
-    if backup_version != version || check != "ok" {
+    if backup_version != SCHEMA_VERSION || check != "ok" {
         return Err(PersistenceError::CorruptProject {
             stage: PersistenceStage::Open,
         });
@@ -1192,77 +1085,9 @@ mod tests {
             .unwrap()
     }
 
-    fn downgrade_project_to_schema_v3(project_path: &Path) {
-        let mut connection = Connection::open(project_path.join(DATABASE_FILENAME)).unwrap();
-        let transaction = connection
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .unwrap();
-        transaction
-            .pragma_update(None, "defer_foreign_keys", true)
-            .unwrap();
-        review::drop_for_legacy_fixture(&transaction).unwrap();
-        arena::drop_for_legacy_fixture(&transaction).unwrap();
-        ledger::provider::drop_for_legacy_fixture(&transaction).unwrap();
-        release::drop_for_legacy_fixture(&transaction).unwrap();
-        resources::drop_for_legacy_fixture(&transaction).unwrap();
-        transaction
-            .execute_batch(
-                "CREATE TEMP TABLE execution_results_copy AS SELECT * FROM main.execution_results;
-                 DROP TABLE main.execution_results;",
-            )
-            .unwrap();
-        transaction
-            .execute_batch(ledger::EXECUTION_RESULTS_TABLE_V3)
-            .unwrap();
-        transaction
-            .execute_batch(
-                "INSERT INTO main.execution_results SELECT * FROM temp.execution_results_copy;
-                 DROP TABLE temp.execution_results_copy;
-                 DROP TABLE translation_selections;
-                 DROP TABLE translation_revisions;",
-            )
-            .unwrap();
-        transaction
-            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-            .unwrap();
-        transaction
-            .pragma_update(None, "user_version", 3i64)
-            .unwrap();
-        transaction.commit().unwrap();
-    }
 
-    fn run_migration_crash_child(project_path: &Path, point: &str, hook_path: &Path) {
-        use std::process::Stdio;
-        use std::time::Instant;
 
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "persistence::tests::schema_migration_crash_child",
-                "--nocapture",
-            ])
-            .env("TSUMUGI_MIGRATION_PROJECT", project_path)
-            .env("TSUMUGI_MIGRATION_CRASH", point)
-            .env("TSUMUGI_MIGRATION_HOOK", hook_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if let Some(status) = child.try_wait().unwrap() {
-                assert!(!status.success());
-                break;
-            }
-            if Instant::now() >= deadline {
-                child.kill().unwrap();
-                child.wait().unwrap();
-                panic!("owned migration crash helper timed out");
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(fs::read_to_string(hook_path).unwrap(), point);
-    }
+
 
     fn run_crash_child(project_path: &Path, hook_path: &Path, mode: &str) {
         let executable = std::env::current_exe().unwrap();
@@ -1409,402 +1234,17 @@ mod tests {
         assert_eq!(fs::read(&database).unwrap(), before);
     }
 
-    #[test]
-    fn schema_four_upgrade_preserves_project_and_recoverable_backup() {
-        let parent = temporary_directory("translation-upgrade");
-        let path = parent.path().join("project");
-        let store = ProjectStore::create(&path, metadata()).unwrap();
-        store.close().unwrap();
 
-        let database = path.join(DATABASE_FILENAME);
-        let connection = Connection::open(&database).unwrap();
-        review::drop_for_legacy_fixture(&connection).unwrap();
-        arena::drop_for_legacy_fixture(&connection).unwrap();
-        ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
-        release::drop_for_legacy_fixture(&connection).unwrap();
-        resources::drop_for_legacy_fixture(&connection).unwrap();
-        connection
-            .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
-            .unwrap();
-        connection
-            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-            .unwrap();
-        connection.pragma_update(None, "user_version", 4).unwrap();
-        drop(connection);
 
-        let reopened = ProjectStore::open(&path).unwrap();
-        assert_eq!(reopened.metadata().unwrap(), metadata());
-        assert_eq!(
-            reopened
-                .connection()
-                .unwrap()
-                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            SCHEMA_VERSION
-        );
-        reopened.close().unwrap();
 
-        let backups: Vec<_> = fs::read_dir(&path)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("project.sqlite3.pre-v4-")
-            })
-            .collect();
-        assert_eq!(backups.len(), 1);
-        let backup =
-            Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        assert_eq!(
-            backup
-                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            4
-        );
-        assert_eq!(
-            backup
-                .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                .unwrap(),
-            "ok"
-        );
-        assert_eq!(
-            backup
-                .query_row("SELECT display_name FROM project_metadata", [], |row| {
-                    row.get::<_, String>(0)
-                })
-                .unwrap(),
-            "Demo"
-        );
-        assert_eq!(
-            backup
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE name='translation_revisions'",
-                    [],
-                    |row| row.get::<_, i64>(0)
-                )
-                .unwrap(),
-            0
-        );
-    }
 
-    #[test]
-    fn schema_seven_upgrade_adds_release_storage_and_preserves_backup() {
-        let parent = temporary_directory("release-upgrade");
-        let path = parent.path().join("project");
-        ProjectStore::create(&path, metadata())
-            .unwrap()
-            .close()
-            .unwrap();
-        let database = path.join(DATABASE_FILENAME);
-        let connection = Connection::open(&database).unwrap();
-        arena::drop_for_legacy_fixture(&connection).unwrap();
-        ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
-        release::drop_for_legacy_fixture(&connection).unwrap();
-        connection
-            .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-            .unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-        connection.pragma_update(None, "user_version", 7).unwrap();
-        drop(connection);
-        let reopened = ProjectStore::open(&path).unwrap();
-        assert_eq!(reopened.metadata().unwrap(), metadata());
-        assert_eq!(
-            reopened
-                .connection()
-                .unwrap()
-                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            SCHEMA_VERSION
-        );
-        assert_eq!(
-            reopened
-                .list_releases(
-                    crate::execution::ExecutionId::parse(&metadata().project_id().to_string())
-                        .unwrap()
-                )
-                .unwrap()
-                .len(),
-            0
-        );
-        reopened.close().unwrap();
-        let backups: Vec<_> = fs::read_dir(&path)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|file| {
-                file.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("project.sqlite3.pre-v7-")
-            })
-            .collect();
-        assert_eq!(backups.len(), 1);
-        let backup =
-            Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        assert_eq!(
-            backup
-                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            7
-        );
-        assert_eq!(
-            backup
-                .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                .unwrap(),
-            "ok"
-        );
-    }
 
-    #[test]
-    fn schema_seven_release_upgrade_recovers_across_process_commit_boundaries() {
-        for (point, expected_version) in [
-            ("before-release-migration-commit", 7),
-            ("after-release-migration-commit", 8),
-        ] {
-            let parent = temporary_directory("release-migration-crash");
-            let path = parent.path().join("project");
-            ProjectStore::create(&path, metadata())
-                .unwrap()
-                .close()
-                .unwrap();
-            let database = path.join(DATABASE_FILENAME);
-            let connection = Connection::open(&database).unwrap();
-            arena::drop_for_legacy_fixture(&connection).unwrap();
-            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
-            release::drop_for_legacy_fixture(&connection).unwrap();
-            connection
-                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-                .unwrap();
-            crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-            connection.pragma_update(None, "user_version", 7).unwrap();
-            drop(connection);
 
-            run_migration_crash_child(&path, point, &parent.path().join("migration-hook"));
-            let connection = Connection::open(&database).unwrap();
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                expected_version
-            );
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            drop(connection);
-            let backups = fs::read_dir(&path)
-                .unwrap()
-                .map(|item| item.unwrap().path())
-                .filter(|file| {
-                    file.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("project.sqlite3.pre-v7-")
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(backups.len(), 1);
-            let backup =
-                Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                7
-            );
-            drop(backup);
 
-            let reopened = ProjectStore::open(&path).unwrap();
-            assert_eq!(reopened.metadata().unwrap(), metadata());
-            assert_eq!(
-                reopened
-                    .connection()
-                    .unwrap()
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                SCHEMA_VERSION
-            );
-            reopened.close().unwrap();
-        }
-    }
 
-    #[test]
-    fn schema_five_resource_upgrade_preserves_project_and_crash_boundaries() {
-        for point in [
-            "before-resource-migration-commit",
-            "after-resource-migration-commit",
-        ] {
-            let parent = temporary_directory("resource-migration-crash");
-            let project_path = parent.path().join("project");
-            ProjectStore::create(&project_path, metadata())
-                .unwrap()
-                .close()
-                .unwrap();
-            let database = project_path.join(DATABASE_FILENAME);
-            let connection = Connection::open(&database).unwrap();
-            review::drop_for_legacy_fixture(&connection).unwrap();
-            arena::drop_for_legacy_fixture(&connection).unwrap();
-            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
-            release::drop_for_legacy_fixture(&connection).unwrap();
-            resources::drop_for_legacy_fixture(&connection).unwrap();
-            connection
-                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-                .unwrap();
-            crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-            connection.pragma_update(None, "user_version", 5).unwrap();
-            drop(connection);
 
-            let hook = parent.path().join("migration-hook");
-            run_migration_crash_child(&project_path, point, &hook);
-            let connection = Connection::open(&database).unwrap();
-            let version: i64 = connection
-                .query_row("PRAGMA user_version", [], |row| row.get(0))
-                .unwrap();
-            assert_eq!(
-                version,
-                if point == "before-resource-migration-commit" {
-                    5
-                } else {
-                    6
-                }
-            );
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            drop(connection);
-            let prior_backups = fs::read_dir(&project_path)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| {
-                    path.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("project.sqlite3.pre-v5-")
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(prior_backups.len(), 1);
-            let reopened = ProjectStore::open(&project_path).unwrap();
-            assert_eq!(reopened.metadata().unwrap(), metadata());
-            assert_eq!(
-                reopened
-                    .connection()
-                    .unwrap()
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                SCHEMA_VERSION
-            );
-            reopened.close().unwrap();
-            let backup =
-                Connection::open_with_flags(&prior_backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY)
-                    .unwrap();
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                5
-            );
-        }
-    }
 
-    #[test]
-    fn schema_nine_ai_upgrade_recovers_across_process_commit_boundaries() {
-        for (point, expected) in [
-            ("before-ai-migration-commit", 9),
-            ("after-ai-migration-commit", 10),
-        ] {
-            let parent = temporary_directory("ai-migration-crash");
-            let path = parent.path().join("project");
-            ProjectStore::create(&path, metadata())
-                .unwrap()
-                .close()
-                .unwrap();
-            let database = path.join(DATABASE_FILENAME);
-            let connection = Connection::open(&database).unwrap();
-            restore_legacy_translation_fixture(&connection).unwrap();
-            connection.pragma_update(None, "user_version", 9).unwrap();
-            drop(connection);
-            run_migration_crash_child(&path, point, &parent.path().join("migration-hook"));
-            let connection = Connection::open(&database).unwrap();
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-                    .unwrap(),
-                expected
-            );
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            drop(connection);
-            let reopened = ProjectStore::open(&path).unwrap();
-            assert_eq!(reopened.metadata().unwrap(), metadata());
-            reopened.close().unwrap();
-        }
-    }
 
-    #[test]
-    fn schema_ten_arena_upgrade_recovers_across_process_commit_boundaries() {
-        for (point, expected) in [
-            ("before-arena-migration-commit", 10),
-            ("after-arena-migration-commit", 11),
-        ] {
-            let parent = temporary_directory("arena-migration-crash");
-            let path = parent.path().join("project");
-            ProjectStore::create(&path, metadata())
-                .unwrap()
-                .close()
-                .unwrap();
-            let database = path.join(DATABASE_FILENAME);
-            let connection = Connection::open(&database).unwrap();
-            arena::drop_for_legacy_fixture(&connection).unwrap();
-            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
-            connection.pragma_update(None, "user_version", 10).unwrap();
-            drop(connection);
-            run_migration_crash_child(&path, point, &parent.path().join("migration-hook"));
-            let connection = Connection::open(&database).unwrap();
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-                    .unwrap(),
-                expected
-            );
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            drop(connection);
-            let reopened = ProjectStore::open(&path).unwrap();
-            assert_eq!(reopened.metadata().unwrap(), metadata());
-            reopened.close().unwrap();
-            let backup = fs::read_dir(&path)
-                .unwrap()
-                .map(|p| p.unwrap().path())
-                .find(|p| {
-                    p.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("project.sqlite3.pre-v10-")
-                })
-                .unwrap();
-            let connection =
-                Connection::open_with_flags(backup, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-                    .unwrap(),
-                10
-            );
-        }
-    }
 
     #[test]
     fn malformed_arena_schema_and_future_version_are_rejected_without_repair() {
@@ -1818,7 +1258,7 @@ mod tests {
             let database = path.join(DATABASE_FILENAME);
             let connection = Connection::open(&database).unwrap();
             if future {
-                connection.pragma_update(None, "user_version", 13).unwrap();
+                connection.pragma_update(None, "user_version", SCHEMA_VERSION + 1).unwrap();
             } else {
                 connection
                     .execute_batch(
@@ -1841,7 +1281,7 @@ mod tests {
                 connection
                     .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
                     .unwrap(),
-                if future { 13 } else { 12 }
+                if future { SCHEMA_VERSION + 1 } else { SCHEMA_VERSION }
             );
             assert_eq!(
                 connection
@@ -1863,224 +1303,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn schema_migration_crash_child() {
-        let Ok(project) = std::env::var("TSUMUGI_MIGRATION_PROJECT") else {
-            return;
-        };
-        let _ = ProjectStore::open(project);
-        panic!("translation migration crash hook did not abort");
-    }
 
-    #[test]
-    fn schema_four_migration_reopens_across_process_commit_boundaries() {
-        for point in [
-            "before-translation-migration-commit",
-            "after-translation-migration-commit",
-        ] {
-            let parent = temporary_directory("translation-migration-crash");
-            let project_path = parent.path().join("project");
-            ProjectStore::create(&project_path, metadata())
-                .unwrap()
-                .close()
-                .unwrap();
-            let database = project_path.join(DATABASE_FILENAME);
-            let connection = Connection::open(&database).unwrap();
-            review::drop_for_legacy_fixture(&connection).unwrap();
-            arena::drop_for_legacy_fixture(&connection).unwrap();
-            ledger::provider::drop_for_legacy_fixture(&connection).unwrap();
-            release::drop_for_legacy_fixture(&connection).unwrap();
-            resources::drop_for_legacy_fixture(&connection).unwrap();
-            connection
-                .execute_batch(
-                    "DROP TABLE translation_selections; DROP TABLE translation_revisions;",
-                )
-                .unwrap();
-            connection
-                .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
-                .unwrap();
-            connection.pragma_update(None, "user_version", 4).unwrap();
-            drop(connection);
 
-            let hook = parent.path().join("migration-hook");
-            run_migration_crash_child(&project_path, point, &hook);
 
-            let connection = Connection::open(&database).unwrap();
-            let version: i64 = connection
-                .query_row("PRAGMA user_version", [], |row| row.get(0))
-                .unwrap();
-            let table_count: i64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('translation_revisions','translation_selections')",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(
-                (version, table_count),
-                if point == "before-translation-migration-commit" {
-                    (4, 0)
-                } else {
-                    (5, 2)
-                }
-            );
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            drop(connection);
 
-            let backups: Vec<_> = fs::read_dir(&project_path)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| {
-                    path.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("project.sqlite3.pre-v4-")
-                })
-                .collect();
-            assert_eq!(backups.len(), 1);
-            let backup =
-                Connection::open_with_flags(&backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                4
-            );
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            drop(backup);
 
-            let reopened = ProjectStore::open(&project_path).unwrap();
-            assert_eq!(reopened.metadata().unwrap(), metadata());
-            assert_eq!(
-                reopened
-                    .connection()
-                    .unwrap()
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                SCHEMA_VERSION
-            );
-            reopened.close().unwrap();
-        }
-    }
-
-    #[test]
-    fn schema_three_migration_reopens_across_process_commit_boundaries() {
-        for (point, expected_version, result_limit) in [
-            ("before-v3-migration-commit", 3i64, 262_144i64),
-            ("after-v3-migration-commit", 4i64, 2_097_152i64),
-        ] {
-            let parent = temporary_directory("schema-three-migration-crash");
-            let project_path = parent.path().join("project");
-            ProjectStore::create(&project_path, metadata())
-                .unwrap()
-                .close()
-                .unwrap();
-            downgrade_project_to_schema_v3(&project_path);
-
-            let database = project_path.join(DATABASE_FILENAME);
-            let hook = parent.path().join("migration-hook");
-            run_migration_crash_child(&project_path, point, &hook);
-
-            let connection = Connection::open(&database).unwrap();
-            let version: i64 = connection
-                .query_row("PRAGMA user_version", [], |row| row.get(0))
-                .unwrap();
-            assert_eq!(version, expected_version);
-            let result_table: String = connection
-                .query_row(
-                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='execution_results'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert!(result_table.contains(&format!("BETWEEN 1 AND {result_limit}")));
-            let translation_tables: i64 = connection
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('translation_revisions','translation_selections')",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(translation_tables, 0);
-            assert_eq!(
-                connection
-                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            assert_eq!(
-                connection
-                    .query_row("SELECT display_name FROM project_metadata", [], |row| {
-                        row.get::<_, String>(0)
-                    })
-                    .unwrap(),
-                "Demo"
-            );
-            drop(connection);
-
-            let v3_backups: Vec<_> = fs::read_dir(&project_path)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| {
-                    path.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("project.sqlite3.pre-v3-")
-                })
-                .collect();
-            assert_eq!(v3_backups.len(), 1);
-            let backup =
-                Connection::open_with_flags(&v3_backups[0], OpenFlags::SQLITE_OPEN_READ_ONLY)
-                    .unwrap();
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                3
-            );
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-            drop(backup);
-
-            let reopened = ProjectStore::open(&project_path).unwrap();
-            assert_eq!(reopened.metadata().unwrap(), metadata());
-            assert_eq!(
-                reopened
-                    .connection()
-                    .unwrap()
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                SCHEMA_VERSION
-            );
-            reopened.close().unwrap();
-
-            let v4_backup_count = fs::read_dir(&project_path)
-                .unwrap()
-                .map(|entry| entry.unwrap().path())
-                .filter(|path| {
-                    path.file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .starts_with("project.sqlite3.pre-v4-")
-                })
-                .count();
-            assert_eq!(v4_backup_count, if expected_version == 4 { 1 } else { 0 });
-        }
-    }
 
     #[test]
     fn open_refuses_corrupt_metadata_without_repair() {

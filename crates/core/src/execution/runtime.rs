@@ -156,26 +156,36 @@ impl ExecutionRuntime {
             .iter()
             .any(|worker| worker.request.input.envelope().attempt_id == attempt)
     }
-    /// Rebuild only eligible remaining work from durable evidence. Capability
-    /// registration and enqueue-time checks remain authoritative.
-    pub fn resume(
-        &mut self,
-        store: &mut ProjectStore,
-        attempt: ExecutionId,
-        items: &[ExecutionId],
-    ) -> Result<ExecutionId, ExecutionError> {
-        if self.is_active(attempt) || self.retired.iter().any(|(id, _)| *id == attempt) {
+    /// Exact replay returns durable evidence before consulting live controls.
+    /// It does not schedule historical queued work after a process reopens.
+    pub fn resume(&mut self, store: &mut ProjectStore, action: &ContinuationAction) -> Result<ContinuationReceipt, ExecutionError> {
+        let action = action.canonical()?;
+        if let Some(receipt) = store.execution_continuation(action.action_id)? {
+            return if receipt.action == action { Ok(receipt) } else { Err(ExecutionError::new(ErrorCode::ResultMismatch, "continuation-identity")) };
+        }
+        if self.is_active(action.source_attempt_id) || self.retired.iter().any(|(id, _)| *id == action.source_attempt_id) {
             return Err(ExecutionError::new(ErrorCode::Busy, "still-running"));
         }
-        let input = store.execution_retry_input(attempt, items)?;
-        if !store.execution_recovery_policy(attempt)?.allows_replay() {
-            return Err(ExecutionError::new(
-                ErrorCode::Unauthorized,
-                "external-new-consent",
-            ));
+        let plan = store.execution_recovery(action.source_attempt_id, false)?;
+        let unit = plan.units.iter().find(|unit| unit.unit_id == action.unit_id)
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "continuation-unit"))?;
+        let mut remaining = unit.remaining_item_ids.clone();
+        remaining.sort();
+        if remaining != action.item_ids || !unit.actions.contains(&action.kind.recovery_action()) {
+            return Err(ExecutionError::new(ErrorCode::Unauthorized, "continuation-eligibility"));
         }
-        self.submit(store, &input)?;
-        Ok(input.envelope().attempt_id)
+        let input = store.execution_retry_input(action.source_attempt_id, &action.item_ids)?;
+        if !self.accepting { return Err(ExecutionError::new(ErrorCode::Busy, "quiescing")); }
+        let key = (input.envelope().capability_id.clone(), input.envelope().capability_version.clone());
+        let policy = self.policies.get(&key).copied().ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "capability"))?;
+        if !store.execution_recovery_policy(action.source_attempt_id)?.allows_replay() {
+            return Err(ExecutionError::new(ErrorCode::Unauthorized, "external-new-consent"));
+        }
+        if store.queued_execution_item_count(self.initial_sequence)? + input.envelope().items.len() > MAX_QUEUED_ITEMS
+            || store.queued_execution_attempts(self.initial_sequence)?.len() >= MAX_QUEUED_ATTEMPTS {
+            return Err(ExecutionError::new(ErrorCode::LimitExceeded, "execution-queue"));
+        }
+        store.enqueue_continuation(&action, &input, policy)
     }
     pub fn apply_query_outcome(
         &self,

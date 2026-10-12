@@ -369,9 +369,10 @@ fn explicit_resume_dispatches_only_eligible_remaining_work() {
         .cancel(&mut store, fixed.envelope().task_id, cancellation_id)
         .unwrap();
     let selected = fixed.envelope().items[0].item_id;
+    let continuation = crate::execution::test_continuation_action(&store, fixed.envelope().attempt_id, &[selected]);
     let attempt = runtime
-        .resume(&mut store, fixed.envelope().attempt_id, &[selected])
-        .unwrap();
+        .resume(&mut store, &continuation)
+        .unwrap().attempt_id;
     runtime.tick(&mut store).unwrap();
     let call = calls.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(call.request.input.envelope().attempt_id, attempt);
@@ -504,7 +505,8 @@ fn committed_cancellation_projection_failure_reconciles_the_original_request() {
         .find(|item| item.execution == ExecutionState::CancelledBeforeDispatch)
         .unwrap()
         .item_id;
-    let resumed = runtime.resume(&mut store, attempt, &[selected]).unwrap();
+    let continuation = crate::execution::test_continuation_action(&store, attempt, &[selected]);
+    let resumed = runtime.resume(&mut store, &continuation).unwrap().attempt_id;
     runtime.tick(&mut store).unwrap();
     let second = calls.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_ne!(resumed, attempt);
@@ -813,12 +815,12 @@ fn runtime_effect_policy_is_host_owned_and_not_operation_name_based() {
             .iter()
             .all(|u| !u.actions.contains(&RecoveryAction::ResumeUndispatched))
     );
+    let continuation = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
     assert!(
         external
             .resume(
                 &mut store,
-                input.envelope().attempt_id,
-                &[input.envelope().items[0].item_id]
+                &continuation
             )
             .is_err()
     );
@@ -826,4 +828,91 @@ fn runtime_effect_policy_is_host_owned_and_not_operation_name_based() {
         store.enqueue_read_only_execution(&input).unwrap_err().code,
         ErrorCode::ResultMismatch
     );
+}
+
+#[test]
+fn continuation_lost_ack_replays_original_intent_without_dispatch_after_reopen() {
+    let (_temp, mut store, mut runtime, calls) = setup();
+    let input = input(&store);
+    let source = input.envelope().attempt_id;
+    let task = input.envelope().task_id;
+    runtime.submit(&mut store, &input).unwrap();
+    runtime.cancel(&mut store, task, ExecutionId::new()).unwrap();
+    let action = crate::execution::test_continuation_action(&store, source, &[input.envelope().items[0].item_id]);
+    let receipt = runtime.resume(&mut store, &action).unwrap();
+    assert_eq!(runtime.resume(&mut store, &action).unwrap(), receipt);
+    assert_eq!(store.execution_attempt_ids(task).unwrap().len(), 2);
+    runtime.tick(&mut store).unwrap();
+    // Only the selected cancelled unit receives a new dispatch.
+    let mut dispatched = Vec::new();
+    while let Ok(call) = calls.recv_timeout(Duration::from_millis(100)) {
+        dispatched.push((call.request.input.envelope().attempt_id, call.request.item_id));
+        call.release.send(ExecutionState::Succeeded).unwrap();
+        assert!(call.finished.recv_timeout(Duration::from_secs(5)).unwrap());
+        runtime.tick(&mut store).unwrap();
+    }
+    pump_until(&mut runtime, &mut store, |runtime, store| !runtime.has_active_work(store).unwrap());
+    assert_eq!(dispatched.iter().filter(|(id,_)|*id == receipt.attempt_id).count(), 1);
+    runtime.cancel(&mut store, task, ExecutionId::new()).unwrap();
+    assert_eq!(runtime.resume(&mut store, &action).unwrap(), receipt);
+    let mut different = action.clone();
+    different.expected_cancellation_revision = different.expected_cancellation_revision.next().unwrap();
+    assert_eq!(runtime.resume(&mut store, &different).unwrap_err().code, ErrorCode::ResultMismatch);
+    drop(runtime);
+    let path = store.directory().to_path_buf();
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    let mut new_runtime = ExecutionRuntime::new(&reopened).unwrap();
+    // No registered runner and current cancellation cannot erase old facts.
+    assert_eq!(new_runtime.resume(&mut reopened, &action).unwrap(), receipt);
+    new_runtime.tick(&mut reopened).unwrap();
+    assert!(!new_runtime.has_active_work(&reopened).unwrap());
+    assert_eq!(reopened.execution_attempt_ids(task).unwrap().len(), 2);
+}
+
+#[test]
+fn fresh_continuation_rejects_stale_cancel_and_scope_inside_writer_transaction() {
+    let (_temp, mut store, mut runtime, _calls) = setup();
+    let input = input(&store);
+    runtime.submit(&mut store, &input).unwrap();
+    let action = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
+    let next = store.execution_retry_input(action.source_attempt_id, &action.item_ids).unwrap();
+    runtime.cancel(&mut store, input.envelope().task_id, ExecutionId::new()).unwrap();
+    for _ in 0..2 {
+        assert_eq!(store.enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly).unwrap_err().code, ErrorCode::Cancelled);
+        assert!(store.execution_continuation(action.action_id).unwrap().is_none());
+        assert_eq!(store.execution_attempt_ids(input.envelope().task_id).unwrap().len(), 1);
+    }
+    let mut fresh = action.clone();
+    fresh.action_id = ExecutionId::new();
+    fresh.expected_cancellation_revision = store.execution_task(input.envelope().task_id).unwrap().cancellation_revision;
+    let mut changed = next.envelope().clone();
+    changed.items[0].payload = json!("changed");
+    let changed = FixedInput::capture(changed).unwrap();
+    assert_eq!(store.enqueue_continuation(&fresh, &changed, RecoveryPolicy::ReadOnly).unwrap_err().code, ErrorCode::ResultMismatch);
+    assert!(store.execution_continuation(fresh.action_id).unwrap().is_none());
+}
+
+#[test]
+fn replay_of_recorded_queued_continuation_never_renews_authority_on_reopen() {
+    let (_temp, mut store, mut runtime, calls) = setup();
+    let fixed = input(&store);
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.cancel(&mut store, fixed.envelope().task_id, ExecutionId::new()).unwrap();
+    let action = crate::execution::test_continuation_action(&store, fixed.envelope().attempt_id, &[fixed.envelope().items[0].item_id]);
+    let receipt = runtime.resume(&mut store, &action).unwrap();
+    let path = store.directory().to_path_buf();
+    drop(runtime);
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    let mut runtime = ExecutionRuntime::new(&reopened).unwrap();
+    let (new_calls, observed) = mpsc::channel();
+    runtime.register_read_only(Arc::new(Controlled { calls: new_calls })).unwrap();
+    assert_eq!(runtime.resume(&mut reopened, &action).unwrap(), receipt);
+    runtime.tick(&mut reopened).unwrap();
+    assert_eq!(reopened.execution_attempt(receipt.attempt_id, false).unwrap().progress.queued, 1);
+    assert!(!runtime.has_active_work(&reopened).unwrap());
+    assert!(observed.try_recv().is_err());
+    assert!(calls.try_recv().is_err());
+    assert_eq!(reopened.execution_attempt_ids(fixed.envelope().task_id).unwrap().len(), 2);
 }

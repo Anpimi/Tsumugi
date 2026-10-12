@@ -216,9 +216,9 @@ fn provider_parent_cancel_stops_children_and_preserves_unknown_reservation() {
 }
 
 #[test]
-fn provider_schema_eleven_upgrade_retains_unknown_exposure_and_validated_backup() {
+fn provider_current_reopen_retains_unknown_usage_and_refuses_schema_eleven() {
     let (temp, mut store, rows) = source_project();
-    let (url, _, wire) = server("ok");
+    let (url, calls, wire) = server("no-usage");
     let mut c = config(url);
     c.max_requests = 3;
     let input = store
@@ -234,56 +234,36 @@ fn provider_schema_eleven_upgrade_retains_unknown_exposure_and_validated_backup(
     .unwrap();
     rt.submit(&mut store, &input).unwrap();
     drain(&mut rt, &mut store, input.envelope().attempt_id);
+    let budget = store.provider_budget(input.envelope().task_id).unwrap().unwrap();
+    assert_eq!(
+        (budget.limit, budget.dispatched, budget.unresolved, budget.usage_unknown, budget.legacy_held),
+        (3, 1, 0, 1, 0)
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     drop(rt);
-    drop(store);
+    store.close().unwrap();
     wire.join().unwrap();
     let path = temp.path().join("project");
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.provider_budget(input.envelope().task_id).unwrap().unwrap(), budget);
+    reopened.close().unwrap();
     let db = path.join("project.sqlite3");
     let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch("DROP TABLE execution_continuations;").unwrap();
     crate::persistence::ledger::provider::drop_for_legacy_fixture(&conn).unwrap();
     conn.pragma_update(None, "user_version", 11).unwrap();
     drop(conn);
-    let before = std::fs::read(&db).unwrap();
-    let reopened = ProjectStore::open(&path).unwrap();
-    let budget = reopened
-        .provider_budget(input.envelope().task_id)
-        .unwrap()
-        .unwrap();
+    assert_unsupported_snapshot_unchanged(&path, 11);
+    let old = rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     assert_eq!(
-        (budget.limit, budget.dispatched, budget.legacy_held),
-        (3, 0, 3)
-    );
-    let backup = std::fs::read_dir(&path)
-        .unwrap()
-        .flatten()
-        .find(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with("project.sqlite3.pre-v11-")
-        })
-        .unwrap()
-        .path();
-    let old = rusqlite::Connection::open(&backup).unwrap();
-    assert_eq!(
-        old.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
-            .unwrap(),
-        11
-    );
-    assert_eq!(
-        old.query_row("SELECT COUNT(*) FROM execution_results", [], |r| r
-            .get::<_, u32>(0))
-            .unwrap(),
+        old.query_row("SELECT COUNT(*) FROM execution_results", [], |row| row.get::<_, u32>(0)).unwrap(),
         2
     );
     drop(old);
-    drop(reopened);
-    let c = rusqlite::Connection::open(&db).unwrap();
-    c.pragma_update(None, "user_version", 13).unwrap();
-    drop(c);
-    let future = std::fs::read(&db).unwrap();
-    assert!(ProjectStore::open(&path).is_err());
-    assert_eq!(std::fs::read(&db).unwrap(), future);
-    assert_ne!(before, future);
+    let future = rusqlite::Connection::open(&db).unwrap();
+    future.pragma_update(None, "user_version", 14).unwrap();
+    drop(future);
+    assert_unsupported_snapshot_unchanged(&path, 14);
 }
 
 #[test]
@@ -358,11 +338,11 @@ fn provider_process_crash_preserves_reservation_without_sending_or_replaying() {
     )
     .unwrap();
     rt.tick(&mut store).unwrap();
+    let continuation = crate::execution::test_continuation_action(&store, input.envelope().attempt_id, &[input.envelope().items[0].item_id]);
     assert!(
         rt.resume(
             &mut store,
-            input.envelope().attempt_id,
-            &[input.envelope().items[0].item_id]
+                &continuation
         )
         .is_err()
     );
@@ -399,48 +379,50 @@ fn bounded_child(mut child: std::process::Child) -> std::process::ExitStatus {
     }
 }
 #[test]
-fn provider_schema_migration_process_interrupt_is_atomic() {
-    for (point, committed) in [
-        ("before-provider-migration-commit", false),
-        ("after-provider-migration-commit", true),
-    ] {
-        let (temp, store, _) = source_project();
-        let path = store.directory().to_path_buf();
-        drop(store);
-        let c = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-        crate::persistence::ledger::provider::drop_for_legacy_fixture(&c).unwrap();
-        c.pragma_update(None, "user_version", 11).unwrap();
-        drop(c);
-        let hook = temp.path().join("hook");
+fn provider_schema_eleven_refusal_child() {
+    let Ok(path) = std::env::var("TSUMUGI_PROVIDER_UNSUPPORTED_PROJECT") else {
+        return;
+    };
+    let proof = std::env::var("TSUMUGI_PROVIDER_UNSUPPORTED_PROOF").unwrap();
+    assert_unsupported_snapshot_unchanged(std::path::Path::new(&path), 11);
+    let unchanged = rusqlite::Connection::open_with_flags(
+        std::path::Path::new(&path).join("project.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert!(unchanged.query_row("SELECT COUNT(*) FROM execution_attempts", [], |row| row.get::<_, i64>(0)).unwrap() > 0);
+    std::fs::write(proof, b"unsupported-schema:11").unwrap();
+}
+
+#[test]
+fn provider_schema_eleven_process_reopen_preserves_original_snapshot() {
+    let (temp, store, _) = source_project();
+    let path = store.directory().to_path_buf();
+    store.close().unwrap();
+    let c = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    c.execute_batch("DROP TABLE execution_continuations;").unwrap();
+    crate::persistence::ledger::provider::drop_for_legacy_fixture(&c).unwrap();
+    c.pragma_update(None, "user_version", 11).unwrap();
+    drop(c);
+    let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+    for replay in 0..2 {
+        let proof = temp.path().join(format!("provider-refusal-{replay}.txt"));
         let child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "persistence::tests::schema_migration_crash_child",
+                "ai::tests::provider_tests::provider_schema_eleven_refusal_child",
                 "--nocapture",
             ])
-            .env("TSUMUGI_MIGRATION_PROJECT", &path)
-            .env("TSUMUGI_MIGRATION_CRASH", point)
-            .env("TSUMUGI_MIGRATION_HOOK", &hook)
+            .env("TSUMUGI_PROVIDER_UNSUPPORTED_PROJECT", &path)
+            .env("TSUMUGI_PROVIDER_UNSUPPORTED_PROOF", &proof)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        assert!(!bounded_child(child).success());
-        assert_eq!(std::fs::read_to_string(hook).unwrap(), point);
-        let c = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-        assert_eq!(
-            c.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
-                .unwrap(),
-            if committed { 12 } else { 11 }
-        );
-        drop(c);
-        let opened = ProjectStore::open(&path).unwrap();
-        assert!(
-            !opened
-                .execution_tasks(Revision::new(0).unwrap(), 50)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(bounded_child(child).success());
+        assert_eq!(std::fs::read(&proof).unwrap(), b"unsupported-schema:11");
+        assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), before);
+        assert_unsupported_snapshot_unchanged(&path, 11);
     }
 }
 

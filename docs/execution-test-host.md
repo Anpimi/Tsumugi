@@ -30,6 +30,16 @@ Available modes:
 
 The feature also registers `seed_execution_fixture` for IPC tests. It requires the current `sessionToken`, `projectId`, a mode, `delayMs` from 0 through 5000, and `grouped`. It has no production menu entry. Fixture target tables are accepted only by this explicit feature; use a normal build and a separate fresh project for production schema checks.
 
+## Continuation identity and current storage
+
+Resume and safe-failure retry use `continue_execution`, with a fixed action identity, original attempt and consistency unit, exact remaining item set and expected task cancellation revision. The original intent, canonical request digest and unique new attempt are committed in one execution-ledger transaction. `read_execution_continuation` reads the complete original receipt by action identity. `read_execution_continuations` pages the original attempt's receipts by the existing attempt sequence; a non-null cursor means more history must be read.
+
+Replaying a recorded request returns that same receipt before evaluating fresh eligibility. It does not enqueue again, invoke a producer again or renew scheduling authority after reopening. A changed payload under the same action conflicts. An unrecorded request keeps its original cancellation basis; a later cancellation rejects it. Reused successes stay in the complete unit without another dispatch. This local guarantee does not establish exactly-once external execution or provider billing.
+
+The old anonymous `recover_execution` route refuses resume/retry. It still owns outcome queries and output validation: query jobs remain session-owned and validation may commit individual saved results. They do not acquire continuation receipts or an exact replay guarantee from this change.
+
+Current projects use schema 13. Opening verifies the exact layout, frozen inputs, result references and continuation associations. Other development schemas are rejected before DDL, without a reset or automatic upgrade. Preserve an unsupported directory and reimport its original sources into a new project.
+
 ## Manual checks
 
 1. In `partial --fixture-grouped`, inspect the saved outputs, retry the single eligible failure, and adopt the group. Successful outputs must not be regenerated; all three target changes appear in the recorded receipt.

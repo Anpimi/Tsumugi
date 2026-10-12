@@ -3,6 +3,7 @@ export const AdoptionStateValues = ["unapplied","committed","conflict","rejected
 export const CommandErrorCodeValues = ["invalid-input","destination-conflict","missing-project","permission-denied","unsupported-schema","corrupt-project","stale-revision","session-invalid","project-in-use","busy","storage-failed","outcome-unknown","limit-exceeded","result-mismatch","output-invalid","dependency-conflict","cancelled"] as const;
 export const CommandOutcomeValues = ["rejected","unknown"] as const;
 export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
+export const ContinuationKindValues = ["resume-undispatched","retry-safe-failure"] as const;
 export const ExecutionStateValues = ["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"] as const;
 export const RecoveryActionValues = ["resume-undispatched","retry-safe-failure","validate-output","adopt-result","query-outcome","view-receipt"] as const;
 export const RecoveryGuidanceValues = ["reconcile-original","review-current","choose-destination"] as const;

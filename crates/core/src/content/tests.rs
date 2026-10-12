@@ -460,154 +460,128 @@ fn upstream_competing_confirmation_and_split_identity_fail_atomically() {
     assert_eq!(store.source_history(0, 10).unwrap().total, 2);
 }
 
-#[test]
-fn source_maintenance_migration_child() {
-    if let Ok(path) = std::env::var("TSUMUGI_SOURCE_MIGRATION_CHILD") {
-        let _ = ProjectStore::open(path);
-        panic!("migration hook did not abort");
-    }
+fn assert_unsupported_source_snapshot_unchanged(path: &std::path::Path) {
+    let database = path.join("project.sqlite3");
+    let before = std::fs::read(&database).unwrap();
+    let entries = || {
+        std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<std::collections::BTreeSet<_>>>()
+            .unwrap()
+    };
+    let before_entries = entries();
+    let error = ProjectStore::open(path).unwrap_err();
+    assert_eq!(error.code(), crate::PersistenceErrorCode::UnsupportedSchema);
+    assert_eq!(error.found_schema_version(), Some(8));
+    assert_eq!(std::fs::read(&database).unwrap(), before);
+    assert_eq!(entries(), before_entries);
+    let unchanged = rusqlite::Connection::open_with_flags(
+        &database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        unchanged.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),
+        8
+    );
+    assert_eq!(
+        unchanged.query_row("SELECT COUNT(*) FROM source_snapshots", [], |row| row.get::<_, i64>(0)).unwrap(),
+        1
+    );
+    assert_eq!(
+        unchanged.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0)).unwrap(),
+        "ok"
+    );
 }
 
 #[test]
-fn schema_eight_migration_interruptions_preserve_source_and_backup() {
-    for point in [
-        "before-maintenance-migration-commit",
-        "after-maintenance-migration-commit",
-    ] {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("project");
-        let mut store = create(&path);
-        let (input, result) = generate(&mut store, small(r#"{"key":"Original"}"#));
-        let action = prepare(&mut store, &input, &result);
-        store
-            .adopt_execution(&action, &SourceAdoptionHandler)
-            .unwrap();
-        let original = store.content_scope().unwrap();
-        store.close().unwrap();
-        let database = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-        crate::persistence::restore_legacy_translation_fixture(&database).unwrap();
-        database.execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;").unwrap();
-        drop(database);
-        let hook = directory.path().join("hook");
-        let result = Command::new(std::env::current_exe().unwrap())
+fn source_schema_eight_refusal_child() {
+    let Ok(path) = std::env::var("TSUMUGI_SOURCE_UNSUPPORTED_CHILD") else {
+        return;
+    };
+    let proof = std::env::var("TSUMUGI_SOURCE_UNSUPPORTED_PROOF").unwrap();
+    assert_unsupported_source_snapshot_unchanged(std::path::Path::new(&path));
+    std::fs::write(proof, b"unsupported-schema:8").unwrap();
+}
+
+#[test]
+fn schema_eight_process_reopen_preserves_source_without_backup_or_ddl() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("project");
+    let mut store = create(&path);
+    let (input, result) = generate(&mut store, small(r#"{"key":"Original"}"#));
+    let action = prepare(&mut store, &input, &result);
+    let receipt = store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
+    let original = store.content_scope().unwrap();
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(reopened.content_scope().unwrap(), original);
+    assert_eq!(reopened.source_history(0, 10).unwrap().total, 1);
+    assert_eq!(reopened.adoption_receipt(action.action_id).unwrap(), Some(receipt));
+    reopened.close().unwrap();
+    let database = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    crate::persistence::restore_legacy_translation_fixture(&database).unwrap();
+    database.execute_batch("DROP TABLE execution_continuations; DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;").unwrap();
+    drop(database);
+    let before = std::fs::read(path.join("project.sqlite3")).unwrap();
+    for replay in 0..2 {
+        let proof = directory.path().join(format!("source-refusal-{replay}.txt"));
+        let mut child = Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "content::tests::source_maintenance_migration_child",
+                "content::tests::source_schema_eight_refusal_child",
                 "--nocapture",
             ])
-            .env("TSUMUGI_SOURCE_MIGRATION_CHILD", &path)
-            .env("TSUMUGI_MIGRATION_CRASH", point)
-            .env("TSUMUGI_MIGRATION_HOOK", &hook)
-            .output()
+            .env("TSUMUGI_SOURCE_UNSUPPORTED_CHILD", &path)
+            .env("TSUMUGI_SOURCE_UNSUPPORTED_PROOF", &proof)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
             .unwrap();
-        assert!(!result.status.success());
-        assert_eq!(std::fs::read_to_string(hook).unwrap(), point);
-        let reopened = ProjectStore::open(&path).unwrap();
-        assert_eq!(reopened.content_scope().unwrap(), original);
-        assert_eq!(reopened.source_history(0, 10).unwrap().total, 1);
-        reopened.close().unwrap();
-        let backups = std::fs::read_dir(&path)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| {
-                path.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .starts_with("project.sqlite3.pre-v8-")
-            })
-            .collect::<Vec<_>>();
-        // An interrupted pre-commit migration leaves schema 8 and the next
-        // open takes another independent pre-upgrade backup.
-        assert_eq!(
-            backups.len(),
-            if point == "before-maintenance-migration-commit" {
-                2
-            } else {
-                1
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
             }
-        );
-        for path in backups {
-            let backup = rusqlite::Connection::open_with_flags(
-                path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-            )
-            .unwrap();
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
-                    .unwrap(),
-                8
-            );
-            assert_eq!(
-                backup
-                    .query_row("SELECT COUNT(*) FROM source_snapshots", [], |row| row
-                        .get::<_, u32>(0))
-                    .unwrap(),
-                1
-            );
-            assert_eq!(
-                backup
-                    .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-                    .unwrap(),
-                "ok"
-            );
-        }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("owned source refusal child exceeded deadline");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(status.success());
+        assert_eq!(std::fs::read(&proof).unwrap(), b"unsupported-schema:8");
+        assert_eq!(std::fs::read(path.join("project.sqlite3")).unwrap(), before);
+        assert_unsupported_source_snapshot_unchanged(&path);
     }
 }
 
 #[test]
-fn schema_eight_source_upgrade_keeps_s1_and_a_recoverable_backup() {
+fn current_source_s1_reopens_and_schema_eight_is_refused_without_changes() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("project");
     let mut store = create(&path);
     let (input, result) = generate(&mut store, small(r#"{"greeting":"Hello"}"#));
     let action = prepare(&mut store, &input, &result);
-    store
-        .adopt_execution(&action, &SourceAdoptionHandler)
-        .unwrap();
+    let receipt = store.adopt_execution(&action, &SourceAdoptionHandler).unwrap();
     let snapshot = store.content_scope().unwrap().current_snapshot.unwrap();
     store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.source_content(snapshot, 0, 50).unwrap().rows[0].occurrence.key,
+        "greeting"
+    );
+    assert_eq!(reopened.source_history(0, 10).unwrap().total, 1);
+    assert_eq!(reopened.adoption_receipt(action.action_id).unwrap(), Some(receipt));
+    reopened.close().unwrap();
     let database = path.join("project.sqlite3");
     let connection = rusqlite::Connection::open(&database).unwrap();
     crate::persistence::restore_legacy_translation_fixture(&connection).unwrap();
-    connection
-        .execute_batch(
-            "DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;",
-        )
-        .unwrap();
+    connection.execute_batch("DROP TABLE execution_continuations; DROP TABLE source_lineage_evidence; DROP TABLE source_lineage; PRAGMA user_version=8;").unwrap();
     drop(connection);
-    let reopened = ProjectStore::open(&path).unwrap();
-    assert_eq!(
-        reopened.source_content(snapshot, 0, 50).unwrap().rows[0]
-            .occurrence
-            .key,
-        "greeting"
-    );
-    let backup = std::fs::read_dir(&path)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("project.sqlite3.pre-v8-")
-        })
-        .unwrap();
-    let previous =
-        rusqlite::Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .unwrap();
-    assert_eq!(
-        previous
-            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
-            .unwrap(),
-        8
-    );
-    assert_eq!(
-        previous
-            .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
-            .unwrap(),
-        "ok"
-    );
+    assert_unsupported_source_snapshot_unchanged(&path);
 }
 
 #[test]
