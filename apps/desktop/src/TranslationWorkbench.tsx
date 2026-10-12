@@ -8,10 +8,15 @@ import { useTranslation } from "react-i18next";
 import type { CommandError, ProjectView } from "./projectCommands";
 import { executionCommands as execution, executionContext } from "./executionCommands";
 import { sourceCommands, type ContentPage, type ContentRow, type ContentScope } from "./sourceCommands";
-import { translationCommands as commands, translationHistoryAfter, type TranslationHistory, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
+import { translationCommands as commands, translationHistoryAfter, type TranslationHistory, type TranslationPreview, type TranslationPreviewRow, type TranslationRevision, type TranslationDecision } from "./translationCommands";
 import { useTranslationImportSession } from "./TranslationImportSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
-import { useWorkbenchCommands } from "./workbenchCommands";
+import { useWorkbenchCommands, type CommandAvailability, type TranslationImportSetupCommandPayload, type TranslationImportConsentCommandPayload,
+  type TranslationImportStartPendingCommandPayload, type TranslationImportPreviewCommandPayload, type TranslationImportRowTarget,
+  type TranslationImportRowCommandPayload, type TranslationImportBatchCommandPayload, type TranslationImportPendingCommandPayload,
+  type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload } from "./workbenchCommands";
+import { validateResponseHistory } from "./generated/translation.validators";
+import { validateResponseEditor } from "./generated/review.validators";
 import type { ChangeScope } from "./sessionReads";
 import type { QueryKey } from "@tanstack/react-query";
 
@@ -375,6 +380,180 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     }
     return available;
   }
+  const unavailableCommand: CommandAvailability = { enabled: false, reason: "unavailable" };
+  function sameCommandValue(left: unknown, right: unknown): boolean {
+    if (Object.is(left,right)) return true;
+    if (Array.isArray(left) || Array.isArray(right)) return Array.isArray(left) && Array.isArray(right)
+      && left.length === right.length && left.every((value,index)=>sameCommandValue(value,right[index]));
+    if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+    const keys=Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every(key=>Object.prototype.hasOwnProperty.call(right,key)
+      && sameCommandValue(Reflect.get(left,key),Reflect.get(right,key)));
+  }
+  function businessGate(area: "import" | "edit", recovery = false): CommandAvailability {
+    if (!mounted.current || reads.retired || !open || tab !== area || disabled || leaveIntent
+      || reads.context.projectId !== commandScope.projectId || reads.context.sessionToken !== commandScope.sessionToken) return { enabled: false, reason: "hidden" };
+    const imported = importSession.current(), draft = draftSession.current();
+    if (running.current || localBusy || imported.busy || draft?.saving || draft?.selecting) return { enabled: false, reason: "busy" };
+    if (!recovery && (imported.pendingStart || imported.uncertain.length || draft?.pending || draft?.pendingSelection)) return { enabled: false, reason: "pending-action" };
+    if (!recovery && (!targetAvailable || (area === "import" && imported.targetLocale !== targetLocale))) return unavailableCommand;
+    return { enabled: true };
+  }
+  function sourceReady(snapshotId?: string) {
+    const value = reads.client.getQueryState<ContentScope>(reads.key(sourceScopeKey));
+    return value?.status === "success" && value.error === null && value.fetchStatus === "idle" && !value.isInvalidated
+      && !!value.data?.currentSnapshot && (!snapshotId || value.data.currentSnapshot === snapshotId);
+  }
+  function sourceFlightProof() {
+    const captured = reads.client.getQueryData<ContentScope>(reads.key(sourceScopeKey)), witness = reads.watchExactQuery(sourceScopeKey);
+    return { current: () => {
+      const value = witness.current();
+      return !reads.retired && !!captured && (!value || value.state.status === "success" && value.state.error === null
+        && sameCommandValue(value.state.data, captured));
+    }, dispose: witness.dispose };
+  }
+  function importSetupPayload(): TranslationImportSetupCommandPayload {
+    const value = importSession.current();
+    return { kind: "translation-import-setup", editSeq: value.editSeq, locale: value.targetLocale,
+      selectionId: value.folder?.selectionId ?? null, fileName: value.fileName };
+  }
+  function importSetupAvailability(payload?: TranslationImportSetupCommandPayload, inspecting = false): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    return payload && sameCommandValue(payload, importSetupPayload()) && (!inspecting || !!payload.selectionId && !!payload.fileName
+      && !!sourcePage && sourceReady()) ? { enabled: true } : unavailableCommand;
+  }
+  function importConsentPayload(confirmed = importSession.current().confirmed): TranslationImportConsentCommandPayload | undefined {
+    const value = importSession.current(), checked = value.preflight;
+    return checked && value.folder ? { ...importSetupPayload(), kind: "translation-import-consent", sourceSnapshotId: checked.sourceSnapshotId,
+      fileDigest: checked.fileDigest, declaredLocale: checked.declaredLocale, confirmed } : undefined;
+  }
+  function importConsentAvailability(payload?: TranslationImportConsentCommandPayload, starting = false): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    const value = importSession.current(), actual = importConsentPayload(payload?.confirmed);
+    return payload && actual && sameCommandValue(payload, actual) && value.preflight?.fileName === payload.fileName
+      && value.preflight.targetLocale === payload.locale && sourceReady(payload.sourceSnapshotId)
+      && (!starting || payload.confirmed && value.confirmed && !value.attempt) ? { enabled: true } : unavailableCommand;
+  }
+  function importStartPendingPayload(): TranslationImportStartPendingCommandPayload | undefined {
+    const request = importSession.current().pendingStart;
+    return request ? { kind: "translation-import-start-pending", request: structuredClone(request) } : undefined;
+  }
+  function importStartPendingAvailability(payload?: TranslationImportStartPendingCommandPayload): CommandAvailability {
+    const allowed = businessGate("import", true); if (!allowed.enabled) return allowed;
+    return payload && sameCommandValue(payload, importStartPendingPayload()) ? { enabled: true } : unavailableCommand;
+  }
+  function importPreviewTarget(value: TranslationPreview, editSeq = importSession.current().editSeq) {
+    return { editSeq, attemptId: value.attemptId, bundleId: value.bundleId, basis: value.basis, locale: value.targetLocale,
+      fixedSourceSnapshotId: value.fixedSourceSnapshotId, currentSourceSnapshotId: value.currentSourceSnapshotId,
+      fileDigest: value.fileDigest, previewResultDigest: value.resultDigest };
+  }
+  function importRowTarget(row: TranslationPreviewRow): TranslationImportRowTarget | undefined {
+    return row.unitId && row.occurrenceId && row.sourceRevisionId ? { ordinal: row.entry.ordinal, itemId: row.itemId, resultId: row.resultId,
+      resultDigest: row.resultDigest, unitId: row.unitId, occurrenceId: row.occurrenceId, sourceRevisionId: row.sourceRevisionId,
+      expectedSelectionId: row.currentSelection?.eventId ?? null } : undefined;
+  }
+  function importRowPayload(row: TranslationPreviewRow, decision: TranslationDecision, captured = importSession.current().preview,
+    editSeq = importSession.current().editSeq): TranslationImportRowCommandPayload | undefined {
+    const target = importRowTarget(row);
+    return target && captured ? { kind: "translation-import-row", ...importPreviewTarget(captured, editSeq), ...target, decision } : undefined;
+  }
+  function rowCommandTarget(payload: TranslationImportRowCommandPayload, applying = false) {
+    const value = importSession.current(), capture = value.rowAction, basis = applying ? capture?.preview : value.preview;
+    const row = applying ? capture?.row : basis?.rows.find(row => sameCommandValue(importRowTarget(row), {
+      ordinal: payload.ordinal, itemId: payload.itemId, resultId: payload.resultId, resultDigest: payload.resultDigest, unitId: payload.unitId,
+      occurrenceId: payload.occurrenceId, sourceRevisionId: payload.sourceRevisionId, expectedSelectionId: payload.expectedSelectionId }));
+    if (!row || !basis) return undefined;
+    if (applying) return capture && sameCommandValue(payload, importRowPayload(row, capture.decision, basis, capture.editSeq)) ? row : undefined;
+    return sameCommandValue(payload, importRowPayload(row, payload.decision, basis, value.editSeq)) ? row : undefined;
+  }
+  function importRowAvailability(payload?: TranslationImportRowCommandPayload, applying = false): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    const value = importSession.current(), row = payload ? rowCommandTarget(payload, applying) : undefined;
+    return payload && row && !value.stale && !draftSession.mutationReserved
+      && payload.fixedSourceSnapshotId === payload.currentSourceSnapshotId && payload.editSeq === value.editSeq
+      && payload.locale === targetLocale && (row.status === "unique" || row.status === "selected-conflict")
+      && (payload.decision === "replace" ? !!row.currentSelection : payload.decision !== "select-if-empty" || !row.currentSelection)
+      ? { enabled: true } : unavailableCommand;
+  }
+  function importPreviewPayload(): TranslationImportPreviewCommandPayload | undefined {
+    const value = importSession.current();
+    return value.preview ? { kind: "translation-import-preview", ...importPreviewTarget(value.preview), selectIfEmpty: value.selectIfEmpty } : undefined;
+  }
+  function importPreviewAvailability(payload?: TranslationImportPreviewCommandPayload): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    const value = importSession.current();
+    return payload && sameCommandValue(payload, importPreviewPayload()) && !!value.preview?.unique && !value.preview.sourceChanged
+      && !value.stale && !draftSession.mutationReserved
+      && payload.fixedSourceSnapshotId === payload.currentSourceSnapshotId ? { enabled: true } : unavailableCommand;
+  }
+  function importBatchPayload(): TranslationImportBatchCommandPayload | undefined {
+    const capture = importSession.current().batchCapture; if (!capture || capture.decision === "replace") return undefined;
+    const rows = capture.eligible.map(importRowTarget); if (rows.some(row => !row)) return undefined;
+    return { kind: "translation-import-batch", ...importPreviewTarget(capture.preview, capture.editSeq), decision: capture.decision,
+      rows: rows.filter((row): row is TranslationImportRowTarget => !!row), excluded: capture.excluded };
+  }
+  function importBatchAvailability(payload?: TranslationImportBatchCommandPayload): CommandAvailability {
+    const allowed = businessGate("import"); if (!allowed.enabled) return allowed;
+    return payload && sameCommandValue(payload, importBatchPayload()) && payload.editSeq === importSession.current().editSeq
+      && !importSession.current().stale && !draftSession.mutationReserved
+      && payload.fixedSourceSnapshotId === payload.currentSourceSnapshotId ? { enabled: true } : unavailableCommand;
+  }
+  function importPendingPayload(actionId: string): TranslationImportPendingCommandPayload | undefined {
+    const value = importSession.current().uncertain.find(pending => pending.request.actionId === actionId);
+    return value ? { kind: "translation-import-pending", request: structuredClone(value.request), recoveryUnitId: value.recoveryUnitId,
+      previousSelectionSequence: value.previousSelectionSequence } : undefined;
+  }
+  function importPendingAvailability(payload?: TranslationImportPendingCommandPayload, retry = false): CommandAvailability {
+    const allowed = businessGate("import", true); if (!allowed.enabled) return allowed;
+    const pending = payload && importSession.current().uncertain.find(value => value.request.actionId === payload.request.actionId);
+    return payload && pending && sameCommandValue(payload, importPendingPayload(payload.request.actionId)) && (!retry || pending.receiptChecked)
+      ? { enabled: true } : unavailableCommand;
+  }
+  function revisionPayload(revision: TranslationRevision): TranslationRevisionCommandPayload | undefined {
+    const value = draftSession.current();
+    return value ? { kind: "translation-revision", unitId: value.unitId, locale: value.locale, sourceRevisionId: value.sourceRevisionId,
+      expectedSelectionId: value.baseSelectionId, editSeq: value.editSeq, revisionId: revision.revisionId, revisionActionId: revision.actionId,
+      revisionOrdinal: revision.ordinal, revisionSourceRevisionId: revision.sourceRevisionId, revisionSourceSnapshotId: revision.sourceSnapshotId } : undefined;
+  }
+  function revisionTarget(payload: TranslationRevisionCommandPayload) {
+    return history?.rows.find(row => sameCommandValue(payload, revisionPayload(row)));
+  }
+  function revisionAvailability(payload?: TranslationRevisionCommandPayload): CommandAvailability {
+    const allowed = businessGate("edit"); if (!allowed.enabled) return allowed;
+    const value = draftSession.current(), revision = payload && revisionTarget(payload);
+    return payload && value && revision && value.text === (value.baseText ?? "") && !value.newerDraftSaved
+      && !draftSession.mutationReserved && payload.locale === targetLocale && editorTarget?.unitId === value.unitId && !historyStale
+      && value.baseRevisionId !== payload.revisionId && !!snapshot && checkedRead(editorKey(editorIntent), snapshot)
+      && (!historySelected || !!history && checkedRead(historyKey(historyIntent), history)) && sourceReady()
+      ? { enabled: true } : unavailableCommand;
+  }
+  function selectionPendingPayload(): TranslationSelectionPendingCommandPayload | undefined {
+    const value = draftSession.current()?.pendingSelection;
+    return value ? { kind: "translation-selection-pending", request: structuredClone(value.request), submittedSeq: value.submittedSeq } : undefined;
+  }
+  function selectionPendingAvailability(payload?: TranslationSelectionPendingCommandPayload, retry = false): CommandAvailability {
+    const allowed = businessGate("edit", true); if (!allowed.enabled) return allowed;
+    const value = draftSession.current()?.pendingSelection;
+    return payload && value && sameCommandValue(payload, selectionPendingPayload()) && (!retry || value.receiptChecked)
+      ? { enabled: true } : unavailableCommand;
+  }
+  function revisionFlightProof(revision: TranslationRevision) {
+    const sourceProof = sourceFlightProof(), editorWitness = reads.watchExactQuery(editorKey(editorIntent));
+    const historyWitness = historySelected ? reads.watchExactQuery(historyKey(historyIntent)) : null, before = draftSession.current();
+    function matches(value: TranslationHistory) {
+      return !!before && value.unitId === before.unitId && value.locale === before.locale
+        && (value.current?.eventId ?? null) === before.baseSelectionId && value.rows.some(row => sameCommandValue(row, revision));
+    }
+    return { current: () => {
+      const editor = editorWitness.current(), selectedHistory = historyWitness?.current();
+      return sourceProof.current() && !!before && (!editor || editor.state.status === "success" && editor.state.error === null
+        && validateResponseEditor(editor.state.data) && editor.state.data.target.unitId === before.unitId
+        && editor.state.data.target.locale === before.locale && editor.state.data.target.sourceRevisionId === before.sourceRevisionId
+        && editor.state.data.target.selectionId === before.baseSelectionId && (historyWitness !== null || matches(editor.state.data.translations)))
+        && (!selectedHistory || selectedHistory.state.status === "success" && selectedHistory.state.error === null
+          && validateResponseHistory(selectedHistory.state.data) && matches(selectedHistory.state.data));
+    }, dispose: () => { sourceProof.dispose(); editorWitness.dispose(); historyWitness?.dispose(); } };
+  }
   useLayoutEffect(() => {
     const removeSave = commandRegistry.register({
       id: "translation.save", nameKey: "translation.save", category: "translation", scope: commandScope,
@@ -396,7 +575,44 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
       binding: null, risk: "writes-translation", confirmation: "none", availability: reconcileAvailability,
       handler: () => { void perform(checkSavedAction); },
     });
-    return () => { removeReconcile(); removeRetry(); removeSaveNext(); removeSave(); };
+    const metadata = { category: "translation" as const, scope: commandScope, binding: null, confirmation: "none" as const };
+    const removeBusiness = [
+      commandRegistry.register({ ...metadata, id: "translation.choose-import-folder", nameKey: "translation.chooseFolder", risk: "captures-translation-import",
+        payloadKind: "translation-import-setup", availability: payload => importSetupAvailability(payload), handler: () => { void importSession.chooseFolder(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.inspect-import", nameKey: "translation.inspect", risk: "captures-translation-import",
+        payloadKind: "translation-import-setup", availability: payload => importSetupAvailability(payload, true), handler: () => { const proof=sourceFlightProof(); void importSession.preflight(proof.current,proof.dispose); } }),
+      commandRegistry.register({ ...metadata, id: "translation.confirm-import-language", nameKey: "translation.languageConfirm", risk: "captures-translation-import",
+        payloadKind: "translation-import-consent", availability: payload => importConsentAvailability(payload), handler: payload => importSession.confirmLanguage(payload.confirmed) }),
+      commandRegistry.register({ ...metadata, id: "translation.start-import", nameKey: "translation.start", risk: "runs-translation-import",
+        confirmation: "required", payloadKind: "translation-import-consent", availability: payload => importConsentAvailability(payload,true),
+        handler: () => { const proof=sourceFlightProof(); void importSession.start(proof.current,proof.dispose); } }),
+      commandRegistry.register({ ...metadata, id: "translation.retry-import-start", nameKey: "translation.checkStart", risk: "retries-execution-action",
+        payloadKind: "translation-import-start-pending", availability: importStartPendingAvailability, handler: () => { void importSession.retryStart(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.choose-import-row", nameKey: "translation.addCandidate", risk: "captures-translation-import",
+        payloadKind: "translation-import-row", availability: payload => importRowAvailability(payload), handler: payload => {
+          const row=rowCommandTarget(payload); if(row)importSession.chooseRow(row,payload.decision);
+        } }),
+      commandRegistry.register({ ...metadata, id: "translation.apply-import-row", nameKey: "translation.selectImported", risk: "writes-translation",
+        confirmation: "required", payloadKind: "translation-import-row", availability: payload => importRowAvailability(payload,true),
+        handler: () => { void importSession.applyRow(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.capture-import-batch", nameKey: "translation.apply", risk: "captures-translation-import",
+        payloadKind: "translation-import-preview", availability: importPreviewAvailability,
+        handler: () => { void importSession.captureBatch(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.apply-import-batch", nameKey: "translation.batchStart", risk: "writes-translation",
+        confirmation: "required", payloadKind: "translation-import-batch", availability: importBatchAvailability,
+        handler: () => { void importSession.applyBatch(); } }),
+      commandRegistry.register({ ...metadata, id: "translation.check-import-receipt", nameKey: "translation.checkReceipt", risk: "reconciles-execution-action",
+        payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload), handler: payload => { void importSession.checkReceipt(payload.request.actionId); } }),
+      commandRegistry.register({ ...metadata, id: "translation.retry-import-action", nameKey: "translation.retryAction", risk: "retries-execution-action",
+        payloadKind: "translation-import-pending", availability: payload => importPendingAvailability(payload,true), handler: payload => { void importSession.retryAction(payload.request.actionId); } }),
+      commandRegistry.register({ ...metadata, id: "translation.select-revision", nameKey: "translation.selectRevision", risk: "writes-translation",
+        payloadKind: "translation-revision", availability: revisionAvailability, handler: payload => { void perform(current => selectRevision(payload,current)); } }),
+      commandRegistry.register({ ...metadata, id: "translation.check-selection", nameKey: "translation.checkSelection", risk: "reconciles-execution-action",
+        payloadKind: "translation-selection-pending", availability: payload => selectionPendingAvailability(payload), handler: () => { void perform(current => checkSelection(current)); } }),
+      commandRegistry.register({ ...metadata, id: "translation.retry-selection", nameKey: "translation.retrySelection", risk: "retries-execution-action",
+        payloadKind: "translation-selection-pending", availability: payload => selectionPendingAvailability(payload,true), handler: () => { void perform(current => checkSelection(current,true)); } }),
+    ];
+    return () => { removeBusiness.forEach(dispose=>dispose()); removeReconcile(); removeRetry(); removeSaveNext(); removeSave(); };
   });
   useImperativeHandle(ref, () => ({
     saveCurrent() {
@@ -571,12 +787,13 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (result.savedCurrent && currentView() && currentLocale(targetLocale)
       && draftSession.unchanged(result.submittedSeq, result.submittedText)) await navigateEntry(1, currentView, true);
   }
-  async function selectRevision(revisionId: string, current: () => boolean) {
-    const locale = targetLocale, revision = history?.rows.find(value => value.revisionId === revisionId);
+  async function selectRevision(payload: TranslationRevisionCommandPayload, current: () => boolean) {
+    const locale = targetLocale, revision = revisionTarget(payload);
     const basis = draftSession.current();
     if (!revision || !basis || !editorTarget || dirty || pendingSave || pendingSelection || !currentLocale(locale)) return;
-    const selected = await draftSession.selectRevision(revision, () => current() && currentLocale(locale)
-      && editorTarget.unitId === basis.unitId && history?.rows.some(value => value === revision) === true);
+    const proof = revisionFlightProof(revision);
+    // Query evidence follows this fixed business wait; only the UI refresh is tied to the consumer.
+    const selected = await draftSession.selectRevision(revision, proof.current, proof.dispose);
     endMutationWait(current);
     if (!selected || !current() || !currentLocale(locale)) return;
     try { await refreshHistory(current); await loadList(listAfter, appliedQuery, current); }
@@ -646,7 +863,6 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
     if (intent?.kind === "close") setOpen(false);
     if (intent?.kind === "switch") await switchEditor(intent, current);
   }
-  const canImport = Boolean(sourcePage && targetAvailable && fileName);
   return <>
     {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || (localBusy && !editorDraft?.saving)}>
         <div className="execution-content" aria-busy={busy}>
@@ -661,25 +877,25 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           <div className="execution-actions">{sourcePage?.namespace !== "webvtt:source" ? <button className="secondary-button" aria-current={tab === "import" ? "page" : undefined} onClick={() => setTab("import")}>{t("translation.importTab")}</button> : null}<button className="secondary-button" aria-current={tab === "edit" ? "page" : undefined} onClick={() => setTab("edit")}>{t("translation.editTab")}</button></div>
           {sourcePage && (project.metadata.targetLocales.length || targetUnavailable) ? <label>{t("translation.target")}<select value={targetLocale} disabled={busy || dirty || !!pendingSave || !!pendingSelection || !!pendingStart || uncertain.length > 0} onChange={event => changeTarget(event.target.value)}>{targetUnavailable ? <option value={targetLocale} disabled>{t("translation.removedTargetOption", { locale: targetLocale })}</option> : null}{project.metadata.targetLocales.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label> : null}
           {tab === "import" && targetLocale && ((sourcePage && sourcePage.namespace !== "webvtt:source") || preview || preflight || pendingStart) ? <>
-            <section><button className="secondary-button" disabled={busy || !targetAvailable || uncertain.length > 0} onClick={() => void importSession.chooseFolder()}>{t("translation.chooseFolder")}</button>
+            <section><button className="secondary-button" disabled={!importSetupAvailability(importSetupPayload()).enabled} onClick={() => commandRegistry.dispatch("translation.choose-import-folder",commandScope,importSetupPayload())}>{t("translation.chooseFolder")}</button>
               {filesRead.error ? <p role="status">{t("translation.filesUnavailable")} <button className="text-button" onClick={() => void filesRead.refetch()}>{t("execution.refresh")}</button></p> : null}
               {folder ? <><p>{t("translation.folder", { name: folder.folderName })}</p>{files.length ? <label>{t("translation.file")}<select value={fileName} disabled={busy || !!pendingStart || uncertain.length > 0} onChange={event => importSession.setFile(event.target.value)}>{fileName && !files.includes(fileName) ? <option value={fileName} disabled>{fileName}</option> : null}{files.map(file => <option key={file} value={file}>{file}</option>)}</select></label> : <p role="status">{t(filesRead.isFetching ? "execution.loading" : filesRead.error ? "translation.filesUnavailable" : "translation.noFiles")}</p>}
-                <button className="secondary-button" disabled={busy || !canImport} onClick={() => void importSession.preflight()}>{t("translation.inspect")}</button>
+                <button className="secondary-button" disabled={!importSetupAvailability(importSetupPayload(),true).enabled} onClick={() => commandRegistry.dispatch("translation.inspect-import",commandScope,importSetupPayload())}>{t("translation.inspect")}</button>
               </> : null}
-              {preflight ? <><p>{t("translation.preflight", { count: preflight.count, file: preflight.fileName })}</p><label className="source-check"><input type="checkbox" checked={confirmed} disabled={busy} onChange={event => importSession.confirmLanguage(event.target.checked)} />{t("translation.languageConfirm", { file: preflight.fileName, target: preflight.targetLocale, declared: preflight.declaredLocale })}</label>
-                <button className="primary-button" disabled={busy || !targetAvailable || !localeAvailable(preflight.targetLocale) || !confirmed || !!pendingStart || !!attempt} onClick={() => void importSession.start(() => currentLocale(targetLocale))}>{t("translation.start")}</button></> : null}
-              {pendingStart ? <div role="status"><p>{t("translation.startUnknown")}</p><button className="secondary-button" disabled={busy} onClick={() => void importSession.retryStart()}>{t("translation.checkStart")}</button></div> : null}
+              {preflight ? <><p>{t("translation.preflight", { count: preflight.count, file: preflight.fileName })}</p><label className="source-check"><input type="checkbox" checked={confirmed} disabled={!importConsentAvailability(importConsentPayload()).enabled} onChange={event => {const payload=importConsentPayload(event.target.checked);if(payload)commandRegistry.dispatch("translation.confirm-import-language",commandScope,payload);}} />{t("translation.languageConfirm", { file: preflight.fileName, target: preflight.targetLocale, declared: preflight.declaredLocale })}</label>
+                <button className="primary-button" disabled={!importConsentAvailability(importConsentPayload(),true).enabled} onClick={() => {const payload=importConsentPayload();if(payload)commandRegistry.dispatch("translation.start-import",commandScope,payload);}}>{t("translation.start")}</button></> : null}
+              {pendingStart ? <div role="status"><p>{t("translation.startUnknown")}</p><button className="secondary-button" disabled={!importStartPendingAvailability(importStartPendingPayload()).enabled} onClick={() => {const payload=importStartPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-import-start",commandScope,payload);}}>{t("translation.checkStart")}</button></div> : null}
               {attempt && !preview ? <p role="status">{t("translation.progress", { count: preflight?.count ?? 0 })}</p> : null}
             </section>
             {preview ? <section><h3>{t("translation.preview")}</h3><p>{t("translation.counts", { unique: String(preview.unique), unmatched: String(preview.unmatched), conflicts: String(preview.selectedConflicts), changed: String(preview.sourceChanged) })}</p><p>{preview.logicalPath} · {preview.targetLocale}</p>{preview.sourceChanged ? <p role="alert">{t("translation.sourceChanged")}</p> : null}
-              <div className="source-table-scroll"><table className="source-table"><caption>{t("translation.page", { first: String((preview.rows[0]?.entry.ordinal ?? 0) + 1), last: String((preview.rows.at(-1)?.entry.ordinal ?? -1) + 1), total: String(preview.total) })}</caption><thead><tr><th scope="col">{t("translation.key")}</th><th scope="col">{t("translation.sourceText")}</th><th scope="col">{t("translation.importedText")}</th><th scope="col">{t("translation.selectedText")}</th><th scope="col">{t("translation.match")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.ordinal}><th scope="row">{row.entry.nativeKey}<details><summary>{t("translation.evidence")}</summary><p>{preview.logicalPath} · {row.entry.valueByteRange[0]}–{row.entry.valueByteRange[1]}</p><code>{preview.fileDigest}</code></details></th><td><pre>{row.sourceText === "" ? t("translation.empty") : row.sourceText}</pre></td><td><pre>{row.entry.text === "" ? t("translation.empty") : row.entry.text}</pre></td><td><pre>{row.currentText === "" ? t("translation.empty") : row.currentText}</pre></td><td>{t(`translation.status.${row.status}`)}{row.status === "unique" || row.status === "selected-conflict" ? <div className="translation-row-actions"><button className="text-button" disabled={busy || !targetAvailable || preview.targetLocale !== targetLocale || importState.stale || draftSession.mutationReserved} onClick={() => importSession.chooseRow(row, "candidate-only")}>{t("translation.addCandidate")}</button><button className="text-button" disabled={busy || !targetAvailable || preview.targetLocale !== targetLocale || importState.stale || draftSession.mutationReserved} onClick={() => importSession.chooseRow(row, row.status === "unique" ? "select-if-empty" : "replace")}>{t(row.status === "unique" ? "translation.selectImported" : "translation.replaceSelected")}</button></div> : null}{targetFromTranslation(row) ? <button className="text-button" disabled={busy || readBusy || !targetAvailable} onClick={() => chooseEditor(targetFromTranslation(row)!)}>{t("translation.openEditor")}</button> : null}</td></tr>)}</tbody></table></div>
+              <div className="source-table-scroll"><table className="source-table"><caption>{t("translation.page", { first: String((preview.rows[0]?.entry.ordinal ?? 0) + 1), last: String((preview.rows.at(-1)?.entry.ordinal ?? -1) + 1), total: String(preview.total) })}</caption><thead><tr><th scope="col">{t("translation.key")}</th><th scope="col">{t("translation.sourceText")}</th><th scope="col">{t("translation.importedText")}</th><th scope="col">{t("translation.selectedText")}</th><th scope="col">{t("translation.match")}</th></tr></thead><tbody>{preview.rows.map(row => <tr key={row.entry.ordinal}><th scope="row">{row.entry.nativeKey}<details><summary>{t("translation.evidence")}</summary><p>{preview.logicalPath} · {row.entry.valueByteRange[0]}–{row.entry.valueByteRange[1]}</p><code>{preview.fileDigest}</code></details></th><td><pre>{row.sourceText === "" ? t("translation.empty") : row.sourceText}</pre></td><td><pre>{row.entry.text === "" ? t("translation.empty") : row.entry.text}</pre></td><td><pre>{row.currentText === "" ? t("translation.empty") : row.currentText}</pre></td><td>{t(`translation.status.${row.status}`)}{row.status === "unique" || row.status === "selected-conflict" ? <div className="translation-row-actions"><button className="text-button" disabled={!importRowAvailability(importRowPayload(row,"candidate-only")).enabled} onClick={() => {const payload=importRowPayload(row,"candidate-only");if(payload)commandRegistry.dispatch("translation.choose-import-row",commandScope,payload);}}>{t("translation.addCandidate")}</button><button className="text-button" disabled={!importRowAvailability(importRowPayload(row,row.status === "unique" ? "select-if-empty" : "replace")).enabled} onClick={() => {const payload=importRowPayload(row,row.status === "unique" ? "select-if-empty" : "replace");if(payload)commandRegistry.dispatch("translation.choose-import-row",commandScope,payload);}}>{t(row.status === "unique" ? "translation.selectImported" : "translation.replaceSelected")}</button></div> : null}{targetFromTranslation(row) ? <button className="text-button" disabled={busy || readBusy || !targetAvailable} onClick={() => chooseEditor(targetFromTranslation(row)!)}>{t("translation.openEditor")}</button> : null}</td></tr>)}</tbody></table></div>
               <div className="execution-actions"><button className="secondary-button" disabled={busy} onClick={() => void importSession.page(0, true)}>{t("translation.refreshPreview")}</button>{preview.nextOrdinal !== null ? <button className="secondary-button" disabled={busy} onClick={() => void importSession.page(preview.nextOrdinal!)}>{t("execution.nextPage")}</button> : null}</div>
               {importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}
               <p>{t("translation.applyHelp")}</p><label className="source-check"><input type="checkbox" checked={selectIfEmpty} disabled={busy} onChange={event => importSession.setStrategy(event.target.checked)} />{t("translation.selectIfEmpty")}</label>
-              <button className="primary-button" disabled={busy || !targetAvailable || preview.targetLocale !== targetLocale || preview.unique === 0 || preview.sourceChanged > 0 || importState.stale || draftSession.mutationReserved} onClick={() => void importSession.captureBatch()}>{t("translation.apply", { count: preview.unique })}</button>
+              <button className="primary-button" disabled={!importPreviewAvailability(importPreviewPayload()).enabled} onClick={() => {const payload=importPreviewPayload();if(payload)commandRegistry.dispatch("translation.capture-import-batch",commandScope,payload);}}>{t("translation.apply", { count: preview.unique })}</button>
               {batchProgress ? <p role="status">{t("translation.applying", { done: String(batchProgress.done), total: String(batchProgress.total) })}</p> : null}
               {batchOutcome ? <><p role="status">{t("translation.outcome", { applied: String(batchOutcome.applied), conflicted: String(batchOutcome.conflicted), failed: String(batchOutcome.failed), unknown: String(batchOutcome.unknown) })}</p><details><summary>{t("translation.batchDetails")}</summary><ul>{batchDetails.map((item, index) => <li key={`${item.key}:${index}`}>{item.key}: {t(`translation.batchStatus.${item.status}`)}</li>)}</ul></details></> : null}
-              {uncertain.map(pending => <div key={pending.request.actionId} role="status"><p>{pending.key}</p><button className="secondary-button" disabled={busy} onClick={() => void importSession.checkReceipt(pending.request.actionId)}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={busy || !pending.receiptChecked} onClick={() => void importSession.retryAction(pending.request.actionId)}>{t("translation.retryAction")}</button></div>)}
+              {uncertain.map(pending => <div key={pending.request.actionId} role="status"><p>{pending.key}</p><button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId)).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.check-import-receipt",commandScope,payload);}}>{t("translation.checkReceipt")}</button><button className="secondary-button" disabled={!importPendingAvailability(importPendingPayload(pending.request.actionId),true).enabled} onClick={() => {const payload=importPendingPayload(pending.request.actionId);if(payload)commandRegistry.dispatch("translation.retry-import-action",commandScope,payload);}}>{t("translation.retryAction")}</button></div>)}
               {receiptMessage ? <p role="status">{t(receiptMessage === "found" ? "translation.receiptFound" : "translation.receiptMissing")}</p> : null}
             </section> : null}
           </> : null}
@@ -719,7 +935,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                   <details className="selected-translation"><summary>{t("translation.current")}</summary><pre>{editorDraft?.baseSelectionId ? editorDraft.baseText || t("translation.empty") : t("translation.noSelection")}</pre></details>
                   <label>{t("translation.draft")}<textarea ref={draftField} value={draft} onChange={event => draftSession.edit(event.target.value)} /></label>
                   <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
-                  {pendingSelection ? <div role="status"><p>{t("translation.selectionUnknown")}</p><button className="secondary-button" disabled={busy} onClick={() => void perform(current => checkSelection(current))}>{t("translation.checkSelection")}</button><button className="secondary-button" disabled={busy || !pendingSelection.receiptChecked} onClick={() => void perform(current => checkSelection(current, true))}>{t("translation.retrySelection")}</button></div> : null}
+                  {pendingSelection ? <div role="status"><p>{t("translation.selectionUnknown")}</p><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload()).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.check-selection",commandScope,payload);}}>{t("translation.checkSelection")}</button><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload(),true).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-selection",commandScope,payload);}}>{t("translation.retrySelection")}</button></div> : null}
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
                 </div>
                 {editorRead.isFetching || historyRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
@@ -729,7 +945,7 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
                 {editorResources?.terms ? <><h6>{t("resource.applicableTerms")}</h6>{editorResources.terms.entries.length ? <ul>{editorResources.terms.entries.map(entry => <li key={entry.source}>{entry.source}: {entry.selected ? <>{entry.selected.target} · {entry.selected.originKind === "manual" ? t("resource.manual") : t("resource.external")} · {entry.selected.reason}</> : t("resource.conflict")}</li>)}</ul> : <p>{t("resource.noApplicableTerms")}</p>}</> : null}
                 {editorResources ? <><h6>{t("resource.manualContext")}</h6>{editorResources.context ? <p>{editorResources.context.text} · {editorResources.context.reason}</p> : <p>{t("resource.noManualContext")}</p>}</> : null}
               </section>
-              <section aria-label={t("translation.history")}><div className="execution-section-heading"><h4>{t("translation.history")}</h4><button className="text-button" disabled={busy || readBusy || !targetAvailable || !!pendingSave || !editorTarget} onClick={() => void performRead(refreshHistory)}>{t("translation.refreshHistory")}</button></div>{historyRead.error && historyIntent ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable} onClick={() => void performRead(current => loadHistory(historyIntent.after, current))}>{t("execution.refresh")}</button> : null}{historyStale ? <p role="status">{t("translation.historyStale")}</p> : null}{history?.rows.length ? <ul>{history.rows.map(revision => <li key={revision.revisionId}><p>{revision.ordinal}: {revision.text === "" ? t("translation.empty") : revision.text}</p><p>{revision.originKind === "import" ? t("translation.importOrigin", { file: revision.logicalPath ?? "" }) : revision.originKind === "ai" ? t("ai.origin") : t("translation.manualOrigin")}</p>{revision.originKind === "import" ? <details><summary>{t("translation.evidence")}</summary><p>{t("translation.key")}: {revision.nativeKey}</p><p>{t("translation.file")}: {revision.logicalPath}</p><code>{revision.fileDigest}</code></details> : null}<button className="secondary-button" disabled={busy || !targetAvailable || dirty || !!pendingSave || !!pendingSelection || draftSession.mutationReserved || editorDraft?.baseRevisionId === revision.revisionId} onClick={() => void perform(current => selectRevision(revision.revisionId, current))}>{t("translation.selectRevision")}</button></li>)}</ul> : historyStale ? null : <p>{t("translation.noHistory")}</p>}
+              <section aria-label={t("translation.history")}><div className="execution-section-heading"><h4>{t("translation.history")}</h4><button className="text-button" disabled={busy || readBusy || !targetAvailable || !!pendingSave || !editorTarget} onClick={() => void performRead(refreshHistory)}>{t("translation.refreshHistory")}</button></div>{historyRead.error && historyIntent ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable} onClick={() => void performRead(current => loadHistory(historyIntent.after, current))}>{t("execution.refresh")}</button> : null}{historyStale ? <p role="status">{t("translation.historyStale")}</p> : null}{history?.rows.length ? <ul>{history.rows.map(revision => <li key={revision.revisionId}><p>{revision.ordinal}: {revision.text === "" ? t("translation.empty") : revision.text}</p><p>{revision.originKind === "import" ? t("translation.importOrigin", { file: revision.logicalPath ?? "" }) : revision.originKind === "ai" ? t("ai.origin") : t("translation.manualOrigin")}</p>{revision.originKind === "import" ? <details><summary>{t("translation.evidence")}</summary><p>{t("translation.key")}: {revision.nativeKey}</p><p>{t("translation.file")}: {revision.logicalPath}</p><code>{revision.fileDigest}</code></details> : null}<button className="secondary-button" disabled={!revisionAvailability(revisionPayload(revision)).enabled} onClick={() => {const payload=revisionPayload(revision);if(payload)commandRegistry.dispatch("translation.select-revision",commandScope,payload);}}>{t("translation.selectRevision")}</button></li>)}</ul> : historyStale ? null : <p>{t("translation.noHistory")}</p>}
               {history ? <div className="execution-actions"><button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching || history.rows[0]?.ordinal === "1"} onClick={() => void performRead(current => loadHistory(translationHistoryAfter(history.rows[0]?.ordinal ?? "1", 101), current))}>{t("translation.earlier")}</button>{history.nextOrdinal !== null ? <button className="secondary-button" disabled={busy || readBusy || !targetAvailable || historyRead.isFetching} onClick={() => void performRead(current => loadHistory(history.nextOrdinal!, current))}>{t("translation.later")}</button> : null}</div> : null}</section>
                 </details>
               </div> : <div className="editor-empty"><h2>{t("workbench.chooseEntry")}</h2><p>{t("workbench.chooseEntryHelp")}</p></div>}
@@ -737,8 +953,8 @@ export function TranslationWorkbench({ project, disabled, ref }: { project: Proj
           </section> : null}
         </div>
       </WorkbenchPanel> : null}
-    <Dialog.Root open={batchCapture !== null} onOpenChange={value => { if (!value && !importState.busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (importState.busy) event.preventDefault(); }}><Dialog.Title>{t("translation.batchConfirm")}</Dialog.Title><Dialog.Description>{t("translation.batchScope", { total: String(batchCapture?.preview.total ?? 0), matches: String(batchCapture?.eligible.length ?? 0), excluded: String(batchCapture?.excluded ?? 0) })}</Dialog.Description><p>{t(batchCapture?.decision === "select-if-empty" ? "translation.batchSelect" : "translation.batchCandidates")}</p>{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={importState.busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={busy || importState.stale || !targetAvailable || draftSession.mutationReserved} onClick={() => void importSession.applyBatch(() => currentLocale(targetLocale))}>{t("translation.batchStart")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
-    <Dialog.Root open={rowAction !== null} onOpenChange={value => { if (!value && !busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</Dialog.Title><Dialog.Description>{t("translation.rowActionHelp", { key: rowAction?.row.entry.nativeKey ?? "" })}</Dialog.Description>{rowAction ? <div className="translation-action-compare"><p>{t("translation.importedText")}: {rowAction.row.entry.text === "" ? t("translation.empty") : rowAction.row.entry.text}</p><p>{t("translation.selectedText")}: {rowAction.row.currentText === null ? t("translation.noSelection") : rowAction.row.currentText === "" ? t("translation.empty") : rowAction.row.currentText}</p></div> : null}{targetUnavailable ? <p role="alert">{t("translation.removedTargetImport", { locale: targetLocale })}</p> : null}{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={busy || !targetAvailable || !preview || preview.targetLocale !== targetLocale || importState.stale || draftSession.mutationReserved} onClick={() => void importSession.applyRow(() => currentLocale(targetLocale))}>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={batchCapture !== null} onOpenChange={value => { if (!value && !importState.busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (importState.busy) event.preventDefault(); }}><Dialog.Title>{t("translation.batchConfirm")}</Dialog.Title><Dialog.Description>{t("translation.batchScope", { total: String(batchCapture?.preview.total ?? 0), matches: String(batchCapture?.eligible.length ?? 0), excluded: String(batchCapture?.excluded ?? 0) })}</Dialog.Description><p>{t(batchCapture?.decision === "select-if-empty" ? "translation.batchSelect" : "translation.batchCandidates")}</p>{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={importState.busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={!importBatchAvailability(importBatchPayload()).enabled} onClick={() => {const payload=importBatchPayload();if(payload)commandRegistry.dispatch("translation.apply-import-batch",commandScope,payload);}}>{t("translation.batchStart")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
+    <Dialog.Root open={rowAction !== null} onOpenChange={value => { if (!value && !busy) importSession.cancelConfirmation(); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</Dialog.Title><Dialog.Description>{t("translation.rowActionHelp", { key: rowAction?.row.entry.nativeKey ?? "" })}</Dialog.Description>{rowAction ? <div className="translation-action-compare"><p>{t("translation.importedText")}: {rowAction.row.entry.text === "" ? t("translation.empty") : rowAction.row.entry.text}</p><p>{t("translation.selectedText")}: {rowAction.row.currentText === null ? t("translation.noSelection") : rowAction.row.currentText === "" ? t("translation.empty") : rowAction.row.currentText}</p></div> : null}{targetUnavailable ? <p role="alert">{t("translation.removedTargetImport", { locale: targetLocale })}</p> : null}{importState.stale ? <p role="alert">{t("translation.previewStale")}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => importSession.cancelConfirmation()}>{t("execution.back")}</button><button className="primary-button" disabled={!importRowAvailability(rowAction ? importRowPayload(rowAction.row,rowAction.decision,rowAction.preview,rowAction.editSeq) : undefined,true).enabled} onClick={() => {const capture=importSession.current().rowAction;const payload=capture ? importRowPayload(capture.row,capture.decision,capture.preview,capture.editSeq) : undefined;if(payload)commandRegistry.dispatch("translation.apply-import-row",commandScope,payload);}}>{t(rowAction?.decision === "replace" ? "translation.replaceSelected" : rowAction?.decision === "select-if-empty" ? "translation.selectImported" : "translation.addCandidate")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
     <Dialog.Root open={leaveIntent !== null} onOpenChange={value => { if (!value && !busy) resolveLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onEscapeKeyDown={event => { if (busy) event.preventDefault(); }}><Dialog.Title>{t("translation.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translation.leaveHelp")}</Dialog.Description>{targetUnavailable ? <p role="alert">{t("translation.removedTargetDraft", { locale: targetLocale })}</p> : null}{failure ? <p role="alert">{t(`translation.errors.${errorKey(failure)}`)}</p> : null}{newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}<div className="form-actions"><button className="secondary-button" disabled={busy} onClick={() => resolveLeave(false)}>{t("translation.stay")}</button><button className="secondary-button" disabled={busy || !!pendingSave || !!pendingSelection} onClick={() => resolveLeave(true)}>{t("translation.discard")}</button><button className="primary-button" disabled={busy || !targetAvailable} onClick={() => void perform(saveAndLeave)}>{pendingSave ? t("translation.retryAction") : t("translation.saveAndContinue")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
   </>;
 }

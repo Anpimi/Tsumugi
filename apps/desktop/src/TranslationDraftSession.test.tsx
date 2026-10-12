@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import fixture from "../test/fixtures/translation-commands.json";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useTranslationImportSession } from "./TranslationImportSession";
-import type { ProjectView } from "./projectCommands";
+import { isCommandError, hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
 import type { TranslationRevision, TranslationSelectRequest, TranslationSelection } from "./translationCommands";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { fixtureIdentity } from "./testSupport/executionFixture";
@@ -26,6 +26,12 @@ function selection(request: TranslationSelectRequest): TranslationSelection {
     eventId: fixtureIdentity(702), sequence: "1", previousEventId: request.expectedSelectionId ?? null };
 }
 function calls(name: string) { return invoke.mock.calls.filter(([command]) => command === name); }
+function mutationRejection(): CommandError {
+  // ExecutionHost.allow_mutation rejects a quiescing host before any write.
+  const failure: CommandError = { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false };
+  expect(isCommandError(failure)).toBe(true); expect(hasUnknownOutcome(failure)).toBe(false);
+  return failure;
+}
 beforeEach(() => {
   invoke.mockReset(); originalRequest = null; selected = null;
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
@@ -37,6 +43,26 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+it("preserves an unknown selection and newer B after an explicit same-request retry is definitely rejected",async()=>{
+  render(<Probe/>,project);begin();const original=invoke.getMockImplementation()!,rejected=mutationRejection();
+  invoke.mockImplementation((command:string,payload)=>command==="select_translation_revision" ? Promise.reject(new Error("Lost ACK"))
+    : command==="read_translation_action" ? Promise.resolve(null) : original(command,payload));
+  await act(async()=>{await drafts.selectRevision(candidate);});const request=structuredClone(drafts.current()!.pendingSelection!.request);
+  act(()=>drafts.edit("Newer B"));await act(async()=>{await drafts.checkSelection();});expect(drafts.current()?.pendingSelection?.receiptChecked).toBe(true);
+  invoke.mockImplementation((command:string,payload)=>command==="select_translation_revision" ? Promise.reject(rejected) : original(command,payload));
+  await act(async()=>{expect(await drafts.retrySelection()).toBe(false);});
+  expect(drafts.current()).toMatchObject({text:"Newer B",outcomeUnknown:true,pendingSelection:{request,receiptChecked:false}});
+  expect(drafts.mutationReserved).toBe(true);expect(calls("select_translation_revision").map(([,args])=>args.request)).toEqual([request,request]);
+  expect(calls("create_execution_identity")).toHaveLength(1);await act(async()=>{await drafts.retrySelection();});expect(calls("select_translation_revision")).toHaveLength(2);
+});
+
+it("releases a first definite selection rejection and its captured read listener",async()=>{
+  render(<Probe/>,project);begin();const original=invoke.getMockImplementation()!,dispose=vi.fn(),rejected=mutationRejection();
+  invoke.mockImplementation((command:string,payload)=>command==="select_translation_revision" ? Promise.reject(rejected) : original(command,payload));
+  await act(async()=>{expect(await drafts.selectRevision(candidate,()=>true,dispose)).toBe(false);});
+  expect(drafts.current()?.pendingSelection).toBeNull();expect(drafts.current()?.outcomeUnknown).toBe(false);expect(drafts.mutationReserved).toBe(false);expect(dispose).toHaveBeenCalledTimes(1);
+});
 function begin() {
   act(() => drafts.begin({ unitId: candidate.unitId, locale: candidate.locale, sourceRevisionId: candidate.sourceRevisionId,
     key: "key", sourceText: "Original" }, null, null));

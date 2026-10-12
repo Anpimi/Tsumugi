@@ -5,6 +5,8 @@ import type { CancellationTarget } from "./ExecutionTaskSession";
 import type { RecoveryAction } from "./executionCommands";
 import type { BuildLocaleChoice, DeliveryView } from "./releaseCommands";
 import { validateResponseDelivery } from "./generated/release.validators";
+import type { TranslationStartRequest, TranslationAdoptRequest, TranslationSelectRequest, TranslationDecision } from "./translationCommands";
+import { validateRequestStart, validateRequestAdopt, validateRequestSelect } from "./generated/translation.validators";
 
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
@@ -83,6 +85,36 @@ export type ArenaPendingCommandPayload = { kind: "arena-pending" } & (
   | { pendingKind: "select" | "merge"; actionId: string; unitId: string; locale: string }
   | { pendingKind: "adopt"; actionId: string; attemptId: string; recoveryUnitId: string; resultId: string }
 );
+export interface TranslationImportSetupCommandPayload {
+  kind: "translation-import-setup"; editSeq: number; locale: string; selectionId: string | null; fileName: string;
+}
+export interface TranslationImportConsentCommandPayload extends Omit<TranslationImportSetupCommandPayload, "kind"> {
+  kind: "translation-import-consent"; sourceSnapshotId: string; fileDigest: string; declaredLocale: string; confirmed: boolean;
+}
+export interface TranslationImportStartPendingCommandPayload { kind: "translation-import-start-pending"; request: TranslationStartRequest }
+interface TranslationImportPreviewTarget {
+  editSeq: number; attemptId: string; bundleId: string; basis: string; locale: string;
+  fixedSourceSnapshotId: string; currentSourceSnapshotId: string; fileDigest: string; previewResultDigest: string;
+}
+export interface TranslationImportPreviewCommandPayload extends TranslationImportPreviewTarget { kind: "translation-import-preview"; selectIfEmpty: boolean }
+export interface TranslationImportRowTarget {
+  ordinal: number; itemId: string; resultId: string; resultDigest: string; unitId: string; occurrenceId: string;
+  sourceRevisionId: string; expectedSelectionId: string | null;
+}
+export interface TranslationImportRowCommandPayload extends TranslationImportPreviewTarget, TranslationImportRowTarget {
+  kind: "translation-import-row"; decision: TranslationDecision;
+}
+export interface TranslationImportBatchCommandPayload extends TranslationImportPreviewTarget {
+  kind: "translation-import-batch"; decision: Exclude<TranslationDecision, "replace">; rows: TranslationImportRowTarget[]; excluded: number;
+}
+export interface TranslationImportPendingCommandPayload {
+  kind: "translation-import-pending"; request: TranslationAdoptRequest; recoveryUnitId: string; previousSelectionSequence: string | null;
+}
+export interface TranslationRevisionCommandPayload {
+  kind: "translation-revision"; unitId: string; locale: string; sourceRevisionId: string; expectedSelectionId: string | null; editSeq: number;
+  revisionId: string; revisionActionId: string; revisionOrdinal: string; revisionSourceRevisionId: string; revisionSourceSnapshotId: string;
+}
+export interface TranslationSelectionPendingCommandPayload { kind: "translation-selection-pending"; request: TranslationSelectRequest; submittedSeq: number }
 export interface ReleasePreparationCommandPayload {
   kind: "release-preparation"; editSeq: number; locales: string[]; fileNames: string[]; sourceLocale: string; targetLocales: string[];
   integrationId: string; integrationVersion: string; eligibilityBasis: string | null;
@@ -121,6 +153,20 @@ export interface TaskReceiptCommandPayload extends TaskCommandTarget { kind: "ta
 export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string; attemptId: string; operation: string; itemId: string; resultId: string }
 export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 interface WorkbenchCommandPayloads {
+  "translation.choose-import-folder": TranslationImportSetupCommandPayload;
+  "translation.inspect-import": TranslationImportSetupCommandPayload;
+  "translation.confirm-import-language": TranslationImportConsentCommandPayload;
+  "translation.start-import": TranslationImportConsentCommandPayload;
+  "translation.retry-import-start": TranslationImportStartPendingCommandPayload;
+  "translation.choose-import-row": TranslationImportRowCommandPayload;
+  "translation.apply-import-row": TranslationImportRowCommandPayload;
+  "translation.capture-import-batch": TranslationImportPreviewCommandPayload;
+  "translation.apply-import-batch": TranslationImportBatchCommandPayload;
+  "translation.check-import-receipt": TranslationImportPendingCommandPayload;
+  "translation.retry-import-action": TranslationImportPendingCommandPayload;
+  "translation.select-revision": TranslationRevisionCommandPayload;
+  "translation.check-selection": TranslationSelectionPendingCommandPayload;
+  "translation.retry-selection": TranslationSelectionPendingCommandPayload;
   "release.assess-build": ReleasePreparationCommandPayload;
   "release.start-build": ReleasePreparationCommandPayload;
   "release.check-build": ReleaseBuildPendingCommandPayload;
@@ -237,7 +283,8 @@ interface CommandMetadata {
     | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"
     | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
     | "captures-execution-action" | "writes-execution" | "reads-execution" | "opens-execution-preview"
-    | "captures-release" | "runs-release-build" | "exports-release" | "reconciles-release" | "opens-release";
+    | "captures-release" | "runs-release-build" | "exports-release" | "reconciles-release" | "opens-release"
+    | "captures-translation-import" | "runs-translation-import";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -264,6 +311,15 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"translation-import-setup", "translation.choose-import-folder" | "translation.inspect-import">
+  | ResourceCommand<"translation-import-consent", "translation.confirm-import-language" | "translation.start-import">
+  | ResourceCommand<"translation-import-start-pending", "translation.retry-import-start">
+  | ResourceCommand<"translation-import-row", "translation.choose-import-row" | "translation.apply-import-row">
+  | ResourceCommand<"translation-import-preview", "translation.capture-import-batch">
+  | ResourceCommand<"translation-import-batch", "translation.apply-import-batch">
+  | ResourceCommand<"translation-import-pending", "translation.check-import-receipt" | "translation.retry-import-action">
+  | ResourceCommand<"translation-revision", "translation.select-revision">
+  | ResourceCommand<"translation-selection-pending", "translation.check-selection" | "translation.retry-selection">
   | ResourceCommand<"release-preparation", "release.assess-build" | "release.start-build">
   | ResourceCommand<"release-build-pending", "release.check-build" | "release.retry-build">
   | ResourceCommand<"release-record", "release.choose-release">
@@ -325,6 +381,20 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind?.startsWith("translation-")) {
+    if (!validTranslationPayload(payload)) return unavailable;
+    switch (command.payloadKind) {
+      case "translation-import-setup": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-import-consent": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-import-start-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-import-row": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-import-preview": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-import-batch": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-import-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-revision": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-selection-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+    }
+  }
   if (command.payloadKind?.startsWith("release-")) {
     if (!validReleasePayload(payload)) return unavailable;
     switch (command.payloadKind) {
@@ -430,6 +500,39 @@ function identities(value: unknown, nonempty = false): value is string[] {
   return Array.isArray(value) && (!nonempty || value.length > 0) && value.every(validIdentity) && new Set(value).size === value.length;
 }
 function taskRevision(value: unknown): value is string { return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value); }
+function translationSetup(value: Omit<TranslationImportSetupCommandPayload, "kind">) {
+  return editSequence(value.editSeq) && validIdentity(value.locale) && nullableIdentity(value.selectionId) && typeof value.fileName === "string";
+}
+function translationPreview(value: TranslationImportPreviewTarget) {
+  return editSequence(value.editSeq) && [value.attemptId,value.bundleId,value.basis,value.locale,value.fixedSourceSnapshotId,
+    value.currentSourceSnapshotId,value.fileDigest,value.previewResultDigest].every(validIdentity);
+}
+function translationRow(value: TranslationImportRowTarget) {
+  return !!value && typeof value === "object" && editSequence(value.ordinal) && [value.itemId,value.resultId,value.resultDigest,value.unitId,
+    value.occurrenceId,value.sourceRevisionId].every(validIdentity) && nullableIdentity(value.expectedSelectionId);
+}
+function validTranslationPayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload,{kind:`translation-${string}`}> {
+  if (!payload || typeof payload !== "object") return false;
+  switch (payload.kind) {
+    case "translation-import-setup": return translationSetup(payload);
+    case "translation-import-consent": return translationSetup(payload) && validIdentity(payload.selectionId) && validIdentity(payload.fileName)
+      && [payload.sourceSnapshotId,payload.fileDigest].every(validIdentity) && typeof payload.declaredLocale === "string" && typeof payload.confirmed === "boolean";
+    case "translation-import-start-pending": return validateRequestStart(payload.request);
+    case "translation-import-preview": return translationPreview(payload) && typeof payload.selectIfEmpty === "boolean";
+    case "translation-import-row": return translationPreview(payload) && translationRow(payload)
+      && ["candidate-only","select-if-empty","replace"].includes(payload.decision);
+    case "translation-import-batch": return translationPreview(payload) && ["candidate-only","select-if-empty"].includes(payload.decision)
+      && editSequence(payload.excluded) && Array.isArray(payload.rows) && payload.rows.length > 0 && payload.rows.every(translationRow)
+      && new Set(payload.rows.map(row=>row.itemId)).size === payload.rows.length && new Set(payload.rows.map(row=>row.resultId)).size === payload.rows.length;
+    case "translation-import-pending": return validateRequestAdopt(payload.request) && validIdentity(payload.recoveryUnitId)
+      && (payload.previousSelectionSequence === null || taskRevision(payload.previousSelectionSequence));
+    case "translation-revision": return editSequence(payload.editSeq) && nullableIdentity(payload.expectedSelectionId)
+      && [payload.unitId,payload.locale,payload.sourceRevisionId,payload.revisionId,payload.revisionActionId,payload.revisionSourceRevisionId,payload.revisionSourceSnapshotId].every(validIdentity)
+      && taskRevision(payload.revisionOrdinal) && payload.revisionOrdinal !== "0";
+    case "translation-selection-pending": return validateRequestSelect(payload.request) && editSequence(payload.submittedSeq);
+    default: return false;
+  }
+}
 function releaseTarget(value: ReleaseCommandTarget) { return [value.releaseId,value.releaseActionId,value.attemptId,value.manifestSha256].every(validIdentity); }
 function deliveryEvidence(value: unknown) { return validateResponseDelivery(value) && value.files.length > 0; }
 function validReleasePayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload,{kind:`release-${string}`}> {
@@ -604,7 +707,16 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "release-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "translation-import-setup" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-import-consent" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-import-start-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-import-preview" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-import-row" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-import-batch" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-import-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-revision" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-selection-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "release-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-build-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-record" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-destination" && payload?.kind === command.payloadKind) command.handler(payload);

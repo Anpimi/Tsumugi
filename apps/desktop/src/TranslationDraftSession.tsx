@@ -41,7 +41,7 @@ interface DraftSession {
   mutationReserved: boolean;
   reserveMutation: () => symbol | null;
   releaseMutation: (token: symbol) => void;
-  selectRevision: (revision: TranslationRevision, proof?: () => boolean) => Promise<boolean>;
+  selectRevision: (revision: TranslationRevision, proof?: () => boolean, dispose?: () => void) => Promise<boolean>;
   checkSelection: () => Promise<boolean>;
   retrySelection: () => Promise<boolean>;
 }
@@ -62,6 +62,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   const mutation = useRef<symbol | null>(null);
   const selectionReservation = useRef<symbol | null>(null);
   const selectionVersion = useRef(0);
+  const selectionReadCleanup = useRef<(() => void) | null>(null);
   const [mutationReserved, setMutationReserved] = useState(false);
   useLayoutEffect(() => {
     const previous = projectRef.current, locale = currentDraft.current?.locale;
@@ -70,6 +71,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     projectRef.current = project;
   }, [project]);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; mutation.current = null; selectionReservation.current = null; }; }, []);
+  useLayoutEffect(() => () => { selectionReadCleanup.current?.(); selectionReadCleanup.current = null; }, []);
 
   function reserveMutation() {
     if (!mounted.current || mutation.current || inFlight.current || currentDraft.current?.pending || currentDraft.current?.pendingSelection || currentDraft.current?.saving) return null;
@@ -201,7 +203,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
     if (token) releaseMutation(token);
     return true;
   }
-  async function dispatchSelection(pending: SelectionPending) {
+  async function dispatchSelection(pending: SelectionPending, recovering = false) {
     if (!mounted.current) return false;
     update(value => value ? { ...value, pendingSelection: { ...pending, receiptChecked: false }, selecting: true, failure: null, receiptCheck: null, receiptKind: "selection" } : value);
     const original = currentDraft.current?.pendingSelection;
@@ -211,18 +213,21 @@ export function TranslationDraftSession({ project, children }: { project: Projec
       return confirmSelection(original, selection);
     } catch (error) {
       if (mounted.current) update(value => value?.pendingSelection === original ? { ...value, selecting: false,
-        pendingSelection: hasUnknownOutcome(error) ? original : null, outcomeUnknown: hasUnknownOutcome(error), failure: commandFailure(error) } : value);
-      if (!hasUnknownOutcome(error)) {
+        pendingSelection: recovering || hasUnknownOutcome(error) ? original : null, outcomeUnknown: recovering || hasUnknownOutcome(error), failure: commandFailure(error) } : value);
+      if (!recovering && !hasUnknownOutcome(error)) {
         const token = selectionReservation.current; selectionReservation.current = null; if (token) releaseMutation(token);
       }
       return false;
     }
   }
-  async function selectRevision(revision: TranslationRevision, proof: () => boolean = () => true) {
+  async function selectRevision(revision: TranslationRevision, proof: () => boolean = () => true, dispose?: () => void) {
     const before = currentDraft.current;
     if (!before || !proof() || before.text !== (before.baseText ?? "") || before.newerDraftSaved
-      || !projectRef.current.metadata.targetLocales.includes(before.locale) || revision.unitId !== before.unitId || revision.locale !== before.locale) return false;
-    const token = reserveMutation(); if (!token) return false;
+      || !projectRef.current.metadata.targetLocales.includes(before.locale) || revision.unitId !== before.unitId || revision.locale !== before.locale) { dispose?.(); return false; }
+    const token = reserveMutation(); if (!token) { dispose?.(); return false; }
+    let disposed = false;
+    const cleanup = () => { if (!disposed) { disposed = true; dispose?.(); } };
+    selectionReadCleanup.current = cleanup;
     selectionReservation.current = token;
     const meta = projectRef.current.metadata.sourceLocale;
     const ticket = selectionVersion.current, selectedRevisionId = revision.revisionId, selectedText = revision.text;
@@ -244,6 +249,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
         submittedSeq: before.editSeq, text: selectedText, receiptChecked: false });
     } catch (error) { if (mounted.current) update(value => value ? { ...value, failure: commandFailure(error) } : value); return false; }
     finally {
+      cleanup(); if (selectionReadCleanup.current === cleanup) selectionReadCleanup.current = null;
       if (!currentDraft.current?.pendingSelection) {
         selectionReservation.current = null; releaseMutation(token);
         if (mounted.current) update(value => value ? { ...value, selecting: false } : value);
@@ -274,7 +280,7 @@ export function TranslationDraftSession({ project, children }: { project: Projec
   async function retrySelection() {
     const pending = currentDraft.current?.pendingSelection;
     if (!pending?.receiptChecked || currentDraft.current?.selecting || !mounted.current) return false;
-    return dispatchSelection(pending);
+    return dispatchSelection(pending, true);
   }
 
   return <DraftContext.Provider value={{ draft, current, begin, edit, revert, clear, save, checkSavedAction, selected, unchanged,

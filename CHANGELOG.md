@@ -46,6 +46,8 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 ### Fixed
 
+- Translation import, fixed match application and historical revision selection share scoped commands and preserve their original requests. A later rejected retry cannot erase an earlier uncertain import or selection; checked history and current-source reads remain separate from captured import work.
+
 - Build and export actions share scoped commands with exact mappings, saved release identities and destination consent. Original uncertain requests remain recoverable across view changes; historical release export stays available when current readiness or history reads fail.
 
 - Task recovery, saved-result application, cancellation and preview navigation verify the exact workspace and original scope through the shared command context. Confirmed requests retain their identities across view changes; uncertain results require an exact lookup before explicit replay, and changed or failed reads cannot authorize new task actions.

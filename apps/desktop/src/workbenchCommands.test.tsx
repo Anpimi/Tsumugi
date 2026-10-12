@@ -1,9 +1,53 @@
 import { describe, expect, it, vi } from "vitest";
 import releaseFixture from "../test/fixtures/releaseCommands.contract.json";
+import translationFixture from "../test/fixtures/translation-commands.json";
 import { validateResponseDelivery } from "./generated/release.validators";
 import { WorkbenchCommands, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
+
+describe("Translation business command payloads",()=>{
+  const translationScope={...scope,area:"translation" as const},metadata={nameKey:"translation.start" as const,category:"translation" as const,
+    scope:translationScope,binding:null,risk:"writes-translation" as const,confirmation:"none" as const};
+  const setup={kind:"translation-import-setup" as const,editSeq:1,locale:"zh-CN",selectionId:translationFixture.start.selectionId,fileName:"zh.json"};
+  const consent={...setup,kind:"translation-import-consent" as const,sourceSnapshotId:translationFixture.start.expectedSourceSnapshotId,
+    fileDigest:translationFixture.start.expectedFileDigest,declaredLocale:"zh",confirmed:true};
+  const target={editSeq:1,attemptId:translationFixture.start.attemptId,bundleId:"bundle",basis:"basis",locale:"zh-CN",
+    fixedSourceSnapshotId:translationFixture.start.expectedSourceSnapshotId,currentSourceSnapshotId:translationFixture.start.expectedSourceSnapshotId,
+    fileDigest:"file",previewResultDigest:"results"};
+  const row={ordinal:0,itemId:"item",resultId:"result",resultDigest:"row-result",unitId:"unit",occurrenceId:"occurrence",sourceRevisionId:"revision",expectedSelectionId:null};
+  const adopt={...translationFixture.adopt,confirmation:{...translationFixture.adopt.confirmation,decision:"candidate-only" as const}};
+  const selection=translationFixture.select;
+  const revision={kind:"translation-revision" as const,unitId:"unit",locale:"zh-CN",sourceRevisionId:"current-revision",expectedSelectionId:null,
+    editSeq:1,revisionId:"revision",revisionActionId:"action",revisionOrdinal:"1",revisionSourceRevisionId:"source",revisionSourceSnapshotId:"snapshot"};
+  it.each([
+    ["translation.choose-import-folder",setup,[{editSeq:-1},{selectionId:undefined}]],
+    ["translation.inspect-import",setup,[{locale:""},{fileName:null}]],
+    ["translation.confirm-import-language",consent,[{confirmed:"yes"},{fileDigest:""}]],
+    ["translation.start-import",consent,[{sourceSnapshotId:null},{selectionId:null}]],
+    ["translation.retry-import-start",{kind:"translation-import-start-pending",request:translationFixture.start},[{request:{}}]],
+    ["translation.choose-import-row",{...target,...row,kind:"translation-import-row",decision:"candidate-only"},[{expectedSelectionId:undefined},{decision:"other"}]],
+    ["translation.apply-import-row",{...target,...row,kind:"translation-import-row",decision:"select-if-empty"},[{ordinal:-1},{itemId:null}]],
+    ["translation.capture-import-batch",{...target,kind:"translation-import-preview",selectIfEmpty:true},[{selectIfEmpty:"yes"},{basis:""}]],
+    ["translation.apply-import-batch",{...target,kind:"translation-import-batch",decision:"candidate-only",rows:[row],excluded:0},[{rows:[]},{rows:[row,row]},{excluded:-1}]],
+    ["translation.check-import-receipt",{kind:"translation-import-pending",request:adopt,recoveryUnitId:"recovery",previousSelectionSequence:null},[{request:{}},{recoveryUnitId:""}]],
+    ["translation.retry-import-action",{kind:"translation-import-pending",request:adopt,recoveryUnitId:"recovery",previousSelectionSequence:"1"},[{previousSelectionSequence:undefined}]],
+    ["translation.select-revision",revision,[{revisionOrdinal:"0"},{expectedSelectionId:undefined}]],
+    ["translation.check-selection",{kind:"translation-selection-pending",request:selection,submittedSeq:1},[{request:{}},{submittedSeq:-1}]],
+    ["translation.retry-selection",{kind:"translation-selection-pending",request:selection,submittedSeq:1},[{request:{...selection,revisionId:null}}]],
+  ] as const)("checks %s before its owner and uses the same scope for describe and dispatch",(id,payload,malformed)=>{
+    const commands=new WorkbenchCommands(),handler=vi.fn();let enabled=true;
+    const remove=commands.register({...metadata,id,payloadKind:payload.kind,availability:()=>({enabled}),handler} as WorkbenchCommand);
+    const dispatch=(value?:unknown,targetScope=translationScope)=>Reflect.apply(commands.dispatch,commands,[id,targetScope,value]);
+    expect(dispatch()).toBe(false);expect(dispatch(null)).toBe(false);expect(dispatch({...payload,kind:"other"})).toBe(false);
+    malformed.forEach(change=>expect(dispatch({...payload,...change})).toBe(false));
+    expect(dispatch(payload,{...translationScope,sessionToken:"other"})).toBe(false);expect(dispatch(payload,{...translationScope,projectId:"other"})).toBe(false);
+    expect(Reflect.apply(commands.dispatch,commands,[id,{...translationScope,area:"tasks"},payload])).toBe(false);
+    expect(Reflect.apply(commands.describe,commands,[id,translationScope,payload])?.availability.enabled).toBe(true);
+    expect(handler).not.toHaveBeenCalled();expect(dispatch(payload)).toBe(true);expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
+    enabled=false;expect(dispatch(payload)).toBe(false);remove();expect(dispatch(payload)).toBe(false);
+  });
+});
 
 describe("WorkbenchCommands", () => {
   it("dispatches only the live committed project, session, and area", () => {

@@ -5,7 +5,7 @@ import { useTranslationImportSession } from "./TranslationImportSession";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { translationCommands, type TranslationAdoptRequest, type TranslationPreview, type TranslationPreviewRow } from "./translationCommands";
 import type { AdoptionAction, Receipt } from "./executionCommands";
-import type { ProjectView } from "./projectCommands";
+import { isCommandError, hasUnknownOutcome, type CommandError, type ProjectView } from "./projectCommands";
 import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { translationActionFixture, translationAttemptFixture, translationPreviewFixture, translationReceiptFixture, translationRecoveryUnit, translationRowFixture } from "./testSupport/translationFixture";
@@ -25,6 +25,12 @@ function Probe() {
 function rowFor(request: TranslationAdoptRequest) { return preview.rows.find(row => row.itemId === request.itemId)!; }
 function action(request: TranslationAdoptRequest) { return translationActionFixture(request, translationRecoveryUnit(rowFor(request))); }
 function receipt(request: TranslationAdoptRequest) { return translationReceiptFixture(request, translationRecoveryUnit(rowFor(request)), rowFor(request).currentSelection?.sequence ?? null); }
+function mutationRejection(): CommandError {
+  // ExecutionHost.allow_mutation rejects a quiescing host before any write.
+  const failure: CommandError = { code: "busy", stage: "execution-recover", outcome: "rejected", recoveryRequired: false };
+  expect(isCommandError(failure)).toBe(true); expect(hasUnknownOutcome(failure)).toBe(false);
+  return failure;
+}
 beforeEach(() => {
   invoke.mockReset(); preview = translationPreviewFixture(); pageSize = 100; nextIdentity = 50; requests = new Map();
   invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
@@ -53,6 +59,47 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+it("retains the first unknown start after a definite rejection of the identical explicit retry", async () => {
+  render(<Probe/>,project);
+  await act(async()=>{await owner.chooseFolder();owner.setFile("zh.json");await owner.preflight();});
+  act(()=>owner.confirmLanguage(true));const original=invoke.getMockImplementation()!,rejected=mutationRejection();let sent=0;
+  invoke.mockImplementation((command:string,payload)=>command==="start_translation_import" ? Promise.reject(++sent===1 ? new Error("Lost ACK")
+    : rejected) : original(command,payload));
+  await act(async()=>{await owner.start();});const request=structuredClone(owner.current().pendingStart);
+  await act(async()=>{await owner.retryStart();});
+  expect(owner.current().pendingStart).toEqual(request);expect(owner.current().attempt).toBeNull();
+  expect(calls("start_translation_import").map(([,args])=>args.request)).toEqual([request,request]);expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["prepare_translation_adoption","adopt_execution"])("preserves an unknown import and its reservation after a checked-missing retry is rejected by %s",async boundary=>{
+  render(<Probe/>,project);await ready();const original=invoke.getMockImplementation()!,rejected=mutationRejection();
+  invoke.mockImplementation((command:string,payload)=>command==="adopt_execution" ? Promise.reject(new Error("Lost ACK"))
+    : command==="read_execution_receipt" ? Promise.resolve(null) : original(command,payload));
+  await applyRow();const pending=structuredClone(owner.current().uncertain[0]);
+  await act(async()=>{await owner.checkReceipt(pending.request.actionId);});expect(owner.current().uncertain[0].receiptChecked).toBe(true);
+  invoke.mockImplementation((command:string,payload)=>command===boundary ? Promise.reject(rejected) : original(command,payload));
+  await act(async()=>{await owner.retryAction(pending.request.actionId);});
+  expect(owner.current().uncertain).toHaveLength(1);expect(owner.current().uncertain[0]).toMatchObject({request:pending.request,receiptChecked:false});
+  expect(drafts.mutationReserved).toBe(true);expect(calls("create_execution_identity")).toHaveLength(1);
+  await act(async()=>{await owner.retryAction(pending.request.actionId);});expect(calls("prepare_translation_adoption")).toHaveLength(2);
+});
+
+it("releases fresh definite rejection while preserving no invented unknown request",async()=>{
+  render(<Probe/>,project);await ready();const original=invoke.getMockImplementation()!,rejected=mutationRejection();
+  invoke.mockImplementation((command:string,payload)=>command==="prepare_translation_adoption" ? Promise.reject(rejected) : original(command,payload));
+  await applyRow();expect(owner.current().uncertain).toEqual([]);expect(drafts.mutationReserved).toBe(false);
+});
+
+it("disposes its captured read listener on owner destruction before a deferred identity returns",async()=>{
+  const view=render(<Probe/>,project);
+  await act(async()=>{await owner.chooseFolder();owner.setFile("zh.json");await owner.preflight();});act(()=>owner.confirmLanguage(true));
+  const original=invoke.getMockImplementation()!,dispose=vi.fn();let resolve!: (value:string)=>void;
+  invoke.mockImplementation((command:string,payload)=>command==="create_execution_identity" ? new Promise<string>(done=>{resolve=done;}) : original(command,payload));
+  let work!:Promise<void>;act(()=>{work=owner.start(()=>true,dispose);});await waitFor(()=>expect(resolve).toBeDefined());
+  view.unmount();expect(dispose).toHaveBeenCalledTimes(1);await act(async()=>{resolve(fixtureIdentity(999));await work;});
+  expect(dispose).toHaveBeenCalledTimes(1);expect(calls("start_translation_import")).toHaveLength(0);
+});
 async function ready() {
   act(() => owner.showAttempt(preview.attemptId));
   const page = await translationCommands.preview({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,

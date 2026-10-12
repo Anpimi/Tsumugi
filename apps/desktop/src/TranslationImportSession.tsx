@@ -53,8 +53,8 @@ interface ImportSession {
   confirmLanguage: (value: boolean) => void;
   setStrategy: (value: boolean) => void;
   chooseFolder: () => Promise<void>;
-  preflight: () => Promise<void>;
-  start: (proof?: () => boolean) => Promise<void>;
+  preflight: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
+  start: (proof?: () => boolean, dispose?: () => void) => Promise<void>;
   retryStart: () => Promise<void>;
   showAttempt: (id: string) => boolean;
   ready: (page: TranslationPreview) => void;
@@ -100,6 +100,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
     editSeq: 0, completionVersion: 0, failure: null }));
   const stateRef = useRef(state), projectRef = useRef(project), mounted = useSessionAlive(), flight = useRef(false);
   const version = useRef(0), mutation = useRef<symbol | null>(null), currentMeta = useRef(metadata(project, state.targetLocale));
+  const readCleanup = useRef<(() => void) | null>(null);
   function current() { return stateRef.current; }
   function live() { return mounted.current && projectRef.current.sessionToken === session.sessionToken && projectRef.current.metadata.projectId === session.projectId; }
   function update(change: (before: TranslationImportState) => TranslationImportState) {
@@ -109,6 +110,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
   function revoke() { version.current++; update(before => ({ ...before, stale: !!before.preview, confirmed: false })); }
   useLayoutEffect(() => { mounted.current = true; return () => {
     mounted.current = false; version.current++;
+    readCleanup.current?.(); readCleanup.current = null;
     if (mutation.current) draftsRef.current.releaseMutation(mutation.current);
     mutation.current = null;
   }; }, []);
@@ -133,6 +135,13 @@ export function TranslationImportSession({ project, children }: { project: Proje
     flight.current = true; update(before => ({ ...before, busy: true, failure: null }));
     try { await work(); } catch (error) { if (live()) update(before => ({ ...before, failure: commandFailure(error) })); }
     finally { flight.current = false; update(before => ({ ...before, busy: false })); }
+  }
+  async function withReadCleanup(dispose: (() => void) | undefined, work: () => Promise<void>) {
+    let disposed = false;
+    const cleanup = () => { if (!disposed) { disposed = true; dispose?.(); } };
+    readCleanup.current = cleanup;
+    try { await work(); }
+    finally { cleanup(); if (readCleanup.current === cleanup) readCleanup.current = null; }
   }
   function available(locale = current().targetLocale) { return !!locale && projectRef.current.metadata.targetLocales.includes(locale); }
   function fresh(before: TranslationImportState, ticket: number, meta: string, proof: () => boolean) {
@@ -166,17 +175,17 @@ export function TranslationImportSession({ project, children }: { project: Proje
       update(before => ({ ...resetPreparation(before), folder, fileName: "" }));
     });
   }
-  async function preflight() {
+  async function preflight(proof: () => boolean = live, dispose?: () => void) {
     const before = current(), ticket = version.current, meta = metadata(projectRef.current, before.targetLocale);
-    if (!before.folder || !before.fileName || !available()) return;
-    await run(async () => {
+    if (!before.folder || !before.fileName || !available() || !proof() || !editable()) { dispose?.(); return; }
+    await withReadCleanup(dispose, () => run(async () => {
       const checked = await translationCommands.preflight({ ...session, selectionId: before.folder!.selectionId, fileName: before.fileName, targetLocale: before.targetLocale });
-      if (!live() || ticket !== version.current || meta !== metadata(projectRef.current, before.targetLocale) || current().folder !== before.folder) return;
+      if (!live() || !proof() || ticket !== version.current || meta !== metadata(projectRef.current, before.targetLocale) || current().folder !== before.folder) return;
       if (checked.fileName !== before.fileName || checked.targetLocale !== before.targetLocale) throw invalid();
       update(value => ({ ...value, preflight: checked, confirmed: false }));
-    });
+    }));
   }
-  async function dispatchStart(request: TranslationStartRequest) {
+  async function dispatchStart(request: TranslationStartRequest, recovering = false) {
     if (!live()) return;
     update(before => ({ ...before, pendingStart: request }));
     try {
@@ -186,14 +195,14 @@ export function TranslationImportSession({ project, children }: { project: Proje
       update(before => before.pendingStart === request ? { ...before, attempt, pendingStart: null, preview: null,
         batchCapture: null, rowAction: null, batchOutcome: null, batchDetails: [], stale: false, failure: null } : before);
     } catch (error) {
-      if (!hasUnknownOutcome(error)) update(before => before.pendingStart === request ? { ...before, pendingStart: null } : before);
+      if (!recovering && !hasUnknownOutcome(error)) update(before => before.pendingStart === request ? { ...before, pendingStart: null } : before);
       throw error;
     }
   }
-  async function start(proof: () => boolean = live) {
+  async function start(proof: () => boolean = live, dispose?: () => void) {
     const before = current(), ticket = version.current, meta = metadata(projectRef.current, before.targetLocale);
-    if (!before.folder || !before.preflight || !before.confirmed || before.attempt || !available() || !proof()) return;
-    await run(async () => {
+    if (!before.folder || !before.preflight || !before.confirmed || before.attempt || !available() || !proof() || !editable()) { dispose?.(); return; }
+    await withReadCleanup(dispose, () => run(async () => {
       const scope = await sourceCommands.scope(session);
       if (!fresh(before, ticket, meta, proof) || scope.currentSnapshot !== before.preflight!.sourceSnapshotId) return;
       const attemptId = await executionCommands.identity(session);
@@ -203,9 +212,9 @@ export function TranslationImportSession({ project, children }: { project: Proje
       await dispatchStart({ ...session, attemptId, selectionId: before.folder!.selectionId, fileName: before.preflight!.fileName,
         targetLocale: before.preflight!.targetLocale, expectedFileDigest: before.preflight!.fileDigest,
         expectedSourceSnapshotId: before.preflight!.sourceSnapshotId, languageConfirmed: true });
-    });
+    }));
   }
-  async function retryStart() { const request = current().pendingStart; if (request) await run(() => dispatchStart(request), true); }
+  async function retryStart() { const request = current().pendingStart; if (request) await run(() => dispatchStart(request, true), true); }
   function showAttempt(attempt: string) {
     if (!editable()) return false;
     version.current++; update(before => ({ ...resetPreparation(before), attempt })); return true;
@@ -335,7 +344,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
         ? { ...before.batchOutcome, unknown: before.batchOutcome.unknown - 1, applied: before.batchOutcome.applied + 1 } : before.batchOutcome }));
     releaseMutation(); return checked;
   }
-  async function dispatch(pending: TranslationImportPending): Promise<BatchStatus> {
+  async function dispatch(pending: TranslationImportPending, recovering = false): Promise<BatchStatus> {
     if (!live()) return "failed";
     let original = { ...pending, receiptChecked: false };
     replacePending(original);
@@ -350,7 +359,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
       settle(original, receipt); return "applied";
     } catch (error) {
       if (!live()) return "unknown";
-      if (hasUnknownOutcome(error)) { replacePending(original); update(before => ({ ...before, failure: commandFailure(error) })); return "unknown"; }
+      if (recovering || hasUnknownOutcome(error)) { replacePending(original); update(before => ({ ...before, failure: commandFailure(error) })); return "unknown"; }
       update(before => ({ ...before, uncertain: before.uncertain.filter(value => value.request.actionId !== original.request.actionId), failure: commandFailure(error) }));
       return isCommandError(error) && error.code === "dependency-conflict" ? "conflicted" : "failed";
     }
@@ -436,7 +445,7 @@ export function TranslationImportSession({ project, children }: { project: Proje
   }
   async function retryAction(actionId: string) {
     const pending = current().uncertain.find(value => value.request.actionId === actionId);
-    if (pending?.receiptChecked) await run(async () => { await dispatch(pending); releaseMutation(); }, true);
+    if (pending?.receiptChecked) await run(async () => { await dispatch(pending, true); releaseMutation(); }, true);
   }
   return <ImportContext.Provider value={{ state, current, setTarget, setFile, confirmLanguage, setStrategy, chooseFolder,
     preflight, start, retryStart, showAttempt, ready, page, chooseRow, cancelConfirmation, applyRow, captureBatch, applyBatch, checkReceipt, retryAction }}>{children}</ImportContext.Provider>;
