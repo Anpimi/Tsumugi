@@ -1,8 +1,7 @@
-import { ProjectSessionWorkbench, type ProjectSessionHandle } from "./ProjectSessionWorkbench";
+import { ProjectSessionWorkbench, type OverviewSourcePresentation, type ProjectSessionHandle } from "./ProjectSessionWorkbench";
 import type { SessionExitPermit } from "./sessionNavigation";
 import { CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, type WorkspaceArea } from "./WorkbenchFrame";
-import { sourceCommands } from "./sourceCommands";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
@@ -333,7 +332,9 @@ function App() {
   const locale: Locale = isLocale(resolvedLanguage) ? resolvedLanguage : "en-US";
   const [project, setProject] = useState<ProjectView | null>(null);
   const [area, setArea] = useState<WorkspaceArea>("overview");
-  const [sourceState, setSourceState] = useState<"loading" | "empty" | "ready" | "failed">("loading");
+  const [sourcePresentation, setSourcePresentation] = useState<OverviewSourcePresentation | null>(null);
+  const sourceState = project && sourcePresentation && sourcePresentation.projectId === project.metadata.projectId
+    && sourcePresentation.sessionToken === project.sessionToken ? sourcePresentation.state : "loading";
   const areaNavigation = useRef(false);
   const compositionActive = useRef(false);
   const compositionRelease = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1253,15 +1254,17 @@ function App() {
   }, [busy, createDraftDirty, dirty, project, resolvedLanguage]);
 
   useEffect(() => { setArea("overview"); }, [project?.sessionToken]);
-  useEffect(() => {
-    if (!project || area !== "overview") return;
-    let stale = false;
-    setSourceState("loading");
-    void sourceCommands.scope(executionContext(project)).then(scope => {
-      if (!stale) setSourceState(scope.currentSnapshot ? "ready" : "empty");
-    }).catch(() => { if (!stale) setSourceState("failed"); });
-    return () => { stale = true; };
-  }, [project?.sessionToken, area]);
+  const sourceStateChanged = useCallback((value: OverviewSourcePresentation) => {
+    const current = currentProject.current;
+    if (!metadataOwnerAlive.current || currentRetiredSession.current || !current
+      || current.metadata.projectId !== value.projectId || currentSession.current !== value.sessionToken) return;
+    setSourcePresentation(previous => previous?.projectId === value.projectId && previous.sessionToken === value.sessionToken
+      && previous.state === value.state ? previous : value);
+  }, []);
+  const activateArea = useCallback((next: WorkspaceArea) => {
+    if (currentExitPresentation.current.area !== next) setSourcePresentation(null);
+    setArea(next);
+  }, []);
   async function navigateArea(next: WorkspaceArea) {
     if (next === area || busy || stopping || coordinating || areaNavigation.current || lifecycleFlight.current) return;
     if (!project) { if (next === "overview") setArea(next); return; }
@@ -1734,7 +1737,8 @@ function App() {
           {sessionPresentation ? <WorkspaceViewProvider key={`${sessionPresentation.metadata.projectId}:${sessionPresentation.sessionToken}`} value={sessionViewOwner}>
             <ProjectSessionWorkbench key={`${sessionPresentation.metadata.projectId}:${sessionPresentation.sessionToken}`} ref={projectSession}
               project={sessionPresentation} retired={retiredSession !== null} disabled={busy || stopping}
-              onActivate={retiredSession ? () => {} : setArea} onCoordinatingChange={coordinationChanged} />
+              onActivate={retiredSession ? () => {} : activateArea} onCoordinatingChange={coordinationChanged}
+              onSourceState={sourceStateChanged} />
             {retiredSession?.metadata ? <section className="editor-card">
               <label className="field" htmlFor="retired-metadata-value">
                 <span>{t(retiredSession.metadata.form.kind === "rename" ? "editor.renameLabel" : "editor.targetLabel")}</span>

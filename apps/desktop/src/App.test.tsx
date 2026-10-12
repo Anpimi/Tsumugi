@@ -15,6 +15,8 @@ import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
 import type { AttemptDetail } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
+import type { ContentScope } from "./sourceCommands";
+import { sourceKeys } from "./sourceQueries";
 import type { Eligibility } from "./reviewCommands";
 import { StrictMode } from "react";
 import type { ProjectMetadataReconcileCommandPayload, WorkbenchCommands } from "./workbenchCommands";
@@ -256,6 +258,166 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it.each(["empty", "failed"] as const)("refreshes Overview to %s after a semantic source change and recovers without a mutation", async next => {
+    const user = userEvent.setup(), ready: ContentScope = { revision: "1", currentSnapshot: fixtureIdentity(500) };
+    let readScope: () => Promise<ContentScope> = async () => ready;
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "read_content_scope" ? readScope() : original(command, args));
+    await renderApp(); await createProject(user);
+    const overview = () => within(screen.getByRole("region", { name: i18n.t("workbench.nextStep") }));
+    expect(await overview().findByRole("button", { name: i18n.t("workbench.continue") })).toBeEnabled();
+    const reads = mocks.reads!;
+    let resolve!: (value: ContentScope) => void, reject!: (error: Error) => void;
+    readScope = () => new Promise<ContentScope>((yes, no) => { resolve = yes; reject = no; });
+    // Synthetic semantic notification, delivered to the real App session Query owner.
+    await act(async () => { reads.invalidate(["source"]); });
+    await waitFor(() => expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope")).toHaveLength(2));
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeDisabled();
+    expect(overview().queryByRole("button", { name: i18n.t("workbench.continue") })).not.toBeInTheDocument();
+    expect(overview().queryByRole("button", { name: i18n.t("release.title") })).not.toBeInTheDocument();
+    await act(async () => {
+      if (next === "empty") resolve({ revision: "2", currentSnapshot: null });
+      else reject(new Error("Source read unavailable"));
+    });
+    await waitFor(() => expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeEnabled());
+    expect(overview().queryByRole("heading", { name: i18n.t("workbench.continueTitle") })).not.toBeInTheDocument();
+    if (next === "failed") {
+      expect(overview().getByText(i18n.t("workbench.sourceFailed"))).toBeVisible();
+      expect(reads.client.getQueryData(reads.key(sourceKeys.scope))).toEqual(ready);
+    } else expect(overview().queryByText(i18n.t("workbench.sourceFailed"))).not.toBeInTheDocument();
+    readScope = async () => ({ revision: "3", currentSnapshot: fixtureIdentity(600) });
+    await act(async () => { reads.invalidate(["source"]); });
+    expect(await overview().findByRole("button", { name: i18n.t("workbench.continue") })).toBeEnabled();
+    expect(overview().queryByText(i18n.t("workbench.sourceFailed"))).not.toBeInTheDocument();
+    const calls = mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope");
+    expect(calls).toHaveLength(3);
+    for (const [, args] of calls) expect(args).toEqual({ request: { projectId: metadata().projectId, sessionToken: "session-1" } });
+    expect(mocks.invoke.mock.calls.every(([command]) => command === "create_project" || command === "read_content_scope")).toBe(true);
+    expect(reads.client.getQueryCache().findAll({ queryKey: reads.key(sourceKeys.scope), exact: true })).toHaveLength(1);
+  });
+
+  it("stops Overview reads while hidden and waits for a fresh return and reset instead of cached readiness", async () => {
+    const user = userEvent.setup(), ready: ContentScope = { revision: "1", currentSnapshot: fixtureIdentity(500) };
+    let readScope: () => Promise<ContentScope> = async () => ready;
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => {
+      if (command === "read_content_scope") return readScope();
+      if (command === "execution_status") return Promise.resolve(executionFixture.status);
+      if (command === "list_execution_tasks") return Promise.resolve([]);
+      return original(command, args);
+    });
+    await renderApp(); await createProject(user);
+    const overview = () => within(screen.getByRole("region", { name: i18n.t("workbench.nextStep") }));
+    expect(await overview().findByRole("button", { name: i18n.t("workbench.continue") })).toBeEnabled();
+    const reads = mocks.reads!;
+    await user.click(screen.getByRole("button", { name: i18n.t("execution.title") }));
+    await screen.findByRole("heading", { name: i18n.t("execution.title") });
+    expect(reads.client.getQueryCache().find({ queryKey: reads.key(sourceKeys.scope), exact: true })?.getObserversCount()).toBe(0);
+    await act(async () => { reads.invalidate(["source"]); });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope")).toHaveLength(1);
+    let reject!: (error: Error) => void;
+    readScope = () => new Promise<ContentScope>((_, no) => { reject = no; });
+    await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("workbench.backOverview") })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: i18n.t("workbench.backOverview") }));
+    await waitFor(() => expect(reject).toBeTypeOf("function"));
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeDisabled();
+    expect(overview().queryByRole("button", { name: i18n.t("workbench.continue") })).not.toBeInTheDocument();
+    await act(async () => { reject(new Error("Fresh Overview read unavailable")); });
+    expect(await overview().findByText(i18n.t("workbench.sourceFailed"))).toBeVisible();
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeEnabled();
+    let resolve!: (value: ContentScope) => void;
+    readScope = () => new Promise<ContentScope>(yes => { resolve = yes; });
+    let reset!: Promise<void>;
+    act(() => { reset = reads.client.resetQueries({ queryKey: reads.key(sourceKeys.scope), exact: true }); });
+    await waitFor(() => expect(resolve).toBeTypeOf("function"));
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeDisabled();
+    expect(overview().queryByText(i18n.t("workbench.sourceFailed"))).not.toBeInTheDocument();
+    await act(async () => { resolve({ revision: "2", currentSnapshot: fixtureIdentity(600) }); await reset; });
+    expect(await overview().findByRole("button", { name: i18n.t("workbench.continue") })).toBeEnabled();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope")).toHaveLength(3);
+    await user.click(screen.getByRole("button", { name: i18n.t("execution.title") }));
+    await waitFor(() => expect(screen.getByRole("button", { name: i18n.t("workbench.backOverview") })).toBeEnabled());
+    let resolveReturn!: (value: ContentScope) => void;
+    readScope = () => new Promise<ContentScope>(yes => { resolveReturn = yes; });
+    // An ordinary hide/return must also recheck; no source event is sent here.
+    await user.click(screen.getByRole("button", { name: i18n.t("workbench.backOverview") }));
+    await waitFor(() => expect(resolveReturn).toBeTypeOf("function"));
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeDisabled();
+    expect(overview().queryByRole("button", { name: i18n.t("workbench.continue") })).not.toBeInTheDocument();
+    await act(async () => { resolveReturn({ revision: "3", currentSnapshot: null }); });
+    await waitFor(() => expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeEnabled());
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope")).toHaveLength(4);
+  });
+
+  it("withdraws cached Overview readiness in the same turn as an exact Query reset", async () => {
+    const user = userEvent.setup();
+    let readScope: () => Promise<ContentScope> = async () => ({ revision: "1", currentSnapshot: fixtureIdentity(500) });
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args) => command === "read_content_scope" ? readScope() : original(command, args));
+    await renderApp(); await createProject(user);
+    const overview = () => within(screen.getByRole("region", { name: i18n.t("workbench.nextStep") }));
+    expect(await overview().findByRole("button", { name: i18n.t("workbench.continue") })).toBeEnabled();
+    const reads = mocks.reads!;
+    let resolve!: (value: ContentScope) => void;
+    readScope = () => new Promise<ContentScope>(yes => { resolve = yes; });
+    let reset!: Promise<void>;
+    act(() => { reset = reads.client.resetQueries({ queryKey: reads.key(sourceKeys.scope), exact: true }); });
+    expect(resolve).toBeTypeOf("function");
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeDisabled();
+    expect(overview().queryByRole("button", { name: i18n.t("workbench.continue") })).not.toBeInTheDocument();
+    expect(overview().queryByRole("button", { name: i18n.t("release.title") })).not.toBeInTheDocument();
+    await act(async () => { resolve({ revision: "2", currentSnapshot: null }); await reset; });
+    await waitFor(() => expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeEnabled());
+    expect(overview().queryByRole("button", { name: i18n.t("workbench.continue") })).not.toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "read_content_scope")).toHaveLength(2);
+  });
+
+  it.each(["success", "failure"] as const)("ignores another project session's late Overview %s after an actual project replacement", async outcome => {
+    const user = userEvent.setup(), originalProject = projectView();
+    const otherProject = { ...projectView("Other"), sessionToken: "session-2", locator: "C:\\Projects\\other",
+      metadata: { ...metadata("Other"), projectId: fixtureIdentity(900) } };
+    let resolveOld!: (value: ContentScope) => void, rejectOld!: (error: Error) => void;
+    const oldRead = new Promise<ContentScope>((yes, no) => { resolveOld = yes; rejectOld = no; });
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command: string, args: { request: { sessionToken: string } }) => {
+      if (command === "read_content_scope") return args.request.sessionToken === "session-1" ? oldRead
+        : Promise.resolve({ revision: "2", currentSnapshot: null } satisfies ContentScope);
+      if (command === "open_project") return Promise.resolve(otherProject);
+      return original(command, args);
+    });
+    await renderApp(); await createProject(user);
+    const overview = () => within(screen.getByRole("region", { name: i18n.t("workbench.nextStep") }));
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("read_content_scope", {
+      request: { projectId: originalProject.metadata.projectId, sessionToken: originalProject.sessionToken },
+    }));
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Open another" }));
+    await user.type(screen.getByRole("textbox", { name: /Project folder/ }), otherProject.locator);
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    await screen.findByRole("heading", { name: "Other" });
+    await waitFor(() => expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeEnabled());
+    const reads = mocks.reads!;
+    await act(async () => {
+      // A foreign exact key cannot provide the current project's presentation either.
+      reads.client.setQueryData([originalProject.metadata.projectId, originalProject.sessionToken, ...sourceKeys.scope],
+        { revision: "3", currentSnapshot: fixtureIdentity(500) } satisfies ContentScope);
+      if (outcome === "success") resolveOld({ revision: "3", currentSnapshot: fixtureIdentity(500) });
+      else rejectOld(new Error("Previous project's source read failed"));
+    });
+    expect(reads.context).toEqual({ projectId: otherProject.metadata.projectId, sessionToken: otherProject.sessionToken });
+    expect(overview().getByRole("heading", { name: i18n.t("workbench.importTitle") })).toBeVisible();
+    expect(overview().getByRole("button", { name: i18n.t("workbench.import") })).toBeEnabled();
+    expect(overview().queryByRole("button", { name: i18n.t("workbench.continue") })).not.toBeInTheDocument();
+    expect(overview().queryByText(i18n.t("workbench.sourceFailed"))).not.toBeInTheDocument();
+    expect(reads.client.getQueryData(reads.key(sourceKeys.scope))).toEqual({ revision: "2", currentSnapshot: null });
+    expect(mocks.invoke).toHaveBeenCalledWith("read_content_scope", {
+      request: { projectId: otherProject.metadata.projectId, sessionToken: otherProject.sessionToken },
+    });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+  });
+
   it("routes metadata reconciliation through the exact original Registry capture and refuses other scopes and payloads", async () => {
     const { user, payload, scope, commands, view } = await prepareUnknownMetadata({ directory: true, strict: true });
     expect(commands.describe("project.metadata.reconcile", scope, payload)).toMatchObject({

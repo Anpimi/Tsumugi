@@ -1,6 +1,7 @@
-import { useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
+import { matchQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { SessionReadProvider, SessionReadStatus, useSessionReads } from "./SessionReadProvider";
+import { SessionReadProvider, SessionReadStatus, useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { TranslationDraftSession, useTranslationDraftSession } from "./TranslationDraftSession";
 import { TranslationImportSession, useTranslationImportSession } from "./TranslationImportSession";
 import { ExecutionTaskSession, useExecutionTaskSession } from "./ExecutionTaskSession";
@@ -22,6 +23,8 @@ import { useWorkspaceView, useWorkspaceViewChanges, type WorkspaceArea } from ".
 import { executionContext } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import { reviewCommands } from "./reviewCommands";
+import { sourceKeys, sourceReads } from "./sourceQueries";
+import type { ContentScope } from "./sourceCommands";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { SessionNavigation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
 
@@ -44,13 +47,45 @@ export interface ProjectSessionHandle {
   prepareExit: () => Promise<SessionExitPermit | null>;
   retire: () => void;
 }
+export interface OverviewSourcePresentation {
+  projectId: string;
+  sessionToken: string;
+  state: "loading" | "empty" | "ready" | "failed";
+}
 interface Props { project: ProjectView; disabled: boolean; onActivate: (area: WorkspaceArea) => void;
-  onCoordinatingChange: (busy: boolean) => void; retired?: boolean; ref?: Ref<ProjectSessionHandle> }
+  onCoordinatingChange: (busy: boolean) => void; onSourceState?: (value: OverviewSourcePresentation) => void;
+  retired?: boolean; ref?: Ref<ProjectSessionHandle> }
 export function ProjectSessionWorkbench(props: Props) {
   return <ProjectSessionOwners project={props.project}><SessionWorkbench {...props} /></ProjectSessionOwners>;
 }
 
-function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange, retired = false, ref }: Props) {
+function OverviewSourceObserver({ project, onSourceState }: Pick<Props, "project" | "onSourceState">) {
+  const reads = useSessionReads();
+  const source = useSessionQuery({ ...sourceReads.scope(executionContext(project)), enabled: !reads.retired });
+  const queryKey = useMemo(() => reads.key(sourceKeys.scope), [reads]);
+  const subscribe = useCallback((notify: () => void) => reads.client.getQueryCache().subscribe(event => {
+    if (matchQuery({ queryKey, exact: true }, event.query)) notify();
+  }), [reads, queryKey]);
+  const snapshot = useCallback((): OverviewSourcePresentation["state"] => {
+    const state = reads.client.getQueryState<ContentScope>(queryKey);
+    if (!state || state.fetchStatus !== "idle" || state.status === "pending") return "loading";
+    if (state.status === "error") return "failed";
+    if (state.isInvalidated || !state.data) return "loading";
+    return state.data.currentSnapshot ? "ready" : "empty";
+  }, [reads, queryKey]);
+  // Query observer notifications are batched. An exact cache reset or refetch
+  // must revoke the current presentation in the same turn, before that batch.
+  const currentState = useSyncExternalStore(subscribe, snapshot);
+  const state = source.isFetching || source.isPending ? "loading" : currentState;
+  useLayoutEffect(() => {
+    if (!reads.retired && reads.context.projectId === project.metadata.projectId && reads.context.sessionToken === project.sessionToken) {
+      onSourceState?.({ ...executionContext(project), state });
+    }
+  }, [reads, project.metadata.projectId, project.sessionToken, state, onSourceState]);
+  return null;
+}
+
+function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange, onSourceState, retired = false, ref }: Props) {
   const { t } = useTranslation(), view = useWorkspaceView(), reads = useSessionReads();
   useWorkspaceViewChanges();
   const translation = useTranslationDraftSession(), imports = useTranslationImportSession(), tasks = useExecutionTaskSession();
@@ -205,6 +240,7 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     }, null, 2)} /></label>
   </section>;
   return <><SessionReadStatus />{navigating ? <p role="status">{t("workbench.openingDestination")}</p> : null}{failure ? <div role="alert" className="execution-feedback"><p>{t("workbench.navigationBlocked")}</p><CommandFailureDetails failure={failure} /></div> : null}
+    {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} /> : null}
     {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} /> : null}
