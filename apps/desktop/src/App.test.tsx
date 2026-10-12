@@ -13,6 +13,7 @@ import { defaultAiConfig, type AiItem, type AiPrepared, type AiView } from "./ai
 import { aiViewFixture, arenaViewFixture } from "./testSupport/aiFixture";
 import type { ArenaConfig, ArenaPrepared, ArenaView } from "./arenaCommands";
 import type { SessionReads } from "./sessionReads";
+import type { AttemptDetail } from "./executionCommands";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 
@@ -201,6 +202,48 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it("assembles the existing shared translation reservation above Tasks and settles the original application through real App navigation", async () => {
+    const user = userEvent.setup(); await renderApp(); await createProject(user);
+    const original = mocks.invoke.getMockImplementation()!;
+    const projectId = metadata().projectId, detail: AttemptDetail = structuredClone(executionFixture.detail) as AttemptDetail;
+    Object.assign(detail.items[0].status, { execution: "succeeded", validation: "valid", cancellationRequested: false });
+    detail.items[0].resultId = executionFixture.prepare.resultIds[0];
+    Object.assign(detail.progress, { succeeded: 1, unknown: 0 });
+    Object.assign(detail.recovery.units[0], { actions: ["adopt-result"], resultIds: [...executionFixture.prepare.resultIds], remainingItemIds: [], blockedReason: null });
+    const receipt = { ...executionFixture.receipt, projectId };
+    mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "execution_status") return executionFixture.status;
+      if (command === "list_execution_tasks") return [{ ...executionFixture.task, projectId, sequence: "1" }];
+      if (command === "read_execution_task") return [executionFixture.summary];
+      if (command === "read_execution_attempt") return detail;
+      if (command === "create_execution_identity") return executionFixture.prepare.actionId;
+      if (command === "prepare_execution_adoption") return { ...executionFixture.action, projectId, parameters: null };
+      if (command === "adopt_execution") throw new Error("Original application ACK lost");
+      if (command === "read_execution_receipt") return receipt;
+      return original(command, args);
+    });
+    await user.click(screen.getByRole("button", { name: "Tasks" }));
+    await user.click(await screen.findByRole("button", { name: /Sample update/ }));
+    await user.click(await screen.findByRole("button", { name: "Apply saved results" }));
+    await user.click(within(screen.getByRole("dialog", { name: "Apply saved results" })).getByRole("button", { name: "Apply saved results" }));
+    await screen.findByText(i18n.t("execution.adoptionUnknown"));
+    await user.click(screen.getByRole("button", { name: "Keep output and return" }));
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    await screen.findByText(i18n.t("execution.adoptionUnknown"));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Check recorded outcome" }));
+    await screen.findByRole("heading", { name: "Recorded changes" });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "prepare_execution_adoption").map(([, payload]) => payload.request))
+      .toEqual([{ ...executionFixture.prepare, projectId }]);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "adopt_execution").map(([, payload]) => payload.request))
+      .toEqual([{ ...executionFixture.adopt, projectId }]);
+    await user.click(screen.getByRole("button", { name: "Back to overview" }));
+    await user.click(screen.getByRole("button", { name: "Close project" }));
+    await screen.findByRole("heading", { name: "No project open" });
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(1);
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === "adopt_execution")).toHaveLength(1);
+  });
   function installReleasePreparation() {
     const original = mocks.invoke.getMockImplementation()!;
     mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {

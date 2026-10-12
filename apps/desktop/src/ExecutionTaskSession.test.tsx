@@ -8,8 +8,10 @@ import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { i18n } from "./i18n";
 import { ExecutionTasks, type TasksHandle } from "./ExecutionTasks";
-import { executionCommands } from "./executionCommands";
+import { executionCommands, type AttemptDetail } from "./executionCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { useTranslationDraftSession } from "./TranslationDraftSession";
+import { validateResponseAttempt } from "./generated/execution.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -17,9 +19,11 @@ const project: ProjectView = { ...fixture.session, locator: "isolated", reconcil
   metadata: { projectId: fixture.session.projectId, displayName: "Tasks", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const target: CancellationTarget = { taskId: fixture.detail.taskId, attemptId: fixture.detail.attemptId, origin: "tasks" };
 let owner: ReturnType<typeof useExecutionTaskSession>;
+let translation: ReturnType<typeof useTranslationDraftSession>;
 function Probe() {
   const value = useExecutionTaskSession();
-  useLayoutEffect(() => { owner = value; });
+  const draft = useTranslationDraftSession();
+  useLayoutEffect(() => { owner = value; translation = draft; });
   return <TaskCancellationFeedback origin="tasks" />;
 }
 function FailedReadProbe() {
@@ -43,6 +47,306 @@ beforeEach(async () => {
     if (command === "cancel_execution_task") return "1";
     throw new Error(command);
   });
+});
+
+function applicationDetail(): AttemptDetail {
+  const value: AttemptDetail = structuredClone(fixture.detail) as AttemptDetail;
+  Object.assign(value.items[0].status, { execution: "succeeded", validation: "valid", cancellationRequested: false });
+  value.items[0].resultId = fixture.prepare.resultIds[0];
+  Object.assign(value.progress, { succeeded: 1, unknown: 0 });
+  Object.assign(value.recovery.units[0], { actions: ["adopt-result"], blockedReason: null, resultIds: [...fixture.prepare.resultIds], remainingItemIds: [] });
+  if (!validateResponseAttempt(value)) throw new Error("Invalid execution adoption fixture");
+  return value;
+}
+const generalAction = () => ({ ...structuredClone(fixture.action), parameters: null });
+async function confirmApplication(value = applicationDetail()) {
+  await act(async () => { await owner.begin(value, value.recovery.units[0], "adopt-result", 0); });
+  expect(owner.activity?.phase).toBe("confirming");
+}
+function installApplication() {
+  invoke.mockImplementation(async command => {
+    if (command === "create_execution_identity") return fixture.prepare.actionId;
+    if (command === "prepare_execution_adoption") return generalAction();
+    if (command === "adopt_execution" || command === "read_execution_receipt") return structuredClone(fixture.receipt);
+    if (command === "cancel_execution_task") return "2";
+    throw new Error(command);
+  });
+}
+
+it("shares the existing translation reservation before identity and excludes same-task cancellation", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  let identify!: (value: unknown) => void;
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "create_execution_identity"
+    ? new Promise(resolve => { identify = resolve; }) : original(command, payload));
+  let pending!: Promise<void>;
+  act(() => { pending = owner.submit(); void owner.submit(); void owner.cancel(target); });
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(translation.reserveMutation()).toBeNull();
+  act(() => { translation.begin({ unitId: fixtureIdentity(270), locale: "zh-CN", sourceRevisionId: fixtureIdentity(271), key: "manual", sourceText: "Source" }, null, null);
+    translation.edit("New manual draft"); });
+  await act(async () => { expect((await translation.save()).saved).toBe(false); });
+  expect(calls("save_translation_revision")).toHaveLength(0);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(owner.canCancel(target)).toBe(false);
+  expect(calls("cancel_execution_task")).toHaveLength(0);
+  await act(async () => { identify(fixture.prepare.actionId); await pending; });
+  expect(owner.activity?.phase).toBe("recorded");
+  expect(translation.current()?.text).toBe("New manual draft");
+  let token: symbol | null = null; act(() => { token = translation.reserveMutation(); }); expect(token).not.toBeNull();
+  act(() => { if (token) translation.releaseMutation(token); });
+});
+
+it("does not start general adoption while that task's original cancellation is still preparing", async () => {
+  render(<Probe />, project); installApplication();
+  let identify!: (value: unknown) => void;
+  invoke.mockImplementation(command => command === "create_execution_identity" ? new Promise(resolve => { identify = resolve; }) : Promise.resolve("2"));
+  let pending!: Promise<void>; act(() => { pending = owner.cancel(target); });
+  const value = applicationDetail();
+  await act(async () => { await owner.begin(value, value.recovery.units[0], "adopt-result", 0); await owner.submit(); });
+  expect(owner.activity).toBeNull(); expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("prepare_execution_adoption")).toHaveLength(0);
+  await act(async () => { identify(fixtureIdentity(272)); await pending; });
+  expect(owner.current(target.taskId)?.phase).toBe("recorded");
+});
+
+it("does not allocate an adoption identity while another translation write is reserved", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  let token: symbol | null = null;
+  act(() => { token = translation.reserveMutation(); });
+  await act(async () => { await owner.submit(); });
+  expect(owner.activity).toMatchObject({ phase: "confirming", failure: "busy" });
+  expect(calls("create_execution_identity")).toHaveLength(0);
+  act(() => { if (token) translation.releaseMutation(token); });
+  await act(async () => { await owner.submit(); });
+  expect(owner.activity?.phase).toBe("recorded");
+});
+
+it.each(["identity", "prepare", "adopt"] as const)("continues fixed adoption after consumer unmount during %s", async stage => {
+  const view = render(<Probe />, project); installApplication(); await confirmApplication();
+  let finish!: (value: unknown) => void;
+  const waiting = stage === "identity" ? "create_execution_identity" : stage === "prepare" ? "prepare_execution_adoption" : "adopt_execution";
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === waiting ? new Promise(resolve => { finish = resolve; }) : original(command, payload));
+  let pending!: Promise<void>;
+  await act(async () => { pending = owner.submit(); await Promise.resolve(); await Promise.resolve(); });
+  expect(finish).toBeDefined(); view.rerender(null, project);
+  await act(async () => { finish(stage === "identity" ? fixture.prepare.actionId : stage === "prepare" ? generalAction() : fixture.receipt); await pending; });
+  view.rerender(<Probe />, project);
+  expect(owner.activity).toMatchObject({ phase: "recorded", prepare: fixture.prepare, receipt: fixture.receipt });
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(calls("prepare_execution_adoption").map(([, payload]) => payload.request)).toEqual([fixture.prepare]);
+  expect(calls("adopt_execution").map(([, payload]) => payload.request)).toEqual([fixture.adopt]);
+});
+
+it.each(["identity", "prepare", "adopt"] as const)("stops late %s continuation when the real project owner is destroyed", async stage => {
+  const view = render(<Probe />, project); installApplication(); await confirmApplication();
+  let finish!: (value: unknown) => void;
+  const waiting = stage === "identity" ? "create_execution_identity" : stage === "prepare" ? "prepare_execution_adoption" : "adopt_execution";
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === waiting ? new Promise(resolve => { finish = resolve; }) : original(command, payload));
+  let pending!: Promise<void>;
+  await act(async () => { pending = owner.submit(); await Promise.resolve(); await Promise.resolve(); });
+  expect(finish).toBeDefined();
+  view.rerender(<Probe />, { ...project, sessionToken: "session-B" });
+  await act(async () => { finish(stage === "identity" ? fixture.prepare.actionId : stage === "prepare" ? generalAction() : fixture.receipt); await pending; });
+  expect(owner.activity).toBeNull(); expect(owner.unresolved()).toBe(false);
+  expect(calls("prepare_execution_adoption")).toHaveLength(stage === "identity" ? 0 : 1);
+  expect(calls("adopt_execution")).toHaveLength(stage === "adopt" ? 1 : 0);
+});
+
+it("freezes the caller's complete unit and ordered prepare payload before identity", async () => {
+  render(<Probe />, project); installApplication();
+  const detail = applicationDetail(); await confirmApplication(detail);
+  detail.taskId = fixtureIdentity(280); detail.attemptId = fixtureIdentity(281);
+  detail.recovery.units[0].unitId = fixtureIdentity(282); detail.recovery.units[0].resultIds.reverse();
+  detail.recovery.units[0].scopes[0].id = "Changed caller";
+  await act(async () => { await owner.submit(); });
+  expect(owner.activity?.intent.taskId).toBe(target.taskId);
+  expect(owner.activity?.intent.unit.scopes[0].id).toBe("Sample A");
+  expect(Object.isFrozen(owner.activity?.intent.unit.scopes[0])).toBe(true);
+  expect(Object.isFrozen(owner.activity?.prepare?.resultIds)).toBe(true);
+  expect(calls("prepare_execution_adoption")[0][1].request).toEqual(fixture.prepare);
+});
+
+it("rejects a shape-valid wrong preparation before adoption and revokes a missing-receipt permission", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce({ ...generalAction(), operation: "other" });
+  await act(async () => { await owner.submit(); });
+  expect(owner.activity?.phase).toBe("unknown"); expect(calls("adopt_execution")).toHaveLength(0);
+  invoke.mockResolvedValueOnce(null);
+  await act(async () => { await owner.checkAdoption(); });
+  expect(owner.activity?.retryAllowed).toBe(true);
+  invoke.mockRejectedValueOnce(new Error("Preparation acknowledgement lost again"));
+  await act(async () => { await owner.retryAdoption(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", retryAllowed: false, prepare: fixture.prepare });
+  await act(async () => { await owner.retryAdoption(); });
+  expect(calls("prepare_execution_adoption")).toHaveLength(2);
+  expect(calls("adopt_execution")).toHaveLength(0);
+});
+
+it("restores lost preparation evidence using only the original prepare when its receipt already exists", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce(new Error("Lost preparation ACK"));
+  await act(async () => { await owner.submit(); });
+  expect(owner.activity?.proof).toBeNull();
+  await act(async () => { await owner.checkAdoption(); });
+  expect(owner.activity).toMatchObject({ phase: "recorded", receipt: fixture.receipt, proof: { parameters: null } });
+  expect(calls("adopt_execution")).toHaveLength(0);
+  expect(calls("prepare_execution_adoption").map(([, payload]) => payload.request)).toEqual([fixture.prepare, fixture.prepare]);
+  expect(calls("read_execution_receipt")[0][1].request).toEqual(fixture.adopt);
+  expect(calls("read_project")).toHaveLength(0);
+});
+
+it("pins a seen receipt before failed proof restoration and never readopts after it disappears or changes", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce(new Error("Lost preparation ACK"));
+  await act(async () => { await owner.submit(); });
+  invoke.mockResolvedValueOnce(fixture.receipt).mockResolvedValueOnce({ ...generalAction(), parameters: {} });
+  await act(async () => { await owner.checkAdoption(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", receipt: fixture.receipt, retryAllowed: false });
+  invoke.mockResolvedValueOnce(null);
+  await act(async () => { await owner.checkAdoption(); await owner.retryAdoption(); owner.dismiss(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", receipt: fixture.receipt, retryAllowed: false });
+  invoke.mockResolvedValueOnce({ ...fixture.receipt, requestDigest: "f".repeat(64) });
+  await act(async () => { await owner.checkAdoption(); });
+  expect(owner.activity?.receipt).toEqual(fixture.receipt);
+  expect(calls("adopt_execution")).toHaveLength(0);
+  expect(calls("prepare_execution_adoption")).toHaveLength(2);
+  expect(owner.unresolved()).toBe(true);
+});
+
+it("retains the original uncertainty after a formally rejected replay and can settle only checked original evidence", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce(generalAction()).mockRejectedValueOnce(new Error("Lost adoption ACK"));
+  await act(async () => { await owner.submit(); });
+  const original = owner.activity?.prepare;
+  invoke.mockResolvedValueOnce(null);
+  await act(async () => { await owner.checkAdoption(); });
+  invoke.mockRejectedValueOnce({ code: "busy", outcome: "rejected", stage: "execution-adopt", recoveryRequired: false });
+  await act(async () => { await owner.retryAdoption(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", retryAllowed: false, uncertain: true });
+  expect(owner.activity?.prepare).toBe(original);
+  expect(translation.reserveMutation()).toBeNull();
+  await act(async () => { await owner.checkAdoption(); });
+  expect(owner.activity?.phase).toBe("recorded");
+  expect(calls("adopt_execution")).toHaveLength(1);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it("pins the first checked cancellation basis and keeps an incompatible replay unknown", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce(generalAction()).mockRejectedValueOnce(new Error("Lost adoption ACK"));
+  await act(async () => { await owner.submit(); });
+  invoke.mockResolvedValueOnce(null); await act(async () => { await owner.checkAdoption(); });
+  invoke.mockResolvedValueOnce({ ...generalAction(), cancellationRevision: "2" });
+  await act(async () => { await owner.retryAdoption(); });
+  expect(owner.activity?.phase).toBe("unknown");
+  expect(owner.activity?.proof?.cancellationRevision).toBe(fixture.action.cancellationRevision);
+  expect(calls("adopt_execution")).toHaveLength(1);
+});
+
+it("settles a business ACK before a subsequent pure query failure", async () => {
+  const view = render(<Probe />, project); installApplication(); await confirmApplication();
+  await act(async () => { await owner.submit(); });
+  invoke.mockRejectedValue(new Error("Later projection failed"));
+  view.rerender(<><Probe /><FailedReadProbe /></>, project);
+  await screen.findByText("Read failed");
+  expect(owner.activity).toMatchObject({ phase: "recorded", receipt: fixture.receipt });
+  expect(owner.unresolved()).toBe(false);
+});
+
+it("does not let an already recorded cancellation conceal the same task's new unknown adoption", async () => {
+  render(<Probe />, project); installApplication();
+  await act(async () => { await owner.cancel(target); });
+  await confirmApplication();
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce(new Error("Lost preparation ACK"));
+  await act(async () => { await owner.submit(); });
+  expect(owner.current(target.taskId)?.phase).toBe("recorded");
+  expect(owner.activity?.phase).toBe("unknown"); expect(owner.unresolved()).toBe(true);
+});
+
+it("keeps a missing original recovery outcome unresolved through remount and newer projections without retrying it", async () => {
+  const view = render(<Probe />, project);
+  const value = applicationDetail(); value.items[0].status.execution = "failed"; value.items[0].status.validation = "absent";
+  value.recovery.units[0].actions = ["retry-safe-failure"]; value.recovery.units[0].remainingItemIds = [...value.recovery.units[0].itemIds];
+  await act(async () => { await owner.begin(value, value.recovery.units[0], "retry-safe-failure", 0); });
+  invoke.mockRejectedValueOnce(new Error("New attempt created, ACK lost"));
+  await act(async () => { await owner.submit(); });
+  const request = owner.activity?.recoveryRequest;
+  expect(request).toEqual({ ...fixture.recover, action: "retry-safe-failure" });
+  view.rerender(null, project); view.rerender(<Probe />, project); await refreshWorkbenchReads();
+  await act(async () => { await owner.submit(); await owner.retryAdoption(); owner.dismiss(); });
+  expect(owner.activity).toMatchObject({ phase: "unknown", recoveryRequest: request });
+  expect(calls("recover_execution")).toHaveLength(1);
+  expect(calls("create_execution_identity")).toHaveLength(0);
+  expect(owner.unresolved()).toBe(true);
+});
+
+it.each(["source-import", "translation-import", "ai-translation", "arena-translation"])("keeps %s adoption on its dedicated confirmation route", async operation => {
+  render(<Probe />, project); installApplication();
+  const value = applicationDetail(); value.operation = operation;
+  await act(async () => { await owner.begin(value, value.recovery.units[0], "adopt-result", 0); await owner.submit(); });
+  expect(owner.activity).toBeNull(); expect(invoke).not.toHaveBeenCalled();
+});
+
+function spanningDetail() {
+  const value = applicationDetail(), first = structuredClone(value.items[0]);
+  const items = Array.from({ length: 101 }, (_, index) => ({ ...structuredClone(first),
+    status: { ...first.status, itemId: index === 0 ? first.status.itemId : fixtureIdentity(400 + index) },
+    resultId: index === 0 ? first.resultId : fixtureIdentity(600 + index),
+    scope: { ...first.scope, id: index === 0 ? first.scope.id : `Item ${index}` } }));
+  const unit = { ...structuredClone(value.recovery.units[0]), itemIds: [items[0].status.itemId, items[100].status.itemId],
+    scopes: [items[0].scope, items[100].scope], resultIds: [items[100].resultId!, items[0].resultId!] };
+  const page = (offset: number): AttemptDetail => ({ ...structuredClone(value), progress: { ...value.progress, total: 101, succeeded: 101 },
+    items: items.slice(offset, offset + 100), nextOffset: offset === 0 ? 100 : null,
+    recovery: { attemptId: value.attemptId, units: [structuredClone(unit)] } });
+  return { page, items, unit };
+}
+
+it("captures a complete cross-page unit from a later page and preserves reverse-order requests on every replay", async () => {
+  render(<Probe />, project); installApplication();
+  const { page, unit } = spanningDetail();
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: { request: { offset?: number } }) => command === "read_execution_attempt"
+    ? Promise.resolve(page(payload.request.offset!)) : original(command, payload));
+  await act(async () => { await owner.begin(page(100), unit, "adopt-result", 100); });
+  expect(owner.activity?.intent.items.map(item => item.scope.id)).toEqual(["Sample A", "Item 100"]);
+  expect(calls("read_execution_attempt").map(([, payload]) => payload.request)).toEqual([{ ...fixture.session, attemptId: target.attemptId, offset: 0, limit: 100 }]);
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockResolvedValueOnce({ ...generalAction(), resultIds: [...unit.resultIds].sort() }).mockRejectedValueOnce(new Error("Lost adoption ACK"));
+  await act(async () => { await owner.submit(); });
+  const prepare = { ...fixture.prepare, resultIds: [...unit.resultIds] };
+  expect(owner.activity?.prepare).toEqual(prepare);
+  invoke.mockResolvedValueOnce(null); await act(async () => { await owner.checkAdoption(); });
+  invoke.mockResolvedValueOnce({ ...generalAction(), resultIds: [...unit.resultIds].sort() }).mockResolvedValueOnce(fixture.receipt);
+  await act(async () => { await owner.retryAdoption(); });
+  expect(owner.activity?.phase).toBe("recorded");
+  expect(calls("prepare_execution_adoption").map(([, payload]) => payload.request)).toEqual([prepare, prepare]);
+  expect(calls("adopt_execution").map(([, payload]) => payload.request)).toEqual([fixture.adopt, fixture.adopt]);
+  expect(calls("create_execution_identity")).toHaveLength(1);
+});
+
+it.each(["duplicate", "missing", "offset", "scope"] as const)("rejects %s cross-page evidence without allocating an identity", async problem => {
+  render(<Probe />, project); installApplication(); const { page, unit } = spanningDetail();
+  const first = page(0), last = page(100);
+  if (problem === "duplicate") last.items[0] = structuredClone(first.items[0]);
+  if (problem === "missing") last.items[0].status.itemId = fixtureIdentity(999);
+  if (problem === "offset") first.nextOffset = 99;
+  if (problem === "scope") last.items[0].scope.id = "Another scope";
+  invoke.mockResolvedValueOnce(first);
+  await act(async () => { await owner.begin(last, unit, "adopt-result", 100); });
+  expect(owner.activity?.phase).toBe("rejected");
+  expect(calls("create_execution_identity")).toHaveLength(0);
+  expect(calls("prepare_execution_adoption")).toHaveLength(0);
+});
+
+it("releases the shared write reservation only after a verified first rejection", async () => {
+  render(<Probe />, project); installApplication(); await confirmApplication();
+  invoke.mockResolvedValueOnce(fixture.prepare.actionId).mockRejectedValueOnce({ code: "busy", outcome: "rejected", stage: "execution-adopt", recoveryRequired: false });
+  await act(async () => { await owner.submit(); });
+  expect(owner.activity?.phase).toBe("rejected"); expect(owner.unresolved()).toBe(false);
+  let token: symbol | null = null; act(() => { token = translation.reserveMutation(); });
+  expect(token).not.toBeNull(); act(() => { if (token) translation.releaseMutation(token); });
 });
 afterEach(cleanup);
 

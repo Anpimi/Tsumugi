@@ -5,12 +5,11 @@ import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "reac
 import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
-import type { CommandError, ProjectView } from "./projectCommands";
-import { projectCommands } from "./projectCommands";
-import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type PrepareRequest, type ResultEnvelope } from "./executionCommands";
+import type { ProjectView } from "./projectCommands";
+import { executionCommands as commands, executionContext, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ResultEnvelope } from "./executionCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string; cancellation?: CancellationTarget };
-export interface TasksHandle { allowLeave: () => Promise<boolean> }
+export interface TasksHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
 export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslationPreview, onAiPreview, onArenaPreview, ref }: { project: ProjectView; disabled: boolean; onSourcePreview?: (id: string) => void; onTranslationPreview?: (id: string) => void; onArenaPreview?: (id: string) => void; onAiPreview?: (id: string) => void; ref?: Ref<TasksHandle> }) {
   const { t } = useTranslation();
   const [open, setOpen] = useWorkbenchView("tasks");
@@ -18,12 +17,12 @@ export function ExecutionTasks({ project, disabled, onSourcePreview, onTranslati
   const [dismissBlocked, setDismissBlocked] = useState(false);
   const [visited, setVisited] = useState(false);
   useEffect(() => { if (open) setVisited(true); }, [open]);
-  useImperativeHandle(ref, () => ({ allowLeave: () => {
+  useImperativeHandle(ref, () => ({ allowNavigate: () => Promise.resolve(true), allowLeave: () => {
     if (cancellations.unresolved()) { setVisited(true); setOpen(true); return Promise.resolve(false); }
     return Promise.resolve(!dismissBlocked);
   } }));
   return <WorkbenchPanel open={open} title={t("execution.title")} description={project.metadata.displayName}
-    onBack={() => { if (!dismissBlocked) setOpen(false); }} backDisabled={disabled || dismissBlocked}>
+    onBack={() => setOpen(false)} backDisabled={disabled}>
     {visited ? <TaskContent active={open} disabled={disabled} onArenaPreview={id => { setOpen(false); onArenaPreview?.(id); }} onAiPreview={id => { setOpen(false); onAiPreview?.(id); }} key={project.sessionToken} project={project} onDismissBlockedChange={setDismissBlocked} onSourcePreview={id => { setOpen(false); onSourcePreview?.(id); }} onTranslationPreview={id => { setOpen(false); onTranslationPreview?.(id); }} /> : null}
   </WorkbenchPanel>;
 }
@@ -37,24 +36,32 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const [cursor, setCursor] = useState("0");
   const [attemptCursor, setAttemptCursor] = useState("0");
   const [offset, setOffset] = useState(0);
-  const [busy, setBusy] = useState(false);
+  const busy = cancellations.busy;
+  const activity = cancellations.activity;
+  const pendingAction = activity?.phase === "unknown" || cancellations.busy ? activity : null;
+  const [showOwnerDialog, setShowOwnerDialog] = useState(true);
   const [failureValue, setFailure] = useState<CommandFailure | null>(null);
-  const failure = typeof failureValue === "string" ? failureValue : failureValue?.code ?? null;
   const [message, setMessage] = useState<"done" | "noReceipt" | "queryStarted" | null>(null);
-  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-  const [output, setOutput] = useState<ResultEnvelope | null>(null);
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
-  const [pendingAction, setPendingAction] = useState<PrepareRequest | null>(null);
-  const [receiptChecked, setReceiptChecked] = useState(false);
+  const [localConfirmation, setConfirmation] = useState<Confirmation | null>(null);
+  const ownerConfirmation = activity && showOwnerDialog && activity.phase !== "recorded" && activity.phase !== "rejected"
+    ? { action: activity.intent.action, unit: activity.intent.unit, itemId: activity.intent.itemId } : null;
+  const confirmation: Confirmation | null = localConfirmation ?? ownerConfirmation;
+  const [outputSelection, setOutput] = useState<{ attemptId: string; itemId: string; resultId: string } | null>(null);
+  const [receiptSelection, setReceipt] = useState<{ attemptId: string; unitId: string; actionId: string } | null>(null);
+
   const actionTrigger = useRef<HTMLElement | null>(null);
   const outputRegion = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { onDismissBlockedChange?.(busy || pendingAction !== null); return () => onDismissBlockedChange?.(false); }, [busy, pendingAction, onDismissBlockedChange]);
-  useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
-  function confirm(choice: Confirmation) { actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setFailure(null); setMessage(null); setConfirmation(choice.action === "cancel" && detail ? { ...choice, cancellation: { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } } : choice); }
-  const mounted = useRef(true);
-  const mutating = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-
+  useEffect(() => { onDismissBlockedChange?.(busy || cancellations.unresolved()); return () => onDismissBlockedChange?.(false); }, [busy, activity, cancellations.state, onDismissBlockedChange]);
+  function confirm(choice: Confirmation) {
+    actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setFailure(null); setMessage(null); setShowOwnerDialog(true);
+    if (choice.action === "cancel" && detail) setConfirmation({ ...choice, cancellation: { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } });
+    else if (detail && choice.unit && choice.action !== "view-receipt" && choice.action !== "cancel")
+      void cancellations.begin(detail, choice.unit, choice.action, offset, choice.itemId);
+  }
+  function closeConfirmation() {
+    setConfirmation(null); setShowOwnerDialog(false); cancellations.dismiss();
+  }
   function showError(error: unknown) {
     setFailure(commandFailure(error,"storage-failed"));
   }
@@ -77,74 +84,83 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const cancelTarget: CancellationTarget | null = detail ? { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } : null;
   const cancellation = confirmation?.cancellation ? cancellations.current(confirmation.cancellation.taskId) : undefined;
   const cancelling = cancellation?.phase === "preparing" || cancellation?.phase === "pending";
+  useEffect(() => { if (cancellation?.phase === "recorded" || cancellation?.phase === "rejected") setConfirmation(null); }, [cancellation]);
   const loading = projection.isPending && active && !busy;
   useEffect(() => { const error = projection.error ?? projection.data?.runtime.error; if (error) showError(error); }, [projection.error, projection.data?.runtime.error]);
 
   function selectTask(id: string | null) {
-    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setFailure(null); setPendingAction(null);
-  }
-  async function perform(work: () => Promise<void>) {
-    if (mutating.current) return;
-    mutating.current = true; setBusy(true); setFailure(null); setMessage(null);
-    try { await work(); } catch (error) { if (mounted.current) showError(error); }
-    finally { mutating.current = false; if (mounted.current) { setBusy(false); reads.invalidate(["execution"]); } }
+    setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setOffset(0); setOutput(null); setReceipt(null); setFailure(null);
   }
   async function execute(choice: Confirmation) {
     if (choice.action === "cancel") {
       if (!choice.cancellation || disabled || busy || pendingAction || !cancellations.canCancel(choice.cancellation)) return;
       await cancellations.cancel(choice.cancellation);
-      if (mounted.current) setConfirmation(null);
       return;
     }
-    const action = choice.action;
-    if (!detail) return;
-    const selected = detail;
-    await perform(async () => {
-      if (choice.unit) {
-        const unit = choice.unit;
-        if (action === "adopt-result") {
-          const actionId = await commands.identity(context);
-          const prepared = { ...context, attemptId: selected.attemptId, unitId: unit.unitId, actionId, resultIds: unit.resultIds };
-          setPendingAction(prepared); setReceiptChecked(false);
-          await commands.prepare(prepared);
-          const result = await commands.adopt({ ...context, actionId });
-          if (mounted.current) { setReceipt(result); setPendingAction(null); }
-        } else if (action === "view-receipt" && unit.receiptId) {
-          const result = await commands.receipt({ ...context, actionId: unit.receiptId });
-          if (mounted.current) setReceipt(result);
-        } else {
-          const result = await commands.recover({ ...context, attemptId: selected.attemptId, unitId: unit.unitId, action, itemIds: choice.itemId ? [choice.itemId] : unit.remainingItemIds });
-          if (mounted.current && result.attemptId !== selected.attemptId) { setAttemptId(result.attemptId); setOffset(0); setOutput(null); setReceipt(null); }
-          if (mounted.current && result.queryStarted) setMessage("queryStarted");
-        }
-      }
-      if (mounted.current) { setConfirmation(null); if (action !== "query-outcome") setMessage("done"); }
-    });
+    if (disabled) return;
+    if (choice.action === "view-receipt" && choice.unit?.receiptId && detail) {
+      setReceipt({ attemptId: detail.attemptId, unitId: choice.unit.unitId, actionId: choice.unit.receiptId });
+      return;
+    }
+    await cancellations.submit();
   }
-  async function checkReceipt() {
-    if (!pendingAction) return;
-    await perform(async () => {
-      await projectCommands.read({ sessionToken: context.sessionToken });
-      const result = await commands.receipt({ ...context, actionId: pendingAction.actionId });
-      if (!mounted.current) return;
-      setReceipt(result); setReceiptChecked(true);
-      if (result) { setPendingAction(null); setConfirmation(null); setMessage("done"); } else setMessage("noReceipt");
-    });
-  }
-  const errorKey = failure === "dependency-conflict" ? "conflict" : failure === "outcome-unknown" ? "unknown" : failure === "session-invalid" ? "session" : failure === "cancelled" ? "cancelled" : failure === "output-invalid" ? "invalid" : failure === "busy" ? "busy" : "failed";
-  const feedback = <>{failure ? <div role="alert"><p>{t(`execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={failureValue} /></div> : null}{message ? <p role="status">{t(`execution.${message}`)}</p> : null}
-    {pendingAction ? <div className="execution-actions"><button className="secondary-button" disabled={busy} onClick={() => void checkReceipt()}>{t("execution.checkReceipt")}</button>
-      {receiptChecked ? <button className="secondary-button" disabled={busy} onClick={() => void perform(async () => { await commands.prepare(pendingAction); const result = await commands.adopt({ ...context, actionId: pendingAction.actionId }); if (mounted.current) { setReceipt(result); setPendingAction(null); setConfirmation(null); setMessage("done"); } })}>{t("execution.retryAdoption")}</button> : null}
-      <button className="text-button" disabled={busy} onClick={() => { setPendingAction(null); setConfirmation(null); }}>{t("execution.keepOutput")}</button></div> : null}</>;
+  const recovered = activity?.phase === "recorded" ? activity.recovery : null;
+  useEffect(() => {
+    if (recovered && activity) {
+      setTaskId(activity.intent.taskId);
+      setAttemptId(recovered.attemptId); setOffset(0); setOutput(null); setReceipt(null);
+      setMessage(recovered.queryStarted ? "queryStarted" : "done");
+    }
+  }, [recovered]);
+  const outputQuery = useSessionQuery<ResultEnvelope>({ key: ["task-output", outputSelection], scopes: ["execution"], enabled: active && outputSelection !== null,
+    read: async () => {
+      if (!outputSelection) throw new Error("No task output selected");
+      const result = await commands.output({ ...context, attemptId: outputSelection.attemptId, resultId: outputSelection.resultId });
+      // A reused result retains the source attempt identity; Host authorizes its association.
+      if (result.projectId !== context.projectId || result.resultId !== outputSelection.resultId || result.itemId !== outputSelection.itemId) throw new Error("Invalid task output association");
+      return result;
+    } });
+  const receiptQuery = useSessionQuery<Receipt | null>({ key: ["task-receipt", receiptSelection], scopes: ["execution"], enabled: active && receiptSelection !== null,
+    read: async () => {
+      if (!receiptSelection) throw new Error("No task receipt selected");
+      const result = await commands.receipt({ ...context, actionId: receiptSelection.actionId });
+      if (result && (result.projectId !== context.projectId || result.attemptId !== receiptSelection.attemptId
+        || result.unitId !== receiptSelection.unitId || result.actionId !== receiptSelection.actionId)) throw new Error("Invalid task receipt association");
+      return result;
+    } });
+  const output = outputQuery.data ?? null;
+  const shownReceipt = receiptSelection ? receiptQuery.data : activity?.phase === "recorded" ? activity.receipt : null;
+  useEffect(() => { if (output) { outputRegion.current?.focus(); outputRegion.current?.scrollIntoView?.({ block: "nearest" }); } }, [output]);
+  useEffect(() => { const error = outputQuery.error ?? receiptQuery.error; if (error) showError(error); }, [outputQuery.error, receiptQuery.error]);
+  const ownerFailure = activity?.failure ?? null;
+  const displayedFailure = ownerFailure ?? failureValue;
+  const displayedCode = typeof displayedFailure === "string" ? displayedFailure : displayedFailure?.code ?? null;
+  const errorKey = displayedCode === "dependency-conflict" ? "conflict" : displayedCode === "outcome-unknown" ? "unknown" : displayedCode === "session-invalid" ? "session" : displayedCode === "cancelled" ? "cancelled" : displayedCode === "output-invalid" ? "invalid" : displayedCode === "busy" ? "busy" : "failed";
+  const errorRegion = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (active && displayedFailure) errorRegion.current?.focus(); }, [active, displayedFailure]);
+  const feedback = <><TaskCancellationFeedback origin="tasks" taskId={taskId ?? undefined} disabled={busy || pendingAction !== null} visible={active} />
+    {displayedFailure ? <div role="alert" tabIndex={-1} ref={errorRegion}><p>{t(`execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={displayedFailure} /></div> : null}
+    {activity?.phase === "capturing" ? <p role="status">{t("execution.capturing")}</p> : null}
+    {activity?.phase === "unknown" ? <section aria-label={t("execution.originalAction")}>
+      <p role="status">{t(activity.intent.action === "adopt-result" ? "execution.adoptionUnknown" : "execution.recoveryUnknown")}</p>
+      <ul>{activity.intent.unit.scopes.map((scope, index) => <li key={activity.intent.unit.itemIds[index]}>{scope.id}{scope.locale ? ` · ${scope.locale}` : ""}</li>)}</ul>
+      <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify({ taskId: activity.intent.taskId, operation: activity.intent.operation,
+        unit: activity.intent.unit, request: activity.prepare ?? activity.recoveryRequest }, null, 2)}</pre></details>
+      {activity.prepare ? <div className="execution-actions">
+        <button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.checkAdoption()}>{t("execution.checkReceipt")}</button>
+        {activity.retryAllowed ? <><p role="status">{t("execution.noReceipt")}</p><button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.retryAdoption()}>{t("execution.retryAdoption")}</button></> : null}
+      </div> : null}
+      <button className="text-button" disabled={busy} onClick={() => { setConfirmation(null); setShowOwnerDialog(false); }}>{t("execution.keepOutput")}</button>
+    </section> : null}
+    {activity?.phase === "recorded" && activity.receipt ? <p role="status">{t("execution.adoptionRecorded")}</p> : message ? <p role="status">{t(`execution.${message}`)}</p> : null}</>;
   const titleFor = (action: Confirmation["action"]) => action === "cancel" ? t("execution.cancel") : t(`execution.actions.${action}`);
   const confirmationCount = confirmation?.itemId ? 1 : confirmation?.unit?.itemIds.length ?? 0;
   const blockedKey = (reason: string) => reason === "external-new-consent" ? "externalConsent" : reason === "outcome-unknown" ? "unknown" : reason === "scope-removed" ? "scopeRemoved" : reason === "output-invalid" ? "invalid" : reason === "retry-not-safe" ? "retryUnsafe" : "blocked";
   return <div className="execution-content" aria-busy={busy || cancelling || loading}>
-    <TaskCancellationFeedback origin="tasks" taskId={taskId ?? undefined} disabled={busy || pendingAction !== null} visible={active} />
     {!confirmation ? feedback : null}
     <div className="execution-actions">
       {taskId ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => selectTask(null)}>{t("execution.allTasks")}</button> : null}
-      <button className="secondary-button" disabled={busy} onClick={() => void perform(async () => { await projectCommands.read({ sessionToken: context.sessionToken }); })}>{t("execution.refresh")}</button>
+      <button className="secondary-button" disabled={busy} onClick={() => reads.invalidate(["execution"], false)}>{t("execution.refresh")}</button>
     </div>
     {loading ? <p role="status">{t("execution.loading")}</p> : null}
     {!taskId ? <>
@@ -188,8 +204,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
             </details>
             {unit.blockedReason ? <p>{t(unit.blockedReason === "continued-in-new-attempt" ? "execution.continued" : unit.blockedReason === "still-running" ? "execution.running" : `execution.errors.${blockedKey(unit.blockedReason)}`)}</p> : null}
             <div className="execution-actions">{unit.actions.map(action => action === "query-outcome" ? unit.remainingItemIds.map(id =>
-              <button className="secondary-button" key={id} disabled={busy || pendingAction !== null} onClick={() => confirm({ action, unit, itemId: id })}>{t(`execution.actions.${action}`)} · {unit.scopes[unit.itemIds.indexOf(id)]?.id}</button>
-            ) : <button className={action === "adopt-result" || action === "retry-safe-failure" || action === "resume-undispatched" ? "primary-button" : "secondary-button"} key={action} disabled={busy || pendingAction !== null} onClick={() => {
+              <button className="secondary-button" key={id} disabled={disabled || busy || pendingAction !== null || activity?.phase === "confirming"} onClick={() => confirm({ action, unit, itemId: id })}>{t(`execution.actions.${action}`)} · {unit.scopes[unit.itemIds.indexOf(id)]?.id}</button>
+            ) : <button className={action === "adopt-result" || action === "retry-safe-failure" || action === "resume-undispatched" ? "primary-button" : "secondary-button"} key={action} disabled={disabled || busy || pendingAction !== null || activity?.phase === "confirming"} onClick={() => {
               if (action === "adopt-result" && detail.operation === "source-import") onSourcePreview?.(detail.attemptId);
               else if (action === "adopt-result" && detail.operation === "translation-import") onTranslationPreview?.(detail.attemptId);
               else if (action === "adopt-result" && detail.operation === "arena-translation") onArenaPreview?.(detail.attemptId); else if (action === "adopt-result" && detail.operation === "ai-translation") onAiPreview?.(detail.attemptId); else if (action === "view-receipt") void execute({ action, unit }); else confirm({ action, unit });
@@ -201,10 +217,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
         {detail.operation === "translation-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onTranslationPreview?.(detail.attemptId)}>{t("translation.preview")}</button> : null}
         <ul className="execution-list">{detail.items.map(item => <li key={item.status.itemId}>
           <div className="execution-item-heading"><strong>{item.scope.id}{item.scope.locale ? ` · ${item.scope.locale}` : ""}</strong>
-            {item.resultId ? <button className="text-button" disabled={busy} onClick={() => void perform(async () => {
-              const result = await commands.output({ ...context, attemptId: detail.attemptId, resultId: item.resultId! });
-              if (mounted.current) setOutput(result);
-            })}>{t(item.status.execution === "succeeded" ? "execution.output" : "execution.failureDetails")}</button> : null}
+            {item.resultId ? <button className="text-button" disabled={busy} onClick={() => setOutput({ attemptId: detail.attemptId, itemId: item.status.itemId, resultId: item.resultId! })}>{t(item.status.execution === "succeeded" ? "execution.output" : "execution.failureDetails")}</button> : null}
           </div>
           <p>{t(`execution.states.${item.status.execution}`)} · {t(`execution.adoption.${item.status.adoption}`)}</p>
           {item.status.validation === "invalid" ? <p>{t("execution.errors.invalid")}</p> : null}
@@ -226,8 +239,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
         </div> : null}
       </> : null}
     </>}
-    {receipt ? <section className="execution-receipt" role="status"><h3>{t("execution.receipt")}</h3><ul>{receipt.changes.map(change => <li key={`${change.kind}:${change.id}`}>{change.id} · {t("execution.revision", { number: change.revision })}</li>)}</ul></section> : null}
-    <Dialog.Root open={confirmation !== null} onOpenChange={open => { if (!open && !busy && !cancelling) setConfirmation(null); }}>
+    {shownReceipt ? <section className="execution-receipt" role="status"><h3>{t("execution.receipt")}</h3>{shownReceipt.changes.length === 0 ? <p>{t("execution.noChanges")}</p> : <ul>{shownReceipt.changes.map((change, index) => <li key={`${index}:${change.kind}:${change.id}`}>{change.id} · {t("execution.revision", { number: change.revision })}</li>)}</ul>}</section> : null}
+    <Dialog.Root open={active && confirmation !== null} onOpenChange={open => { if (!open && !busy && !cancelling) closeConfirmation(); }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" />
         <Dialog.Content className="confirm-dialog execution-confirm-dialog" onCloseAutoFocus={event => { event.preventDefault(); actionTrigger.current?.focus(); }} onEscapeKeyDown={event => { if (busy || cancelling) event.preventDefault(); }} onPointerDownOutside={event => event.preventDefault()}>
           <Dialog.Title>{confirmation ? titleFor(confirmation.action) : t("execution.nextSteps")}</Dialog.Title>
@@ -240,8 +253,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
             {confirmation.action === "resume-undispatched" || confirmation.action === "retry-safe-failure" ? <small> · {t(confirmation.unit!.remainingItemIds.includes(confirmation.unit!.itemIds[index]) ? "execution.willRun" : "execution.reuse")}</small> : null}
           </li> : null)}</ul>
           {feedback}
-          <div className="form-actions"><button className="secondary-button" disabled={busy || cancelling} onClick={() => setConfirmation(null)}>{t("execution.back")}</button>
-            <button className="primary-button" disabled={busy || cancelling || pendingAction !== null || (confirmation?.action === "cancel" && (disabled || !confirmation.cancellation || !cancellations.canCancel(confirmation.cancellation)))} onClick={() => { if (confirmation) void execute(confirmation); }}>{busy || cancelling ? t("execution.working") : confirmation ? titleFor(confirmation.action) : t("execution.confirm")}</button>
+          <div className="form-actions"><button className="secondary-button" disabled={busy || cancelling} onClick={closeConfirmation}>{t("execution.back")}</button>
+            <button className="primary-button" disabled={disabled || busy || cancelling || pendingAction !== null || (ownerConfirmation !== null && activity?.phase !== "confirming") || (confirmation?.action === "cancel" && (disabled || !confirmation.cancellation || !cancellations.canCancel(confirmation.cancellation)))} onClick={() => { if (confirmation) void execute(confirmation); }}>{busy || cancelling ? t("execution.working") : confirmation ? titleFor(confirmation.action) : t("execution.confirm")}</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
