@@ -6,6 +6,7 @@ import { validateRequestCancel, validateRequestPrepare, validateRequestRecovery,
 import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
+import type { QueryKey } from "@tanstack/react-query";
 
 type Origin = "tasks" | "source" | "ai" | "arena";
 export interface CancellationTarget { readonly taskId: string; readonly attemptId: string; readonly origin: Origin }
@@ -68,6 +69,9 @@ interface TaskSession {
   activity: TaskActivity | null;
   currentActivity: () => TaskActivity | null;
   begin: (detail: AttemptDetail, unit: RecoveryUnit, action: TaskAction, offset: number, itemId?: string) => Promise<void>;
+  beginFromQuery: (key: QueryKey, detail: AttemptDetail, unit: RecoveryUnit, action: TaskAction, offset: number, itemId?: string) => Promise<void>;
+  canBegin: (taskId: string) => boolean;
+  canSubmit: () => boolean;
   submit: () => Promise<void>;
   checkAdoption: () => Promise<void>;
   retryAdoption: () => Promise<void>;
@@ -94,8 +98,11 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
   const [activity, setActivity] = useState<TaskActivity | null>(null);
   const activityRef = useRef<TaskActivity | null>(null);
   const reservation = useRef<symbol | null>(null);
+  const readCapture = useRef<{ intent: TaskIntent; key: QueryKey; total: number } | null>(null);
+  const readCleanup = useRef<(() => void) | null>(null);
   useLayoutEffect(() => { mounted.current = true; return () => {
-    mounted.current = false; const token = reservation.current; reservation.current = null; if (token) translation.releaseMutation(token);
+    mounted.current = false; readCleanup.current?.(); readCleanup.current = null;
+    const token = reservation.current; reservation.current = null; if (token) translation.releaseMutation(token);
   }; }, []);
   useLayoutEffect(() => { projectRef.current = project; }, [project]);
   function live() {
@@ -176,18 +183,77 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     const token = reservation.current; reservation.current = null;
     if (token) translation.releaseMutation(token);
   }
-  function dismiss() { if (live() && !activityUnresolved(activityRef.current)) { updateActivity(null); release(); } }
+  function dismiss() { if (live() && !activityUnresolved(activityRef.current)) { updateActivity(null); readCapture.current = null; release(); } }
   function cancellationBlocks(taskId: string) {
     const value = current(taskId);
     // A settled cancellation does not replace Core's basis for a new explicit action.
     return !!value && unresolved(value);
   }
-  function canBegin() { return live() && !activityUnresolved(activityRef.current) && activityRef.current?.phase !== "confirming"; }
+  function canBegin(taskId: string) {
+    return live() && !activityUnresolved(activityRef.current) && activityRef.current?.phase !== "confirming" && !cancellationBlocks(taskId);
+  }
+  function matchesRead(data: unknown, intent: TaskIntent, total: number, items: readonly ItemView[]) {
+    const detail = (data as { detail?: unknown } | undefined)?.detail;
+    if (!validateResponseAttempt(detail) || detail.taskId !== intent.taskId || detail.attemptId !== intent.attemptId || detail.operation !== intent.operation
+      || detail.recovery.attemptId !== intent.attemptId || detail.progress.total !== total) return false;
+    const units = detail.recovery.units.filter(unit => unit.unitId === intent.unit.unitId);
+    const selected = detail.items.filter(item => intent.unit.itemIds.includes(item.status.itemId));
+    return units.length === 1 && sameUnit(units[0], intent.unit) && selected.length > 0
+      && selected.every(item => items.some(original => JSON.stringify(item) === JSON.stringify(original)));
+  }
+  function unrelatedAttempt(data: unknown, intent: TaskIntent) {
+    const detail = (data as { detail?: unknown } | undefined)?.detail;
+    // The latest-attempt selector can legitimately move after a complete capture.
+    // That projection cannot replace or revoke the owner's original decision.
+    return validateResponseAttempt(detail) && detail.taskId === intent.taskId && detail.operation === intent.operation
+      && detail.recovery.attemptId === detail.attemptId && detail.attemptId !== intent.attemptId;
+  }
+  function capturedReadProof(value: TaskActivity) {
+    const capture = readCapture.current;
+    // Direct checked-owner consumers use the original complete capture contract.
+    // Production registry consumers additionally bind that capture to their exact Query.
+    if (!capture) return { current: live, dispose: () => {} };
+    if (capture.intent !== value.intent) return { current: () => false, dispose: () => {} };
+    const witness = reads.watchExactQuery(capture.key);
+    readCleanup.current = witness.dispose;
+    return {
+      current() { const query = witness.current(); return live() && (!query || unrelatedAttempt(query.state.data, value.intent)
+        || query.state.status === "success" && query.state.error === null && matchesRead(query.state.data, value.intent, capture.total, value.intent.items)); },
+      dispose() { witness.dispose(); if (readCleanup.current === witness.dispose) readCleanup.current = null; },
+    };
+  }
+  function canSubmit() {
+    const value = activityRef.current;
+    if (!live() || value?.phase !== "confirming" || cancellationBlocks(value.intent.taskId)) return false;
+    // Confirmation continues the owner's complete original capture. A mutable
+    // latest-selector Query is no longer the target authority for this action.
+    const capture = readCapture.current;
+    return !capture || capture.intent === value.intent;
+  }
+  async function beginFromQuery(key: QueryKey, detail: AttemptDetail, unit: RecoveryUnit, action: TaskAction, offset: number, itemId?: string) {
+    if (!canBegin(detail.taskId)) return;
+    const query = reads.client.getQueryCache().find({ queryKey: reads.key(key), exact: true });
+    if (!query || query.state.status !== "success" || query.state.error !== null || query.state.fetchStatus !== "idle" || query.state.isInvalidated) return;
+    const total = detail.progress.total;
+    const initial: TaskIntent = freeze({ taskId: detail.taskId, attemptId: detail.attemptId, operation: detail.operation, action, unit: structuredClone(unit), itemId,
+      items: structuredClone(detail.items), cancellationRevision: null });
+    if (!matchesRead(query.state.data, initial, total, initial.items)) return;
+    const witness = reads.watchExactQuery(key);
+    const proof = () => { const latest = witness.current(); return live() && (!latest || latest.state.status === "success" && latest.state.error === null
+      && matchesRead(latest.state.data, initial, total, initial.items)); };
+    readCleanup.current = witness.dispose;
+    try { await capture(detail, unit, action, offset, itemId, proof, key); }
+    finally { witness.dispose(); if (readCleanup.current === witness.dispose) readCleanup.current = null; }
+  }
 
   async function begin(detail: AttemptDetail, unit: RecoveryUnit, action: TaskAction, offset: number, itemId?: string) {
-    if (!canBegin() || cancellationBlocks(detail.taskId)) return;
+    await capture(detail, unit, action, offset, itemId, live);
+  }
+  async function capture(detail: AttemptDetail, unit: RecoveryUnit, action: TaskAction, offset: number, itemId: string | undefined, proof: () => boolean, key?: QueryKey) {
+    if (!canBegin(detail.taskId)) return;
     // These domains require their own preview and complete authorization flow.
     if (action === "adopt-result" && ["source-import", "translation-import", "ai-translation", "arena-translation"].includes(detail.operation)) return;
+    readCapture.current = null;
     const intent: TaskIntent = freeze({ taskId: detail.taskId, attemptId: detail.attemptId, operation: detail.operation, action,
       unit: structuredClone(unit), ...(itemId ? { itemId } : {}), items: [], cancellationRevision: null });
     let value: TaskActivity = { intent, phase: "capturing", prepare: null, proof: null, receipt: null,
@@ -208,6 +274,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       do {
         const page = pageOffset === offset ? initial : await executionCommands.attempt({ ...session, attemptId: intent.attemptId, offset: pageOffset, limit: 100 });
         if (!holds(value)) return;
+        if (!proof()) throw new Error("Task capture read changed");
         if (page.attemptId !== intent.attemptId || page.taskId !== intent.taskId || page.operation !== intent.operation
           || page.recovery.attemptId !== intent.attemptId || page.progress.total !== total || page.items.length > 100
           || pageOffset + page.items.length > total
@@ -231,11 +298,13 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       if (action === "resume-undispatched" || action === "retry-safe-failure") {
         const task = await executionCommands.taskView({ ...session, taskId: intent.taskId });
         if (!holds(value)) return;
+        if (!proof()) throw new Error("Task capture read changed");
         if (task.operation !== intent.operation) throw new Error("Invalid continuation task operation");
         // Zero is a valid basis before any cancellation. Keep it through identity allocation and every replay.
         cancellationRevision = task.cancellationRevision;
       }
       value = change(value, { phase: "confirming", intent: freeze({ ...intent, items: structuredClone(selected), cancellationRevision }) });
+      if (key) readCapture.current = { intent: value.intent, key: [...key], total };
     } catch (error) {
       if (holds(value)) change(value, { phase: "rejected", failure: commandFailure(error, "output-invalid") });
     }
@@ -254,7 +323,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     // Generic change kinds belong to their handlers, so do not guess a domain mapping.
     reads.invalidate(["project"]);
   }
-  async function dispatchAdoption(start: TaskActivity) {
+  async function dispatchAdoption(start: TaskActivity, currentRead: () => boolean = live) {
     if (!holds(start) || !start.prepare || !reservation.current) return;
     let value = change(start, { phase: "preparing", retryAllowed: false, failure: null });
     try {
@@ -263,6 +332,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       const proof = freeze(structuredClone(confirmExecutionAction(value.prepare!, value.intent.operation, action, value.proof)));
       value = change(value, { proof });
       if (value.receipt) { settle(value, value.receipt); return; }
+      if (!currentRead()) throw new Error("Captured task read changed before adoption");
       value = change(value, { phase: "adopting" });
       const receipt = await executionCommands.adopt(freeze({ ...session, actionId: value.prepare!.actionId }));
       if (holds(value)) settle(value, receipt);
@@ -289,12 +359,18 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
   }
   async function submit() {
     const start = activityRef.current;
-    if (!live() || start?.phase !== "confirming" || cancellationBlocks(start.intent.taskId)) return;
+    if (!canSubmit() || !start) return;
+    const readProof = capturedReadProof(start);
+    try { await submitCaptured(start, readProof.current); }
+    finally { readProof.dispose(); }
+  }
+  async function submitCaptured(start: TaskActivity, currentRead: () => boolean) {
     if (start.intent.action === "resume-undispatched" || start.intent.action === "retry-safe-failure") {
       let value = change(start, { phase: "identifying", failure: null });
       try {
         const actionId = await executionCommands.identity(session);
         if (!holds(value)) return;
+        if (!currentRead()) throw new Error("Captured task read changed during identity allocation");
         if (!validateResponseIdentity(actionId) || value.intent.cancellationRevision === null || cancellationBlocks(value.intent.taskId)) throw new Error("Invalid continuation identity");
         const request: ContinuationRequest = freeze({ ...session, action: {
           actionId, projectId: session.projectId, sourceAttemptId: value.intent.attemptId, unitId: value.intent.unit.unitId,
@@ -307,6 +383,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
       return;
     }
     if (start.intent.action !== "adopt-result") {
+      if (!currentRead()) { fail(start, new Error("Captured task recovery read changed"), false); return; }
       const request: RecoveryRequest = freeze({ ...session, attemptId: start.intent.attemptId, unitId: start.intent.unit.unitId,
         action: start.intent.action, itemIds: [...(start.intent.itemId ? [start.intent.itemId] : start.intent.unit.remainingItemIds)] });
       if (!validateRequestRecovery(request)) return;
@@ -329,12 +406,13 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
     try {
       const actionId = await executionCommands.identity(session);
       if (!holds(value)) return;
+      if (!currentRead()) throw new Error("Captured task read changed during identity allocation");
       if (!validateResponseIdentity(actionId) || cancellationBlocks(value.intent.taskId)) throw new Error("Invalid task adoption identity");
       const request: PrepareRequest = freeze({ ...session, attemptId: value.intent.attemptId, unitId: value.intent.unit.unitId,
         actionId, resultIds: [...value.intent.unit.resultIds] });
       if (!validateRequestPrepare(request)) throw new Error("Invalid task adoption request");
       value = change(value, { prepare: request });
-      await dispatchAdoption(value);
+      await dispatchAdoption(value, currentRead);
     } catch (error) { fail(value, error, false); }
   }
   async function checkAdoption() {
@@ -386,7 +464,7 @@ export function ExecutionTaskSession({ project, children }: { project: ProjectVi
   }
 
   return <TaskContext.Provider value={{ state, current, canCancel, cancel, retry, activity, currentActivity: () => activityRef.current,
-    begin, submit, checkAdoption, retryAdoption, checkContinuation, retryContinuation, dismiss, busy: activityBusy(activity),
+    begin, beginFromQuery, canBegin, canSubmit, submit, checkAdoption, retryAdoption, checkContinuation, retryContinuation, dismiss, busy: activityBusy(activity),
     unresolved: () => Object.values(stateRef.current).some(unresolved) || activityUnresolved(activityRef.current) }}>{children}</TaskContext.Provider>;
 }
 

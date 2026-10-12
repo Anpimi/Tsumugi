@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { WorkbenchCommands, type ReviewWaiverCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
+import { WorkbenchCommands, type ReviewWaiverCommandPayload, type TaskPendingCommandPayload, type WorkbenchCommand } from "./workbenchCommands";
 
 const scope = { projectId: "project-a", sessionToken: "session-a", area: "overview" as const };
 
@@ -247,6 +247,60 @@ describe("Arena command payloads", () => {
     expect(dispatch(payload, { ...arenaScope, sessionToken: "other" })).toBe(false);
     expect(Reflect.apply(commands.dispatch, commands, [id, { ...arenaScope, area: "ai" }, payload])).toBe(false);
     expect(Reflect.apply(commands.describe, commands, [id, arenaScope, payload])?.availability.enabled).toBe(true);
+    expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledWith(payload);
+    enabled = false; expect(dispatch(payload)).toBe(false); expect(handler).toHaveBeenCalledTimes(1);
+    remove(); expect(dispatch(payload)).toBe(false);
+  });
+});
+
+describe("Tasks command payloads", () => {
+  const tasksScope = { ...scope, area: "tasks" as const };
+  const metadata = { nameKey: "execution.confirm" as const, category: "tasks" as const, scope: tasksScope,
+    binding: null, risk: "captures-execution-action" as const, confirmation: "none" as const };
+  const target = { taskId: "task", attemptId: "attempt", operation: "operation", unitId: "unit" };
+  const action = { ...target, itemIds: ["item", "other"], remainingItemIds: ["item"], resultIds: ["result"], itemId: null };
+  const adoption: TaskPendingCommandPayload = { kind: "task-pending", ...target, actionId: "action", requestKind: "adoption", resultIds: ["result"] };
+  const continuation: TaskPendingCommandPayload = { kind: "task-pending", ...target, actionId: "action", requestKind: "continuation", action: "resume-undispatched", itemIds: ["item"], expectedCancellationRevision: "0" };
+  it("keeps complete units independent of the continuation dispatch limit", () => {
+    const commands = new WorkbenchCommands(), handler = vi.fn(), itemIds=Array.from({length:2001},(_,index)=>`item-${index}`);
+    commands.register({...metadata,id:"tasks.resume-undispatched",payloadKind:"task-action",availability:()=>({enabled:true}),handler});
+    const payload={kind:"task-action" as const,...target,action:"resume-undispatched" as const,itemIds,remainingItemIds:itemIds.slice(0,2000),resultIds:[],itemId:null,offset:0};
+    expect(commands.dispatch("tasks.resume-undispatched",tasksScope,payload)).toBe(true);
+    expect(commands.dispatch("tasks.resume-undispatched",tasksScope,{...payload,remainingItemIds:itemIds})).toBe(false);
+    expect(handler).toHaveBeenCalledExactlyOnceWith(payload);
+  });
+  it.each([
+    ["tasks.adopt-result", { kind: "task-action", ...action, action: "adopt-result", offset: 0 }, [{ itemIds: [] }, { resultIds: ["same", "same"] }]],
+    ["tasks.resume-undispatched", { kind: "task-action", ...action, action: "resume-undispatched", offset: 100 }, [{ offset: -1 }, { remainingItemIds: ["foreign"] }]],
+    ["tasks.retry-safe-failure", { kind: "task-action", ...action, action: "retry-safe-failure", offset: 0 }, [{ action: "other" }]],
+    ["tasks.validate-output", { kind: "task-action", ...action, action: "validate-output", offset: 0 }, [{ itemId: "item" }]],
+    ["tasks.query-outcome", { kind: "task-action", ...action, action: "query-outcome", itemId: "item", offset: 0 }, [{ itemId: null }, { itemId: "foreign" }]],
+    ["tasks.submit-action", { kind: "task-confirmed", ...action, action: "resume-undispatched", cancellationRevision: "0" }, [{ cancellationRevision: undefined }, { cancellationRevision: "01" }]],
+    ["tasks.submit-action", { kind: "task-confirmed", ...action, action: "adopt-result", cancellationRevision: null }, [{ itemIds: ["same", "same"] }]],
+    ["tasks.confirm-cancellation", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "tasks" }, [{ origin: "other" }]],
+    ["tasks.cancel-task", { kind: "execution-cancellation", taskId: "task", attemptId: "attempt", origin: "tasks" }, [{ taskId: null }]],
+    ["tasks.retry-cancellation", { kind: "execution-cancellation-retry", taskId: "task", attemptId: "attempt", origin: "arena", requestId: "request" }, [{ requestId: "" }]],
+    ["tasks.reconcile-adoption", adoption, [{ actionId: "" }, { resultIds: [] }]],
+    ["tasks.retry-adoption", adoption, [{ requestKind: "other" }]],
+    ["tasks.reconcile-continuation", continuation, [{ expectedCancellationRevision: null }, { itemIds: [] }]],
+    ["tasks.retry-continuation", continuation, [{ action: "adopt-result" }]],
+    ["tasks.view-continuation", { kind: "task-history", taskId: "task", sourceAttemptId: "source", operation: "operation", actionId: "action", unitId: "unit",
+      action: "resume-undispatched", itemIds: ["item"], expectedCancellationRevision: "0", attemptId: "new", sequence: "9007199254740993",
+      requestDigest: "a".repeat(64), sourceInputDigest: "b".repeat(64), inputDigest: "c".repeat(64), cursor: "0" }, [{ sequence: "0" }, { inputDigest: "bad" }, { cursor: "01" }]],
+    ["tasks.view-receipt", { kind: "task-receipt", ...target, actionId: "receipt" }, [{ actionId: undefined }]],
+    ["tasks.view-output", { kind: "task-output", taskId: "task", attemptId: "attempt", operation: "operation", itemId: "item", resultId: "result" }, [{ resultId: null }]],
+    ["tasks.open-preview", { kind: "task-preview", taskId: "task", attemptId: "attempt", operation: "source-import", area: "source", unitId: null }, [{ area: "release" }, { unitId: undefined }]],
+  ] as const)("validates the exact %s UI intent without dispatching malformed scope", (id, payload, malformed) => {
+    const commands = new WorkbenchCommands(), handler = vi.fn(); let enabled = true;
+    const remove = commands.register({ ...metadata, id, payloadKind: payload.kind, availability: () => ({ enabled }), handler } as WorkbenchCommand);
+    const dispatch = (value?: unknown, target = tasksScope) => Reflect.apply(commands.dispatch, commands, [id, target, value]);
+    expect(dispatch()).toBe(false); expect(dispatch(null)).toBe(false); expect(dispatch({ ...payload, kind: "unknown" })).toBe(false);
+    malformed.forEach(change => expect(dispatch({ ...payload, ...change })).toBe(false));
+    if (payload.kind === "task-action") expect(dispatch({ ...payload, action: payload.action === "adopt-result" ? "validate-output" : "adopt-result" })).toBe(false);
+    expect(dispatch(payload, { ...tasksScope, projectId: "other" })).toBe(false);
+    expect(dispatch(payload, { ...tasksScope, sessionToken: "other" })).toBe(false);
+    expect(Reflect.apply(commands.dispatch, commands, [id, { ...tasksScope, area: "source" }, payload])).toBe(false);
+    expect(Reflect.apply(commands.describe, commands, [id, tasksScope, payload])?.availability.enabled).toBe(true);
     expect(handler).not.toHaveBeenCalled(); expect(dispatch(payload)).toBe(true); expect(handler).toHaveBeenCalledWith(payload);
     enabled = false; expect(dispatch(payload)).toBe(false); expect(handler).toHaveBeenCalledTimes(1);
     remove(); expect(dispatch(payload)).toBe(false);

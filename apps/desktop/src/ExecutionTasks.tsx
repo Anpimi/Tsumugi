@@ -1,15 +1,20 @@
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { TaskCancellationFeedback, useExecutionTaskSession, type CancellationTarget } from "./ExecutionTaskSession";
 import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef, useWorkspaceView } from "./WorkbenchFrame";
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ProjectView } from "./projectCommands";
 import { executionCommands as commands, executionContext, matchesContinuation, type AttemptDetail, type AttemptSummary, type RecoveryAction, type RecoveryUnit, type Receipt, type RuntimeStatus, type Task, type ResultEnvelope, type ContinuationPage, type ContinuationReceipt } from "./executionCommands";
+import { useWorkbenchCommands, type CommandAvailability, type TaskActionCommandPayload, type TaskConfirmedCommandPayload, type TaskPendingCommandPayload,
+  type TaskHistoryCommandPayload, type TaskReceiptCommandPayload, type TaskOutputCommandPayload, type TaskPreviewCommandPayload,
+  type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload } from "./workbenchCommands";
 
 type Confirmation = { action: RecoveryAction | "cancel"; unit?: RecoveryUnit; itemId?: string; cancellation?: CancellationTarget };
 type HistorySelection = { id: number; record: ContinuationReceipt };
+const actionCommands = { "adopt-result": "tasks.adopt-result", "resume-undispatched": "tasks.resume-undispatched",
+  "retry-safe-failure": "tasks.retry-safe-failure", "validate-output": "tasks.validate-output", "query-outcome": "tasks.query-outcome" } as const;
 function sameContinuationRecord(record: ContinuationReceipt, found: ContinuationReceipt) {
   return matchesContinuation(record.action, found) && found.attemptId === record.attemptId
     && found.taskId === record.taskId && found.operation === record.operation && found.sequence === record.sequence
@@ -38,6 +43,9 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const { t } = useTranslation();
   const context = executionContext(project);
   const cancellations = useExecutionTaskSession();
+  const registry = useWorkbenchCommands();
+  const mounted = useRef(true);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [taskId, setTaskId] = useWorkbenchState<string | null>("tasks", "taskId", null);
   const [attemptId, setAttemptId] = useWorkbenchState<string | null>("tasks", "attemptId", null);
   const [cursor, setCursor] = useWorkbenchState("tasks", "cursor", "0");
@@ -63,12 +71,9 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const outputRegion = useRef<HTMLDivElement | null>(null);
   const handledRecovery = useWorkbenchRef<string | null>("tasks", "handledRecovery", null);
   useEffect(() => { onDismissBlockedChange?.(busy || cancellations.unresolved()); return () => onDismissBlockedChange?.(false); }, [busy, activity, cancellations.state, onDismissBlockedChange]);
-  function confirm(choice: Confirmation) {
+  function rememberTrigger() {
     actionTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setFailure(null); setMessage(null); setShowOwnerDialog(true);
-    if (choice.action === "cancel" && detail) setConfirmation({ ...choice, cancellation: { taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" } });
-    else if (detail && choice.unit && choice.action !== "view-receipt" && choice.action !== "cancel")
-      void cancellations.begin(detail, choice.unit, choice.action, offset, choice.itemId);
   }
   function closeConfirmation() {
     setConfirmation(null); setShowOwnerDialog(false); cancellations.dismiss();
@@ -114,7 +119,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   useEffect(() => {
     const found = selectedContinuation.data;
     // A previous successful lookup cannot complete a new selection or a remount's fresh read.
-    if (!active || busy || pendingAction || selectedContinuation.status !== "success" || selectedContinuation.fetchStatus !== "idle"
+    if (!active || !mounted.current || reads.retired || busy || pendingAction || selectedContinuation.status !== "success" || selectedContinuation.fetchStatus !== "idle"
       || selectedContinuation.isFetching || selectedContinuation.error !== null || !found || !historySelection
       || found.id !== historySelection.id || !sameContinuationRecord(historySelection.record, found.record)
       || !detail || detail.attemptId !== historySelection.record.action.sourceAttemptId || detail.taskId !== historySelection.record.taskId
@@ -131,19 +136,6 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
 
   function selectTask(id: string | null) {
     setTaskId(id); setAttemptId(null); setAttemptCursor("0"); setContinuationCursor("0"); setHistorySelection(null); setOffset(0); setOutput(null); setReceipt(null); setFailure(null);
-  }
-  async function execute(choice: Confirmation) {
-    if (choice.action === "cancel") {
-      if (!choice.cancellation || disabled || busy || pendingAction || !cancellations.canCancel(choice.cancellation)) return;
-      await cancellations.cancel(choice.cancellation);
-      return;
-    }
-    if (disabled) return;
-    if (choice.action === "view-receipt" && choice.unit?.receiptId && detail) {
-      setReceipt({ attemptId: detail.attemptId, unitId: choice.unit.unitId, actionId: choice.unit.receiptId });
-      return;
-    }
-    await cancellations.submit();
   }
   const recovered = activity?.phase === "recorded" ? activity.recovery : null;
   const continued = activity?.phase === "recorded" ? activity.continuation : null;
@@ -183,7 +175,167 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
   const errorKey = displayedCode === "dependency-conflict" ? "conflict" : displayedCode === "outcome-unknown" ? "unknown" : displayedCode === "session-invalid" ? "session" : displayedCode === "cancelled" ? "cancelled" : displayedCode === "output-invalid" ? "invalid" : displayedCode === "busy" ? "busy" : "failed";
   const errorRegion = useRef<HTMLDivElement>(null);
   useEffect(() => { if (active && displayedFailure) errorRegion.current?.focus(); }, [active, displayedFailure]);
-  const feedback = <><TaskCancellationFeedback origin="tasks" taskId={taskId ?? undefined} disabled={busy || pendingAction !== null} visible={active} />
+  const commandScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "tasks" as const };
+  const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
+  const projectionKey = ["tasks",taskId,attemptId,cursor,attemptCursor,offset];
+  function gate(allowOriginal = false): CommandAvailability {
+    if (!active || !mounted.current || reads.retired || reads.context.projectId !== commandScope.projectId || reads.context.sessionToken !== commandScope.sessionToken) return { enabled: false, reason: "hidden" };
+    const current = cancellations.currentActivity();
+    if (current && ["capturing","identifying","preparing","adopting","recovering","checking"].includes(current.phase)) return { enabled: false, reason: "busy" };
+    if (disabled) return unavailable;
+    if (!allowOriginal && current && ["confirming","unknown"].includes(current.phase)) return { enabled: false, reason: "pending-action" };
+    return { enabled: true };
+  }
+  function currentRead<T>(key: readonly unknown[]): T | undefined {
+    const query = reads.client.getQueryState(reads.key(key));
+    return query?.status === "success" && query.error === null && query.fetchStatus === "idle" && !query.isInvalidated
+      ? reads.client.getQueryData<T>(reads.key(key)) : undefined;
+  }
+  function currentDetail(retained = false) {
+    const key = reads.key(projectionKey), query = reads.client.getQueryState(key);
+    const value = retained && query && query.dataUpdateCount > 0 ? reads.client.getQueryData<NonNullable<typeof projection.data>>(key) : currentRead<NonNullable<typeof projection.data>>(projectionKey);
+    const selected = value?.detail;
+    return value && selected && selected.taskId === taskId && selected.recovery.attemptId === selected.attemptId
+      && selected.attemptId === (attemptId ?? value.attempts.at(-1)?.attemptId) ? selected : undefined;
+  }
+  function idsEqual(left: readonly string[], right: readonly string[]) { return left.length === right.length && left.every((id,index) => id === right[index]); }
+  function actionPayload(value: Pick<AttemptDetail,"taskId"|"attemptId"|"operation">, unit: RecoveryUnit, action: TaskActionCommandPayload["action"], itemId?: string): TaskActionCommandPayload {
+    return { kind: "task-action",taskId:value.taskId,attemptId:value.attemptId,operation:value.operation,unitId:unit.unitId,action,
+      itemIds:[...unit.itemIds],remainingItemIds:[...unit.remainingItemIds],resultIds:[...unit.resultIds],offset,itemId:itemId ?? null };
+  }
+  function matchesAction(payload: TaskActionCommandPayload | TaskConfirmedCommandPayload, value: {taskId:string;attemptId:string;operation:string;action:TaskActionCommandPayload["action"];unit:RecoveryUnit;itemId?:string}) {
+    return payload.taskId === value.taskId && payload.attemptId === value.attemptId && payload.operation === value.operation && payload.unitId === value.unit.unitId
+      && payload.action === value.action && payload.itemId === (value.itemId ?? null) && idsEqual(payload.itemIds,value.unit.itemIds)
+      && idsEqual(payload.remainingItemIds,value.unit.remainingItemIds) && idsEqual(payload.resultIds,value.unit.resultIds);
+  }
+  function actionAvailability(payload?: TaskActionCommandPayload, expected?: TaskActionCommandPayload["action"]): CommandAvailability {
+    const allowed = gate(); if (!allowed.enabled) return allowed;
+    const value = currentDetail(), unit = value?.recovery.units.find(unit => unit.unitId === payload?.unitId);
+    return payload && value && unit && payload.action === expected && payload.offset === offset && unit.actions.includes(payload.action)
+      && matchesAction(payload,{...value,unit,action:payload.action,itemId:payload.itemId ?? undefined}) && cancellations.canBegin(value.taskId)
+      && (payload.action !== "query-outcome" || !!payload.itemId && unit.remainingItemIds.includes(payload.itemId))
+      && !(payload.action === "adopt-result" && ["source-import","translation-import","ai-translation","arena-translation"].includes(value.operation)) ? {enabled:true} : unavailable;
+  }
+  function beginAction(payload: TaskActionCommandPayload) {
+    const value = currentDetail(), unit = value?.recovery.units.find(unit => unit.unitId === payload.unitId);
+    if (!value || !unit) return; rememberTrigger();
+    void cancellations.beginFromQuery(projectionKey,value,unit,payload.action,payload.offset,payload.itemId ?? undefined);
+  }
+  function confirmedPayload(): TaskConfirmedCommandPayload | undefined {
+    const value = cancellations.currentActivity(); if (!value) return undefined;
+    const {offset:_offset,...scope} = actionPayload(value.intent,value.intent.unit,value.intent.action,value.intent.itemId);
+    return {...scope,kind:"task-confirmed",cancellationRevision:value.intent.cancellationRevision};
+  }
+  function submitAvailability(payload?: TaskConfirmedCommandPayload): CommandAvailability {
+    const allowed = gate(true); if (!allowed.enabled) return allowed; const value = cancellations.currentActivity();
+    return !localConfirmation && showOwnerDialog && payload && value?.phase === "confirming" && matchesAction(payload,value.intent) && payload.cancellationRevision === value.intent.cancellationRevision
+      && cancellations.canSubmit() ? {enabled:true} : unavailable;
+  }
+  function cancellationPayload(target: CancellationTarget): ExecutionCancellationCommandPayload { return {...target,kind:"execution-cancellation"}; }
+  function sameCancellation(payload: CancellationTarget, target: CancellationTarget) { return payload.taskId === target.taskId && payload.attemptId === target.attemptId && payload.origin === target.origin; }
+  function cancellationAvailability(payload?: ExecutionCancellationCommandPayload, confirmed = false): CommandAvailability {
+    const allowed = gate(true); if (!allowed.enabled) return allowed;
+    if (!payload || payload.origin !== "tasks") return unavailable;
+    const activity = cancellations.currentActivity(); if (activity?.phase === "unknown") return {enabled:false,reason:"pending-action"};
+    const target = confirmed ? localConfirmation?.cancellation : currentDetail(true);
+    return target && ("origin" in target ? sameCancellation(payload,target) : payload.taskId === target.taskId && payload.attemptId === target.attemptId)
+      && cancellations.canCancel(payload) ? {enabled:true} : unavailable;
+  }
+  function cancellationRetryAvailability(payload?: ExecutionCancellationRetryCommandPayload): CommandAvailability {
+    const allowed = gate(true); if (!allowed.enabled) return allowed; const value = payload && cancellations.current(payload.taskId);
+    const activity = cancellations.currentActivity();
+    if (activity && activity.intent.taskId === payload?.taskId && activity.phase !== "recorded" && activity.phase !== "rejected") return unavailable;
+    return payload && value?.phase === "unknown" && sameCancellation(payload,value.target) && payload.requestId === value.request.requestId ? {enabled:true} : unavailable;
+  }
+  function pendingPayload(): TaskPendingCommandPayload | undefined {
+    const value = cancellations.currentActivity(); if (!value) return undefined;
+    const target = {taskId:value.intent.taskId,attemptId:value.intent.attemptId,operation:value.intent.operation,unitId:value.intent.unit.unitId};
+    if (value.prepare) return {...target,kind:"task-pending",requestKind:"adoption",actionId:value.prepare.actionId,resultIds:[...value.prepare.resultIds]};
+    if (value.continuationRequest) { const action = value.continuationRequest.action; return {...target,kind:"task-pending",requestKind:"continuation",actionId:action.actionId,
+      action:action.kind,itemIds:[...action.itemIds],expectedCancellationRevision:action.expectedCancellationRevision}; }
+  }
+  function pendingAvailability(payload: TaskPendingCommandPayload | undefined, kind: "adoption" | "continuation", retry = false): CommandAvailability {
+    const allowed = gate(true); if (!allowed.enabled) return allowed; const value = cancellations.currentActivity(), original = pendingPayload();
+    if (!payload || value?.phase !== "unknown" || !original || original.requestKind !== kind || payload.requestKind !== kind || retry && !value.retryAllowed
+      || payload.taskId !== original.taskId || payload.attemptId !== original.attemptId || payload.operation !== original.operation
+      || payload.unitId !== original.unitId || payload.actionId !== original.actionId) return unavailable;
+    return payload.requestKind === "adoption" && original.requestKind === "adoption" ? idsEqual(payload.resultIds,original.resultIds) ? {enabled:true} : unavailable
+      : payload.requestKind === "continuation" && original.requestKind === "continuation" && payload.action === original.action
+        && payload.expectedCancellationRevision === original.expectedCancellationRevision && idsEqual(payload.itemIds,original.itemIds) ? {enabled:true} : unavailable;
+  }
+  function historyPayload(record: ContinuationReceipt): TaskHistoryCommandPayload {
+    const action = record.action; return {kind:"task-history",taskId:record.taskId,sourceAttemptId:action.sourceAttemptId,operation:record.operation,actionId:action.actionId,
+      unitId:action.unitId,action:action.kind,itemIds:[...action.itemIds],expectedCancellationRevision:action.expectedCancellationRevision,attemptId:record.attemptId,
+      sequence:record.sequence,requestDigest:record.requestDigest,sourceInputDigest:record.sourceInputDigest,inputDigest:record.inputDigest,cursor:continuationCursor};
+  }
+  function historyRecord(payload: TaskHistoryCommandPayload) {
+    const value = currentDetail(), page = value && currentRead<ContinuationPage>(["execution-continuations",value.attemptId,continuationCursor]);
+    return value && payload.sourceAttemptId === value.attemptId && payload.taskId === value.taskId && payload.operation === value.operation && payload.cursor === continuationCursor
+      ? page?.receipts.find(record => { const actual = historyPayload(record); return actual.actionId === payload.actionId && actual.unitId === payload.unitId && actual.action === payload.action
+        && idsEqual(actual.itemIds,payload.itemIds) && actual.expectedCancellationRevision === payload.expectedCancellationRevision && actual.attemptId === payload.attemptId
+        && actual.sequence === payload.sequence && actual.requestDigest === payload.requestDigest && actual.sourceInputDigest === payload.sourceInputDigest && actual.inputDigest === payload.inputDigest; }) : undefined;
+  }
+  function historyAvailability(payload?: TaskHistoryCommandPayload): CommandAvailability {
+    const allowed = gate(); if (!allowed.enabled) return allowed;
+    return payload && !selectedContinuation.isFetching && historyRecord(payload) ? {enabled:true} : unavailable;
+  }
+  function receiptPayload(value: AttemptDetail, unit: RecoveryUnit): TaskReceiptCommandPayload | undefined {
+    return unit.receiptId ? {kind:"task-receipt",taskId:value.taskId,attemptId:value.attemptId,operation:value.operation,unitId:unit.unitId,actionId:unit.receiptId} : undefined;
+  }
+  function receiptAvailability(payload?: TaskReceiptCommandPayload): CommandAvailability {
+    const allowed = gate(); if (!allowed.enabled) return allowed; const value = currentDetail();
+    return payload && value && payload.taskId === value.taskId && payload.attemptId === value.attemptId && payload.operation === value.operation
+      && value.recovery.units.some(unit => unit.unitId === payload.unitId && unit.receiptId === payload.actionId && unit.actions.includes("view-receipt")) ? {enabled:true} : unavailable;
+  }
+  function outputPayload(value: AttemptDetail, item: AttemptDetail["items"][number]): TaskOutputCommandPayload | undefined {
+    return item.resultId ? {kind:"task-output",taskId:value.taskId,attemptId:value.attemptId,operation:value.operation,itemId:item.status.itemId,resultId:item.resultId} : undefined;
+  }
+  function outputAvailability(payload?: TaskOutputCommandPayload): CommandAvailability {
+    const allowed = gate(true); if (!allowed.enabled) return allowed; const value = currentDetail();
+    return payload && value && payload.taskId === value.taskId && payload.attemptId === value.attemptId && payload.operation === value.operation
+      && value.items.some(item => item.status.itemId === payload.itemId && item.resultId === payload.resultId) ? {enabled:true} : unavailable;
+  }
+  function previewPayload(value: AttemptDetail, unitId: string | null = null): TaskPreviewCommandPayload | undefined {
+    const area = value.operation === "source-import" ? "source" : value.operation === "translation-import" ? "translation"
+      : value.operation === "ai-translation" ? "ai" : value.operation === "arena-translation" ? "arena" : undefined;
+    return area ? {kind:"task-preview",taskId:value.taskId,attemptId:value.attemptId,operation:value.operation,area,unitId} : undefined;
+  }
+  function previewAvailability(payload?: TaskPreviewCommandPayload): CommandAvailability {
+    const allowed = gate(); if (!allowed.enabled) return allowed; const value = currentDetail(), actual = value && previewPayload(value,payload?.unitId ?? null);
+    if (!payload || !value || !actual || actual.taskId !== payload.taskId || actual.attemptId !== payload.attemptId || actual.operation !== payload.operation || actual.area !== payload.area) return unavailable;
+    const callback = payload.area === "source" ? onSourcePreview : payload.area === "translation" ? onTranslationPreview : payload.area === "ai" ? onAiPreview : onArenaPreview;
+    return callback && (payload.unitId ? value.recovery.units.some(unit => unit.unitId === payload.unitId && unit.actions.includes("adopt-result"))
+      : payload.area === "ai" || payload.area === "arena" || value.items.some(item => item.status.validation === "valid")) ? {enabled:true} : unavailable;
+  }
+  useLayoutEffect(() => {
+    const metadata = {category:"tasks" as const,scope:commandScope,binding:null,confirmation:"none" as const};
+    const remove = [
+      registry.register({...metadata,id:"tasks.adopt-result",nameKey:"execution.actions.adopt-result",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"adopt-result"),handler:beginAction}),
+      registry.register({...metadata,id:"tasks.resume-undispatched",nameKey:"execution.actions.resume-undispatched",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"resume-undispatched"),handler:beginAction}),
+      registry.register({...metadata,id:"tasks.retry-safe-failure",nameKey:"execution.actions.retry-safe-failure",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"retry-safe-failure"),handler:beginAction}),
+      registry.register({...metadata,id:"tasks.validate-output",nameKey:"execution.actions.validate-output",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"validate-output"),handler:beginAction}),
+      registry.register({...metadata,id:"tasks.query-outcome",nameKey:"execution.actions.query-outcome",risk:"captures-execution-action",payloadKind:"task-action",availability:payload=>actionAvailability(payload,"query-outcome"),handler:beginAction}),
+      registry.register({...metadata,id:"tasks.submit-action",nameKey:"execution.confirm",risk:"writes-execution",confirmation:"required",payloadKind:"task-confirmed",availability:submitAvailability,handler:()=>{void cancellations.submit();}}),
+      registry.register({...metadata,id:"tasks.confirm-cancellation",nameKey:"execution.cancel",risk:"cancels-execution-task",payloadKind:"execution-cancellation",availability:payload=>cancellationAvailability(payload),handler:payload=>{rememberTrigger();setConfirmation({action:"cancel",cancellation:{taskId:payload.taskId,attemptId:payload.attemptId,origin:payload.origin}});}}),
+      registry.register({...metadata,id:"tasks.cancel-task",nameKey:"execution.cancel",risk:"cancels-execution-task",confirmation:"required",payloadKind:"execution-cancellation",availability:payload=>cancellationAvailability(payload,true),handler:({taskId,attemptId,origin})=>{void cancellations.cancel({taskId,attemptId,origin});}}),
+      registry.register({...metadata,id:"tasks.retry-cancellation",nameKey:"execution.retryCancellation",risk:"retries-execution-action",payloadKind:"execution-cancellation-retry",availability:cancellationRetryAvailability,handler:payload=>{void cancellations.retry(payload.taskId);}}),
+      registry.register({...metadata,id:"tasks.reconcile-adoption",nameKey:"execution.checkReceipt",risk:"reconciles-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"adoption"),handler:()=>{void cancellations.checkAdoption();}}),
+      registry.register({...metadata,id:"tasks.retry-adoption",nameKey:"execution.retryAdoption",risk:"retries-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"adoption",true),handler:()=>{void cancellations.retryAdoption();}}),
+      registry.register({...metadata,id:"tasks.reconcile-continuation",nameKey:"execution.checkContinuation",risk:"reconciles-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"continuation"),handler:()=>{void cancellations.checkContinuation();}}),
+      registry.register({...metadata,id:"tasks.retry-continuation",nameKey:"execution.retryContinuation",risk:"retries-execution-action",payloadKind:"task-pending",availability:payload=>pendingAvailability(payload,"continuation",true),handler:()=>{void cancellations.retryContinuation();}}),
+      registry.register({...metadata,id:"tasks.view-continuation",nameKey:"execution.viewContinuation",risk:"reads-execution",payloadKind:"task-history",availability:historyAvailability,handler:payload=>{const record=historyRecord(payload);if(record){setFailure(null);setHistorySelection({id:++historyIntent.current,record:structuredClone(record)});}}}),
+      registry.register({...metadata,id:"tasks.view-receipt",nameKey:"execution.actions.view-receipt",risk:"reads-execution",payloadKind:"task-receipt",availability:receiptAvailability,handler:payload=>{setReceipt({attemptId:payload.attemptId,unitId:payload.unitId,actionId:payload.actionId});}}),
+      registry.register({...metadata,id:"tasks.view-output",nameKey:"execution.output",risk:"reads-execution",payloadKind:"task-output",availability:outputAvailability,handler:payload=>{setOutput({attemptId:payload.attemptId,itemId:payload.itemId,resultId:payload.resultId});}}),
+      registry.register({...metadata,id:"tasks.open-preview",nameKey:"execution.actions.adopt-result",risk:"opens-execution-preview",payloadKind:"task-preview",availability:previewAvailability,handler:payload=>{
+        if(payload.area==="source")onSourcePreview?.(payload.attemptId);else if(payload.area==="translation")onTranslationPreview?.(payload.attemptId);
+        else if(payload.area==="ai")onAiPreview?.(payload.attemptId);else onArenaPreview?.(payload.attemptId);
+      }}),
+    ]; return () => remove.forEach(dispose=>dispose());
+  });
+  const feedback = <><TaskCancellationFeedback origin="tasks" taskId={taskId ?? undefined} disabled={busy} visible={active} retryCommand={{
+    available:intent=>cancellationRetryAvailability({...intent,kind:"execution-cancellation-retry"}).enabled,
+    dispatch:intent=>{registry.dispatch("tasks.retry-cancellation",commandScope,{...intent,kind:"execution-cancellation-retry"});},
+  }} />
     {displayedFailure ? <div role="alert" tabIndex={-1} ref={errorRegion}><p>{t(`execution.errors.${errorKey}`)}</p><CommandFailureDetails failure={displayedFailure} /></div> : null}
     {activity?.phase === "capturing" ? <p role="status">{t("execution.capturing")}</p> : null}
     {activity?.phase === "unknown" ? <section aria-label={t("execution.originalAction")}>
@@ -192,12 +344,12 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
       <details><summary>{t("execution.diagnostic")}</summary><pre>{JSON.stringify({ taskId: activity.intent.taskId, operation: activity.intent.operation,
         unit: activity.intent.unit, request: activity.continuationRequest ?? activity.prepare ?? activity.recoveryRequest }, null, 2)}</pre></details>
       {activity.prepare ? <div className="execution-actions">
-        <button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.checkAdoption()}>{t("execution.checkReceipt")}</button>
-        {activity.retryAllowed ? <><p role="status">{t("execution.noReceipt")}</p><button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.retryAdoption()}>{t("execution.retryAdoption")}</button></> : null}
+        <button className="secondary-button" disabled={!pendingAvailability(pendingPayload(),"adoption").enabled} onClick={() => { const payload=pendingPayload();if(payload)registry.dispatch("tasks.reconcile-adoption",commandScope,payload); }}>{t("execution.checkReceipt")}</button>
+        {activity.retryAllowed ? <><p role="status">{t("execution.noReceipt")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload(),"adoption",true).enabled} onClick={() => { const payload=pendingPayload();if(payload)registry.dispatch("tasks.retry-adoption",commandScope,payload); }}>{t("execution.retryAdoption")}</button></> : null}
       </div> : null}
       {activity.continuationRequest ? <div className="execution-actions">
-        <button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.checkContinuation()}>{t("execution.checkContinuation")}</button>
-        {activity.retryAllowed ? <><p role="status">{t("execution.noContinuation")}</p><button className="secondary-button" disabled={busy || disabled} onClick={() => void cancellations.retryContinuation()}>{t("execution.retryContinuation")}</button></> : null}
+        <button className="secondary-button" disabled={!pendingAvailability(pendingPayload(),"continuation").enabled} onClick={() => { const payload=pendingPayload();if(payload)registry.dispatch("tasks.reconcile-continuation",commandScope,payload); }}>{t("execution.checkContinuation")}</button>
+        {activity.retryAllowed ? <><p role="status">{t("execution.noContinuation")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload(),"continuation",true).enabled} onClick={() => { const payload=pendingPayload();if(payload)registry.dispatch("tasks.retry-continuation",commandScope,payload); }}>{t("execution.retryContinuation")}</button></> : null}
       </div> : null}
       <button className="text-button" disabled={busy} onClick={() => { setConfirmation(null); setShowOwnerDialog(false); }}>{t(activity.continuationRequest ? "execution.deferContinuation" : "execution.keepOutput")}</button>
     </section> : null}
@@ -245,7 +397,7 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
         </section>
         <section aria-label={t("execution.nextSteps")}>
           <div className="execution-section-heading"><h3>{t("execution.nextSteps")}</h3>
-            <button className="text-button" disabled={disabled || busy || pendingAction !== null || !cancelTarget || !cancellations.canCancel(cancelTarget)} onClick={() => confirm({ action: "cancel" })}>{t("execution.cancel")}</button>
+            <button className="text-button" disabled={!cancelTarget || !cancellationAvailability(cancellationPayload(cancelTarget)).enabled} onClick={() => { if(cancelTarget)registry.dispatch("tasks.confirm-cancellation",commandScope,cancellationPayload(cancelTarget)); }}>{t("execution.cancel")}</button>
           </div>
           {detail.recovery.units.map(unit => <section className="execution-unit" key={unit.unitId}>
             <details><summary>{t("execution.groupScope", { count: unit.itemIds.length })}</summary>
@@ -253,11 +405,13 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
             </details>
             {unit.blockedReason ? <p>{t(unit.blockedReason === "continued-in-new-attempt" ? "execution.continued" : unit.blockedReason === "still-running" ? "execution.running" : `execution.errors.${blockedKey(unit.blockedReason)}`)}</p> : null}
             <div className="execution-actions">{unit.actions.map(action => action === "query-outcome" ? unit.remainingItemIds.map(id =>
-              <button className="secondary-button" key={id} disabled={disabled || busy || pendingAction !== null || activity?.phase === "confirming"} onClick={() => confirm({ action, unit, itemId: id })}>{t(`execution.actions.${action}`)} · {unit.scopes[unit.itemIds.indexOf(id)]?.id}</button>
-            ) : <button className={action === "adopt-result" || action === "retry-safe-failure" || action === "resume-undispatched" ? "primary-button" : "secondary-button"} key={action} disabled={disabled || busy || pendingAction !== null || activity?.phase === "confirming"} onClick={() => {
-              if (action === "adopt-result" && detail.operation === "source-import") onSourcePreview?.(detail.attemptId);
-              else if (action === "adopt-result" && detail.operation === "translation-import") onTranslationPreview?.(detail.attemptId);
-              else if (action === "adopt-result" && detail.operation === "arena-translation") onArenaPreview?.(detail.attemptId); else if (action === "adopt-result" && detail.operation === "ai-translation") onAiPreview?.(detail.attemptId); else if (action === "view-receipt") void execute({ action, unit }); else confirm({ action, unit });
+              <button className="secondary-button" key={id} disabled={!actionAvailability(actionPayload(detail,unit,action,id),action).enabled} onClick={() => { registry.dispatch("tasks.query-outcome",commandScope,actionPayload(detail,unit,action,id)); }}>{t(`execution.actions.${action}`)} · {unit.scopes[unit.itemIds.indexOf(id)]?.id}</button>
+            ) : <button className={action === "adopt-result" || action === "retry-safe-failure" || action === "resume-undispatched" ? "primary-button" : "secondary-button"} key={action} disabled={action === "view-receipt" ? !receiptAvailability(receiptPayload(detail,unit)).enabled
+              : action === "adopt-result" && previewPayload(detail,unit.unitId) ? !previewAvailability(previewPayload(detail,unit.unitId)).enabled
+              : !actionAvailability(actionPayload(detail,unit,action),action).enabled} onClick={() => {
+              if(action === "view-receipt"){const payload=receiptPayload(detail,unit);if(payload)registry.dispatch("tasks.view-receipt",commandScope,payload);}
+              else if(action === "adopt-result" && previewPayload(detail,unit.unitId)){const payload=previewPayload(detail,unit.unitId);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload);}
+              else registry.dispatch(actionCommands[action],commandScope,actionPayload(detail,unit,action));
             }}>{t(action === "adopt-result" && detail.operation === "source-import" ? "source.preview" : action === "adopt-result" && detail.operation === "translation-import" ? "translation.preview" : `execution.actions.${action}`)}</button>)}</div>
           </section>)}
         </section>
@@ -269,8 +423,8 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
             {continuationHistory.data.receipts.length === 0 && continuationCursor === "0" ? <p>{t("execution.noContinuationHistory")}</p> : null}
             <ul>{continuationHistory.data.receipts.map(record => <li key={record.action.actionId}>
               {t(`execution.actions.${record.action.kind}`)} · {t("execution.continuationItems", { count: record.action.itemIds.length })}
-              <button className="text-button" disabled={busy || pendingAction !== null || activity?.phase === "confirming" || selectedContinuation.isFetching}
-                onClick={() => { setFailure(null); setHistorySelection({ id: ++historyIntent.current, record: structuredClone(record) }); }}>{t("execution.viewContinuation")}</button>
+              <button className="text-button" disabled={!historyAvailability(historyPayload(record)).enabled}
+                onClick={() => { registry.dispatch("tasks.view-continuation",commandScope,historyPayload(record)); }}>{t("execution.viewContinuation")}</button>
             </li>)}</ul>
             {continuationCursor !== "0" || continuationHistory.data.next !== null ? <div className="execution-actions">
               <button className="text-button" disabled={busy || pendingAction !== null || continuationCursor === "0"} onClick={() => setContinuationCursor("0")}>{t("execution.firstPage")}</button>
@@ -278,12 +432,12 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
             </div> : null}
           </> : null}
         </section>
-        <h3>{t("execution.itemResults")}</h3>{detail.operation === "arena-translation" ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onArenaPreview?.(detail.attemptId)}>{t("arena.open")}</button> : null}{detail.operation === "ai-translation" ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onAiPreview?.(detail.attemptId)}>{t("ai.results")}</button> : null}
-        {detail.operation === "source-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onSourcePreview?.(detail.attemptId)}>{t("source.preview")}</button> : null}
-        {detail.operation === "translation-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={busy || pendingAction !== null} onClick={() => onTranslationPreview?.(detail.attemptId)}>{t("translation.preview")}</button> : null}
+        <h3>{t("execution.itemResults")}</h3>{detail.operation === "arena-translation" ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("arena.open")}</button> : null}{detail.operation === "ai-translation" ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("ai.results")}</button> : null}
+        {detail.operation === "source-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("source.preview")}</button> : null}
+        {detail.operation === "translation-import" && detail.items.some(item => item.status.validation === "valid") ? <button className="secondary-button" disabled={!previewAvailability(previewPayload(detail)).enabled} onClick={() => { const payload=previewPayload(detail);if(payload)registry.dispatch("tasks.open-preview",commandScope,payload); }}>{t("translation.preview")}</button> : null}
         <ul className="execution-list">{detail.items.map(item => <li key={item.status.itemId}>
           <div className="execution-item-heading"><strong>{item.scope.id}{item.scope.locale ? ` · ${item.scope.locale}` : ""}</strong>
-            {item.resultId ? <button className="text-button" disabled={busy} onClick={() => setOutput({ attemptId: detail.attemptId, itemId: item.status.itemId, resultId: item.resultId! })}>{t(item.status.execution === "succeeded" ? "execution.output" : "execution.failureDetails")}</button> : null}
+            {item.resultId ? <button className="text-button" disabled={!outputAvailability(outputPayload(detail,item)).enabled} onClick={() => { const payload=outputPayload(detail,item);if(payload)registry.dispatch("tasks.view-output",commandScope,payload); }}>{t(item.status.execution === "succeeded" ? "execution.output" : "execution.failureDetails")}</button> : null}
           </div>
           <p>{t(`execution.states.${item.status.execution}`)} · {t(`execution.adoption.${item.status.adoption}`)}</p>
           {item.status.validation === "invalid" ? <p>{t("execution.errors.invalid")}</p> : null}
@@ -320,7 +474,10 @@ export function TaskContent({ project, active = true, disabled = false, onDismis
           </li> : null)}</ul>
           {feedback}
           <div className="form-actions"><button className="secondary-button" disabled={busy || cancelling} onClick={closeConfirmation}>{t("execution.back")}</button>
-            <button className="primary-button" disabled={disabled || busy || cancelling || pendingAction !== null || (ownerConfirmation !== null && activity?.phase !== "confirming") || (confirmation?.action === "cancel" && (disabled || !confirmation.cancellation || !cancellations.canCancel(confirmation.cancellation)))} onClick={() => { if (confirmation) void execute(confirmation); }}>{busy || cancelling ? t("execution.working") : confirmation ? titleFor(confirmation.action) : t("execution.confirm")}</button>
+            <button className="primary-button" disabled={confirmation?.action === "cancel" ? !confirmation.cancellation || !cancellationAvailability(cancellationPayload(confirmation.cancellation),true).enabled : !submitAvailability(confirmedPayload()).enabled} onClick={() => {
+              if(confirmation?.action === "cancel"){if(confirmation.cancellation)registry.dispatch("tasks.cancel-task",commandScope,cancellationPayload(confirmation.cancellation));}
+              else {const payload=confirmedPayload();if(payload)registry.dispatch("tasks.submit-action",commandScope,payload);}
+            }}>{busy || cancelling ? t("execution.working") : confirmation ? titleFor(confirmation.action) : t("execution.confirm")}</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

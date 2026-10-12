@@ -747,3 +747,29 @@ it("routes cancellation recovery using the original origin and request through t
   expect(calls("cancel_execution_task")).toHaveLength(1);
   expect(owner.current(original.taskId)?.request).toBe(value.request);
 });
+
+it("binds the full-page consumer capture to its latest exact Query and releases a removed failed replacement before confirmation", async () => {
+  render(<Probe />, project);
+  const base = applicationDetail(), items = Array.from({length:101},(_,index) => ({ ...structuredClone(base.items[0]), resultId:fixtureIdentity(1100+index),
+    status:{...base.items[0].status,itemId:fixtureIdentity(900+index)},scope:{...base.items[0].scope,id:`Scope ${index}`} }));
+  const unit = {...structuredClone(base.recovery.units[0]),itemIds:items.map(item=>item.status.itemId),scopes:items.map(item=>item.scope),resultIds:items.map(item=>item.resultId!)};
+  const detail:AttemptDetail={...base,items:items.slice(0,100),nextOffset:100,progress:{...base.progress,total:101,succeeded:101},recovery:{...base.recovery,units:[unit]}};
+  const key=["task-capture-proof",detail.taskId,detail.attemptId,0],fullKey=sessionReads.key(key);
+  sessionReads.client.setQueryData(fullKey,{detail});
+  let resolve!: (page:AttemptDetail)=>void;
+  const response=new Promise<AttemptDetail>(done=>{resolve=done;});
+  invoke.mockImplementation(async(command:string)=>{if(command==="read_execution_attempt")return response;throw new Error(command);});
+  const subscribe=sessionReads.client.getQueryCache().subscribe,disposed=vi.fn();
+  vi.spyOn(sessionReads.client.getQueryCache(),"subscribe").mockImplementation(listener=>{const stop=subscribe(listener);return()=>{disposed();stop();};});
+  let pending!:Promise<void>;
+  act(()=>{pending=owner.beginFromQuery(key,detail,unit,"adopt-result",0);void owner.beginFromQuery(key,detail,unit,"adopt-result",0);});
+  expect(owner.currentActivity()?.phase).toBe("capturing");expect(calls("read_execution_attempt")).toHaveLength(1);
+  act(()=>{
+    sessionReads.client.removeQueries({queryKey:fullKey,exact:true});sessionReads.client.setQueryData(fullKey,{detail});
+    sessionReads.client.getQueryCache().find({queryKey:fullKey,exact:true})!.setState({status:"error",error:new Error("Replacement capture read failed")});
+    sessionReads.client.removeQueries({queryKey:fullKey,exact:true});
+  });
+  await act(async()=>{resolve({...detail,items:items.slice(100),nextOffset:null});await pending;});
+  expect(owner.currentActivity()?.phase).toBe("rejected");expect(owner.canSubmit()).toBe(false);
+  expect(calls("create_execution_identity")).toHaveLength(0);expect(disposed).toHaveBeenCalledTimes(1);
+});

@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { TranslationKey } from "./i18n/types";
 import type { CancellationTarget } from "./ExecutionTaskSession";
+import type { RecoveryAction } from "./executionCommands";
 
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
@@ -80,7 +81,42 @@ export type ArenaPendingCommandPayload = { kind: "arena-pending" } & (
   | { pendingKind: "select" | "merge"; actionId: string; unitId: string; locale: string }
   | { pendingKind: "adopt"; actionId: string; attemptId: string; recoveryUnitId: string; resultId: string }
 );
+interface TaskCommandTarget { taskId: string; attemptId: string; operation: string; unitId: string }
+interface TaskActionTarget extends TaskCommandTarget {
+  action: Exclude<RecoveryAction, "view-receipt">; itemIds: string[]; remainingItemIds: string[]; resultIds: string[]; itemId: string | null;
+}
+export interface TaskActionCommandPayload extends TaskActionTarget { kind: "task-action"; offset: number }
+export interface TaskConfirmedCommandPayload extends TaskActionTarget { kind: "task-confirmed"; cancellationRevision: string | null }
+export type TaskPendingCommandPayload = TaskCommandTarget & { kind: "task-pending"; actionId: string } & (
+  | { requestKind: "adoption"; resultIds: string[] }
+  | { requestKind: "continuation"; action: "resume-undispatched" | "retry-safe-failure"; itemIds: string[]; expectedCancellationRevision: string }
+);
+export interface TaskHistoryCommandPayload {
+  kind: "task-history"; taskId: string; sourceAttemptId: string; operation: string; actionId: string; unitId: string;
+  action: "resume-undispatched" | "retry-safe-failure"; itemIds: string[]; expectedCancellationRevision: string;
+  attemptId: string; sequence: string; requestDigest: string; sourceInputDigest: string; inputDigest: string; cursor: string;
+}
+export interface TaskReceiptCommandPayload extends TaskCommandTarget { kind: "task-receipt"; actionId: string }
+export interface TaskOutputCommandPayload { kind: "task-output"; taskId: string; attemptId: string; operation: string; itemId: string; resultId: string }
+export interface TaskPreviewCommandPayload { kind: "task-preview"; taskId: string; attemptId: string; operation: string; area: "source" | "translation" | "ai" | "arena"; unitId: string | null }
 interface WorkbenchCommandPayloads {
+  "tasks.adopt-result": TaskActionCommandPayload;
+  "tasks.resume-undispatched": TaskActionCommandPayload;
+  "tasks.retry-safe-failure": TaskActionCommandPayload;
+  "tasks.validate-output": TaskActionCommandPayload;
+  "tasks.query-outcome": TaskActionCommandPayload;
+  "tasks.submit-action": TaskConfirmedCommandPayload;
+  "tasks.confirm-cancellation": ExecutionCancellationCommandPayload;
+  "tasks.cancel-task": ExecutionCancellationCommandPayload;
+  "tasks.retry-cancellation": ExecutionCancellationRetryCommandPayload;
+  "tasks.reconcile-adoption": TaskPendingCommandPayload;
+  "tasks.retry-adoption": TaskPendingCommandPayload;
+  "tasks.reconcile-continuation": TaskPendingCommandPayload;
+  "tasks.retry-continuation": TaskPendingCommandPayload;
+  "tasks.view-continuation": TaskHistoryCommandPayload;
+  "tasks.view-receipt": TaskReceiptCommandPayload;
+  "tasks.view-output": TaskOutputCommandPayload;
+  "tasks.open-preview": TaskPreviewCommandPayload;
   "arena.preview": ArenaPreparationCommandPayload;
   "arena.start": ArenaStartCommandPayload;
   "arena.adopt-result": ArenaCandidateCommandPayload;
@@ -157,7 +193,7 @@ export interface CommandAvailability {
 }
 interface CommandMetadata {
   nameKey: TranslationKey;
-  category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena";
+  category: "project" | "translation" | "review" | "resources" | "source" | "ai" | "arena" | "tasks";
   scope: CommandScope;
   binding: "Mod+S" | null;
   risk: "writes-project" | "writes-translation" | "writes-review" | "runs-review-checks"
@@ -165,7 +201,8 @@ interface CommandMetadata {
     | "writes-resources" | "captures-resources" | "reads-resources" | "retries-resource-action" | "opens-translation"
     | "captures-source" | "reads-source" | "writes-source" | "retries-source-action" | "cancels-source-task"
     | "captures-ai" | "runs-ai" | "reconciles-execution-action" | "retries-execution-action" | "cancels-execution-task"
-    | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft";
+    | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
+    | "captures-execution-action" | "writes-execution" | "reads-execution" | "opens-execution-preview";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -192,6 +229,13 @@ type ResourceCommand<K extends CommandPayload["kind"], I extends WorkbenchComman
   handler: (payload: Extract<CommandPayload, { kind: K }>) => void;
 };
 export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand | WaiverWorkbenchCommand
+  | ResourceCommand<"task-action", "tasks.adopt-result" | "tasks.resume-undispatched" | "tasks.retry-safe-failure" | "tasks.validate-output" | "tasks.query-outcome">
+  | ResourceCommand<"task-confirmed", "tasks.submit-action">
+  | ResourceCommand<"task-pending", "tasks.reconcile-adoption" | "tasks.retry-adoption" | "tasks.reconcile-continuation" | "tasks.retry-continuation">
+  | ResourceCommand<"task-history", "tasks.view-continuation">
+  | ResourceCommand<"task-receipt", "tasks.view-receipt">
+  | ResourceCommand<"task-output", "tasks.view-output">
+  | ResourceCommand<"task-preview", "tasks.open-preview">
   | ResourceCommand<"arena-preparation", "arena.preview">
   | ResourceCommand<"arena-start", "arena.start">
   | ResourceCommand<"arena-candidate", "arena.adopt-result">
@@ -209,8 +253,8 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"ai-candidate", "ai.adopt-result">
   | ResourceCommand<"ai-start-pending", "ai.reconcile-start" | "ai.retry-start">
   | ResourceCommand<"ai-adoption-pending", "ai.reconcile-adoption" | "ai.retry-adoption">
-  | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task">
-  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation">
+  | ResourceCommand<"execution-cancellation", "ai.cancel-task" | "arena.cancel-task" | "tasks.confirm-cancellation" | "tasks.cancel-task">
+  | ResourceCommand<"execution-cancellation-retry", "ai.retry-cancellation" | "arena.retry-cancellation" | "tasks.retry-cancellation">
   | ResourceCommand<"ai-translation-target", "ai.open-translation">
   | ResourceCommand<"resource-term", "resource.save-term">
   | ResourceCommand<"resource-context", "resource.save-context" | "resource.capture-context">
@@ -238,6 +282,18 @@ export type WorkbenchCommandDescription = CommandMetadata & {
 };
 
 function availability(command: WorkbenchCommand, payload?: CommandPayload): CommandAvailability {
+  if (command.payloadKind?.startsWith("task-")) {
+    if (!validTaskPayload(payload)) return unavailable;
+    switch (command.payloadKind) {
+      case "task-action": return payload.kind === command.payloadKind && command.id === `tasks.${payload.action}` ? command.availability(payload) : unavailable;
+      case "task-confirmed": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "task-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "task-history": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "task-receipt": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "task-output": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "task-preview": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+    }
+  }
   if (command.payloadKind?.startsWith("arena-")) {
     if (!validArenaPayload(payload)) return unavailable;
     switch (command.payloadKind) {
@@ -314,6 +370,36 @@ function validTarget(payload: ReviewFallbackCommandPayload | ReviewWaiverCommand
 const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 function nullableIdentity(value: unknown) { return value === null || validIdentity(value); }
 function editSequence(value: unknown) { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
+function identities(value: unknown, nonempty = false): value is string[] {
+  return Array.isArray(value) && (!nonempty || value.length > 0) && value.every(validIdentity) && new Set(value).size === value.length;
+}
+function taskRevision(value: unknown): value is string { return typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value); }
+function taskTarget(value: TaskCommandTarget) { return [value.taskId,value.attemptId,value.operation,value.unitId].every(validIdentity); }
+function taskActionTarget(value: TaskActionTarget) {
+  return taskTarget(value) && ["adopt-result","resume-undispatched","retry-safe-failure","validate-output","query-outcome"].includes(value.action)
+    && identities(value.itemIds,true) && identities(value.remainingItemIds) && identities(value.resultIds)
+    && value.remainingItemIds.every(id => value.itemIds.includes(id))
+    && (!(value.action === "resume-undispatched" || value.action === "retry-safe-failure") || value.remainingItemIds.length > 0 && value.remainingItemIds.length <= 2000)
+    && (value.action === "query-outcome" ? validIdentity(value.itemId) && value.remainingItemIds.includes(value.itemId) : value.itemId === null);
+}
+function validTaskPayload(payload: CommandPayload | undefined): payload is Extract<CommandPayload,{kind:`task-${string}`}> {
+  if (!payload || typeof payload !== "object") return false;
+  switch (payload.kind) {
+    case "task-action": return taskActionTarget(payload) && editSequence(payload.offset);
+    case "task-confirmed": return taskActionTarget(payload) && (payload.cancellationRevision === null || taskRevision(payload.cancellationRevision));
+    case "task-pending": return taskTarget(payload) && validIdentity(payload.actionId) && (payload.requestKind === "adoption" ? identities(payload.resultIds,true)
+      : payload.requestKind === "continuation" && ["resume-undispatched","retry-safe-failure"].includes(payload.action) && identities(payload.itemIds,true) && payload.itemIds.length <= 2000 && taskRevision(payload.expectedCancellationRevision));
+    case "task-history": return [payload.taskId,payload.sourceAttemptId,payload.operation,payload.actionId,payload.unitId,payload.attemptId].every(validIdentity)
+      && ["resume-undispatched","retry-safe-failure"].includes(payload.action) && identities(payload.itemIds,true) && payload.itemIds.length <= 2000
+      && taskRevision(payload.expectedCancellationRevision) && taskRevision(payload.sequence) && payload.sequence !== "0" && taskRevision(payload.cursor)
+      && [payload.requestDigest,payload.sourceInputDigest,payload.inputDigest].every(value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value));
+    case "task-receipt": return taskTarget(payload) && validIdentity(payload.actionId);
+    case "task-output": return [payload.taskId,payload.attemptId,payload.operation,payload.itemId,payload.resultId].every(validIdentity);
+    case "task-preview": return [payload.taskId,payload.attemptId,payload.operation].every(validIdentity)
+      && ["source","translation","ai","arena"].includes(payload.area) && nullableIdentity(payload.unitId);
+    default: return false;
+  }
+}
 type AiCommandPayload = Extract<CommandPayload, { kind: `ai-${string}` | `execution-cancellation${string}` }>;
 function validExecutionItemTarget(payload: ExecutionItemCommandTarget) {
   return [payload.attemptId, payload.taskId, payload.itemId, payload.translationUnitId, payload.locale,
@@ -439,7 +525,14 @@ export class WorkbenchCommands {
     const command = this.scopedCommand(id, scope);
     const payload = args[0];
     if (!command || !availability(command, payload).enabled) return false;
-    if (command.payloadKind === "arena-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
+    if (command.payloadKind === "task-action" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "task-confirmed" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "task-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "task-history" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "task-receipt" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "task-output" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "task-preview" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "arena-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "arena-start" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "arena-candidate" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "arena-compare" && payload?.kind === command.payloadKind) command.handler(payload);
