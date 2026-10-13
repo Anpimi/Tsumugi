@@ -24,7 +24,7 @@ import type { QueryKey } from "@tanstack/react-query";
 export interface EditorTarget { unitId: string; sourceRevisionId: string; key: string; sourceText: string }
 type EditorReadIntent = { id: number; unitId: string; locale: string };
 type ListReadIntent = { id: number; scopeId: string; locale: string; query: string; after: number };
-type ListReadProof = { intent: ListReadIntent; query: object; dataUpdateCount: number };
+type ListReadProof = { intent: ListReadIntent; query: object; data: ReviewSummaryPage; epoch: string };
 type HistoryReadIntent = EditorReadIntent & { after: string };
 type EditorActivation = { target: EditorTarget; locale: string; suggestedText?: string };
 type LeaveIntent = { kind: "import-project" } | { kind: "close" } | { kind: "project" } | { kind: "switch"; target: EditorTarget; after?: number };
@@ -244,7 +244,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     if (!listIntent || !readyListRead || readyListRead.intent !== listIntent || reads.retired) return false;
     const query = reads.client.getQueryCache().find({ queryKey: reads.key(listKey(listIntent)), exact: true });
     return !!query && query === readyListRead.query && query.state.status === "success" && query.state.fetchStatus === "idle"
-      && !query.state.isInvalidated && query.state.error === null && query.state.dataUpdateCount === readyListRead.dataUpdateCount;
+      && !query.state.isInvalidated && query.state.error === null && query.state.data === readyListRead.data
+      && readEpoch(["source", "translation", "resources", "review"]) === readyListRead.epoch;
   }
   useEffect(() => {
     if (!open || !targetAvailable) return;
@@ -326,7 +327,10 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       const query = reads.client.getQueryCache().find({ queryKey: reads.key(listKey(intent)), exact: true });
       if (!query) return;
       setListIntent(intent); setListAfter(after); setAppliedQuery(search); setNavigationEnd(false);
-      setReadyListRead({ intent, query, dataUpdateCount: query.state.dataUpdateCount });
+      // A routine focus check may reread identical data without a semantic
+      // change. Preserve only that original Query and exact data confirmation;
+      // changed facts, replacement records and semantic notifications revoke it.
+      setReadyListRead({ intent, query, data: next, epoch: readEpoch(dependencies) });
       listPosition.current = { query: search, after };
       listScope.current = { id: next.scopeId, locale, query: search };
       listBasis.current = next.sourceSnapshotId;

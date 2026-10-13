@@ -1114,6 +1114,54 @@ it("does not advance a replacement session from an old save-and-next acknowledge
     .toMatchObject({ projectId: project.metadata.projectId, sessionToken: project.sessionToken, text: "A" });
 });
 
+it.each(["unchanged focus refresh", "semantic notification", "changed projection"] as const)("retains navigation confirmation only for an unchanged focus refresh (%s)", async mode => {
+  seedSelectedTranslation();
+  const original = invoke.getMockImplementation()!;
+  const page = reviewSummaryPageFixture([
+    reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original", translationText: "Saved base",
+      sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205) })),
+    reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(217), nativeKey: "second", sourceText: "Second source",
+      sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205) })),
+  ]);
+  let changed = false;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "read_review_summary_page"
+    ? Promise.resolve(changed ? { ...page, rows: page.rows.map(row => ({ ...row, translationPreview: "Different projection" })) } : page)
+    : original(command, args));
+  let reads!: ReturnType<typeof useSessionReads>;
+  render(<><QueryProbe capture={value => { reads = value; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  await user.type(await screen.findByRole("textbox", { name: "Your draft" }), " retained B");
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
+  const query = reads.client.getQueryCache().findAll().find(value => value.queryKey[2] === "translation-list" && value.isActive());
+  if (!query) throw new Error("Expected active fixed list Query");
+  const before = query.state.dataUpdateCount;
+  const confirmed = query.state.data;
+  changed = mode === "changed projection";
+  act(() => reads.invalidate(["project"], mode === "semantic notification"));
+  await waitFor(() => {
+    expect(query.state.dataUpdateCount).toBeGreaterThan(before);
+    expect(query.state.fetchStatus).toBe("idle");
+  });
+  expect(screen.getByRole("textbox", { name: "Your draft" })).toHaveValue("Saved base retained B");
+  expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+  if (mode !== "unchanged focus refresh") {
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next entry" })).toBeDisabled();
+    expect(invoke.mock.calls.some(([name]) => name === "save_translation_revision" || name === "read_review_neighbor")).toBe(false);
+    return;
+  }
+  expect(query.state.data).toBe(confirmed);
+  expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Next entry" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Save and next" }));
+  expect(await screen.findByRole("heading", { name: "second" })).toBeInTheDocument();
+  const saved = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
+  expect(saved).toHaveLength(1);
+  expect(saved[0][1].request.text).toBe("Saved base retained B");
+});
+
 it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 51 without manual paging, then reports the end (%s)", async mode => {
   const original = invoke.getMockImplementation()!;
   const saved = new Map<string, string>();

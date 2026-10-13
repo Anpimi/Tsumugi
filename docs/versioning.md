@@ -34,6 +34,15 @@ source. It stays in the same undistributed alpha batch without another bump;
 both Unreleased changelogs describe the behavior. Native and whole-product
 acceptance remain separate.
 
+Translation navigation confirmation retains the original fixed-scope Query,
+its exact data and its semantic change epoch. A routine focus reread of unchanged
+data no longer disables neighboring-entry navigation or Save and next. Changed
+data, semantic notifications, failed or pending reads and replacement Query
+records still revoke confirmation. This frontend correction changes no schema,
+IPC, SDK/process/Store contract, dependency or version source. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no
+additional bump or migration; both Unreleased changelogs describe the correction.
+
 Package-scoped shutdown also retains the original sealed calling-package association
 through generation-service model children, active and retired workers, outcome
 queries and later selection effects. Revocation ends admission; cleanup still

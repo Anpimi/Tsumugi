@@ -10,6 +10,11 @@ The combined development build opens project schema 33 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 
+- Translation navigation and Save and next remain available after a routine
+  focus check returns the same confirmed list. Actual source, translation,
+  resource or review changes, changed list data and replaced Query records still
+  require a fresh explicit read; unfinished drafts remain intact.
+
 - The experimental standalone SDK defines bounded work-plan generation-service
   input, child-identity receipts and finite errors at schema/behavior 1/1, with
   Rust receivers and generated JavaScript contracts. Configuration, model
