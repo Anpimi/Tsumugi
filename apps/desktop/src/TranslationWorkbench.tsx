@@ -295,7 +295,10 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     const retained = fresh ? null : listScope.current;
     const scopeId = retained?.locale === locale && retained.query === search ? retained.id : null;
     const dependencies: ChangeScope[] = ["source", "translation", "resources", "review"];
-    const id = ++readSequence.current, captureEpoch = readEpoch(dependencies); latestListRead.current = id;
+    const id = ++readSequence.current; latestListRead.current = id;
+    await reads.synchronizeFresh();
+    if (!current() || !currentLocale(locale) || reads.retired || latestListRead.current !== id) return;
+    const captureEpoch = readEpoch(dependencies);
     let intent: ListReadIntent, next: ReviewSummaryPage;
     if (scopeId === null) {
       // Null scope creates a Host capture and is never an automatic Query function.
@@ -892,6 +895,8 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
               </div>
               {editorDraft && displayedTarget ? <div className="translation-detail">
                 <div className="translation-editor">
+                  <div className="translation-editor-content">
+                  {editorRead.isFetching || historyRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
                   <div className="execution-section-heading"><h2>{displayedTarget.key}</h2><span role="status" className="draft-state">{t(editorDraft.saving ? "workbench.saving" : dirty ? "workbench.unsaved" : editorDraft.baseSelectionId ? "workbench.saved" : "workbench.unselected")}</span>
                     <button className="text-button" disabled={busy || readBusy || composing || protectionBlocked || dirty || !!pendingSave || !!pendingSelection || !targetAvailable}
                       onClick={() => void performRead(current => openEditor(displayedTarget, current))}>{t("protection.refreshEntry")}</button></div>
@@ -927,11 +932,12 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
                     }} onCompositionEnd={() => setComposing(false)}
                     onSelect={event => setHasDraftSelection(event.currentTarget.selectionStart < event.currentTarget.selectionEnd)}
                     onChange={event => draftSession.edit(event.target.value)} /></label>
-                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div></div>
+                  </div>
+                  <div className="editor-save-bar"><p>{t("translation.draftHelp")}</p><div className="execution-actions"><button className="primary-button" disabled={pendingSave ? !retryAvailability().enabled : !saveAvailability().enabled} onClick={() => commandRegistry.dispatch(pendingSave ? "translation.retry-save" : "translation.save", commandScope)}>{pendingSave ? t("translation.retryAction") : t("translation.save")}</button>{pendingSave ? <button className="secondary-button" disabled={!reconcileAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.reconcile-save", commandScope)}>{t("translation.checkSavedAction")}</button> : null}<button className="secondary-button" disabled={!saveAndNextAvailability().enabled} onClick={() => commandRegistry.dispatch("translation.save-and-next", commandScope)}>{t("workbench.saveAndNext")}</button><button className="text-button" disabled={busy || !dirty || !!pendingSave || !!pendingSelection} onClick={() => draftSession.revert()}>{t("translation.discardDraft")}</button></div>
                   {pendingSelection ? <div role="status"><p>{t("translation.selectionUnknown")}</p><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload()).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.check-selection",commandScope,payload);}}>{t("translation.checkSelection")}</button><button className="secondary-button" disabled={!selectionPendingAvailability(selectionPendingPayload(),true).enabled} onClick={() => {const payload=selectionPendingPayload();if(payload)commandRegistry.dispatch("translation.retry-selection",commandScope,payload);}}>{t("translation.retrySelection")}</button></div> : null}
                   {newerDraftSaved ? <p role="status">{t("translation.savedNewerDraft")}</p> : null}
+                  </div>
                 </div>
-                {editorRead.isFetching || historyRead.isFetching ? <p role="status">{t("execution.loading")}</p> : null}
                 <details className="editor-references"><summary>{t("workbench.references")}</summary>
               <section aria-label={t("resource.editorReference")}><h5>{t("resource.editorReference")}</h5><p>{t("resource.editorReferenceHelp")}</p>
                 {editorRead.error ? <p role="status">{t("resource.editorLoadFailed")}</p> : null}

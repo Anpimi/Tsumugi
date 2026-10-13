@@ -32,6 +32,8 @@ function CommandsProbe({ capture }: { capture: (commands: WorkbenchCommands) => 
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+const listen = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
 const project: ProjectView = { sessionToken: "session", locator: "C:\\isolated\\project", reconciliationState: "settled", metadata: { projectId: fixtureIdentity(900), displayName: "Demo", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const content = sourcePageFixture({ snapshotId: fixtureIdentity(200), attemptId: fixtureIdentity(201), resultId: fixtureIdentity(202), scope: { revision: "2", currentSnapshot: fixtureIdentity(200) }, confirmation: { ...sourcePageFixture().confirmation, resultDigest: "digest", identityPolicy: "native-key", expectedContentRevision: "1", sourceLanguage: "en" }, namespace: "Example.Mod", coverage: [], total: 1, nextOrdinal: null, diagnostics: [], rows: [sourceRowFixture({ occurrenceId: fixtureIdentity(203), unitId: fixtureIdentity(204), sourceRevisionId: fixtureIdentity(205) }, { ordinal: 0, artifactId: fixtureIdentity(206), namespace: "Example.Mod", key: "first", text: "Original", source: { artifactId: fixtureIdentity(206), range: { encoding: "utf8-byte", start: 9, end: 19 } } })] });
 const preview: TranslationPreview = { attemptId: fixtureIdentity(210), bundleId: fixtureIdentity(211), fixedSourceSnapshotId: fixtureIdentity(200), currentSourceSnapshotId: fixtureIdentity(200), resultDigest: "all-results", fileDigest: "file-digest", logicalPath: "i18n/zh.json", declaredLocale: "zh", targetLocale: "zh-CN", basis: "basis", total: 1, unique: 1, unmatched: 0, ambiguous: 0, selectedConflicts: 0, sourceChanged: 0, applied: 0, nextOrdinal: null, rows: [{ entry: { ordinal: 0, artifactId: fixtureIdentity(212), nativeKey: "FIRST", text: "你好", keyByteRange: [1, 8], valueByteRange: [9, 19] }, itemId: fixtureIdentity(213), resultId: fixtureIdentity(214), resultDigest: "result-digest", unitId: fixtureIdentity(204), occurrenceId: fixtureIdentity(203), sourceRevisionId: fixtureIdentity(205), sourceText: "Original", currentSelection: null, currentText: null, status: "unique" }] };
@@ -68,6 +70,7 @@ function seedSelectedTranslation(text = "Saved base") {
 beforeEach(async () => {
   await i18n.changeLanguage("en-US");
   invoke.mockReset(); history = emptyHistory; applied = false; conflicting = false; identity = 0; savedActions = new Map(); importActions = new Map();
+  listen.mockReset().mockResolvedValue(() => {});
   protection = new Map(); protectionActions = new Map(); pluginAttempts = new Map();
   invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: fixtureIdentity(200) };
@@ -1160,6 +1163,56 @@ it.each(["unchanged focus refresh", "semantic notification", "changed projection
   const saved = invoke.mock.calls.filter(([name]) => name === "save_translation_revision");
   expect(saved).toHaveLength(1);
   expect(saved[0][1].request.text).toBe("Saved base retained B");
+});
+
+it.each(["before list read", "after editor read"] as const)("settles current change metadata before confirming post-save navigation (%s)", async delivery => {
+  let stop = () => {};
+  try {
+    seedSelectedTranslation();
+    const original = invoke.getMockImplementation()!;
+    const epoch = fixtureIdentity(820);
+    let sequence = "0", receive = (_event: { payload: unknown }) => {};
+    const notification = () => receive({ payload: { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+      epoch, kind: "change", afterSequence: "0", sequence: "1", scopes: ["translation"] } });
+    listen.mockImplementation(async (_name: string, callback: typeof receive) => { receive = callback; return () => {}; });
+    invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {
+      if (command === "read_project_changes") return { projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+        epoch, sequence, progressSequence: "0", scopes: ["translation"], runtime: { active: false, quiescing: false, queryCount: 0, error: null } };
+      if (command === "read_review_summary_page") return reviewSummaryPageFixture([
+        reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(204), nativeKey: "first", sourceText: "Original",
+          sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205), translationText: history.currentText })),
+        reviewSummaryFor(reviewTargetFixture({ unitId: fixtureIdentity(217), nativeKey: "second", sourceText: "Second source",
+          sourceSnapshotId: fixtureIdentity(200), sourceRevisionId: fixtureIdentity(205) })),
+      ]);
+      const value = await original(command, args);
+      if (command === "save_translation_revision") {
+        sequence = "1";
+        if (delivery === "before list read") notification();
+      }
+      if (command === "read_review_editor_snapshot" && args.request.unitId === fixtureIdentity(217)
+        && delivery === "after editor read") notification();
+      return value;
+    });
+    let reads!: ReturnType<typeof useSessionReads>;
+    render(<><QueryProbe capture={value => { reads = value; }} /><TranslationWorkbench project={project} disabled={false} /></>, project);
+    let semanticChanges = 0;
+    const unsubscribe = reads.subscribeChanges(scopes => { if (scopes.includes("project") || scopes.includes("translation")) semanticChanges++; });
+    await act(async () => { stop = reads.start(); });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Translations" }));
+    await user.click(await screen.findByRole("button", { name: "first" }));
+    await user.type(await screen.findByRole("textbox", { name: "Your draft" }), " saved A");
+    await user.click(screen.getByRole("button", { name: "Save and next" }));
+    expect(await screen.findByRole("heading", { name: "second" })).toBeInTheDocument();
+    await waitFor(() => expect(semanticChanges).toBeGreaterThan(0));
+    await user.type(screen.getByRole("textbox", { name: "Your draft" }), "Final B");
+    expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save and next" })).toBeEnabled();
+    expect(invoke.mock.calls.filter(([name]) => name === "save_translation_revision")).toHaveLength(1);
+    unsubscribe();
+  } finally {
+    stop(); cleanup();
+  }
 });
 
 it.each(["save-and-next", "save-and-continue"])("saves entry 50 and opens entry 51 without manual paging, then reports the end (%s)", async mode => {

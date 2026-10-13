@@ -14,6 +14,10 @@ they do not define alternate current project formats.
   focus check returns the same confirmed list. Actual source, translation,
   resource or review changes, changed list data and replaced Query records still
   require a fresh explicit read; unfinished drafts remain intact.
+  Explicit list reads confirm current project changes before recording their
+  navigation basis, so a delayed save notification cannot disable the next entry.
+  Save and recovery actions stay at the editor panel's bottom while content and
+  references scroll independently, including the compact layout.
 
 - The experimental standalone SDK defines bounded work-plan generation-service
   input, child-identity receipts and finite errors at schema/behavior 1/1, with

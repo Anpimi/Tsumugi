@@ -38,7 +38,13 @@ Translation navigation confirmation retains the original fixed-scope Query,
 its exact data and its semantic change epoch. A routine focus reread of unchanged
 data no longer disables neighboring-entry navigation or Save and next. Changed
 data, semantic notifications, failed or pending reads and replacement Query
-records still revoke confirmation. This frontend correction changes no schema,
+records still revoke confirmation.
+Before an explicit list read, the existing session bridge confirms a current
+change snapshot and delivers queued semantic invalidation; a snapshot already
+in flight before a checked save cannot confirm that save. Unavailable metadata
+refuses dependent confirmation. Editor actions sit outside the content scroll
+area, keeping save and recovery available in the regular and compact layouts.
+These frontend corrections change no schema,
 IPC, SDK/process/Store contract, dependency or version source. The same
 undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no
 additional bump or migration; both Unreleased changelogs describe the correction.
