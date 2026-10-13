@@ -207,6 +207,7 @@ workbench: {
   retiredDraftDiscard: "Discard local work and continue",
   openingDestination: "Opening the requested workspace…",
   navigationBlocked: "The destination is unavailable or has unfinished work. Keep your current work and resolve it before trying again.",
+  exitBlocked: "Current work is unfinished or its saved status needs checking. Your content is kept in this workspace. Check its status here, then try leaving the project or closing the window again.",
   overview: "Project overview", backOverview: "Back to overview", nextStep: "Next step",
   importTitle: "Bring in your source", importHelp: "Import a supported source to start translating. Your originals stay unchanged.",
   sourceFailed: "Could not read the source state. Open Sources to inspect or retry.", import: "Import source",

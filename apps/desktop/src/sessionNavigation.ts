@@ -77,7 +77,10 @@ export class SessionNavigation {
         }
         this.ports.blocked(next.area);
         this.ports.show(next.area);
-        if (next.status === "blocked") return null;
+        if (next.status === "blocked") {
+          if (current()) this.ports.failure({ reason: "session-exit-blocked" });
+          return null;
+        }
         const presentation = await this.ports.consumer(next.area);
         if (!current() || !presentation) return null;
         const proof = () => current() && this.ports.inspect().find(value => value.area === next.area)?.revision === next.revision;

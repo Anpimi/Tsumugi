@@ -44,7 +44,28 @@ describe("project session navigation", () => {
     expect(test.area()).toBe("tasks");
     expect(test.presentation.allowLeave).not.toHaveBeenCalled();
     expect(test.ports.accept).not.toHaveBeenCalled();
+    expect(test.ports.failure).toHaveBeenCalledWith({ reason: "session-exit-blocked" });
     expect(test.ports.busy).toHaveBeenLastCalledWith(false);
+  });
+  it("explains an unconfirmed execution read and requires a fresh exit intent after recovery", async () => {
+    const test = setup(); test.setStates([{ area: "translation", status: "blocked", revision: "saved-attempt" }]);
+    expect(await test.navigation.prepareExit()).toBeNull();
+    expect(test.area()).toBe("translation");
+    expect(test.ports.failure).toHaveBeenCalledWith({ reason: "session-exit-blocked" });
+    expect(test.presentation.allowLeave).not.toHaveBeenCalled();
+    test.setStates([{ area: "translation", status: "ready", revision: "saved-attempt" }]);
+    expect(test.ports.accept).not.toHaveBeenCalled();
+    const permit = await test.navigation.prepareExit();
+    expect(permit?.current()).toBe(true);
+    permit?.release();
+    expect(test.ports.busy).toHaveBeenLastCalledWith(false);
+  });
+  it("does not report an old blocked exit after its project session ends", async () => {
+    const test = setup(); test.setStates([{ area: "translation", status: "blocked", revision: "saved-attempt" }]);
+    test.ports.show = vi.fn(() => test.replace());
+    expect(await test.navigation.prepareExit()).toBeNull();
+    expect(test.ports.failure).not.toHaveBeenCalled();
+    expect(test.presentation.allowLeave).not.toHaveBeenCalled();
   });
   it("does not exit after saving A when a newer B invalidated the dialog capture", async () => {
     const test = setup(); test.setStates([{ area: "translation", status: "dirty", revision: "A" }]);

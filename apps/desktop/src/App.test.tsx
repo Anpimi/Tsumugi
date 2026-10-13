@@ -874,11 +874,13 @@ describe("project lifecycle workbench", () => {
     await user.type(screen.getByRole("textbox", { name: /Project folder/ }), "C:\\Projects\\other");
     await user.click(screen.getByRole("button", { name: "Open project" }));
     expect(await screen.findByRole("textbox", { name: "Your draft" })).toHaveValue("Original request");
+    expect(screen.getByText(i18n.t("workbench.exitBlocked"))).toBeInTheDocument();
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "open_project")).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Project overview" }));
     const nativeClose = mocks.onCloseRequested.mock.calls.at(-1)?.[0]; if (!nativeClose) throw new Error("No native close handler");
     await act(async () => { await nativeClose({ preventDefault: vi.fn() }); });
     await screen.findByRole("button", { name: "Retry the same action" });
+    expect(screen.getByText(i18n.t("workbench.exitBlocked"))).toBeInTheDocument();
     expect(mocks.invoke.mock.calls.filter(([command]) => command === "close_project")).toHaveLength(0);
     expect(mocks.destroy).not.toHaveBeenCalled(); expect(fixture.saves()).toHaveLength(1);
     expect(fixture.saves()[0][1].request).toEqual(original);

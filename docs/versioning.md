@@ -26,6 +26,8 @@ Independent artifact checks match the existing Core release-build scope to the
 captured source snapshot and selected language; foreign scopes cannot advance
 to checking or release recording. Captured builder and runtime labels display
 the original input; preparation and read failures do not assert package absence.
+Blocked project and window exits show recovery guidance in the relevant workspace,
+while preserving original requests, exit guards and explicit retry.
 This frontend integration
 changes no storage, generated IPC, SDK/process contract, dependency or version
 source. It stays in the same undistributed alpha batch without another bump;
