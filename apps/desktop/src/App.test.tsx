@@ -986,7 +986,7 @@ describe("project lifecycle workbench", () => {
           cancellationRequested: false, diagnostic: null };
         return { ...executionFixture.detail, attemptId: captured.attemptId, operation: "locale-build",
           progress: { total: 1, queued: 0, running: 0, succeeded: 1, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
-          items: [{ scope: { kind: "locale", id: "zh-CN", locale: "zh-CN" }, status, resultId: executionFixture.prepare.resultIds[0] }],
+          items: [{ scope: { kind: "release-build", id: releaseFixture.responses.releases[0].sourceSnapshotId, locale: "zh-CN" }, status, resultId: executionFixture.prepare.resultIds[0] }],
           recovery: { attemptId: captured.attemptId, units: [] } };
       }
       return original(command, args);
@@ -2283,7 +2283,7 @@ describe("project lifecycle workbench", () => {
       if (command === "read_execution_continuations") return { receipts: [], next: null };
       if (command === "read_execution_attempt") return { ...executionFixture.detail, taskId: saved.taskId, attemptId: saved.attemptId, operation: "locale-build",
         progress: { total: 1, queued: 0, running: 0, succeeded: 1, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
-        items: [{ scope: { kind: "locale", id: "zh-CN", locale: "zh-CN" }, status: locale.status, resultId: locale.result!.resultId }],
+        items: [{ scope: { kind: "release-build", id: saved.sourceSnapshotId, locale: "zh-CN" }, status: locale.status, resultId: locale.result!.resultId }],
         recovery: { attemptId: saved.attemptId, units: [] } };
       if (command === "read_saved_plugin_build") return saved;
       throw new Error(`Unexpected command: ${command}`);

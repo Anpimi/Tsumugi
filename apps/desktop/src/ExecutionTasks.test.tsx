@@ -20,9 +20,9 @@ const task = { taskId: fixture.detail.taskId, projectId: fixture.session.project
 function detail(): AttemptDetail { return structuredClone(fixture.detail) as AttemptDetail; }
 function savedBuildDetail(saved: SavedPluginBuildView): AttemptDetail {
   return { attemptId: saved.attemptId, taskId: saved.taskId, operation: "locale-build", nextOffset: null,
-    items: saved.locales.map(locale => ({ scope: { kind: "locale", id: locale.choice.locale, locale: locale.choice.locale }, status: locale.status, resultId: locale.result?.resultId ?? null })),
+    items: saved.locales.map(locale => ({ scope: { kind: "release-build", id: saved.sourceSnapshotId, locale: locale.choice.locale }, status: locale.status, resultId: locale.result?.resultId ?? null })),
     progress: { total: saved.locales.length, queued: 0, running: 0, succeeded: saved.locales.length, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
-    recovery: { attemptId: saved.attemptId, units: [{ unitId: fixtureIdentity(830), itemIds: saved.locales.map(locale => locale.itemId), scopes: saved.locales.map(locale => ({ kind: "locale", id: locale.choice.locale, locale: locale.choice.locale })),
+    recovery: { attemptId: saved.attemptId, units: [{ unitId: fixtureIdentity(830), itemIds: saved.locales.map(locale => locale.itemId), scopes: saved.locales.map(locale => ({ kind: "release-build", id: saved.sourceSnapshotId, locale: locale.choice.locale })),
       resultIds: saved.locales.flatMap(locale => locale.result ? [locale.result.resultId] : []), remainingItemIds: [], actions: [], blockedReason: "external-new-consent", receiptId: null }] } };
 }
 async function openSavedBuild(options: { saved?: SavedPluginBuildView; onSavedBuild?: (id: string) => Promise<boolean>; read?: () => Promise<SavedPluginBuildView> } = {}) {
@@ -320,7 +320,7 @@ it.each(["task", "item", "result"] as const)("refuses a saved build with a diffe
   const alert = await screen.findByRole("alert");
   expect(alert).toHaveTextContent(i18n.t("releasePlugin.savedReadFailed"));
   expect(screen.queryByRole("region", { name: i18n.t("releasePlugin.savedTitle") })).not.toBeInTheDocument();
-  expect(screen.getByText("zh-CN · zh-CN", { selector: "strong" })).toBeInTheDocument();
+  expect(screen.getByText(`${correct.sourceSnapshotId} · zh-CN`, { selector: "strong" })).toBeInTheDocument();
   response = correct;
   await user.click(within(alert).getByRole("button", { name: i18n.t("releasePlugin.savedRefresh") }));
   await screen.findByRole("region", { name: i18n.t("releasePlugin.savedTitle") });

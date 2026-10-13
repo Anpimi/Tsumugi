@@ -19,7 +19,12 @@ original identity, consent and deadline across explicit retry; a later rejection
 does not erase an earlier unknown outcome. Current Query facts remain separate
 from captured requests and checked acknowledgements. Reference-query exit confirms
 the original draft before discarding, then checks the continuing exit intent and
-newer resource inputs after the original action settles. This frontend integration
+newer resource inputs after the original action settles. Plugin build discovery
+reads only editable setup; captured execution and original recovery retain their
+existing authority, while returning to setup rereads current package options.
+Independent artifact checks match the existing Core release-build scope to the
+captured source snapshot and selected language; foreign scopes cannot advance
+to checking or release recording. This frontend integration
 changes no storage, generated IPC, SDK/process contract, dependency or version
 source. It stays in the same undistributed alpha batch without another bump;
 both Unreleased changelogs describe the behavior. Native and whole-product

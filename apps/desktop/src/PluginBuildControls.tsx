@@ -4,7 +4,7 @@ import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { PluginPermissions } from "./PluginManager";
 import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion, type PluginComponentRuntime } from "./pluginEnvironments";
 import { pluginCommands, readEnabledPluginPackages, type PluginBuildRequest, type PluginBuildView } from "./pluginCommands";
-import { releaseCommands } from "./releaseCommands";
+import { releaseCommands, type PluginBuildReview } from "./releaseCommands";
 import { executionContext, type AttemptDetail } from "./executionCommands";
 import type { ProjectView } from "./projectCommands";
 import { readCompleteAttempt } from "./executionRead";
@@ -21,6 +21,10 @@ import { useWorkbenchCommands, type CommandAvailability, type ReleasePreparation
 interface BuildChoice { key: string; label: string; package: PluginBuildRequest["package"]; resourceId: string; runtimeKinds: PluginComponentRuntime[] }
 export interface PluginBuildState { busy: boolean; pending: boolean }
 export interface PluginBuildHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean>; showSavedBuild: (attemptId: string) => boolean }
+function matchesBuildScope(item: AttemptDetail["items"][number], review: PluginBuildReview | null | undefined): boolean {
+  return !!review && item.scope.kind === "release-build" && item.scope.id === review.sourceSnapshotId
+    && item.scope.locale !== null && review.choices.some(choice => choice.locale === item.scope.locale);
+}
 function BuildExecutionReview({ build, checker }: { build: PluginBuildView; checker: boolean }) {
   const { t } = useTranslation();
   const capability = checker ? build.checker : build.builder;
@@ -51,8 +55,11 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
     checkReview, checkConsent, checkAttempt, pending, buildReceipt: receipt, busy } = owner;
   const failure = owner.failureArea === "build" ? owner.failure : null;
   const setupOpen = open && !savedAttempt;
+  // Discovery belongs to editable setup. Captured execution keeps its original
+  // environment and authority; unrelated Store reads must not replace that result.
+  const discovering = setupOpen && !prepared && !attempt;
   const inventoryKey = ["release-plugin-inventory",refresh];
-  const inventoryRead = useSessionQuery({ key: inventoryKey, scopes: ["execution"], enabled: setupOpen && !busy,
+  const inventoryRead = useSessionQuery({ key: inventoryKey, scopes: ["execution"], enabled: discovering && !busy,
     read: async () => {
       const query = reads.client.getQueryCache().find({queryKey:reads.key(inventoryKey),exact:true}), flight = query?.promise;
       const current = () => !reads.retired && !!query && query.promise === flight && query.state.fetchStatus === "fetching"
@@ -79,7 +86,7 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
   const environmentAvailable = !!inventory && knownEnvironment;
   const selectedBuild = owner.buildChoice;
   const environmentKey = ["release-plugin-environment",selectedBuild];
-  const environmentRead = useSessionQuery({ key:environmentKey,scopes:["execution"],enabled:setupOpen && !busy && knownEnvironment && !!selectedBuild,
+  const environmentRead = useSessionQuery({ key:environmentKey,scopes:["execution"],enabled:discovering && !busy && knownEnvironment && !!selectedBuild,
     read: async () => {
       // The application Store is exclusive. A shared invalidation may refresh
       // both observers; wait for the inventory Query rather than opening it twice.
@@ -109,11 +116,11 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
   const locked = disabled || owner.reserved() || tasks.unresolved(), draftLocked = locked || !!prepared || !!attempt;
   const loading = inventoryRead.isFetching, environmentLoading = environmentRead.isFetching;
   const mappingLocked = disabled || !!prepared || !!attempt || !!pending && pending.kind !== "build";
-  const unavailable = !loading && (!inventory || !choice || !environmentAvailable);
+  const unavailable = discovering && !loading && (!inventory || !choice || !environmentAvailable);
   const unit = detail?.recovery.units.length === 1 ? detail.recovery.units[0] : null;
   const complete = !!prepared && !!detail && detail.items.length===prepared.review.choices.length
     && prepared.review.choices.every(choice=>detail.items.filter(item=>item.scope.locale===choice.locale).length===1)
-    && detail.items.every(item=>item.resultId && item.status.execution==="succeeded" && item.status.validation==="valid" && !item.status.cancellationRequested);
+    && detail.items.every(item=>matchesBuildScope(item,prepared.review) && item.resultId && item.status.execution==="succeeded" && item.status.validation==="valid" && !item.status.cancellationRequested);
   const canRecord = complete && !!unit?.actions.includes("adopt-result") && unit.resultIds.length===detail?.items.length && unit.resultIds.every(id=>detail?.items.some(item=>item.resultId===id));
   useLayoutEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
   useLayoutEffect(()=>{
@@ -164,8 +171,7 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
   function artifactAvailability(payload?:ReleaseArtifactCommandPayload):CommandAvailability {
     const allowed=gate();if(!allowed.enabled)return allowed;const value=fresh<AttemptDetail|null>(buildKey);
     return payload&&value&&same(payload,artifactPayload(payload.buildResultId))&&!owner.current().checkReview&&value.attemptId===payload.buildAttemptId
-      &&value.items.some(item=>item.resultId===payload.buildResultId&&item.scope.kind==="locale"&&item.scope.locale!==null
-        &&owner.current().prepared?.review.choices.some(choice=>choice.locale===item.scope.locale&&choice.locale===item.scope.id)
+      &&value.items.some(item=>item.resultId===payload.buildResultId&&matchesBuildScope(item,owner.current().prepared?.review)
         &&item.status.execution==="succeeded"&&item.status.validation!=="valid"&&!item.status.cancellationRequested)?{enabled:true}:no;
   }
   function finishPayload():ReleaseCheckFinishCommandPayload|undefined {
@@ -235,7 +241,7 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
       {eligibility?<div role="status"><p>{t(eligibility.ready?"release.ready":"release.blocked",{count:eligibility.locales.reduce((sum,item)=>sum+item.blockerCount,0)})}</p><p>{t("release.source",{id:eligibility.sourceSnapshotId})} · {eligibility.policyVersion}</p>{eligibility.locales.map(item=><div key={item.locale}><strong>{item.locale}</strong>: {t("release.coverage",{count:item.checkedUnits})}{item.blockers.map((reason,index)=><div className="release-blocker" key={`${reason.unitId}:${index}`}>{reason.nativeKey}: {t(reviewReasonKey(reason.code))}{openBlocker?<button className="text-button" disabled={locked} onClick={()=>openBlocker(reason.unitId,item.locale)}>{t("translation.openEditor")}</button>:null}</div>)}{item.exceptions.map((reason,index)=><p key={index}>{t("release.exception",{key:reason.nativeKey,reason:reason.code})}</p>)}</div>)}</div>:null}
       {prepared&&!attempt&&owner.earlierBuild?<p role="status">{t("release.earlierPreparation")}</p>:null}
       {prepared?<><h4>{t("releasePlugin.fixedBuild")}</h4><p>{t("release.source",{id:prepared.review.sourceSnapshotId})}</p><ul>{prepared.review.choices.map(({locale,outputPaths})=><li key={locale}>{locale}<ul>{outputPaths.map(path=><li key={path}>{path}</li>)}</ul></li>)}</ul>{!attempt?<><BuildExecutionReview build={prepared.review.build} checker={false}/><label className="source-check"><input type="checkbox" checked={buildConsent===prepared.review.inputDigest} disabled={!startAvailability(startPayload()).enabled} onChange={event=>{const payload=startPayload(false,event.target.checked);if(payload)registry.dispatch("release.confirm-builder",scope,payload);}}/>{t("releasePlugin.builderConsent")}</label><button className="primary-button" disabled={!startAvailability(startPayload(),false,true).enabled} onClick={()=>{const payload=startPayload();if(payload)registry.dispatch("release.start-build",scope,payload);}}>{t("release.build")}</button><button className="text-button" disabled={!discardAvailability(discardPayload()).enabled} onClick={()=>registry.dispatch("release.discard-build",scope,discardPayload())}>{t("releasePlugin.discard")}</button></>:null}</>:null}
-      {attempt?<section aria-label={t("releasePlugin.results")}><h4>{t("releasePlugin.results")}</h4><p>{t("release.started",{id:attempt})}</p>{owner.earlierBuild?<p role="status">{t("release.earlierBuild")}</p>:null}{detail?<ul>{detail.items.map(item=><li key={item.status.itemId}>{item.scope.locale} · {t(`execution.states.${item.status.execution}`)} · {t(`releasePlugin.validation.${item.status.validation}`)}{item.status.cancellationRequested?<p>{t("releasePlugin.cancelled")}</p>:null}{item.status.diagnostic?<details><summary>{t("execution.diagnostic")}</summary>{item.status.diagnostic}</details>:null}{item.resultId&&item.scope.kind==="locale"&&item.scope.locale!==null&&prepared?.review.choices.some(choice=>choice.locale===item.scope.locale&&choice.locale===item.scope.id)&&item.status.execution==="succeeded"&&item.status.validation!=="valid"&&!item.status.cancellationRequested?<button className="secondary-button" disabled={!artifactAvailability(artifactPayload(item.resultId)).enabled} onClick={()=>{const payload=artifactPayload(item.resultId!);if(payload)registry.dispatch("release.prepare-artifact-check",scope,payload);}}>{t("releasePlugin.prepareCheck",{locale:item.scope.locale})}</button>:null}</li>)}</ul>:<p role="status">{t("releasePlugin.waiting")}</p>}<button className="secondary-button" disabled={busy||buildRead.isFetching} onClick={()=>void buildRead.refetch()}>{t("execution.refresh")}</button>{detail&&buildActive?<><p>{t("execution.cancelHelp")}</p><button className="secondary-button" disabled={!cancelAvailability(cancelPayload(detail)).enabled} onClick={()=>registry.dispatch("release.cancel-task",scope,cancelPayload(detail))}>{t("execution.cancel")}</button></>:null}</section>:null}
+      {attempt?<section aria-label={t("releasePlugin.results")}><h4>{t("releasePlugin.results")}</h4><p>{t("release.started",{id:attempt})}</p>{owner.earlierBuild?<p role="status">{t("release.earlierBuild")}</p>:null}{detail?<ul>{detail.items.map(item=><li key={item.status.itemId}>{item.scope.locale} · {t(`execution.states.${item.status.execution}`)} · {t(`releasePlugin.validation.${item.status.validation}`)}{item.status.cancellationRequested?<p>{t("releasePlugin.cancelled")}</p>:null}{item.status.diagnostic?<details><summary>{t("execution.diagnostic")}</summary>{item.status.diagnostic}</details>:null}{item.resultId&&item.scope.locale!==null&&matchesBuildScope(item,prepared?.review)&&item.status.execution==="succeeded"&&item.status.validation!=="valid"&&!item.status.cancellationRequested?<button className="secondary-button" disabled={!artifactAvailability(artifactPayload(item.resultId)).enabled} onClick={()=>{const payload=artifactPayload(item.resultId!);if(payload)registry.dispatch("release.prepare-artifact-check",scope,payload);}}>{t("releasePlugin.prepareCheck",{locale:item.scope.locale})}</button>:null}</li>)}</ul>:<p role="status">{t("releasePlugin.waiting")}</p>}<button className="secondary-button" disabled={busy||buildRead.isFetching} onClick={()=>void buildRead.refetch()}>{t("execution.refresh")}</button>{detail&&buildActive?<><p>{t("execution.cancelHelp")}</p><button className="secondary-button" disabled={!cancelAvailability(cancelPayload(detail)).enabled} onClick={()=>registry.dispatch("release.cancel-task",scope,cancelPayload(detail))}>{t("execution.cancel")}</button></>:null}</section>:null}
       {checkReview?<section aria-label={t("releasePlugin.artifacts")}><h4>{t("releasePlugin.checkLocale",{locale:checkReview.locale})}</h4><ul>{checkReview.artifacts.map(file=><li key={`${file.id}:${file.logicalPath}`}>{file.logicalPath} · {t("releasePlugin.bytes",{count:file.byteLength})}<details><summary>{t("source.fingerprint")}</summary><code>{file.sha256}</code></details></li>)}</ul><p>{t("releasePlugin.rules",{count:checkReview.requirements.length})}</p>{!checkAttempt?<><BuildExecutionReview build={checkReview.build} checker/><label className="source-check"><input type="checkbox" checked={checkConsent===checkReview.inputDigest} disabled={!startAvailability(startPayload(true),true).enabled} onChange={event=>{const payload=startPayload(true,event.target.checked);if(payload)registry.dispatch("release.confirm-checker",scope,payload);}}/>{t("releasePlugin.checkerConsent")}</label><button className="primary-button" disabled={!startAvailability(startPayload(true),true,true).enabled} onClick={()=>{const payload=startPayload(true);if(payload)registry.dispatch("release.start-artifact-check",scope,payload);}}>{t("releasePlugin.startCheck")}</button></>:<><p role="status">{t(checkItem?.status.execution==="succeeded"?"releasePlugin.checkReceived":checkActive?"releasePlugin.checkRunning":"releasePlugin.checkFailed")}</p>{checkItem?.resultId&&checkItem.status.execution==="succeeded"&&!checkItem.status.cancellationRequested?<button className="primary-button" disabled={!finishAvailability(finishPayload()).enabled} onClick={()=>{const payload=finishPayload();if(payload)registry.dispatch("release.finish-artifact-check",scope,payload);}}>{t("releasePlugin.recordCheck")}</button>:null}<button className="secondary-button" disabled={busy||checkRead.isFetching} onClick={()=>void checkRead.refetch()}>{t("execution.refresh")}</button>{checkDetail&&checkActive?<button className="secondary-button" disabled={!cancelAvailability(cancelPayload(checkDetail)).enabled} onClick={()=>registry.dispatch("release.cancel-task",scope,cancelPayload(checkDetail))}>{t("execution.cancel")}</button>:null}</>}</section>:null}
       {canRecord&&!receipt?<><p role="status">{t("releasePlugin.allChecked")}</p><button className="primary-button" disabled={!recordAvailability(recordPayload()).enabled} onClick={()=>{const payload=recordPayload();if(payload)registry.dispatch("release.record-build",scope,payload);}}>{t("releasePlugin.recordRelease")}</button></>:null}{receipt?<p role="status">{t("releasePlugin.recorded")}</p>:null}
       {attempt&&!buildActive&&!checkActive?<button className="secondary-button" disabled={!discardAvailability(discardPayload()).enabled} onClick={()=>registry.dispatch("release.discard-build",scope,discardPayload())}>{t("releasePlugin.newBuild")}</button>:null}

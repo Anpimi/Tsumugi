@@ -21,7 +21,7 @@ let serial: number, captured: PluginBuildPrepareRequest | null, build: AttemptDe
 let checks: Map<string, { request: ArtifactCheckPrepareRequest; detail: AttemptDetail }>;
 const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
 function detail(attemptId: string, locales: string[], operation: string): AttemptDetail {
-  const items = locales.map((locale, index) => ({ scope: { kind: "locale", id: locale, locale }, resultId: fixtureIdentity(800 + index),
+  const items = locales.map((locale, index) => ({ scope: { kind: operation === "locale-build" ? "release-build" : "artifact-check", id: fixtureIdentity(707), locale }, resultId: fixtureIdentity(800 + index),
     status: { itemId: fixtureIdentity(810 + index), execution: "succeeded" as const, validation: "pending" as const, adoption: "unapplied" as const, cancellationRequested: false, retrySafe: false, diagnostic: null } }));
   return { attemptId, taskId: fixtureIdentity(820), operation, items, nextOffset: null,
     progress: { total: items.length, queued: 0, running: 0, succeeded: items.length, failed: 0, cancelled: 0, unknown: 0, adopted: 0 },
@@ -165,6 +165,94 @@ async function check(user: ReturnType<typeof userEvent.setup>, locale: string) {
   await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.startCheck") }));
   await user.click(await screen.findByRole("button", { name: i18n.t("releasePlugin.recordCheck") }));
 }
+
+it("opens the independent artifact checker for the Core source-snapshot build scope", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    const value = await original(command, args);
+    if (command === "read_execution_attempt" && value?.operation === "locale-build") {
+      // ReleasePlan::fixed_input binds every locale to the captured source snapshot.
+      value.items.forEach((item: AttemptDetail["items"][number]) => {
+        item.scope = { kind: "release-build", id: fixtureIdentity(707), locale: item.scope.locale };
+      });
+    }
+    return value;
+  });
+  const { user } = await ready(["zh-CN"], false);
+  await start(user);
+  await check(user, "zh-CN");
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_artifact_check")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "start_artifact_check")).toHaveLength(1);
+  await screen.findByRole("button", { name: i18n.t("releasePlugin.recordRelease") });
+});
+
+it.each([
+  { kind: "locale", id: "zh-CN", locale: "zh-CN" },
+  { kind: "release-build", id: fixtureIdentity(708), locale: "zh-CN" },
+  { kind: "release-build", id: fixtureIdentity(707), locale: "de-DE" },
+])("rejects checking and release recording for a foreign build scope: %j", async scope => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    const value = await original(command, args);
+    if (command === "read_execution_attempt" && value?.operation === "locale-build") {
+      value.items[0].scope = scope;
+      value.items[0].status.validation = "valid";
+    }
+    return value;
+  });
+  const { user } = await ready(["zh-CN"], false);
+  await start(user);
+  await waitFor(() => expect(build).not.toBeNull());
+  await screen.findByText(i18n.t("release.started", { id: build!.attemptId }));
+  expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.prepareCheck", { locale: scope.locale }) })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: i18n.t("releasePlugin.recordRelease") })).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_artifact_check" || command === "prepare_execution_adoption")).toBe(false);
+});
+
+it("keeps the original captured build usable without reopening live Store discovery", async () => {
+  const original = invoke.getMockImplementation()!;
+  let laterDiscovery = 0;
+  invoke.mockImplementation(async (command, args) => {
+    if (captured && ["read_plugin_inventory", "read_plugin_package", "read_plugin_build"].includes(command)) {
+      laterDiscovery++;
+      throw { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-store-busy" };
+    }
+    return original(command, args);
+  });
+  const { user } = await ready(["zh-CN"], false);
+  const request = structuredClone(captured);
+  await refreshWorkbenchReads(["execution"]);
+  expect(laterDiscovery).toBe(0);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await start(user);
+  await screen.findByRole("button", { name: i18n.t("releasePlugin.prepareCheck", { locale: "zh-CN" }) });
+  expect(captured).toEqual(request);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_plugin_build")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command]) => command === "start_plugin_build")).toHaveLength(1);
+  expect(laterDiscovery).toBe(0);
+});
+
+it("rereads current installed choices after explicitly discarding a captured preparation", async () => {
+  const original = invoke.getMockImplementation()!;
+  let inventoryReads = 0;
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_plugin_inventory") inventoryReads++;
+    if (command === "cancel_plugin_build_preparation") captured = null;
+    return original(command, args);
+  });
+  const { user } = await ready(["zh-CN"], false);
+  const before = inventoryReads;
+  expect(before).toBeGreaterThan(0);
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(false);
+  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.discard") }));
+  await waitFor(() => expect(inventoryReads).toBeGreaterThan(before));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: i18n.t("releasePlugin.builder") })).toBeEnabled());
+  expect(screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) })).toHaveValue("deliverables/zh-CN/captions.txt");
+  expect(screen.queryByText(i18n.t("releasePlugin.fixedBuild"))).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command]) => command === "cancel_plugin_build_preparation")).toHaveLength(1);
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(false);
+});
 
 it.each(["en-US", "zh-CN"])("records all languages and multiple exact paths only after separate grants and proofs in %s", async locale => {
   await i18n.changeLanguage(locale);
