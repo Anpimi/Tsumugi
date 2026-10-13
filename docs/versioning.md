@@ -51,6 +51,14 @@ IPC, SDK/process/Store contract, dependency or version source. The same
 undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no
 additional bump or migration; both Unreleased changelogs describe the correction.
 
+Content range selection reuses the existing Core fixed review scope and captures
+the complete membership, original bases and explicit exclusions. Search and page
+changes keep this user intent separate from current Query facts. Transfer to AI
+preparation replaces only the selected IDs and locale, requiring a new preview
+and consent while preserving model setup, saved plans and cumulative budgets.
+It adds no storage, IPC, SDK contract, dependency or version source and stays in
+the same undistributed alpha batch without an additional bump or migration.
+
 Package-scoped shutdown also retains the original sealed calling-package association
 through generation-service model children, active and retired workers, outcome
 queries and later selection effects. Revocation ends admission; cleanup still

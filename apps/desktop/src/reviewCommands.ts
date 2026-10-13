@@ -3,7 +3,7 @@ import { checkedInvoke } from "./ipc";
 import type { ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
 import * as validators from "./generated/review.validators";
 import { checkerIdentity, contractIdentity } from "./reviewIdentity";
-import type { ReviewSummaryPage } from "./generated/review.responses";
+import type { ReviewSummaryPage, ReviewScopeCapture } from "./generated/review.responses";
 
 export type { ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
 export type { ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
@@ -24,7 +24,11 @@ export const reviewCommands = {
       && page.rows.every(row => row.locale === request.locale && row.sourceSnapshotId === page.sourceSnapshotId)),
   editorSnapshot: (request: ReviewTargetRequest) => checkedInvoke("read_review_editor_snapshot", request, validators.validateResponseEditor),
   neighbor: (request: ReviewNeighborRequest) => checkedInvoke("read_review_neighbor", request, validators.validateResponseNeighbor),
-  captureScope: (request: ReviewScopeRequest) => checkedInvoke("capture_review_scope", request, validators.validateResponseScope),
+  captureScope: (request: ReviewScopeRequest) => checkedInvoke("capture_review_scope", request,
+    (capture): capture is ReviewScopeCapture => validators.validateResponseScope(capture)
+      && capture.scopeId === request.scopeId && capture.locale === request.locale
+      && new Set(capture.units.map(unit => unit.unitId)).size === capture.units.length
+      && capture.units.every(unit => !request.excluded.includes(unit.unitId))),
   page: (request: ReviewPageRequest) => checkedInvoke("read_review_page", request, validators.validateResponsePage),
   target: (request: ReviewTargetRequest) => checkedInvoke("read_review_target", request, validators.validateResponseTarget),
   history: (request: ReviewHistoryRequest) => checkedInvoke("read_review_history", request, validators.validateResponseHistory),

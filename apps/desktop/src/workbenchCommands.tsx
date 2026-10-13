@@ -26,6 +26,7 @@ import { validateResponseProjectView } from "./generated/validators";
 
 type PlainWorkbenchCommandId = "project.metadata.save" | "translation.save"
   | "translation.save-and-next" | "translation.retry-save" | "translation.reconcile-save"
+  | "translation.capture-content-selection" | "translation.clear-content-selection" | "translation.prepare-selected-ai"
   | "review.approve" | "review.request-changes" | "review.run-checks" | "review.prepare-checks" | "review.cancel-checks" | "review.retry-pending"
   | "review.approve-batch" | "review.stop-batch"
   | "source.discard" | "source.begin-update" | "source.show-current" | "source.read-current" | "source.read-applied" | "source.refresh-attempt";
@@ -171,6 +172,10 @@ export interface TranslationRevisionCommandPayload {
   revisionId: string; revisionActionId: string; revisionOrdinal: string; revisionSourceRevisionId: string; revisionSourceSnapshotId: string;
 }
 export interface TranslationSelectionPendingCommandPayload { kind: "translation-selection-pending"; request: TranslationSelectRequest; submittedSeq: number }
+export interface TranslationContentRowCommandPayload {
+  kind: "translation-content-row"; unitId: string; scopeId: string; locale: string; sourceSnapshotId: string;
+  listReadId: number; selectionVersion: number; checked: boolean;
+}
 export interface ReleasePreparationCommandPayload { kind: "release-preparation"; editSeq: number; build: PluginBuildRequest;
   choices: PluginBuildLocaleChoice[]; sourceLocale: string; targetLocales: string[]; eligibilityBasis: string | null }
 export interface ReleasePluginStartCommandPayload { kind: "release-plugin-start"; phase: "build" | "check"; attemptId: string; inputDigest: string; approved: boolean }
@@ -270,6 +275,7 @@ interface WorkbenchCommandPayloads {
   "translation.select-revision": TranslationRevisionCommandPayload;
   "translation.check-selection": TranslationSelectionPendingCommandPayload;
   "translation.retry-selection": TranslationSelectionPendingCommandPayload;
+  "translation.toggle-content-selection": TranslationContentRowCommandPayload;
   "release.assess-build": ReleasePreparationCommandPayload;
   "release.prepare-build": ReleasePreparationCommandPayload;
   "release.cancel-task": ExecutionCancellationCommandPayload;
@@ -389,7 +395,7 @@ interface CommandMetadata {
     | "captures-arena" | "runs-arena" | "writes-arena" | "reads-arena" | "discards-arena-draft"
     | "captures-execution-action" | "writes-execution" | "reads-execution" | "opens-execution-preview"
     | "captures-release" | "runs-release-build" | "exports-release" | "reconciles-release" | "opens-release"
-    | "captures-translation-import" | "runs-translation-import" | "reconciles-project";
+    | "captures-translation-import" | "runs-translation-import" | "reconciles-project" | "captures-content-selection";
   confirmation: "none" | "required";
 }
 interface PlainWorkbenchCommand extends CommandMetadata {
@@ -447,6 +453,7 @@ export type WorkbenchCommand = PlainWorkbenchCommand | FallbackWorkbenchCommand 
   | ResourceCommand<"translation-import-pending", "translation.check-import-receipt" | "translation.retry-import-action">
   | ResourceCommand<"translation-revision", "translation.select-revision">
   | ResourceCommand<"translation-selection-pending", "translation.check-selection" | "translation.retry-selection">
+  | ResourceCommand<"translation-content-row", "translation.toggle-content-selection">
   | ResourceCommand<"release-preparation", "release.assess-build" | "release.prepare-build">
   | ResourceCommand<"release-build-pending", "release.check-build" | "release.retry-build">
   | ResourceCommand<"release-record", "release.choose-release">
@@ -540,6 +547,7 @@ function availability(command: WorkbenchCommand, payload?: CommandPayload): Comm
       case "translation-import-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-revision": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
       case "translation-selection-pending": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
+      case "translation-content-row": return payload.kind === command.payloadKind ? command.availability(payload) : unavailable;
     }
   }
   if (command.payloadKind?.startsWith("release-")) {
@@ -719,6 +727,8 @@ function validTranslationPayload(payload: CommandPayload | undefined): payload i
       && [payload.unitId,payload.locale,payload.sourceRevisionId,payload.revisionId,payload.revisionActionId,payload.revisionSourceRevisionId,payload.revisionSourceSnapshotId].every(validIdentity)
       && taskRevision(payload.revisionOrdinal) && payload.revisionOrdinal !== "0";
     case "translation-selection-pending": return validateRequestSelect(payload.request) && editSequence(payload.submittedSeq);
+    case "translation-content-row": return [payload.unitId,payload.scopeId,payload.locale,payload.sourceSnapshotId].every(validIdentity)
+      && editSequence(payload.listReadId) && editSequence(payload.selectionVersion) && typeof payload.checked === "boolean";
     default: return false;
   }
 }
@@ -991,6 +1001,7 @@ export class WorkbenchCommands {
     else if (command.payloadKind === "translation-import-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-revision" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "translation-selection-pending" && payload?.kind === command.payloadKind) command.handler(payload);
+    else if (command.payloadKind === "translation-content-row" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-preparation" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-build-pending" && payload?.kind === command.payloadKind) command.handler(payload);
     else if (command.payloadKind === "release-record" && payload?.kind === command.payloadKind) command.handler(payload);

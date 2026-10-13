@@ -10,6 +10,12 @@ The combined development build opens project schema 33 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 
+- Content range selection captures every match across pages, including its
+  original bases and explicit exclusions. Later searches keep that fixed set;
+  replacing it requires confirmation. Selected entries can be transferred to
+  AI preparation without running a model or restoring preview, consent or
+  execution authority. Original plans, model settings and budgets are retained.
+
 - Translation navigation and Save and next remain available after a routine
   focus check returns the same confirmed list. Actual source, translation,
   resource or review changes, changed list data and replaced Query records still

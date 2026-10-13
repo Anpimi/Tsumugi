@@ -27,6 +27,7 @@ import { sourceKeys, sourceReads } from "./sourceQueries";
 import type { ContentScope } from "./sourceCommands";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { SessionNavigation, type ExitDisposition, type SessionConsumer, type SessionExitPermit, type WorkspaceDestination } from "./sessionNavigation";
+import type { ContentSelection } from "./contentSelection";
 
 /** The same project owners are shared by production assembly and isolated consumer tests. */
 export function ProjectSessionOwners({ project, children, bridge = true }: { project: ProjectView; children: ReactNode; bridge?: boolean }) {
@@ -154,6 +155,17 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     if (!current()) return false;
     setFailure(null);
     if (destination.kind === "area") return true;
+    if (destination.kind === "ai-selection") {
+      const selected = destination.selection, cached = reads.client.getQueryState<ContentScope>(reads.key(["translation-source-scope"]));
+      if (committed.current.view.memory.read<ContentSelection>("translation", "contentSelection") !== selected
+        || cached?.status !== "success" || cached.fetchStatus !== "idle" || cached.isInvalidated || cached.error !== null
+        || cached.data?.currentSnapshot !== selected.capture.sourceSnapshotId
+        || !committed.current.project.metadata.targetLocales.includes(selected.capture.locale)
+        || !ai.receiveContentSelection(selected, destination.expectedEditSeq)) {
+        setFailure("navigation-edited"); return false;
+      }
+      return true;
+    }
     if (destination.kind === "review-work") { committed.current.view.memory.write("review", "tab", "work"); return true; }
     if (destination.kind === "tool-query") {
       if (resources.inFlight() || resources.current().pending || !resources.tool.addText(destination.text)) {
@@ -257,7 +269,9 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     {view.area === "overview" && !reads.retired ? <OverviewSourceObserver project={project} onSourceState={onSourceState} /> : null}
     {view.area === "source" ? <SourceWorkbench ref={handle => register("source", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenWork={() => { void navigation.navigate({ kind: "review-work" }); }} /> : null}
     {view.area === "translation" ? <TranslationWorkbench ref={handle => register("translation", handle)} project={project} disabled={locked} onOpenExtensions={onOpenExtensions}
-      onQueryText={text => navigation.navigate({ kind: "tool-query", text })} /> : null}
+      onQueryText={text => navigation.navigate({ kind: "tool-query", text })}
+      aiSelection={{ count: ai.selected.length, locale: ai.locale, editSeq: ai.editSeq, available: ai.contentRangeAvailable }}
+      onPrepareSelection={(selection, expectedEditSeq) => navigation.navigate({ kind: "ai-selection", selection, expectedEditSeq })} /> : null}
     {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} /> : null}
     {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}

@@ -1,9 +1,9 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type SetStateAction } from "react";
-import { QueryObserver } from "@tanstack/react-query";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type SetStateAction } from "react";
+import { matchQuery, QueryObserver } from "@tanstack/react-query";
 import { aiCommands, defaultAiConfig, type AiConfig, type AiItem, type AiPrepared, type AiStart, type AiView } from "./aiCommands";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt, type AttemptDetail } from "./executionCommands";
 import { validateResponseIdentity } from "./generated/execution.validators";
-import { validateResponseWorkPlanStatus } from "./generated/ai.validators";
+import { validateResponseWorkPlanStatus, validateResponseView } from "./generated/ai.validators";
 import { validateResponseScope, validateResponsePage } from "./generated/source.validators";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -18,6 +18,7 @@ import type { PluginTextReviewSelection } from "./pluginCommands";
 import { jsonIdentity } from "./pluginToolChoices";
 import type { WorkPlanToolSelection } from "./generated/ai.requests";
 import type { ChangeScope } from "./sessionReads";
+import { contentSelectionIds, validContentSelection, type ContentSelection } from "./contentSelection";
 
 export const defaultPlanOptions: PlanOptions = { stages: (["understanding", "resources", "generation", "checks", "delivery"] as const).map(stage => ({ stage, mode: stage === "generation" ? "assisted" : "manual" })), selectionPolicy: "candidates-only", adoptResources: false, deliver: false, advisoryChecks: [] };
 export type WorkPlanContinuation = (() => boolean) & { fresh: () => boolean; acceptPlan: (status: WorkPlanStatusView) => boolean };
@@ -131,6 +132,31 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     basis.current++;
     update(before => ({ ...before,[key]:fixed(value),capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
+  }
+  function receiveContentSelection(selection: ContentSelection, expectedEditSeq: number) {
+    if (!canReceiveContentSelection() || current().editSeq !== expectedEditSeq
+      || selection.projectId !== session.projectId || selection.sessionToken !== session.sessionToken
+      || !available(selection.capture.locale) || !validContentSelection(selection)) return false;
+    const selected = contentSelectionIds(selection);
+    if (!selected.length || selected.length > 100) return false;
+    // Transfer only a user range. Existing preparation, consent and execution
+    // authority cannot accompany it; the next explicit preview reads Core facts.
+    basis.current++;
+    update(before => ({ ...before,locale:selection.capture.locale,selected:fixed(selected),capture:null,consent:false,staleReason:null,
+      dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
+    return true;
+  }
+  function canReceiveContentSelection() {
+    if (!live() || reads.retired || reserved()) return false;
+    const before = current(); if (!before.attempt) return true;
+    const read = reads.client.getQueryState<AiView | null>(reads.key(["aiCommands",before.attempt])), view = read?.data;
+    // A start acknowledgement is not a completed task. Retain the old range
+    // while its checked result is absent, stale, running or still saving.
+    return read?.status === "success" && read.fetchStatus === "idle" && !read.isInvalidated && read.error === null
+      && validateResponseView(view) && view.detail.attemptId === before.attempt
+      && before.checkedTask?.attemptId === before.attempt && before.checkedTask.taskId === view.detail.taskId
+      && view.detail.progress.queued === 0 && view.detail.progress.running === 0
+      && !view.rows.some(row => row.automation && ["waiting","saving-candidate","checking"].includes(row.automation.phase));
   }
   async function run(work: () => Promise<void>, recovery = false) {
     if (!live() || flight.current || (!recovery && reserved())) return;
@@ -540,12 +566,18 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     update(before => ({ ...before,presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],capture:null,consent:false,staleReason:null,
       dirty:false,editSeq:before.editSeq+1,attempt:null,checkedTask:null,started:null,startedPlan:null,planId:null,options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],failure:null,notice:null })); return true;
   }
-  return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan,
+  const contentToolAttempt = agent.current().toolRun?.prepared.attemptId ?? null;
+  const subscribeContentAvailability = useCallback((notify: () => void) => reads.client.getQueryCache().subscribe(event => {
+    if (matchQuery({ queryKey: reads.key(["aiCommands",state.attempt]), exact: true }, event.query)
+      || contentToolAttempt !== null && matchQuery({ queryKey: reads.key(["agent-tool-attempt",contentToolAttempt]), exact: true }, event.query)) notify();
+  }), [reads,state.attempt,contentToolAttempt]);
+  const contentRangeAvailable = useSyncExternalStore(subscribeContentAvailability, canReceiveContentSelection, canReceiveContentSelection);
+  return { ...state, prepared: current().prepared, preparedPlan: current().preparedPlan, contentRangeAvailable,
     planControl, agent, component, preparePlan, readPlan, readPlanForAction, readViewForAction, runWorkPlan, recordPlan, recordPlanStart, recordGenerated, retryEffect:async(attemptId:string,itemId:string)=>{await aiCommands.retryEffect({...session,attemptId,itemId});if(live())reads.invalidate(["execution","translation","review"]);},
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),
-    current,reserved,targetAvailable,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,
+    current,reserved,targetAvailable,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,receiveContentSelection,canReceiveContentSelection,
     setPresetName:(value:SetStateAction<string>) => edit("presetName",typeof value === "function" ? value(current().presetName) : value),
     setConfig:(value:SetStateAction<AiConfig>) => edit("config",typeof value === "function" ? value(current().config) : value),
     setLocale:(value:SetStateAction<string>) => edit("locale",typeof value === "function" ? value(current().locale) : value),

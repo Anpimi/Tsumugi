@@ -15,6 +15,17 @@ function decisionRequest() {
 }
 beforeEach(() => invoke.mockReset());
 
+it.each(["scope", "locale", "duplicate", "excluded"])("rejects a shape-valid but mismatched fixed scope acknowledgement: %s", async kind => {
+  const request = { ...fixture.requests.scope, excluded: [] as string[] }, response = structuredClone(fixture.responses.scope);
+  if (kind === "scope") response.scopeId = fixture.requests.target.unitId;
+  if (kind === "locale") response.locale = "fr";
+  if (kind === "duplicate") response.units.push(response.units[0]);
+  if (kind === "excluded") request.excluded = [response.units[0].unitId];
+  expect(validators.validateResponseScope(response)).toBe(true);
+  invoke.mockResolvedValue(response);
+  await expect(reviewCommands.captureScope(request)).rejects.toThrow();
+});
+
 it("receives the native profile and rejects mixed runtime fields or claimed authorization", () => {
   const value = structuredClone(fixture.responses.prepareCheck);
   const slot = value.view.checkers[0];

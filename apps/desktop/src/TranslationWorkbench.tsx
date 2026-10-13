@@ -1,7 +1,7 @@
 import { useSessionQuery, useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { reviewCommands, type ReviewSummaryPage, type ReviewSummary, type ReviewTarget, type ReviewEditorSnapshot, type ReviewNeighbor } from "./reviewCommands";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
@@ -15,7 +15,8 @@ import { PluginTranslationControls } from "./PluginTranslationControls";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useWorkbenchCommands, type CommandAvailability, type TranslationImportPreviewCommandPayload, type TranslationImportRowTarget,
   type TranslationImportRowCommandPayload, type TranslationImportBatchCommandPayload, type TranslationImportPendingCommandPayload,
-  type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload } from "./workbenchCommands";
+  type TranslationRevisionCommandPayload, type TranslationSelectionPendingCommandPayload, type TranslationContentRowCommandPayload } from "./workbenchCommands";
+import { contentSelectionIds, fixedContentSelection, type ContentSelection } from "./contentSelection";
 import { validateResponseHistory } from "./generated/translation.validators";
 import { validateResponseEditor } from "./generated/review.validators";
 import type { ChangeScope } from "./sessionReads";
@@ -65,7 +66,11 @@ const targetFromTranslation = (row: TranslationPreviewRow): EditorTarget | null 
   ? { unitId: row.unitId, sourceRevisionId: row.sourceRevisionId, key: row.entry.nativeKey, sourceText: row.sourceText ?? "" }
   : null;
 
-export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, ref }: { project: ProjectView; disabled: boolean; onOpenExtensions?: () => void; onQueryText?: (text: string) => boolean | Promise<boolean>; ref?: Ref<TranslationHandle> }) {
+export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExtensions, aiSelection, onPrepareSelection, ref }: {
+  project: ProjectView; disabled: boolean; onOpenExtensions?: () => void; onQueryText?: (text: string) => boolean | Promise<boolean>;
+  aiSelection?: { count: number; locale: string; editSeq: number; available: boolean };
+  onPrepareSelection?: (selection: ContentSelection, expectedEditSeq: number) => Promise<boolean>; ref?: Ref<TranslationHandle>
+}) {
   const { t } = useTranslation();
   const context = executionContext(project);
   const draftSession = useTranslationDraftSession();
@@ -92,6 +97,14 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   const [navigationEnd, setNavigationEnd] = useWorkbenchState("translation", "navigationEnd", false);
   const [query, setQuery] = useWorkbenchState("translation", "query", "");
   const [appliedQuery, setAppliedQuery] = useWorkbenchState("translation", "appliedQuery", "");
+  const [contentSelection, setContentSelection] = useWorkbenchState<ContentSelection | null>("translation", "contentSelection", null);
+  const selectionVersion = useWorkbenchRef("translation", "contentSelectionVersion", 0);
+  const selectionTransfer = useRef<ContentSelection | null>(null);
+  const [selectionAction, setSelectionAction] = useState<
+    { kind: "capture"; value: ContentSelection; version: number; listReadId: number }
+    | { kind: "ai"; value: ContentSelection; version: number; aiEditSeq: number; previousCount: number; previousLocale: string } | null>(null);
+  const selectedIds = useMemo(() => contentSelection ? new Set(contentSelectionIds(contentSelection)) : new Set<string>(), [contentSelection]);
+  const selectionMembers = useMemo(() => new Set(contentSelection?.capture.units.map(unit => unit.unitId)), [contentSelection]);
   const [listAfter, setListAfter] = useWorkbenchState("translation", "listAfter", 0);
   const listBasis = useWorkbenchRef<string | null>("translation", "listBasis", null);
   const listPosition = useWorkbenchRef("translation", "listPosition", { query: "", after: 0 });
@@ -246,6 +259,72 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     return !!query && query === readyListRead.query && query.state.status === "success" && query.state.fetchStatus === "idle"
       && !query.state.isInvalidated && query.state.error === null && query.state.data === readyListRead.data
       && readEpoch(["source", "translation", "resources", "review"]) === readyListRead.epoch;
+  }
+  function selectionSourceCurrent(value: ContentSelection) {
+    return value.projectId === context.projectId && value.sessionToken === context.sessionToken && currentLocale(value.capture.locale)
+      && !!source && checkedRead(sourceScopeKey, source) && source.currentSnapshot === value.capture.sourceSnapshotId;
+  }
+  function selectionGate(): CommandAvailability {
+    return open && tab === "edit" && !disabled && !busy && !readBusy && !readRunning.current && !composing && !leaveIntent
+      && !selectionAction && !protectionBlocked && !reads.retired && targetAvailable && confirmedList()
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  function contentRowPayload(row: ReviewSummary, checked: boolean): TranslationContentRowCommandPayload | undefined {
+    return list && listIntent ? { kind: "translation-content-row", unitId: row.unitId, scopeId: list.scopeId, locale: targetLocale,
+      sourceSnapshotId: list.sourceSnapshotId, listReadId: listIntent.id, selectionVersion: selectionVersion.current, checked } : undefined;
+  }
+  function contentRowAvailability(payload?: TranslationContentRowCommandPayload): CommandAvailability {
+    const gate = selectionGate(); if (!gate.enabled) return gate;
+    return payload && payload.listReadId === listIntent?.id && payload.scopeId === list?.scopeId && payload.locale === targetLocale
+      && payload.sourceSnapshotId === list.sourceSnapshotId && payload.selectionVersion === selectionVersion.current
+      && list.rows.some(row => row.unitId === payload.unitId)
+      && (!contentSelection || selectionSourceCurrent(contentSelection) && selectionMembers.has(payload.unitId))
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  function chooseContentSelection(value: ContentSelection | null) {
+    selectionVersion.current++; setContentSelection(value); setSelectionAction(null);
+  }
+  async function captureContentSelection(current: () => boolean, unitId?: string) {
+    const intent = listIntent, page = list, version = selectionVersion.current;
+    if (!intent || !page || !confirmedList()) return;
+    const epoch = readEpoch(["source", "translation", "resources", "review"]);
+    const capture = await reviewCommands.captureScope({ ...context, locale: intent.locale, scopeId: intent.scopeId, excluded: [] });
+    if (!current() || version !== selectionVersion.current) return;
+    if (!confirmedList() || listIntent !== intent || readEpoch(["source", "translation", "resources", "review"]) !== epoch
+      || capture.query !== intent.query || capture.sourceSnapshotId !== page.sourceSnapshotId || capture.units.length !== page.total
+      || unitId !== undefined && !capture.units.some(unit => unit.unitId === unitId)) throw { reason: "review-scope-source-changed" };
+    const value = fixedContentSelection({ ...context, capture, excluded: unitId === undefined ? [] : capture.units.filter(unit => unit.unitId !== unitId).map(unit => unit.unitId) });
+    if (!selectionSourceCurrent(value)) throw { reason: "review-scope-source-changed" };
+    if (unitId === undefined) setSelectionAction({ kind: "capture", value, version, listReadId: intent.id });
+    else chooseContentSelection(value);
+  }
+  function toggleContentSelection(payload: TranslationContentRowCommandPayload) {
+    if (!contentRowAvailability(payload).enabled) return;
+    if (!contentSelection) { if (payload.checked) void performRead(current => captureContentSelection(current, payload.unitId)); return; }
+    const excluded = payload.checked ? contentSelection.excluded.filter(id => id !== payload.unitId)
+      : [...contentSelection.excluded.filter(id => id !== payload.unitId), payload.unitId];
+    chooseContentSelection(fixedContentSelection({ ...contentSelection, excluded }));
+  }
+  function selectionConfirmationCurrent() {
+    return !!selectionAction && selectionAction.version === selectionVersion.current && open && tab === "edit" && !disabled
+      && !busy && !readBusy && !composing && !leaveIntent && !reads.retired && selectionSourceCurrent(selectionAction.value)
+      && (selectionAction.kind === "capture" ? selectionAction.listReadId === listIntent?.id && confirmedList()
+        : selectionAction.value === contentSelection && aiSelection?.available && aiSelection.editSeq === selectionAction.aiEditSeq);
+  }
+  function prepareSelectionAvailability(): CommandAvailability {
+    return selectionGate().enabled && !!onPrepareSelection && !!aiSelection?.available && !!contentSelection
+      && selectionSourceCurrent(contentSelection) && selectedIds.size > 0 && selectedIds.size <= 100
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  async function confirmSelectedAi() {
+    const action = selectionAction;
+    if (action?.kind !== "ai" || !selectionConfirmationCurrent() || !onPrepareSelection) return;
+    // The navigation owner checks this same selection and AI edit sequence again.
+    selectionTransfer.current = action.value;
+    setSelectionAction(null);
+    try { if (!await onPrepareSelection(action.value, action.aiEditSeq) && mounted.current) setFailure("navigation-edited"); }
+    catch (error) { if (mounted.current) setFailure(commandFailure(error)); }
+    finally { selectionTransfer.current = null; }
   }
   useEffect(() => {
     if (!open || !targetAvailable) return;
@@ -567,6 +646,19 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     });
     const metadata = { category: "translation" as const, scope: commandScope, binding: null, confirmation: "none" as const };
     const removeBusiness = [
+      commandRegistry.register({ ...metadata, id: "translation.capture-content-selection", nameKey: "workbench.selectAllMatching", risk: "captures-content-selection",
+        availability: () => selectionGate().enabled && !!list?.total ? { enabled: true } : unavailableCommand,
+        handler: () => { void performRead(current => captureContentSelection(current)); } }),
+      commandRegistry.register({ ...metadata, id: "translation.toggle-content-selection", nameKey: "workbench.selectEntry", risk: "captures-content-selection",
+        payloadKind: "translation-content-row", availability: contentRowAvailability, handler: toggleContentSelection }),
+      commandRegistry.register({ ...metadata, id: "translation.clear-content-selection", nameKey: "workbench.clearContentSelection", risk: "captures-content-selection",
+        availability: () => open && tab === "edit" && !disabled && !reads.retired && !!contentSelection && !selectionAction ? { enabled: true } : unavailableCommand,
+        handler: () => chooseContentSelection(null) }),
+      commandRegistry.register({ ...metadata, id: "translation.prepare-selected-ai", nameKey: "workbench.prepareSelectedAi", risk: "captures-ai",
+        confirmation: "required", availability: prepareSelectionAvailability, handler: () => {
+          if (contentSelection && aiSelection) setSelectionAction({ kind: "ai", value: contentSelection, version: selectionVersion.current,
+            aiEditSeq: aiSelection.editSeq, previousCount: aiSelection.count, previousLocale: aiSelection.locale });
+        } }),
       commandRegistry.register({ ...metadata, id: "translation.choose-import-row", nameKey: "translation.addCandidate", risk: "captures-translation-import",
         payloadKind: "translation-import-row", availability: payload => importRowAvailability(payload), handler: payload => {
           const row=rowCommandTarget(payload); if(row)importSession.chooseRow(row,payload.decision);
@@ -637,7 +729,9 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
       return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
     },
     allowNavigate() {
-      if (composing || draftSession.protection.blocked() || leaveIntent || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
+      const confirmingSelection = selectionAction !== null && (selectionAction.kind !== "ai" || selectionTransfer.current !== selectionAction.value
+        || contentSelection !== selectionAction.value || selectionVersion.current !== selectionAction.version);
+      if (composing || draftSession.protection.blocked() || leaveIntent || confirmingSelection || rowAction || batchCapture || (running.current && !editorDraft?.saving)) return Promise.resolve(false);
       return Promise.resolve(true);
     },
   }));
@@ -852,6 +946,20 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
     if (intent?.kind === "switch") await switchEditor(intent, current);
   }
   return <>
+    <Dialog.Root open={selectionAction !== null} onOpenChange={value => { if (!value) setSelectionAction(null); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop execution-confirm-backdrop" /><Dialog.Content className="confirm-dialog execution-confirm-dialog">
+      <Dialog.Title>{t(selectionAction?.kind === "ai" ? "workbench.prepareSelectedAi" : "workbench.confirmContentSelection")}</Dialog.Title>
+      <Dialog.Description>{selectionAction ? t("workbench.fixedContentRange", { count: contentSelectionIds(selectionAction.value).length,
+        excluded: String(selectionAction.value.excluded.length), locale: selectionAction.value.capture.locale,
+        query: selectionAction.value.capture.query || t("workbench.allEntries") }) : ""}</Dialog.Description>
+      <p>{selectionAction?.kind === "ai" ? t("workbench.replaceAiSelection", { count: selectionAction.previousCount, locale: selectionAction.previousLocale })
+        : t("workbench.replaceContentSelection", { count: selectedIds.size })}</p>
+      {!selectionConfirmationCurrent() ? <p role="alert">{t("workbench.contentConfirmationChanged")}</p> : null}
+      <div className="form-actions"><button className="secondary-button" onClick={() => setSelectionAction(null)}>{t("translation.stay")}</button>
+        <button className="primary-button" disabled={!selectionConfirmationCurrent()} onClick={() => {
+          if (!selectionConfirmationCurrent() || !selectionAction) return;
+          if (selectionAction.kind === "ai") void confirmSelectedAi(); else chooseContentSelection(selectionAction.value);
+        }}>{t(selectionAction?.kind === "ai" ? "workbench.openAiPreparation" : "workbench.confirmContentSelection")}</button></div>
+    </Dialog.Content></Dialog.Portal></Dialog.Root>
     {open ? <WorkbenchPanel open={open} title={t("translation.title")} description={t("translation.description")} className="source-dialog translation-workbench" onBack={requestClose} backDisabled={disabled || composing || protectionBlocked || (localBusy && !editorDraft?.saving)}>
         <div className="execution-content" aria-busy={busy}>
           {failure ? <div role="alert"><p>{t(`translation.errors.${errorKey(failure)}`)}</p><CommandFailureDetails failure={effectiveFailureValue} />{typeof effectiveFailureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
@@ -884,9 +992,27 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
               <button className="secondary-button" type="submit" disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable}>{t("workbench.searchAction")}</button>
               <span role="status">{listRead.error ? t("translation.errors.failed") : list ? t("workbench.results", { count: list.total }) : t("execution.loading")}</span>
             </form>
+            <div className="content-selection-toolbar" role="group" aria-label={t("workbench.contentSelection")}>
+              <span role="status">{contentSelection ? t("workbench.fixedContentRange", { count: selectedIds.size, excluded: String(contentSelection.excluded.length),
+                locale: contentSelection.capture.locale, query: contentSelection.capture.query || t("workbench.allEntries") }) : t("workbench.noContentSelection")}</span>
+              <div className="execution-actions"><button className="secondary-button" disabled={!selectionGate().enabled || !list?.total}
+                onClick={() => commandRegistry.dispatch("translation.capture-content-selection", commandScope)}>{t("workbench.selectAllMatching")}</button>
+                <button className="text-button" disabled={!contentSelection || !!selectionAction || disabled}
+                  onClick={() => commandRegistry.dispatch("translation.clear-content-selection", commandScope)}>{t("workbench.clearContentSelection")}</button>
+                {onPrepareSelection ? <button className="secondary-button" disabled={!prepareSelectionAvailability().enabled}
+                  onClick={() => commandRegistry.dispatch("translation.prepare-selected-ai", commandScope)}>{t("workbench.prepareSelectedAi")}</button> : null}</div>
+              {contentSelection && !selectionSourceCurrent(contentSelection) ? <p role="status">{t("workbench.contentSelectionChanged")}</p> : null}
+              {selectedIds.size > 100 ? <p role="status">{t("workbench.contentSelectionAiLimit")}</p> : null}
+              {onPrepareSelection && !aiSelection?.available ? <p role="status">{t("workbench.contentSelectionAiBusy")}</p> : null}
+            </div>
             <div className="translation-columns">
               <div className="translation-entry-list" aria-label={t("translation.chooseUnit")}>
-                <ul ref={entryList}>{list?.rows.map(row => <li key={row.unitId}><button className="translation-entry" aria-label={row.nativeKey}
+                <ul ref={entryList}>{list?.rows.map(row => <li className="content-selection-row" key={row.unitId}>
+                  <input type="checkbox" aria-label={t("workbench.selectEntry", { key: row.nativeKey })} checked={contentSelection?.capture.locale === targetLocale && selectedIds.has(row.unitId)}
+                    disabled={!contentRowAvailability(contentRowPayload(row, !selectedIds.has(row.unitId))).enabled}
+                    title={contentSelection && !selectionMembers.has(row.unitId) ? t("workbench.outsideContentSelection") : undefined}
+                    onChange={event => { const payload = contentRowPayload(row, event.target.checked); if (payload) commandRegistry.dispatch("translation.toggle-content-selection", commandScope, payload); }} />
+                  <button className="translation-entry" aria-label={row.nativeKey}
                   aria-current={displayedTarget?.unitId === row.unitId ? "true" : undefined} disabled={busy || readBusy || composing || protectionBlocked || !targetAvailable} onClick={() => chooseEditor(listTarget(row))}>
                   <strong>{row.nativeKey}</strong><span className="entry-source">{row.sourcePreview || t("translation.empty")}</span>
                   <span className="entry-translation">{row.translationPreview === null ? t("workbench.unselected") : row.translationPreview || t("translation.empty")}</span>

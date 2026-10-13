@@ -1,10 +1,12 @@
 import type { WorkspaceArea } from "./WorkbenchFrame";
 import type { EditorTarget } from "./TranslationWorkbench";
+import type { ContentSelection } from "./contentSelection";
 
 export type WorkspaceDestination =
   | { kind: "area"; area: WorkspaceArea }
   | { kind: "translation"; target: EditorTarget; locale: string; suggestedText?: string }
   | { kind: "review-work" }
+  | { kind: "ai-selection"; selection: ContentSelection; expectedEditSeq: number }
   | { kind: "saved-build"; attemptId: string }
   | { kind: "tool-query"; text: string }
   | { kind: "attempt"; area: "source" | "translation" | "ai" | "arena"; attemptId: string };
@@ -27,7 +29,7 @@ export interface SessionNavigationPorts {
 }
 export function destinationArea(destination: WorkspaceDestination): WorkspaceArea {
   return destination.kind === "area" || destination.kind === "attempt" ? destination.area
-    : destination.kind === "translation" ? "translation" : destination.kind === "saved-build" ? "release"
+    : destination.kind === "translation" ? "translation" : destination.kind === "ai-selection" ? "ai" : destination.kind === "saved-build" ? "release"
       : destination.kind === "tool-query" ? "resources" : "review";
 }
 

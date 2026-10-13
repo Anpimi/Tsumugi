@@ -13,11 +13,18 @@ import { aiAttempt, aiViewFixture } from "./testSupport/aiFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { i18n } from "./i18n";
+import { fixedContentSelection, type ContentSelection } from "./contentSelection";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "ai-owner-session", locator: "isolated", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(500), displayName: "AI owner", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
+function contentRange(): ContentSelection {
+  return fixedContentSelection({ projectId: project.metadata.projectId, sessionToken: project.sessionToken,
+    capture: { locale: "zh-CN", query: "fixed", readVersion: "basis-view", scopeId: fixtureIdentity(800), sourceSnapshotId: fixtureIdentity(801),
+      units: [1,2,3].map(index => ({ unitId: fixtureIdentity(810 + index), expectedBasis: `basis-${index}`, expectedDecisionId: null })) },
+    excluded: [fixtureIdentity(812)] });
+}
 let owner: ReturnType<typeof useAiPreparation>;
 let reads: ReturnType<typeof useSessionReads>;
 let prepared: AiPrepared;
@@ -97,6 +104,63 @@ async function prepare() {
   await act(async () => { await owner.preview(); });
   act(() => { owner.setConsent(true); });
 }
+
+it("transfers exact fixed content members without execution, preserving configuration and invalidating the old preview and consent", async () => {
+  render(<Harness />, project); await prepare();
+  const before = owner.current(), selection = contentRange(), count = invoke.mock.calls.length;
+  act(() => { expect(owner.receiveContentSelection(selection, before.editSeq)).toBe(true); });
+  expect(owner.selected).toEqual([fixtureIdentity(811), fixtureIdentity(813)]);
+  expect(owner.config).toEqual(before.config); expect(owner.options).toEqual(before.options); expect(owner.planId).toBe(before.planId);
+  expect(owner.prepared).toBeNull(); expect(owner.preparedPlan).toBeNull(); expect(owner.consent).toBe(false);
+  expect(owner.canStart()).toBe(false); expect(owner.dirty).toBe(true); expect(invoke.mock.calls).toHaveLength(count);
+  expect(Object.isFrozen(selection.capture.units)).toBe(true);
+});
+
+it("refuses foreign sessions, obsolete AI edits, duplicate or excluded foreign members and over-limit transfers", () => {
+  render(<Harness />, project); const selection = contentRange(), before = owner.current();
+  const invalidCases: [ContentSelection, number][] = [
+    [{ ...selection, projectId: fixtureIdentity(999) }, before.editSeq],
+    [{ ...selection, sessionToken: "foreign" }, before.editSeq],
+    [selection, before.editSeq + 1],
+    [{ ...selection, capture: { ...selection.capture, locale: "fr" } }, before.editSeq],
+    [{ ...selection, excluded: [fixtureIdentity(999)] }, before.editSeq],
+    [{ ...selection, capture: { ...selection.capture, units: [...selection.capture.units, selection.capture.units[0]] } }, before.editSeq],
+    [{ ...selection, excluded: [], capture: { ...selection.capture, units: Array.from({ length: 101 }, (_, index) => ({ unitId: fixtureIdentity(1000 + index), expectedBasis: "basis", expectedDecisionId: null })) } }, before.editSeq],
+  ];
+  for (const [value, sequence] of invalidCases) {
+    act(() => { expect(owner.receiveContentSelection(value, sequence)).toBe(false); });
+    expect(owner.current()).toBe(before);
+  }
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+it("keeps the original pending generation request when content transfer arrives during its reservation", async () => {
+  render(<Harness />, project); await prepare(); const response = deferred<string>(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, payload: unknown) => command === "start_ai_translation" ? response.promise : original(command, payload));
+  let pending!: Promise<void>; act(() => { pending = owner.start(); });
+  const before = owner.current();
+  act(() => { expect(owner.receiveContentSelection(contentRange(), before.editSeq)).toBe(false); });
+  expect(owner.current()).toBe(before); expect(owner.pendingStart?.request).toEqual(before.pendingStart?.request);
+  await act(async () => { response.resolve(prepared.attemptId); await pending; });
+});
+
+it("blocks transfer after start acknowledgement until the original task has a checked, idle and finished result", async () => {
+  render(<Harness />, project); await prepare(); await act(async () => { await owner.start(); });
+  const before = owner.current();
+  expect(owner.canReceiveContentSelection()).toBe(false);
+  expect(owner.contentRangeAvailable).toBe(false);
+  act(() => { expect(owner.receiveContentSelection(contentRange(), before.editSeq)).toBe(false); });
+  expect(owner.current()).toBe(before);
+  let view!: AiView; await act(async () => { view = await owner.readView(prepared.attemptId); });
+  act(() => { reads.client.setQueryData(reads.key(["aiCommands",prepared.attemptId]), view); });
+  expect(owner.canReceiveContentSelection()).toBe(true);
+  expect(owner.contentRangeAvailable).toBe(true);
+  act(() => { reads.client.setQueryData(reads.key(["aiCommands",prepared.attemptId]), { ...view, detail: { ...view.detail, progress: { ...view.detail.progress, running: 1 } } }); });
+  expect(owner.canReceiveContentSelection()).toBe(false);
+  expect(owner.contentRangeAvailable).toBe(false);
+  act(() => { reads.client.setQueryData(reads.key(["aiCommands",prepared.attemptId]), view); void reads.client.invalidateQueries({ queryKey: reads.key(["aiCommands",prepared.attemptId]), exact: true, refetchType: "none" }); });
+  expect(owner.canReceiveContentSelection()).toBe(false);
+});
 async function start() { await prepare(); await act(async () => { await owner.start(); }); return viewFor(); }
 
 it("reserves generation synchronously across callers before dispatching the captured preview", async () => {

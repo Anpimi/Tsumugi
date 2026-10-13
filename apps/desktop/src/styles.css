@@ -1581,6 +1581,12 @@ button:focus-visible {
 .translation-search { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; flex-shrink: 0; }
 .translation-search input { flex: 1; }
 .translation-search span { font-size: 12px; color: var(--muted); flex-shrink: 0; }
+.content-selection-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding-bottom: 12px; flex-shrink: 0; }
+.content-selection-toolbar > span, .content-selection-toolbar > p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.content-selection-toolbar > p { flex-basis: 100%; }
+.content-selection-row { display: flex; align-items: flex-start; border-bottom: 1px solid var(--border); }
+.content-selection-row > input { flex: 0 0 auto; margin: 16px 4px 0 8px; }
+.content-selection-row .translation-entry { min-width: 0; border-bottom: 0; }
 .translation-columns { display: grid; grid-template-columns: 260px minmax(0, 1fr); flex: 1; min-height: 0; border-top: 1px solid var(--border); }
 .translation-entry-list { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
 .translation-entry-list ul { list-style: none; padding: 0; margin: 0; flex: 1; overflow: auto; }
