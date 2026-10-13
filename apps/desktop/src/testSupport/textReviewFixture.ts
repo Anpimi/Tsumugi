@@ -1,6 +1,6 @@
 //! Synthetic Desktop observations. These do not prove a Worker channel or SHA.
 import wire from "../../test/fixtures/reviewCommands.contract.json";
-import { validateResponsePrepareCheck } from "../generated/review.validators";
+import { validateResponsePrepareCheck, validateResponseCheck } from "../generated/review.validators";
 import type { ReviewCheckerPreflightView, ReviewCheckerView, CheckKey } from "../generated/review.responses";
 import type { PluginTextReviewView } from "../pluginCommands";
 import { fixtureIdentity } from "./executionFixture";
@@ -44,4 +44,12 @@ export function textReviewSlotFixture(view = textReviewViewFixture(), seed = 930
 }
 export function pluginRuleKeyFixture(id: string): CheckKey {
   return { rule: contract(id), implementation: { kind: "plugin", provider: formatReviewSlotFixture().checker.provider } };
+}
+
+export function coreRuleKeyFixture(rule: "required-translation" | "terminology"): CheckKey {
+  const checked: unknown = structuredClone(wire.responses.check);
+  if (!validateResponseCheck(checked)) throw new Error("Invalid check fixture");
+  const match = checked.rules.find(value => value.rule === rule && value.key.implementation.kind === "core");
+  if (!match) throw new Error("Core policy rule required");
+  return match.key;
 }

@@ -1,0 +1,283 @@
+import { usePluginToolQuerySession, type PluginToolQuerySession } from "./PluginToolQuerySession";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { commandFailure, type CommandFailure } from "./CommandFailure";
+import { executionCommands, executionContext, type SessionRequest } from "./executionCommands";
+import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
+import { resourceCommands, type CaptureContext, type ContextCapture, type ContextRevision, type GlossaryCapture,
+  type ResourceDecision, type ResourceDecisionResult, type ResourcePreview, type SaveContext, type SaveTerm, type TermRevision } from "./resourceCommands";
+import { sourceCommands, type ContentRow, type ContentScope } from "./sourceCommands";
+import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
+
+export type ResourceTermDraft = Pick<SaveTerm, "source" | "aliases" | "target" | "protected" | "scopeUnitId" | "reason">;
+export const resourceTermDraftFor = (term: ResourceTermDraft | null): ResourceTermDraft => term
+  ? { source: term.source, aliases: [...term.aliases], target: term.target, protected: term.protected, scopeUnitId: term.scopeUnitId ?? null, reason: term.reason }
+  : { source: "", aliases: [], target: "", protected: false, scopeUnitId: null, reason: "" };
+type PendingBase = { session: SessionRequest };
+export type ResourcePending =
+  | (PendingBase & { kind: "term"; request: SaveTerm; submittedSeq: number; aliasInput: string })
+  | (PendingBase & { kind: "context"; request: SaveContext; submittedSeq: number })
+  | (PendingBase & { kind: "decision"; request: ResourceDecision; locale: string })
+  | (PendingBase & { kind: "capture"; request: CaptureContext });
+export type ResourceNotice = "saved" | "savedNewer" | "decisionSaved" | "previewReady" | "captureSaved" | "unknown" | "pickerUnknown" | "error" | null;
+export interface ResourceSourceBasis { revision: string; snapshotId: string }
+export interface ResourceDraftState {
+  locale: string;
+  selectedTerm: TermRevision | null;
+  termDraft: ResourceTermDraft;
+  aliasInput: string;
+  termSeq: number;
+  newerTerm: boolean;
+  selectedUnit: ContentRow | null;
+  contextRevision: ContextRevision | null;
+  contextDraft: string;
+  contextReason: string;
+  contextSeq: number;
+  newerContext: boolean;
+  /** Explicitly captured evidence, never a mirror of the mutable resource lists. */
+  previewCapture: GlossaryCapture | null;
+  preview: ResourcePreview | null;
+  previewSourceBasis: ResourceSourceBasis | null;
+  previewNeedsRefresh: boolean;
+  fixedContext: ContextCapture | null;
+  pending: ResourcePending | null;
+  pendingUncertain: boolean;
+  busyMutation: boolean;
+  notice: ResourceNotice;
+  failure: CommandFailure | null;
+  completionVersion: number;
+}
+interface ResourceSession {
+  tool: PluginToolQuerySession;
+  state: ResourceDraftState;
+  current: () => ResourceDraftState;
+  inFlight: () => boolean;
+  termDirty: () => boolean;
+  contextDirty: () => boolean;
+  localeAvailable: (locale: string) => boolean;
+  setLocale: (locale: string) => boolean;
+  beginTerm: (term: TermRevision | null) => boolean;
+  editTerm: (draft: ResourceTermDraft, aliases?: string) => void;
+  discardTerm: () => void;
+  beginContext: (row: ContentRow, revision: ContextRevision | null) => boolean;
+  editContext: (text: string) => void;
+  editContextReason: (reason: string) => void;
+  discardContext: () => void;
+  discard: () => void;
+  saveTerm: (isScopeCurrent?: () => boolean) => Promise<void>;
+  saveContext: (isScopeCurrent?: () => boolean) => Promise<void>;
+  decide: (entryId: string, expectedRevisionId: string | null, decision: ResourceDecision["decision"], isScopeCurrent?: () => boolean) => Promise<void>;
+  captureContext: (isScopeCurrent?: () => boolean) => Promise<void>;
+  retryPending: () => Promise<void>;
+  chooseFile: (isCurrent?: () => boolean) => Promise<void>;
+  openPreview: (capture: GlossaryCapture, isCurrent?: () => boolean) => Promise<void>;
+  retryPreview: (isCurrent?: () => boolean) => Promise<void>;
+}
+const ResourceContext = createContext<ResourceSession | null>(null);
+export function useResourceDraftSession() {
+  const owner = useContext(ResourceContext);
+  if (!owner) throw new Error("Resource drafts require a project session owner");
+  return owner;
+}
+function sameTerm(left: ResourceTermDraft, right: ResourceTermDraft) { return JSON.stringify(resourceTermDraftFor(left)) === JSON.stringify(resourceTermDraftFor(right)); }
+function nullable(value: string | null | undefined) { return value ?? null; }
+function invalidReceipt() { throw new Error("Invalid resource action acknowledgement"); }
+
+export function ResourceDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
+  const tool = usePluginToolQuerySession(project);
+  const reads = useSessionReads();
+  const [state, setState] = useState<ResourceDraftState>(() => ({ locale: project.metadata.targetLocales[0] ?? "",
+    selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: 0, newerTerm: false,
+    selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: 0, newerContext: false,
+    previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, pendingUncertain: false, busyMutation: false, notice: null, failure: null, completionVersion: 0 }));
+  const currentState = useRef(state), projectRef = useRef(project);
+  const [session] = useState(() => executionContext(project));
+  const mounted = useSessionAlive(), running = useRef(false);
+  const targetScope = project.metadata.targetLocales.join("\u0000");
+  useLayoutEffect(() => { projectRef.current = project; }, [project]);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  function current() { return currentState.current; }
+  function live() { const value = projectRef.current; return mounted.current && value.sessionToken === session.sessionToken && value.metadata.projectId === session.projectId; }
+  function update(change: (before: ResourceDraftState) => ResourceDraftState) {
+    if (!live()) return;
+    const next = change(current()); currentState.current = next; setState(next);
+  }
+  function localeAvailable(locale: string) { return live() && !!locale && projectRef.current.metadata.targetLocales.includes(locale); }
+  function termDirty() { const value = current(); return value.newerTerm || value.aliasInput !== (value.selectedTerm?.aliases.join(", ") ?? "") || !sameTerm(value.termDraft, resourceTermDraftFor(value.selectedTerm)); }
+  function contextDirty() { const value = current(); return value.newerContext || value.contextDraft !== (value.contextRevision?.text ?? "") || value.contextReason !== (value.contextRevision?.reason ?? ""); }
+  function reserved() { return running.current || !!current().pending; }
+  function resetLocale(before: ResourceDraftState, locale: string): ResourceDraftState {
+    return { ...before, locale, selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: before.termSeq + 1, newerTerm: false,
+      selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: before.contextSeq + 1, newerContext: false,
+      previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, notice: null, failure: null };
+  }
+  useEffect(() => {
+    const next = projectRef.current.metadata.targetLocales[0] ?? "";
+    if (current().locale !== next && !localeAvailable(current().locale) && !reserved() && !termDirty() && !contextDirty()
+      && !current().previewCapture && !current().fixedContext) {
+      update(before => resetLocale(before, next));
+    }
+  }, [targetScope, state.busyMutation, state.pending, state.termSeq, state.contextSeq]);
+  function setLocale(locale: string) {
+    if (!localeAvailable(locale) || reserved() || termDirty() || contextDirty()) return false;
+    update(before => resetLocale(before, locale)); return true;
+  }
+  function beginTerm(term: TermRevision | null) {
+    if (reserved() || termDirty() || !localeAvailable(current().locale) || (term && term.locale !== current().locale)) return false;
+    update(before => ({ ...before, selectedTerm: term, termDraft: resourceTermDraftFor(term), aliasInput: term?.aliases.join(", ") ?? "", termSeq: before.termSeq + 1, newerTerm: false })); return true;
+  }
+  function editTerm(termDraft: ResourceTermDraft, aliases?: string) { update(before => ({ ...before, termDraft, aliasInput: aliases ?? before.aliasInput, termSeq: before.termSeq + 1, newerTerm: false })); }
+  function discardTerm() { if (!reserved()) update(before => ({ ...before, termDraft: resourceTermDraftFor(before.selectedTerm), aliasInput: before.selectedTerm?.aliases.join(", ") ?? "", termSeq: before.termSeq + 1, newerTerm: false })); }
+  function beginContext(row: ContentRow, revision: ContextRevision | null) {
+    const locale = current().locale;
+    if (reserved() || contextDirty() || !localeAvailable(locale) || !row.unitId || !row.sourceRevisionId
+      || (revision && (revision.unitId !== row.unitId || revision.locale !== locale))) return false;
+    update(before => ({ ...before, selectedUnit: row, contextRevision: revision, contextDraft: revision?.text ?? "", contextReason: revision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false, fixedContext: null })); return true;
+  }
+  function editContext(contextDraft: string) { update(before => ({ ...before, contextDraft, contextSeq: before.contextSeq + 1, newerContext: false })); }
+  function editContextReason(contextReason: string) { update(before => ({ ...before, contextReason, contextSeq: before.contextSeq + 1, newerContext: false })); }
+  function discardContext() { if (!reserved()) update(before => ({ ...before, contextDraft: before.contextRevision?.text ?? "", contextReason: before.contextRevision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false })); }
+  function discard() { discardTerm(); discardContext(); }
+  function fail(error: unknown, notice: ResourceNotice = "error") { update(before => ({ ...before, failure: commandFailure(error), notice })); }
+  function reserve() {
+    if (!live() || reserved()) return false;
+    running.current = true; update(before => ({ ...before, busyMutation: true, failure: null, notice: null })); return true;
+  }
+  function release() { running.current = false; update(before => ({ ...before, busyMutation: false })); }
+  function sameTermTarget(before: ResourceDraftState, start: ResourceDraftState) { return before.locale === start.locale && before.selectedTerm?.termId === start.selectedTerm?.termId && before.selectedTerm?.revisionId === start.selectedTerm?.revisionId; }
+  function sameContextTarget(before: ResourceDraftState, start: ResourceDraftState) { return before.locale === start.locale && before.selectedUnit?.unitId === start.selectedUnit?.unitId && before.selectedUnit?.sourceRevisionId === start.selectedUnit?.sourceRevisionId && before.contextRevision?.revisionId === start.contextRevision?.revisionId; }
+  function matchingPreview(before: ResourceDraftState, start: ResourceDraftState) { return before.preview === start.preview && before.previewCapture?.captureId === start.previewCapture?.captureId && before.locale === start.locale; }
+  function confirmTerm(action: Extract<ResourcePending, { kind: "term" }>, revision: TermRevision) {
+    const request = action.request;
+    if (!sameTerm(revision, request) || revision.locale !== request.locale || (request.termId != null && revision.termId !== request.termId)
+      || revision.previousRevisionId !== nullable(request.expectedRevisionId) || revision.originKind !== "manual" || revision.removed
+      || revision.captureId !== null || revision.externalEntryId !== null) invalidReceipt();
+    update(before => {
+      if (before.pending !== action) return before;
+      const unchanged = before.termSeq === action.submittedSeq && sameTerm(before.termDraft, request) && before.aliasInput === action.aliasInput;
+      return { ...before, selectedTerm: revision, termDraft: unchanged ? resourceTermDraftFor(revision) : before.termDraft,
+        aliasInput: unchanged ? revision.aliases.join(", ") : before.aliasInput, newerTerm: !unchanged, pending: null, pendingUncertain: false,
+        notice: unchanged ? "saved" : "savedNewer", failure: null, completionVersion: before.completionVersion + 1 };
+    });
+  }
+  function confirmContext(action: Extract<ResourcePending, { kind: "context" }>, revision: ContextRevision) {
+    const request = action.request;
+    if (revision.unitId !== request.unitId || revision.locale !== request.locale || revision.text !== request.text || revision.reason !== request.reason
+      || revision.previousRevisionId !== nullable(request.expectedRevisionId)) invalidReceipt();
+    update(before => {
+      if (before.pending !== action) return before;
+      const unchanged = before.contextSeq === action.submittedSeq && before.contextDraft === request.text && before.contextReason === request.reason;
+      return { ...before, contextRevision: revision, contextDraft: unchanged ? revision.text : before.contextDraft,
+        contextReason: unchanged ? revision.reason : before.contextReason, newerContext: !unchanged, pending: null, pendingUncertain: false,
+        notice: unchanged ? "saved" : "savedNewer", failure: null, completionVersion: before.completionVersion + 1 };
+    });
+  }
+  function confirmDecision(action: Extract<ResourcePending, { kind: "decision" }>, result: ResourceDecisionResult) {
+    if (result.actionId !== action.request.actionId || result.decision !== action.request.decision) invalidReceipt();
+    update(before => before.pending === action ? { ...before, pending: null, pendingUncertain: false, previewNeedsRefresh: true, notice: "decisionSaved", failure: null, completionVersion: before.completionVersion + 1 } : before);
+  }
+  function confirmCapture(action: Extract<ResourcePending, { kind: "capture" }>, capture: ContextCapture) {
+    const request = action.request;
+    if (capture.unitId !== request.unitId || capture.locale !== request.locale || capture.sourceRevisionId !== request.sourceRevisionId || capture.budgetBytes !== request.budgetBytes) invalidReceipt();
+    update(before => before.pending === action ? { ...before, fixedContext: capture, pending: null, pendingUncertain: false, notice: "captureSaved", failure: null, completionVersion: before.completionVersion + 1 } : before);
+  }
+  async function readPreview(capture: GlossaryCapture, isCurrent: () => boolean = live) {
+    if (!live() || !isCurrent() || !localeAvailable(capture.targetLocale)) return;
+    // The user explicitly accepts a comparison against this source scope. Keep
+    // this small immutable basis separate from the current Query projection.
+    const sourceKey = reads.key(["resource-source-scope"]);
+    const source = await reads.client.fetchQuery<ContentScope>({ queryKey: sourceKey, meta: { scopes: ["source"] }, queryFn: () => sourceCommands.scope(session) });
+    if (!live() || !isCurrent()) return;
+    if (!source.currentSnapshot) throw { reason: "resource-source" };
+    const basis: ResourceSourceBasis = { revision: source.revision, snapshotId: source.currentSnapshot };
+    const result = await resourceCommands.preview({ ...session, captureId: capture.captureId });
+    if (!live() || !isCurrent()) return;
+    if (result.capture.captureId !== capture.captureId || result.capture.digest !== capture.digest || result.capture.targetLocale !== capture.targetLocale) invalidReceipt();
+    const currentSource = reads.client.getQueryData<ContentScope>(sourceKey), sourceState = reads.client.getQueryState(sourceKey);
+    if (sourceState?.status !== "success" || sourceState.fetchStatus !== "idle" || sourceState.isInvalidated
+      || !currentSource || currentSource.revision !== basis.revision || currentSource.currentSnapshot !== basis.snapshotId) throw { reason: "resource-basis" };
+    // An explicit read may establish a new comparison baseline. Seed only its
+    // current projection; automatic Query reads never adopt an owner baseline.
+    reads.client.setQueryData(reads.key(["resource-preview-current", capture.captureId]), result);
+    update(before => before.previewCapture === capture && localeAvailable(capture.targetLocale)
+      ? { ...before, preview: result, previewSourceBasis: basis, previewNeedsRefresh: false, notice: "previewReady", failure: null } : before);
+  }
+  async function dispatch(action: ResourcePending) {
+    if (!live()) return;
+    update(before => ({ ...before, pending: action }));
+    try {
+      if (action.kind === "term") { const result = await resourceCommands.saveTerm({ ...action.session, term: action.request }); if (live()) confirmTerm(action, result); }
+      if (action.kind === "context") { const result = await resourceCommands.saveContext({ ...action.session, context: action.request }); if (live()) confirmContext(action, result); }
+      if (action.kind === "capture") { const result = await resourceCommands.captureContext({ ...action.session, capture: action.request }); if (live()) confirmCapture(action, result); }
+      if (action.kind === "decision") {
+        const result = await resourceCommands.decide({ ...action.session, decision: action.request });
+        if (!live()) return;
+        confirmDecision(action, result);
+      }
+    } catch (error) {
+      update(before => before.pending !== action ? before : { ...before, pending: hasUnknownOutcome(error) || before.pendingUncertain ? action : null,
+        pendingUncertain: hasUnknownOutcome(error) || before.pendingUncertain,
+        notice: hasUnknownOutcome(error) || before.pendingUncertain ? "unknown" : "error", failure: commandFailure(error) });
+    }
+  }
+  async function fresh(kind: ResourcePending["kind"], entry?: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }, isScopeCurrent: () => boolean = () => true) {
+    const start = current(), locale = kind === "decision" ? start.previewCapture?.targetLocale ?? "" : start.locale;
+    if (!localeAvailable(locale) || (kind === "term" && (!start.termDraft.source.trim() || !start.termDraft.target.trim() || !start.termDraft.reason.trim()))
+      || ((kind === "context" || kind === "capture") && (!start.selectedUnit?.unitId || !start.selectedUnit.sourceRevisionId))
+      || (kind === "context" && !start.contextReason.trim()) || (kind === "decision" && (!entry || !start.preview || start.previewNeedsRefresh || !matchingEntry(start.preview, entry)))) return;
+    if (!isScopeCurrent()) { fail({ reason: "resource-basis" }); return; }
+    if (!reserve()) return;
+    try {
+      const actionId = await executionCommands.identity(session);
+      const latest = current();
+      // Identity allocation is asynchronous. Recheck read evidence without the
+      // mutation's own busy reservation, before dispatching a fresh request.
+      if (live() && !isScopeCurrent()) { fail({ reason: "resource-basis" }); return; }
+      if (!live() || !localeAvailable(locale) || latest.pending
+        || (kind === "term" && !sameTermTarget(latest, start))
+        || ((kind === "context" || kind === "capture") && !sameContextTarget(latest, start))
+        || (kind === "decision" && !matchingPreview(latest, start))) return;
+      if (kind === "term") await dispatch({ kind, session, request: { ...start.termDraft, aliases: [...start.termDraft.aliases], projectId: session.projectId, actionId,
+        termId: start.selectedTerm?.termId ?? null, locale, expectedRevisionId: start.selectedTerm?.revisionId ?? null }, submittedSeq: start.termSeq, aliasInput: start.aliasInput });
+      if (kind === "context") await dispatch({ kind, session, request: { projectId: session.projectId, actionId, unitId: start.selectedUnit!.unitId!, locale,
+        sourceRevisionId: start.selectedUnit!.sourceRevisionId!, expectedRevisionId: start.contextRevision?.revisionId ?? null, text: start.contextDraft, reason: start.contextReason }, submittedSeq: start.contextSeq });
+      if (kind === "capture") await dispatch({ kind, session, request: { projectId: session.projectId, actionId, unitId: start.selectedUnit!.unitId!, locale, sourceRevisionId: start.selectedUnit!.sourceRevisionId!, budgetBytes: 16 * 1024 } });
+      if (kind === "decision") await dispatch({ kind, session, locale, request: { projectId: session.projectId, actionId, captureId: start.previewCapture!.captureId, ...entry! } });
+    } catch (error) { fail(error); }
+    finally { release(); }
+  }
+  function matchingEntry(preview: ResourcePreview, entry: { entryId: string; expectedRevisionId: string | null; decision: ResourceDecision["decision"] }) {
+    const row = preview.rows.find(value => value.entry.id === entry.entryId);
+    if (row) return nullable(row.current?.revisionId) === entry.expectedRevisionId && !(entry.decision === "adopt" && (row.kind === "unchanged" || row.kind === "override"));
+    return preview.removed.some(value => value.externalEntryId === entry.entryId && value.revisionId === entry.expectedRevisionId);
+  }
+  async function retryPending() {
+    const action = current().pending;
+    if (!live() || !action || running.current) return;
+    running.current = true; update(before => ({ ...before, busyMutation: true, failure: null, notice: null }));
+    try { await dispatch(action); } finally { release(); }
+  }
+  async function openPreview(capture: GlossaryCapture, isCurrent: () => boolean = live) {
+    if (!isCurrent() || !localeAvailable(capture.targetLocale) || !reserve()) return;
+    update(before => ({ ...before, previewCapture: capture, preview: null, previewSourceBasis: null, previewNeedsRefresh: true }));
+    try { await readPreview(capture, isCurrent); } catch (error) { if (isCurrent()) fail(error); } finally { release(); }
+  }
+  async function retryPreview(isCurrent?: () => boolean) { const capture = current().previewCapture; if (capture) await openPreview(capture, isCurrent); }
+  async function chooseFile(isCurrent: () => boolean = live) {
+    const locale = current().locale;
+    if (!localeAvailable(locale) || termDirty() || contextDirty() || !reserve()) return;
+    let captured = false;
+    try {
+      const capture = await resourceCommands.chooseFile(session);
+      if (!live() || !capture) return;
+      captured = true;
+      // The picker has already captured input. Keep its identity even if the following read fails.
+      update(before => ({ ...before, previewCapture: capture, preview: null, previewSourceBasis: null, previewNeedsRefresh: true, completionVersion: before.completionVersion + 1 }));
+      if (isCurrent() && localeAvailable(capture.targetLocale) && current().locale === locale) await readPreview(capture, isCurrent);
+    } catch (error) { if (!captured || isCurrent()) fail(error, hasUnknownOutcome(error) && !captured ? "pickerUnknown" : "error"); }
+    finally { release(); }
+  }
+  return <ResourceContext.Provider value={{ tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
+    setLocale, beginTerm, editTerm, discardTerm, beginContext, editContext, editContextReason, discardContext, discard,
+    saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
+    decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;
+}

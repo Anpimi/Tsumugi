@@ -1,198 +1,392 @@
-import { WorkbenchPanel, useWorkbenchView } from "./WorkbenchFrame";
+import { WorkbenchPanel, useWorkbenchView, useWorkbenchState, useWorkbenchRef } from "./WorkbenchFrame";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import type { QueryKey } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
-import type { CommandError, ProjectView } from "./projectCommands";
+import type { ProjectView } from "./projectCommands";
 import type { EditorTarget } from "./TranslationWorkbench";
 import type { UiMessages } from "./i18n/types";
-import { useSessionQuery } from "./SessionReadProvider";
-import { SourceHistoryPanel, SourceImpactPanel, SourceOccurrenceOrigin, readSourceHistoryCoverage, useSourceOccurrenceLabel } from "./SourceMaintenance";
+import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { useSourceDraftSession } from "./SourceDraftSession";
+import { TaskCancellationFeedback, useExecutionTaskSession } from "./ExecutionTaskSession";
+import { SourceHistoryPanel, SourceImpactPanel, SourceReadFeedback, SourceOccurrenceOrigin, readSourceHistoryCoverage, useSourceOccurrenceLabel } from "./SourceMaintenance";
+import { SourceImportControls } from "./SourceImportControls";
+import { sourceReads } from "./sourceQueries";
+import { useWorkbenchCommands, type CommandAvailability, type SourceSelectionCommandPayload, type SourceCaptureCommandPayload,
+  type SourceBasisCommandPayload, type SourceComparisonCommandPayload, type SourcePendingCommandPayload,
+  type SourceTaskCommandPayload, type SourcePageCommandPayload, type SourceHistoryContentCommandPayload } from "./workbenchCommands";
 import { executionCommands as execution, executionContext, type AttemptDetail } from "./executionCommands";
-import { sourceCommands as commands, type ContentPage, type SourceChangePage, type LineageChoice, type SourceAdoptRequest, type SourceHistory, type SourceImpactSummary } from "./sourceCommands";
+import { sourceCommands as commands, sameSourceEnvironment, type ContentPage, type LineageChoice } from "./sourceCommands";
 
-import { SourceImportControls, type SourceImportHandle, type SourceImportState } from "./SourceImportControls";
-
-export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: () => Promise<boolean>; allowNavigate: () => Promise<boolean> }
-export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean; ref?: Ref<SourceHandle> }) {
-  const { t } = useTranslation();
+const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
+export interface SourceHandle { showAttempt: (id: string) => void; allowLeave: (current?: () => boolean) => Promise<boolean>; allowNavigate: () => Promise<boolean> }
+export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslation, onOpenExtensions, ref }: { project: ProjectView; disabled: boolean; onOpenWork?: () => void; onOpenTranslation?: (target: EditorTarget, locale: string) => boolean | Promise<boolean>; onOpenExtensions?: () => void; ref?: Ref<SourceHandle> }) {
+  const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const sourceLabel = useSourceOccurrenceLabel();
-  const context = executionContext(project);
+  const context = executionContext(project), commandScope = { ...context, area: "source" as const };
   const [open, setOpen] = useWorkbenchView("source");
-  const sourceImport = useRef<SourceImportHandle>(null);
-  const [importState, setImportState] = useState<SourceImportState>({ busy: false, pending: false, hasDraft: false });
-  const [attempt, setAttempt] = useState<string | null>(null);
-  const [page, setPage] = useState<ContentPage | null>(null);
-  const [comparison, setComparison] = useState<SourceChangePage | null>(null);
-  const [updating, setUpdating] = useState(false);
-  const [lineage, setLineage] = useState<Record<number, LineageChoice>>({});
-  const [actor, setActor] = useState("");
-  const [filter, setFilter] = useState("");
-  const [appliedFilter, setAppliedFilter] = useState("");
-  const [history, setHistory] = useState<SourceHistory | null>(null);
-  const [manualOrdinal, setManualOrdinal] = useState<number | null>(null);
-  const [historicalQuery, setHistoricalQuery] = useState("");
-  const [historicalMatches, setHistoricalMatches] = useState<ContentPage | null>(null);
-  const [estimate, setEstimate] = useState<SourceImpactSummary[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failureValue, setFailure] = useState<CommandFailure | null>(null);
-  const failure = failureReason(failureValue);
-  const [confirmed, setConfirmed] = useState(false);
-  const [pendingApply, setPendingApply] = useState<SourceAdoptRequest | null>(null);
-  const [receiptChecked, setReceiptChecked] = useState(false);
+  const owner = useSourceDraftSession(), tasks = useExecutionTaskSession();
+  const { source, selection, attempt, comparison: fixedComparison, updating, lineage, actor, filter, appliedFilter,
+    manualOrdinal, historicalQuery, estimate, confirmed, pendingStart, pendingApply, receiptChecked, busyMutation } = owner.state;
+  const fixedPreview = owner.state.preview;
+  const lastCompletion = useWorkbenchRef("source", "lastCompletion", owner.state.completionVersion);
+  const [readIntent, setReadIntent] = useWorkbenchState<"auto" | "current" | "applied">("source", "readIntent", () => owner.current().receipt ? "applied" : "auto");
+  const [contentCursor, setContentCursor] = useWorkbenchState<{ snapshotId: string; revision: string; after: number } | null>("source", "contentCursor", null);
+  const [historyOffset, setHistoryOffset] = useWorkbenchState<number | null>("source", "historyOffset", null);
+  const [captureBusy, setCaptureBusy] = useState(false), [captureFailure, setCaptureFailure] = useState<CommandFailure | null>(null);
+  const [captureVersion, setCaptureVersion] = useState(0);
+  const [pluginRefresh] = useWorkbenchState("source", "pluginRefresh", 0);
   const [leave, setLeave] = useState(false);
-  const detailRead = useSessionQuery<AttemptDetail | null>({ key: ["source-attempt", attempt, 0, 100], scopes: ["execution"], enabled: open && !busy && !!attempt && !page && !comparison,
-    read: () => execution.attempt({ ...context, attemptId: attempt!, offset: 0, limit: 100 }) });
-  const detail = detailRead.data ?? null, setDetail = detailRead.setData;
-
+  const mounted = useRef(false), sequence = useRef(0), captureRunning = useRef(false);
+  const committed = useRef({ open, disabled, leave, project });
+  const leaveProof = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null);
-  const mounted = useRef(true);
-  const sequence = useRef(0);
-  const mutation = useRef(false);
-  const first = useRef<HTMLHeadingElement>(null);
-  const errorRegion = useRef<HTMLDivElement>(null);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
-  useImperativeHandle(ref, () => ({
-    showAttempt(id) { if (mutation.current || importState.busy || pendingApply || importState.pending) { setOpen(true); return; } sequence.current++; setAttempt(id); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); setConfirmed(false); setFailure(null); setOpen(true); },
-    allowNavigate() { return Promise.resolve(!busy && !importState.busy && !pendingApply && !importState.pending); },
-    allowLeave() { if (pendingApply || importState.pending) { setOpen(true); return Promise.resolve(false); } if (!importState.hasDraft && Object.keys(lineage).length === 0 && !busy && !importState.busy) return Promise.resolve(true); setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
-  }));
-  function showError(error: unknown) {
-    setFailure(commandFailure(error));
+  const first = useRef<HTMLHeadingElement>(null), errorRegion = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
+  useLayoutEffect(() => { committed.current = { open, disabled, leave, project }; });
+  useLayoutEffect(() => { sequence.current++; captureRunning.current = false; setCaptureBusy(false); }, [open, project.sessionToken]);
+  const integrationOptions = sourceReads.integration(context, source);
+  const inventoryRead = useSessionQuery({ ...sourceReads.inventory(pluginRefresh), enabled: open });
+  // Both reads reopen the installed Store. Finish the inventory/package reads
+  // before resolving the selected environment, including on refresh/remount.
+  const integrationRead = useSessionQuery({ ...integrationOptions,
+    enabled: open && !!source && !!inventoryRead.data && !inventoryRead.isFetching && !inventoryRead.error });
+  const integration = !integrationRead.error ? integrationRead.data : undefined;
+  const scopeOptions = sourceReads.scope(context), scopeRead = useSessionQuery({ ...scopeOptions, enabled: open });
+  const scope = !scopeRead.error ? scopeRead.data : undefined;
+  const snapshotId = readIntent === "applied" ? owner.state.receipt?.changes[0]?.id ?? null : scope?.currentSnapshot ?? null;
+  const contentRevision = readIntent !== "applied" ? scope?.revision ?? "" : "";
+  const contentAfter = contentCursor?.snapshotId === snapshotId && contentCursor.revision === contentRevision ? contentCursor.after : 0;
+  const contentOptions = sourceReads.content(context, snapshotId ?? "", contentAfter, readIntent !== "applied" ? scope : undefined);
+  const browsing = !attempt && !fixedPreview && !fixedComparison && !selection && !updating;
+  // Explicit content reads coexist with newer fixed decisions retained after a delayed ACK.
+  const contentVisible = browsing || readIntent !== "auto";
+  const contentRead = useSessionQuery({ ...contentOptions, enabled: open && contentVisible && !!snapshotId && (readIntent === "applied" || !!scope) });
+  const previewOptions = sourceReads.preview(context, fixedPreview, owner.state.previewAfter);
+  const previewRead = useSessionQuery({ ...previewOptions, enabled: open && !!fixedPreview && owner.state.previewAfter > 0 });
+  const comparisonOptions = sourceReads.comparison(context, fixedComparison, appliedFilter, owner.state.comparisonAfter);
+  const comparisonRead = useSessionQuery({ ...comparisonOptions, enabled: open && !!fixedComparison });
+  const comparison = fixedComparison;
+  // A failed new filter/cursor must not impersonate the captured first page.
+  const comparisonPage = comparisonRead.data ?? (owner.state.comparisonAfter === 0 && appliedFilter === "" ? fixedComparison : null);
+  const previewPage = fixedPreview ? owner.state.previewAfter === 0 ? fixedPreview : previewRead.data ?? null : null;
+  const contentPage = contentVisible && !contentRead.error ? contentRead.data ?? null : null;
+  const page = previewPage ?? contentPage;
+  const historyOptions = sourceReads.history(context, historyOffset ?? 0);
+  const historyRead = useSessionQuery({ ...historyOptions, enabled: open && !!fixedComparison && historyOffset !== null });
+  const history = !historyRead.error ? historyRead.data : undefined;
+  const search = owner.state.historicalSearch;
+  const matchesOptions = sourceReads.historyContent(context, search?.snapshotId ?? "", search?.query ?? "", search?.after ?? 0);
+  const matchesEnabled = !!fixedComparison && !!search && search.snapshotId === fixedComparison.previousSnapshotId && search.newOrdinal === manualOrdinal;
+  const matchesRead = useSessionQuery({ ...matchesOptions, enabled: open && matchesEnabled });
+  const historicalMatches = matchesEnabled && !matchesRead.error ? matchesRead.data : undefined;
+  const detailKey = ["source-attempt", attempt, 0, 100];
+  const detailRead = useSessionQuery({ key: detailKey, scopes: ["execution"], enabled: open && !!attempt && !pendingStart,
+    read: () => execution.attempt({ ...context, attemptId: attempt!, offset: 0, limit: 100 }) });
+  const detail = detailRead.data ?? null;
+  const busy = captureBusy || busyMutation;
+  const failureValue = owner.state.failure ?? captureFailure ?? (open ? commandFailureOrNull(detailRead.error) : null);
+  const failure = failureReason(failureValue);
+  function commandFailureOrNull(error: unknown) { return error ? commandFailure(error) : null; }
+  const setLineage = (value: Record<number, LineageChoice> | ((before: Record<number, LineageChoice>) => Record<number, LineageChoice>)) => owner.edit("lineage", value);
+  const setActor = (value: string) => owner.edit("actor", value);
+  const setFilter = (value: string) => owner.edit("filter", value);
+  const setManualOrdinal = (value: number | null) => owner.edit("manualOrdinal", value);
+  const setHistoricalQuery = (value: string) => owner.edit("historicalQuery", value);
+  const setConfirmed = owner.confirm;
+  function ready(key: QueryKey) { const state = reads.client.getQueryState(reads.key(key)); return state?.status === "success" && state.error === null && state.fetchStatus === "idle" && !state.isInvalidated; }
+  function viewCurrent() { const value = committed.current; return mounted.current && value.open && !value.leave && !value.disabled
+    && value.project.sessionToken === context.sessionToken && value.project.metadata.projectId === context.projectId; }
+  // Render uses reactive inputs; dispatched commands retain the committed-view guard.
+  function common(pending = false, rendering = false): CommandAvailability {
+    if (rendering ? !open || leave || disabled : !viewCurrent()) return { enabled: false, reason: "hidden" };
+    if (captureRunning.current || owner.inFlight()) return { enabled: false, reason: "busy" };
+    if (!pending && owner.hasPending()) return { enabled: false, reason: "pending-action" };
+    return { enabled: true };
+  }
+  function discardAvailability(rendering = false): CommandAvailability {
+    if (rendering ? !open || leave || disabled : !viewCurrent()) return { enabled: false, reason: "hidden" };
+    if (captureRunning.current || !owner.canDiscard()) return { enabled: false, reason: "busy" };
+    return { enabled: true };
+  }
+  // This proof excludes the command's own synchronous reservation.
+  function proof(keys: QueryKey[]) {
+    const locale = project.metadata.sourceLocale, values = keys.map(key => reads.client.getQueryData(reads.key(key)));
+    const witnesses = keys.map(key => reads.watchExactQuery(key));
+    return { current: () => viewCurrent() && !reads.retired && reads.context.projectId === context.projectId && reads.context.sessionToken === context.sessionToken
+      && committed.current.project.metadata.sourceLocale === locale && witnesses.every((witness, index) => {
+        const query = witness.current(); return !query || query.state.status === "success" && query.state.error === null
+          && !query.state.isInvalidated && JSON.stringify(query.state.data) === JSON.stringify(values[index]);
+      }), dispose: () => witnesses.forEach(witness => witness.dispose()) };
+  }
+  function selectionAvailability(input?: SourceSelectionCommandPayload, rendering = false) {
+    const allowed = common(false, rendering); return allowed.enabled && input && ready(scopeOptions.key) && (owner.current().updating || scope?.currentSnapshot === null)
+      && ready(integrationOptions.key) && reads.client.getQueryData(reads.key(integrationOptions.key)) === integration && integration && owner.current().source
+      && input.request.projectId === context.projectId && input.request.sessionToken === context.sessionToken
+      && JSON.stringify(input.request.source) === JSON.stringify(owner.current().source) && sameSourceEnvironment(integration, input.request.source)
+      && !attempt && !fixedPreview && !fixedComparison ? allowed : allowed.enabled ? unavailable : allowed;
+  }
+  function captureAvailability(input?: SourceCaptureCommandPayload, start = false, rendering = false) {
+    const allowed = common(false, rendering), value = owner.current(), currentProject = rendering ? project : committed.current.project;
+    return allowed.enabled && input && ready(integrationOptions.key) && integration && value.selection?.selectionId === input.selectionId && value.declared && value.sourceLanguage === input.sourceLanguage
+      && JSON.stringify(value.selection.source) === JSON.stringify(integration) && currentProject.metadata.sourceLocale === input.sourceLanguage
+      && input.attemptId === (value.preflight?.attemptId ?? null) && input.inputDigest === (value.preflight?.inputDigest ?? null)
+      && input.producerConsent === (!!value.preflight && value.producerConsent === value.preflight.inputDigest)
+      && (!start || (value.preflight && input.producerConsent && ready(scopeOptions.key))) ? allowed : allowed.enabled ? unavailable : allowed;
+  }
+  function basisPayload(): SourceBasisCommandPayload { const value = owner.current(), basis = value.comparison ?? value.preview;
+    return { kind: "source-basis", attemptId: basis?.attemptId ?? "", resultId: basis?.resultId ?? "", revision: basis?.scope.revision ?? "",
+      currentSnapshot: basis?.scope.currentSnapshot ?? null, base: value.comparison?.previousSnapshotId ?? null, editSeq: value.editSeq }; }
+  function matchingBasis(input?: SourceBasisCommandPayload) { const expected = basisPayload(); return !!input && input.attemptId === expected.attemptId && input.resultId === expected.resultId
+    && input.revision === expected.revision && input.currentSnapshot === expected.currentSnapshot && input.base === expected.base && input.editSeq === expected.editSeq; }
+  function basisAvailability(input?: SourceBasisCommandPayload, apply = false, rendering = false) {
+    const allowed = common(false, rendering), value = owner.current(), basis = value.comparison ?? value.preview;
+    const currentScope = reads.client.getQueryData<typeof scope>(reads.key(scopeOptions.key));
+    return allowed.enabled && owner.qualified() && matchingBasis(input) && basis && !value.stale && !value.receipt && ready(scopeOptions.key)
+      && currentScope?.revision === basis.scope.revision && currentScope?.currentSnapshot === basis.scope.currentSnapshot
+      && (!value.comparison || ready(comparisonOptions.key)) && (!apply || (value.confirmed && (!value.comparison || (value.estimate
+        && (!Object.keys(value.lineage).length || (value.actor.trim() && Object.values(value.lineage).every(choice => choice.reason.trim())))))))
+      ? allowed : allowed.enabled ? unavailable : allowed;
+  }
+  function comparisonPayload(after = owner.state.comparisonAfter, query = appliedFilter, base: string | null = fixedComparison?.previousSnapshotId ?? null): SourceComparisonCommandPayload {
+    const value = basisPayload(); return { ...value, kind: "source-comparison", originalBase: fixedComparison?.previousSnapshotId ?? "", base, filter: query, after };
+  }
+  function comparisonAvailability(input?: SourceComparisonCommandPayload, refresh = false, rendering = false) {
+    const allowed = common(false, rendering);
+    if (!allowed.enabled) return allowed;
+    if (!fixedComparison || !input || !matchingBasis({ ...input, kind: "source-basis", base: input.originalBase }) || comparisonRead.isFetching || input.originalBase !== fixedComparison.previousSnapshotId) return unavailable;
+    if (refresh) return input.after === 0 && ready(scopeOptions.key) && (input.base === null || input.base === fixedComparison.previousSnapshotId
+      || (ready(historyOptions.key) && history?.snapshots.some(entry => entry.snapshotId === input.base))) ? allowed : unavailable;
+    return input.base === fixedComparison.previousSnapshotId && (input.after === 0 || (input.filter === appliedFilter
+      && (input.after === owner.current().comparisonAfter || (ready(comparisonOptions.key) && input.after === comparisonPage?.nextOrdinal)))) ? allowed : unavailable;
+  }
+  function pendingPayload(kind: "start" | "apply"): SourcePendingCommandPayload { const value = owner.current();
+    return { kind: "source-pending", pendingKind: kind, attemptId: (kind === "start" ? value.pendingStart : value.pendingApply)?.attemptId ?? "",
+      actionId: kind === "apply" ? value.pendingApply?.actionId ?? null : null }; }
+  function pendingAvailability(input?: SourcePendingCommandPayload, checked = false, rendering = false) {
+    const allowed = common(true, rendering); if (!allowed.enabled) return allowed;
+    if (!input) return unavailable; const expected = pendingPayload(input.pendingKind);
+    return expected.attemptId && input.attemptId === expected.attemptId && input.actionId === expected.actionId && (!checked || owner.current().receiptChecked) ? allowed : unavailable;
+  }
+  function taskPayload(): SourceTaskCommandPayload { return { kind: "source-task", attemptId: attempt ?? "", taskId: detail?.taskId ?? "" }; }
+  function taskAvailability(input?: SourceTaskCommandPayload, rendering = false) {
+    const allowed = common(false, rendering); if (!allowed.enabled || !input) return allowed.enabled ? unavailable : allowed;
+    const original = owner.current(), checker = input.attemptId === original.checkAttempt;
+    const key = checker ? ["source-check", original.checkAttempt] : detailKey;
+    const record = reads.client.getQueryState<AttemptDetail | null>(reads.key(key));
+    const checked = record?.data;
+    return !!record?.dataUpdateCount && checked?.attemptId === input.attemptId && checked.taskId === input.taskId
+      && checked.operation === (checker ? "source-semantic-check" : "source-import")
+      && (checker || input.attemptId === original.attempt && !fixedPreview && !fixedComparison)
+      && tasks.canCancel({ taskId: input.taskId, attemptId: input.attemptId, origin: "source" }) ? allowed : unavailable;
+  }
+  function pagePayload(page: ContentPage, after: number): SourcePageCommandPayload { return { kind: "source-page", snapshotId: page.snapshotId, attemptId: page.attemptId,
+    resultId: page.resultId, after }; }
+  function pageAvailability(input?: SourcePageCommandPayload, rendering = false) {
+    const allowed = common(false, rendering); if (!allowed.enabled) return allowed;
+    const preview = input?.snapshotId === null, basis = preview ? fixedPreview : contentVisible ? contentRead.data : null;
+    if (!input || !basis || input.snapshotId !== basis.snapshotId || input.attemptId !== basis.attemptId || input.resultId !== basis.resultId
+      || (!preview && input.snapshotId !== snapshotId) || (preview ? previewRead.isFetching : contentRead.isFetching)) return unavailable;
+    const cursor = preview ? owner.current().previewAfter : contentAfter;
+    const key = preview ? previewOptions.key : contentOptions.key, displayed = preview ? previewPage : contentPage;
+    return input.after === 0 || input.after === cursor || (ready(key) && input.after === displayed?.nextOrdinal)
+      || (preview && cursor === 0 && input.after === fixedPreview?.nextOrdinal) ? allowed : unavailable;
+  }
+  function historyPayload(after = 0, query = historicalQuery): SourceHistoryContentCommandPayload { return { kind: "source-history-content",
+    snapshotId: fixedComparison?.previousSnapshotId ?? "", query, after, newOrdinal: manualOrdinal }; }
+  function historyAvailability(input?: SourceHistoryContentCommandPayload, rendering = false) {
+    const allowed = common(false, rendering); if (!allowed.enabled) return allowed;
+    if (!fixedComparison || !input || input.snapshotId !== fixedComparison.previousSnapshotId || input.newOrdinal !== owner.current().manualOrdinal || input.newOrdinal === null || matchesRead.isFetching) return unavailable;
+    return input.after === 0 || (search && input.query === search.query && (input.after === search.after || (ready(matchesOptions.key) && input.after === historicalMatches?.nextOrdinal))) ? allowed : unavailable;
   }
   async function perform(work: (current: () => boolean) => Promise<void>) {
-    if (mutation.current) return;
-    mutation.current = true;
-    const ticket = ++sequence.current;
-    const current = () => mounted.current && sequence.current === ticket;
-    setBusy(true); setFailure(null);
-    try { await work(current); } catch (error) { if (current()) showError(error); }
-    finally { mutation.current = false; if (mounted.current) setBusy(false); }
+    if (!common().enabled) return;
+    captureRunning.current = true;
+    const ticket = ++sequence.current, current = () => viewCurrent() && sequence.current === ticket;
+    setCaptureBusy(true); setCaptureFailure(null);
+    try { await work(current); } catch (error) { if (current()) setCaptureFailure(commandFailure(error)); }
+    finally { if (mounted.current && sequence.current === ticket) { captureRunning.current = false; setCaptureBusy(false); } }
   }
-  // A ready preview becomes the user's fixed adoption basis, separate from task progress.
+  function readCurrent(intent: "current" | "applied") {
+    setReadIntent(intent); setContentCursor(null);
+    if (readIntent === intent && snapshotId && contentAfter === 0) void contentRead.refetch();
+    if (intent === "current") void scopeRead.refetch();
+  }
+  function setComparisonIntent(input: SourceComparisonCommandPayload) {
+    if (owner.current().comparisonAfter === input.after && owner.current().appliedFilter === input.filter) void comparisonRead.refetch();
+    else owner.pageIntent(input.after, input.filter);
+  }
+  async function refreshComparison(input: SourceComparisonCommandPayload) {
+    const before = owner.current();
+    await perform(async current => {
+      const result = await scopeRead.refetch();
+      if (result.error) throw result.error;
+      const currentScope = result.data;
+      if (!current() || owner.current().comparison !== before.comparison || owner.current().editSeq !== before.editSeq || !currentScope) return;
+      const check = proof([scopeOptions.key]);
+      try {
+        const next = await commands.compare({ ...context, attemptId: input.attemptId, resultId: input.resultId, base: input.base, filter: input.filter, after: 0, limit: 50 });
+        if (current() && check.current() && owner.current().comparison === before.comparison && owner.current().editSeq === before.editSeq
+          && next.scope.revision === currentScope?.revision && next.scope.currentSnapshot === currentScope?.currentSnapshot) owner.page(next, input.filter, true);
+      } finally { check.dispose(); }
+    });
+  }
+  useLayoutEffect(() => {
+    const meta = { category: "source" as const, binding: null, risk: "reads-source" as const, confirmation: "none" as const, scope: commandScope };
+    const removals = [
+      registry.register({ ...meta, id: "source.select", nameKey: "sourcePlugin.chooseFolder", risk: "captures-source", payloadKind: "source-selection", availability: selectionAvailability, handler: () => { setReadIntent("auto"); setCaptureFailure(null); void owner.select(); } }),
+      registry.register({ ...meta, id: "source.preflight", nameKey: "source.preflight", risk: "captures-source", payloadKind: "source-capture", availability: input => captureAvailability(input), handler: () => { const captured = proof([integrationOptions.key, scopeOptions.key]); void owner.preflight(captured.current, captured.dispose); } }),
+      registry.register({ ...meta, id: "source.start", nameKey: "source.start", risk: "captures-source", payloadKind: "source-capture", availability: input => captureAvailability(input, true), handler: () => { const captured = proof([scopeOptions.key, integrationOptions.key]); void owner.start(captured.current, captured.dispose); } }),
+      registry.register({ ...meta, id: "source.apply", nameKey: fixedComparison ? "source.applyUpdate" : "source.apply", risk: "writes-source", confirmation: "required", payloadKind: "source-basis", availability: input => basisAvailability(input, true), handler: () => { const captured = proof(fixedComparison ? [scopeOptions.key, comparisonOptions.key] : [scopeOptions.key]); void owner.apply(captured.current, captured.dispose); } }),
+      registry.register({ ...meta, id: "source.estimate", nameKey: "source.reviewImpact", payloadKind: "source-basis", availability: input => fixedComparison ? basisAvailability(input) : unavailable, handler: () => void owner.estimate(viewCurrent) }),
+      registry.register({ ...meta, id: "source.search-comparison", nameKey: "source.search", payloadKind: "source-comparison", availability: input => comparisonAvailability(input), handler: setComparisonIntent }),
+      registry.register({ ...meta, id: "source.refresh-comparison", nameKey: "source.refreshComparison", payloadKind: "source-comparison", availability: input => comparisonAvailability(input, true), handler: input => void refreshComparison(input) }),
+      registry.register({ ...meta, id: "source.retry-start", nameKey: "source.checkStart", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "start" ? pendingAvailability(input) : unavailable, handler: () => void owner.retryStart() }),
+      registry.register({ ...meta, id: "source.check-receipt", nameKey: "execution.checkReceipt", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input) : unavailable, handler: () => void owner.checkReceipt() }),
+      registry.register({ ...meta, id: "source.retry-apply", nameKey: "execution.retryAdoption", risk: "retries-source-action", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: () => void owner.retryApply() }),
+      registry.register({ ...meta, id: "source.keep-output", nameKey: "execution.keepOutput", payloadKind: "source-pending", availability: input => input?.pendingKind === "apply" ? pendingAvailability(input, true) : unavailable, handler: owner.keepOutput }),
+      registry.register({ ...meta, id: "source.cancel-task", nameKey: "execution.cancel", risk: "cancels-source-task", payloadKind: "source-task", availability: taskAvailability, handler: input => void owner.cancelTask(input.taskId, () => [owner.current().attempt, owner.current().checkAttempt].includes(input.attemptId), input.attemptId) }),
+      registry.register({ ...meta, id: "source.read-page", nameKey: "execution.nextPage", payloadKind: "source-page", availability: pageAvailability, handler: input => {
+        if (input.snapshotId === null) { if (input.after === owner.current().previewAfter) void previewRead.refetch(); else owner.pageIntent(input.after); }
+        else if (input.after === contentAfter) void contentRead.refetch(); else setContentCursor({ snapshotId: input.snapshotId!, revision: contentRevision, after: input.after });
+      } }),
+      registry.register({ ...meta, id: "source.find-lineage-candidates", nameKey: "source.search", payloadKind: "source-history-content", availability: historyAvailability, handler: input => {
+        if (search?.after === input.after && search.query === input.query && search.newOrdinal === input.newOrdinal) void matchesRead.refetch(); else owner.historyIntent(input.query, input.after);
+      } }),
+      registry.register({ ...meta, id: "source.discard", nameKey: "source.discard", availability: () => discardAvailability(), handler: () => void owner.discard() }),
+      registry.register({ ...meta, id: "source.begin-update", nameKey: "source.update", availability: () => {
+        const allowed = common(); return allowed.enabled && browsing && contentPage?.snapshotId && contentPage.snapshotId === scope?.currentSnapshot && ready(contentOptions.key) ? allowed : unavailable;
+      }, handler: () => { sequence.current++; setReadIntent("auto"); owner.beginUpdate(); setCaptureFailure(null); } }),
+      registry.register({ ...meta, id: "source.show-current", nameKey: "source.viewCurrent", availability: () => common().enabled && !Object.keys(owner.current().lineage).length ? common() : unavailable,
+        handler: () => { owner.showCurrent(); readCurrent("current"); } }),
+      registry.register({ ...meta, id: "source.read-current", nameKey: "source.viewCurrent", availability: common, handler: () => readCurrent("current") }),
+      registry.register({ ...meta, id: "source.read-applied", nameKey: "source.readSaved", availability: () => common().enabled && owner.current().receipt ? common() : unavailable, handler: () => readCurrent("applied") }),
+      registry.register({ ...meta, id: "source.refresh-attempt", nameKey: "execution.refresh", availability: () => common().enabled && !!attempt && !fixedPreview && !fixedComparison ? common() : unavailable, handler: () => { setCaptureFailure(null); void detailRead.refetch(); } }),
+    ];
+    return () => removals.forEach(remove => remove());
+  });
+  useImperativeHandle(ref, () => ({
+    showAttempt(id) { if (owner.showAttempt(id)) { sequence.current++; captureRunning.current = false; setCaptureBusy(false); setReadIntent("auto"); setContentCursor(null); setCaptureFailure(null); } setOpen(true); },
+    allowNavigate() { return Promise.resolve(!busy && !owner.inFlight() && !owner.hasPending()); },
+    allowLeave(current: () => boolean = () => true) {
+      leaveProof.current = current; const value = owner.current(); if (owner.hasPending() && !owner.canDiscard()) { setOpen(true); return Promise.resolve(false); }
+      if (!value.selection && !Object.keys(value.lineage).length && !value.actor.trim() && !busy && !owner.inFlight()) return Promise.resolve(true);
+      setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; }); },
+  }));
+  // Initial preparation is a deliberate fixed capture, never a query refresh.
   useEffect(() => {
-    if (!open || busy || !attempt || page || comparison || !detail) return;
+    if (!open || busyMutation || !attempt || fixedPreview || fixedComparison || !detail || !ready(detailKey) || captureRunning.current) return;
     const ticket = ++sequence.current;
     let stopped = false;
-    const current = () => !stopped && mounted.current && ticket === sequence.current;
+    const current = () => !stopped && viewCurrent() && ticket === sequence.current && owner.current().attempt === attempt;
     const result = detail.items[0];
-    if (result?.resultId && result.status.validation !== "invalid" && result.status.execution === "succeeded") {
+    if (result?.resultId && result.status.execution === "succeeded") {
+      captureRunning.current = true; setCaptureBusy(true);
       void (async () => {
         try {
-          const scope = await commands.scope(context);
-          if (!current()) return;
-          if (scope.currentSnapshot) {
-            const changes = await commands.compare({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
-            if (current()) { setUpdating(true); setComparison(changes); setPage(null); setFailure(null); }
-          } else {
-            const preview = await commands.preview({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
-            if (current()) { setPage(preview); setFailure(null); }
-          }
-        } catch (error) { if (current()) showError(error); }
+          const scopeResult = await scopeRead.refetch(); if (scopeResult.error) throw scopeResult.error;
+          const currentScope = scopeResult.data; if (!current() || !currentScope) return;
+          const next = currentScope.currentSnapshot
+            ? await commands.compare({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 })
+            : await commands.preview({ ...context, attemptId: attempt, resultId: result.resultId!, after: 0, limit: 50 });
+          if (current()) { owner.ready(next, detail); setCaptureFailure(null); }
+        } catch (error) { if (current()) setCaptureFailure(commandFailure(error)); }
+        finally { if (mounted.current && ticket === sequence.current) {
+          captureRunning.current = false; setCaptureBusy(false);
+          // A newer attempt read can supersede preparation without losing its continuation.
+          const value = owner.current();
+          if (stopped && viewCurrent() && value.attempt === attempt && !value.preview && !value.comparison) setCaptureVersion(version => version + 1);
+        } }
       })();
-    } else if (result?.status.execution === "failed" || result?.status.validation === "invalid") setFailure(result.status.diagnostic ?? "output-invalid");
-    else if (result?.status.execution === "unknown" || result?.status.execution === "cancelled-before-dispatch") setFailure(result.status.execution);
+    } else if (result?.status.execution === "failed" || result?.status.validation === "invalid") setCaptureFailure(result.status.diagnostic ?? "output-invalid");
+    else if (result?.status.execution === "unknown" || result?.status.execution === "cancelled-before-dispatch") setCaptureFailure(result.status.execution);
     return () => { stopped = true; };
-  }, [open, busy, attempt, page, comparison, detail, project.sessionToken]);
-  useEffect(() => { if (detailRead.error) showError(detailRead.error); }, [detailRead.error]);
-  useEffect(() => { if (page || comparison) first.current?.focus(); }, [page, comparison]);
-  useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
-  async function loadCurrent(current: () => boolean) {
-    const scope = await commands.scope(context);
-    const next = scope.currentSnapshot ? await commands.content({ ...context, snapshotId: scope.currentSnapshot, after: 0, limit: 50 }) : null;
-    if (current()) { setPage(next); setComparison(null); setUpdating(false); setLineage({}); setConfirmed(false); if (next) { setAttempt(null); } }
-  }
-  async function applied(request: SourceAdoptRequest, current: () => boolean) {
-    let receipt;
-    try {
-      await commands.prepare(request);
-      receipt = await execution.adopt({ ...context, actionId: request.actionId });
-    } catch (error) {
-      const code = (error as Partial<CommandError> | null)?.code;
-      if (current() && code && code !== "outcome-unknown" && code !== "storage-failed") setPendingApply(null);
-      throw error;
-    }
-    const snapshot = receipt.changes.find(change => change.kind === "source-snapshot")?.id;
-    if (!snapshot) throw { code: "output-invalid" };
-    const next = await commands.content({ ...context, snapshotId: snapshot, after: 0, limit: 50 });
-    if (current()) { setPage(next); setComparison(null); setUpdating(false); setLineage({}); setEstimate(null); setHistory(null); setPendingApply(null); setAttempt(null); setConfirmed(false); }
-  }
-  async function compare(after: number, current: () => boolean, base: string | null = comparison?.previousSnapshotId ?? null, query = appliedFilter, reset = false) {
-    if (!comparison) return;
-    const next = await commands.compare({ ...context, attemptId: comparison.attemptId, resultId: comparison.resultId, base, filter: query, after, limit: 50 });
-    if (current()) {
-      const changed = next.scope.currentSnapshot !== comparison.scope.currentSnapshot || next.scope.revision !== comparison.scope.revision;
-      setComparison(next); setAppliedFilter(query);
-      if (reset || changed) { setConfirmed(false); setEstimate(null); setLineage({}); setManualOrdinal(null); setHistoricalMatches(null); }
-      if (changed) setFailure("stale-preview");
-    }
-  }
+  }, [open, busyMutation, attempt, fixedPreview, fixedComparison, detail, detailRead.fetchStatus, detailRead.error, captureVersion, project.sessionToken]);
   useEffect(() => {
-    if (open && !attempt && !page && !importState.hasDraft && !updating) void perform(loadCurrent);
-  }, [open, project.sessionToken]);
-  function requestBack() {
-    if (!mutation.current && !pendingApply && !importState.pending && !importState.busy) setOpen(false);
-  }
+    const basis = owner.current().comparison ?? owner.current().preview;
+    if (basis && detail && ready(detailKey) && detail.attemptId === basis.attemptId) owner.ready(basis, detail);
+  }, [detail, detailRead.fetchStatus, detailRead.error, busyMutation]);
+  useEffect(() => {
+    if (lastCompletion.current === owner.state.completionVersion) return;
+    lastCompletion.current = owner.state.completionVersion;
+    if (owner.state.receipt) { setReadIntent("applied"); setContentCursor(null); }
+  }, [owner.state.completionVersion]);
+  useEffect(() => { if (fixedPreview || fixedComparison) first.current?.focus(); }, [fixedPreview, fixedComparison]);
+  useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
+  function requestBack() { if (!captureRunning.current && !owner.inFlight() && !owner.hasPending()) setOpen(false); }
   const knownErrors: Record<string, keyof UiMessages["source"]["errors"]> = {
     "unsupported-encoding": "encoding", "source-changed": "changed", "duplicate-native-key": "duplicate", "empty-source": "empty", "capture-timeout": "timeout", "extract-timeout": "unknown", "source-corrupt": "invalid", "stale-preview": "conflict", "language-required": "language",
     "unsupported-format": "format", "missing-companion": "missing", "language-conflict": "language", "limit-exceeded": "limit", "input-limit": "limit", "unauthorized-selection": "selection", "session-invalid": "selection", "input-busy": "busy", busy: "busy", "source-already-present": "conflict", "source-namespace": "namespace", "source-unchanged": "unchanged", "lineage-choice": "lineage", "lineage-split": "lineage", "dependency-conflict": "conflict", "output-invalid": "invalid", "invalid-structure": "invalid", cancelled: "cancelled", "cancelled-before-dispatch": "cancelled", unknown: "unknown", "outcome-unknown": "unknown",
   };
-  const locked = busy || importState.busy || importState.pending || pendingApply !== null;
-  const sourceValid = detail?.items[0]?.status.validation === "valid";
-  const proposal = comparison ? { attemptId: comparison.attemptId, resultId: comparison.resultId } : page && !page.snapshotId ? { attemptId: page.attemptId, resultId: page.resultId } : null;
+  const locked = busy || owner.hasPending();
+  const sourceResult = detail?.attemptId === attempt && detail.operation === "source-import" && detail.items.length === 1 ? detail.items[0] : null;
+  const proposal = comparison ? { attemptId: comparison.attemptId, resultId: comparison.resultId } : fixedPreview ? { attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId }
+    : attempt && sourceResult?.resultId && sourceResult.status.execution === "succeeded" && !sourceResult.status.cancellationRequested ? { attemptId: attempt, resultId: sourceResult.resultId } : null;
   const warnings = page?.diagnostics ?? [];
   const manualOccurrence = comparison?.rows.find(row => row.new?.ordinal === manualOrdinal)?.new;
   return <>
     <WorkbenchPanel open={open} title={t("source.title")} description={t("source.description")} className="source-dialog" onBack={() => void requestBack()} backDisabled={disabled || busy}>
         <div className="execution-content" aria-busy={busy}>
+          <TaskCancellationFeedback origin="source" taskId={detail?.taskId} disabled={busy} visible={open} />
           {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t(`source.errors.${knownErrors[failure] ?? "failed"}`)}</p><CommandFailureDetails failure={failureValue} />{typeof failureValue === "string" ? <details><summary>{t("execution.diagnostic")}</summary><code>{failure}</code></details> : null}</div> : null}
           {busy ? <p role="status">{t("execution.working")}</p> : null}
-          {warnings.length ? <details><summary>{t("source.diagnostics", { count: warnings.length })}</summary><ul>{warnings.map((diagnostic, index) => <li key={`${diagnostic}:${index}`}><code>{diagnostic}</code></li>)}</ul></details> : null}
-          <SourceImportControls ref={sourceImport} project={project} open={open} canCapture={!page && !comparison && !attempt} proposal={proposal} validation={detail?.items[0]?.status.validation ?? "pending"} disabled={disabled || busy || !!pendingApply} onState={setImportState}
-            onStarted={id => { sequence.current++; setAttempt(id); setPage(null); setComparison(null); setLineage({}); setEstimate(null); setFilter(""); setAppliedFilter(""); setManualOrdinal(null); setHistoricalMatches(null); setDetail(null); setConfirmed(false); }}
-            onValidated={async () => { if (!proposal) return; const ticket = sequence.current; const fresh = await execution.attempt({ ...context, attemptId: proposal.attemptId, offset: 0, limit: 100 }); if (mounted.current && sequence.current === ticket) setDetail(fresh); }} />
-          {proposal && !sourceValid ? <button className="secondary-button" disabled={locked || Object.keys(lineage).length > 0} onClick={() => { sequence.current++; setAttempt(null); setPage(null); setComparison(null); setConfirmed(false); setFailure(null); }}>{t("sourcePlugin.newInput")}</button> : null}
+          <SourceReadFeedback error={open ? integrationRead.error || scopeRead.error : null} fetching={open && (integrationRead.isFetching || scopeRead.isFetching)} messageKey="source.readFailed" retry={() => {
+            if (integrationRead.error) void integrationRead.refetch(); if (scopeRead.error) void scopeRead.refetch();
+          }} />
+          <SourceReadFeedback error={contentVisible ? contentRead.error : null} fetching={open && contentVisible && contentRead.isFetching} messageKey="source.readFailed" retry={() => void contentRead.refetch()} />
+          {contentVisible && contentAfter > 0 && !contentPage ? <button className="secondary-button" disabled={!common(false, true).enabled || contentRead.isFetching} onClick={() => registry.dispatch(readIntent === "applied" ? "source.read-applied" : "source.read-current", commandScope)}>{t("execution.firstPage")}</button> : null}
+          {fixedPreview && owner.state.previewAfter > 0 ? <SourceReadFeedback error={previewRead.error} fetching={open && previewRead.isFetching} messageKey="source.readFailed" retry={() => void previewRead.refetch()} /> : null}
+          {fixedPreview && owner.state.previewAfter > 0 && !previewPage ? <button className="secondary-button" disabled={!pageAvailability({ kind: "source-page", snapshotId: null, attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId, after: 0 }, true).enabled} onClick={() => registry.dispatch("source.read-page", commandScope, { kind: "source-page", snapshotId: null, attemptId: fixedPreview.attemptId, resultId: fixedPreview.resultId, after: 0 })}>{t("execution.firstPage")}</button> : null}
+          {fixedComparison ? <SourceReadFeedback error={comparisonRead.error} fetching={open && comparisonRead.isFetching} messageKey="source.readFailed" retry={() => void comparisonRead.refetch()} /> : null}
+          {owner.state.receipt ? <p role="status">{t(owner.state.stale ? "source.adoptionSavedNewer" : "source.adoptionSaved")} <button className="text-button" disabled={busy} onClick={() => registry.dispatch("source.read-applied", commandScope)}>{t("source.readSaved")}</button></p> : null}
+          {owner.state.stale && (comparison || owner.state.preview) ? <p role="alert">{t("source.comparisonChanged")}</p> : null}
+          {warnings.length ? <details><summary>{t("source.diagnostics", { count: warnings.length })}</summary><ul>{warnings.map((diagnostic, index) => <li key={index}><code>{diagnostic}</code></li>)}</ul></details> : null}
+          <SourceImportControls project={project} open={open} canCapture={!attempt && !fixedPreview && !fixedComparison && (updating || !scope?.currentSnapshot)}
+            proposal={proposal} validation={sourceResult?.status.validation ?? "absent"} disabled={disabled || busy}
+            inventory={inventoryRead} environmentRead={integrationRead}
+            selectionAvailability={input => selectionAvailability(input, true)}
+            captureAvailability={(input, start) => captureAvailability(input, start, true)}
+            discardAvailability={() => discardAvailability(true)}
+            onValidated={async () => {
+              if (viewCurrent() && attempt && owner.current().attempt === attempt) {
+                await detailRead.refetch();
+                if (viewCurrent() && owner.current().attempt === attempt) setCaptureVersion(value => value + 1);
+              }
+            }} onOpenExtensions={onOpenExtensions} />
+          {pendingStart && !busy ? <section><p>{t("source.startUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("start"), false, true).enabled} onClick={() => registry.dispatch("source.retry-start", commandScope, pendingPayload("start"))}>{t("source.checkStart")}</button></section> : null}
           {attempt && !page && !comparison ? <section><p role="status">{t("source.savedTask")}</p><p>{t("source.taskHelp")}</p>
-            {detail ? <button className="secondary-button" disabled={locked} onClick={() => void perform(async () => { await execution.cancel({ ...context, taskId: detail.taskId, requestId: await execution.identity(context) }); })}>{t("execution.cancel")}</button> : null}
-            <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { if (current()) setDetail(null); })}>{t("execution.refresh")}</button>
+            {detail ? <button className="secondary-button" disabled={!taskAvailability(taskPayload(), true).enabled} onClick={() => registry.dispatch("source.cancel-task", commandScope, taskPayload())}>{t("execution.cancel")}</button> : null}
+            <button className="secondary-button" disabled={!common(false, true).enabled || detailRead.isFetching} onClick={() => registry.dispatch("source.refresh-attempt", commandScope)}>{t("execution.refresh")}</button>
           </section> : null}
-          {page ? <section>
-            <h3 ref={first} tabIndex={-1}>{t(page.snapshotId ? "source.imported" : "source.preview")}</h3>
+          {[previewPage, contentPage].map(page => page ? <section key={page.snapshotId ?? "preview"}>
+            <h3 ref={!page.snapshotId || !previewPage ? first : undefined} tabIndex={-1}>{t(page.snapshotId ? "source.imported" : "source.preview")}</h3>
             <p role="status">{t("source.range", { namespace: page.namespace, count: page.total, language: page.confirmation.sourceLanguage })}</p>
             <ul>{page.coverage.map(file => <li key={file.artifactId}>{file.logicalPath}<details><summary>{t("source.fingerprint")}</summary><code>{file.sha256}</code></details></li>)}</ul>
             <p>{t("source.identityHelp")}</p>
-            <div className="source-table-scroll"><table className="source-table"><caption>{t("source.pageRange", { first: String((page.rows[0]?.occurrence.ordinal ?? 0) + 1), last: String((page.rows.at(-1)?.occurrence.ordinal ?? -1) + 1), total: String(page.total) })}</caption><thead><tr><th scope="col">{t("source.key")}</th><th scope="col">{t("source.text")}</th></tr></thead><tbody>{page.rows.map(row => <tr key={row.occurrence.operationOccurrenceId}><th scope="row">{sourceLabel(row.occurrence)}<SourceOccurrenceOrigin key={`${project.sessionToken}:${project.metadata.projectId}:${page.snapshotId ?? page.resultId}:${row.occurrence.operationOccurrenceId}`} occurrence={row.occurrence} coverage={page.coverage} /></th><td><pre>{row.occurrence.text || t("source.emptyText")}</pre></td></tr>)}</tbody></table></div>
-            <div className="execution-actions">{[0, page.nextOrdinal].map((after, index) => after !== null ? <button className="secondary-button" key={index} disabled={locked || (index === 0 && page.rows[0]?.occurrence.ordinal === 0)} onClick={() => void perform(async current => {
-              const next = page.snapshotId ? await commands.content({ ...context, snapshotId: page.snapshotId, after, limit: 50 }) : await commands.preview({ ...context, attemptId: page.attemptId, resultId: page.resultId, after, limit: 50 });
-              if (current()) setPage(next);
-            })}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
+            <div className="source-table-scroll"><table className="source-table"><caption>{t("source.pageRange", { first: String((page.rows[0]?.occurrence.ordinal ?? 0) + 1), last: String((page.rows.at(-1)?.occurrence.ordinal ?? -1) + 1), total: String(page.total) })}</caption><thead><tr><th scope="col">{t("source.key")}</th><th scope="col">{t("source.text")}</th></tr></thead><tbody>{page.rows.map(row => <tr key={row.occurrence.ordinal}><th scope="row">{sourceLabel(row.occurrence)}<SourceOccurrenceOrigin occurrence={row.occurrence} coverage={page.coverage} />{row.unitId ? <code>{row.unitId}</code> : null}</th><td><pre>{row.occurrence.text || t("source.emptyText")}</pre></td></tr>)}</tbody></table></div>
+            <div className="execution-actions">{[0, page.nextOrdinal].map((after, index) => after !== null ? <button className="secondary-button" key={index} disabled={!pageAvailability(pagePayload(page, after), true).enabled || (index === 0 && (page.snapshotId === null ? owner.state.previewAfter : contentAfter) === 0)} onClick={() => registry.dispatch("source.read-page", commandScope, pagePayload(page, after))}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
             {!page.snapshotId ? <>
-              <label className="source-check"><input type="checkbox" disabled={locked || !sourceValid || page.scope.currentSnapshot !== null} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.confirm", { count: page.total, language: page.confirmation.sourceLanguage })}</label>
+              <label className="source-check"><input type="checkbox" disabled={!basisAvailability(basisPayload(), false, true).enabled || page.scope.currentSnapshot !== null} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.confirm", { count: page.total, language: page.confirmation.sourceLanguage })}</label>
               <p>{t("source.applyHelp")}</p>
               {page.scope.currentSnapshot ? <p>{t("source.errors.conflict")}</p> : null}
-              <button className="primary-button" disabled={locked || !sourceValid || !confirmed || page.scope.currentSnapshot !== null} onClick={() => void perform(async current => {
-                const request = { ...context, attemptId: page.attemptId, resultId: page.resultId, actionId: await execution.identity(context), confirmation: page.confirmation };
-                if (!current()) return;
-                setPendingApply(request); setReceiptChecked(false); await applied(request, current);
-              })}>{t("source.apply")}</button>
+              <button className="primary-button" disabled={!basisAvailability(basisPayload(), true, true).enabled || page.scope.currentSnapshot !== null} onClick={() => registry.dispatch("source.apply", commandScope, basisPayload())}>{t("source.apply")}</button>
             </> : null}
-            {page.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <button className="primary-button" disabled={locked} onClick={() => {
-              sequence.current++; setPage(null); setComparison(null); setLineage({}); setUpdating(true); setConfirmed(false); setFailure(null);
-            }}>{t("source.update")}</button> : null}
-          </section> : null}
+            {page.snapshotId && browsing && page.snapshotId === page.scope.currentSnapshot ? <button className="primary-button" disabled={!common(false, true).enabled || !ready(contentOptions.key) || page.snapshotId !== scope?.currentSnapshot} onClick={() => registry.dispatch("source.begin-update", commandScope)}>{t("source.update")}</button> : null}
+          </section> : null)}
           {comparison ? <section>
             <h3 ref={first} tabIndex={-1}>{t("source.compareTitle")}</h3>
             <p role="status">{t("source.compareSummary", { unchanged: String(comparison.unchanged), moved: String(comparison.moved), changed: String(comparison.changed), added: String(comparison.added), ambiguous: String(comparison.ambiguous), removed: String(comparison.removed) })}</p>
             <p>{t("source.compareHelp")}</p>
             <label className="source-field">{t("source.mappingActor")}<input disabled={locked} value={actor} onChange={event => setActor(event.target.value)} maxLength={128} autoComplete="name" /></label>
             <label className="source-field">{t("source.comparisonFilter")}<input disabled={locked} value={filter} maxLength={256} onChange={event => setFilter(event.target.value)} /></label>
-            <button className="secondary-button" disabled={locked} onClick={() => void perform(current => compare(0, current, comparison.previousSnapshotId, filter))}>{t("source.search")}</button>
-            <button className="secondary-button" disabled={locked} onClick={() => void perform(current => compare(0, current, null, filter, true))}>{t("source.refreshComparison")}</button>
-            <p>{t("source.filteredRange", { count: comparison.filteredTotal, total: String(comparison.total) })}</p>
-            {history ? <label className="source-field">{t("source.comparisonBase")}<select disabled={locked} value={comparison.previousSnapshotId} onChange={event => void perform(current => compare(0, current, event.target.value, filter, true))}>
+            <button className="secondary-button" disabled={!comparisonAvailability(comparisonPayload(0, filter), false, true).enabled} onClick={() => registry.dispatch("source.search-comparison", commandScope, comparisonPayload(0, filter))}>{t("source.search")}</button>
+            <button className="secondary-button" disabled={!comparisonAvailability(comparisonPayload(0, filter, Object.keys(lineage).length ? fixedComparison!.previousSnapshotId : null), true, true).enabled} onClick={() => registry.dispatch("source.refresh-comparison", commandScope, comparisonPayload(0, filter, Object.keys(lineage).length ? fixedComparison!.previousSnapshotId : null))}>{t("source.refreshComparison")}</button>
+            {comparisonPage ? <p>{t("source.filteredRange", { count: comparisonPage.filteredTotal, total: String(comparison.total) })}</p> : null}
+            {history ? <label className="source-field">{t("source.comparisonBase")}<select disabled={locked} value={comparison.previousSnapshotId} onChange={event => registry.dispatch("source.refresh-comparison", commandScope, comparisonPayload(0, filter, event.target.value))}>
               {history.snapshots.map(entry => <option key={entry.snapshotId} value={entry.snapshotId}>{t("source.snapshotLabel", { revision: String(entry.revision) })} · {t(entry.current ? "source.currentSnapshot" : "source.historicalSnapshot")}</option>)}
             </select></label> : null}
-            <div className="source-table-scroll"><table className="source-table source-comparison-table"><caption>{t("source.changePage", { count: comparison.rows.length, total: String(comparison.total) })}</caption><thead><tr><th scope="col">{t("source.changeKind")}</th><th scope="col">{t("source.previous")}</th><th scope="col">{t("source.next")}</th><th scope="col">{t("source.mapping")}</th></tr></thead><tbody>{comparison.rows.map((row,index) => {
+            {comparisonPage ? <div className="source-table-scroll"><table className="source-table source-comparison-table"><caption>{t("source.changePage", { count: comparisonPage.rows.length, total: String(comparison.total) })}</caption><thead><tr><th scope="col">{t("source.changeKind")}</th><th scope="col">{t("source.previous")}</th><th scope="col">{t("source.next")}</th><th scope="col">{t("source.mapping")}</th></tr></thead><tbody>{comparisonPage.rows.map((row,index) => {
               const ordinal = row.new?.ordinal;
               const selected = ordinal === undefined ? undefined : lineage[ordinal];
               const selectedHistorical = historicalMatches?.rows.find(item => item.occurrenceId === selected?.oldOccurrenceId);
@@ -209,7 +403,7 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
                       else next[ordinal] = { newOrdinal: ordinal, oldOccurrenceId, decision: decision as "continue" | "reject", reason: "" };
                       return next;
                     });
-                    setEstimate(null); setConfirmed(false);
+                    setConfirmed(false);
                   }}>
                     <option value={defaultChoice}>{t(`source.mappingChoice.${defaultChoice}`)}</option>
                     {row.candidates.flatMap(candidate => candidate.occurrenceId ? [
@@ -218,46 +412,37 @@ export function SourceWorkbench({ project, disabled, onOpenWork, onOpenTranslati
                     ] : [])}
                     {selected && !row.candidates.some(candidate => candidate.occurrenceId === selected.oldOccurrenceId) ? <option value={`${selected.decision}:${selected.oldOccurrenceId}`}>{t(`source.mappingChoice.${selected.decision}`)} · {selectedHistorical ? sourceLabel(selectedHistorical.occurrence) : t("source.historicalSnapshot")}</option> : null}
                   </select></label>{selected ? <label className="source-field">{t("source.mappingReason")}<textarea disabled={locked} value={selected.reason} maxLength={4096} onChange={event => { setLineage(current => ({ ...current, [ordinal]: { ...current[ordinal], reason: event.target.value } })); setConfirmed(false); }} /></label> : null}
-                  <button className="text-button" disabled={locked} onClick={() => { setManualOrdinal(ordinal); setHistoricalMatches(null); }}>{t("source.chooseHistorical")}</button>
+                  <button className="text-button" disabled={locked} onClick={() => { setManualOrdinal(ordinal); }}>{t("source.chooseHistorical")}</button>
                 </> : t("source.noMapping")}</td></tr>;
-            })}</tbody></table></div>
-            <div className="execution-actions">{[0,comparison.nextOrdinal].map((after,index) => after !== null ? <button className="secondary-button" key={index} disabled={locked || (index === 0 && comparison.rows[0]?.new?.ordinal === 0)} onClick={() => void perform(async current => {
-              await compare(after, current);
-            })}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
-            {manualOrdinal !== null ? <section className="source-maintenance-panel"><h4>{t("source.manualTarget", { key: manualOccurrence ? sourceLabel(manualOccurrence) : t("source.entryLabel", { number: String(manualOrdinal + 1) }) })}</h4>
+            })}</tbody></table></div> : null}
+            <div className="execution-actions">{[0,comparisonPage?.nextOrdinal ?? null].map((after,index) => after !== null ? <button className="secondary-button" key={index} disabled={!comparisonAvailability(comparisonPayload(after), false, true).enabled || (index === 0 && owner.state.comparisonAfter === 0)} onClick={() => registry.dispatch("source.search-comparison", commandScope, comparisonPayload(after))}>{t(index === 0 ? "execution.firstPage" : "execution.nextPage")}</button> : null)}</div>
+            {manualOrdinal !== null ? <section className="source-maintenance-panel"><h4>{t("source.manualTarget", { key: comparisonPage?.rows.find(row => row.new?.ordinal === manualOrdinal)?.new?.key ?? String(manualOrdinal + 1) })}</h4>
               <label className="source-field">{t("source.searchHistory")}<input disabled={locked} maxLength={256} value={historicalQuery} onChange={event => setHistoricalQuery(event.target.value)} /></label>
-              <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { const next = await commands.historyContent({ ...context, snapshotId: comparison.previousSnapshotId, query: historicalQuery, after: 0, limit: 20 }); if (current()) setHistoricalMatches(next); })}>{t("source.search")}</button>
-              {historicalMatches ? <><p>{t("source.historyMatches", { count: historicalMatches.total })}</p><ul>{historicalMatches.rows.map(row => <li key={row.occurrenceId}><strong>{sourceLabel(row.occurrence)}</strong><pre>{row.occurrence.text}</pre><SourceOccurrenceOrigin key={`${project.sessionToken}:${project.metadata.projectId}:${historicalMatches.snapshotId}:${row.occurrenceId}`} occurrence={row.occurrence} coverage={historicalMatches.coverage} />{(["continue", "reject"] as const).map(decision => <button className="text-button" key={decision} disabled={locked} onClick={() => { setLineage(current => ({ ...current, [manualOrdinal]: { newOrdinal: manualOrdinal, oldOccurrenceId: row.occurrenceId!, decision, reason: "" } })); setEstimate(null); setConfirmed(false); }}>{t(`source.mappingChoice.${decision}`)}</button>)}</li>)}</ul>{historicalMatches.nextOrdinal !== null ? <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { const next = await commands.historyContent({ ...context, snapshotId: comparison.previousSnapshotId, query: historicalQuery, after: historicalMatches.nextOrdinal!, limit: 20 }); if (current()) setHistoricalMatches(next); })}>{t("execution.nextPage")}</button> : null}</> : null}
+              <button className="secondary-button" disabled={!historyAvailability(historyPayload(), true).enabled} onClick={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload())}>{t("source.search")}</button>
+              {matchesEnabled ? <SourceReadFeedback error={matchesRead.error} fetching={open && matchesRead.isFetching} retry={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload(search!.after, search!.query))} /> : null}
+              {matchesEnabled && search!.after > 0 ? <button className="secondary-button" disabled={!historyAvailability(historyPayload(0, search!.query), true).enabled} onClick={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload(0, search!.query))}>{t("execution.firstPage")}</button> : null}
+              {historicalMatches ? <><p>{t("source.historyMatches", { count: historicalMatches.total })}</p><ul>{historicalMatches.rows.map(row => <li key={row.occurrenceId}><strong>{row.occurrence.key}</strong><pre>{row.occurrence.text}</pre>{(["continue", "reject"] as const).map(decision => <button className="text-button" key={decision} disabled={locked} onClick={() => { setLineage(current => ({ ...current, [manualOrdinal]: { newOrdinal: manualOrdinal, oldOccurrenceId: row.occurrenceId!, decision, reason: "" } })); setConfirmed(false); }}>{t(`source.mappingChoice.${decision}`)}</button>)}</li>)}</ul>{historicalMatches.nextOrdinal !== null ? <button className="secondary-button" disabled={!historyAvailability(historyPayload(historicalMatches.nextOrdinal!, search!.query), true).enabled} onClick={() => registry.dispatch("source.find-lineage-candidates", commandScope, historyPayload(historicalMatches.nextOrdinal!, search!.query))}>{t("execution.nextPage")}</button> : null}</> : null}
             </section> : null}
-            <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { const next = await commands.estimate({ ...context, attemptId: comparison.attemptId, resultId: comparison.resultId, actionId: await execution.identity(context), confirmation: { ...comparison.confirmation, lineage: Object.values(lineage), actor: actor.trim() || null } }); if (current()) setEstimate(next); })}>{t("source.reviewImpact")}</button>
+            <button className="secondary-button" disabled={!basisAvailability(basisPayload(), false, true).enabled} onClick={() => registry.dispatch("source.estimate", commandScope, basisPayload())}>{t("source.reviewImpact")}</button>
             <p>{t("source.estimateHelp")}</p>{estimate?.map(summary => <p key={summary.locale}>{t("source.impactSummary", { locale: summary.locale, preserved: String(summary.preserved), reassess: String(summary.reassess), unresolved: String(summary.unresolved), total: String(summary.total) })}</p>)}
-            <label className="source-check"><input type="checkbox" disabled={locked || !sourceValid || !estimate} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.updateConfirm", { count: comparison.total })}</label>
+            <label className="source-check"><input type="checkbox" disabled={!basisAvailability(basisPayload(), false, true).enabled || !estimate} checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />{t("source.updateConfirm", { count: comparison.total })}</label>
             <p>{t("source.updateImpact")}</p>
-            <button className="primary-button" disabled={locked || !sourceValid || !confirmed || (Object.keys(lineage).length > 0 && (!actor.trim() || Object.values(lineage).some(choice => !choice.reason.trim())))} onClick={() => void perform(async current => {
-              const request = { ...context, attemptId: comparison.attemptId, resultId: comparison.resultId, actionId: await execution.identity(context), confirmation: { ...comparison.confirmation, lineage: Object.values(lineage), actor: actor.trim() || null } };
-              if (!current()) return;
-              setPendingApply(request); setReceiptChecked(false); await applied(request,current);
-            })}>{t("source.applyUpdate")}</button>
+            <button className="primary-button" disabled={!basisAvailability(basisPayload(), true, true).enabled} onClick={() => registry.dispatch("source.apply", commandScope, basisPayload())}>{t("source.applyUpdate")}</button>
           </section> : null}
-          {pendingApply && !busy ? <section><p>{t("source.applyUnknown")}</p><button className="secondary-button" disabled={busy} onClick={() => void perform(async current => {
-            const receipt = await execution.receipt({ ...context, actionId: pendingApply.actionId });
-            if (!current()) return;
-            setReceiptChecked(true);
-            if (receipt) { await loadCurrent(current); if (current()) setPendingApply(null); }
-          })}>{t("execution.checkReceipt")}</button>{receiptChecked ? <button className="secondary-button" disabled={busy} onClick={() => void perform(current => { setReceiptChecked(false); return applied(pendingApply, current); })}>{t("execution.retryAdoption")}</button> : null}
-            <button className="text-button" disabled={busy || !receiptChecked} onClick={() => { setPendingApply(null); setConfirmed(false); }}>{t("execution.keepOutput")}</button>
+          {pendingApply && !busy ? <section><p>{t("source.applyUnknown")}</p><button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), false, true).enabled} onClick={() => registry.dispatch("source.check-receipt", commandScope, pendingPayload("apply"))}>{t("execution.checkReceipt")}</button>{receiptChecked ? <button className="secondary-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.retry-apply", commandScope, pendingPayload("apply"))}>{t("execution.retryAdoption")}</button> : null}
+            <button className="text-button" disabled={!pendingAvailability(pendingPayload("apply"), true, true).enabled} onClick={() => registry.dispatch("source.keep-output", commandScope, pendingPayload("apply"))}>{t("execution.keepOutput")}</button>
           </section> : null}
-          <button className="text-button" disabled={locked} onClick={() => void perform(loadCurrent)}>{t("source.viewCurrent")}</button>
-          {page?.snapshotId && page.snapshotId === page.scope.currentSnapshot ? <SourceImpactPanel key={page.snapshotId} project={project} snapshotId={page.snapshotId} active={open} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork ? () => { setOpen(false); onOpenWork(); } : undefined} /> : null}
-          <p>{t("source.correctionHelp")}</p><SourceHistoryPanel key={page?.scope.revision ?? comparison?.scope.revision ?? "selection"} project={project} disabled={locked} onHistory={setHistory} />
+          <button className="text-button" disabled={!common(false, true).enabled || !!Object.keys(lineage).length} onClick={() => registry.dispatch("source.show-current", commandScope)}>{t("source.viewCurrent")}</button>
+          {contentPage?.snapshotId && contentPage.snapshotId === contentPage.scope.currentSnapshot ? <SourceImpactPanel key={contentPage.snapshotId} project={project} snapshotId={contentPage.snapshotId} active={open} disabled={locked} onOpenTranslation={onOpenTranslation} onOpenWork={onOpenWork} /> : null}
+          <p>{t("source.correctionHelp")}</p><SourceHistoryPanel project={project} disabled={locked} active={open} onHistoryCursor={setHistoryOffset} />
           <p>{t("source.draftHelp")}</p>
         </div>
       </WorkbenchPanel>
-    <Dialog.Root open={leave} onOpenChange={next => { if (!next) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; } }}>
+    <Dialog.Root open={leave} onOpenChange={next => { if (!next) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; } }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()}>
         <Dialog.Title>{t("source.leaveTitle")}</Dialog.Title><Dialog.Description>{t("source.leaveHelp")}</Dialog.Description>
-        <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; }}>{t("source.keep")}</button>
-          <button className="primary-button" onClick={() => { sequence.current++; void (sourceImport.current?.discard() ?? commands.cancelCapture(context)).then(() => { setLineage({}); setComparison(null); setLeave(false); leaveResolver.current?.(true); leaveResolver.current = null; }, error => { showError(error); setLeave(false); setOpen(true); leaveResolver.current?.(false); leaveResolver.current = null; }); }}>{t("source.leave")}</button></div>
+        <div className="form-actions"><button className="secondary-button" onClick={() => { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; }}>{t("source.keep")}</button>
+          <button className="primary-button" onClick={() => { if (leaveProof.current && !leaveProof.current()) { setLeave(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; } sequence.current++; captureRunning.current = false; setCaptureBusy(false); void owner.discard().then(ok => { setLeave(false); if (!ok) setOpen(true); leaveResolver.current?.(ok); leaveResolver.current = null; leaveProof.current = null; }); }}>{t("source.leave")}</button></div>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
   </>;

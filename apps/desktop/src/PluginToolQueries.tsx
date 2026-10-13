@@ -1,4 +1,8 @@
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
+import { useWorkbenchCommands, type ResourceToolPreparationCommandPayload, type ResourceToolCaptureCommandPayload, type ResourceToolPendingCommandPayload,
+  type ExecutionCancellationCommandPayload, type ExecutionCancellationRetryCommandPayload, type CommandAvailability } from "./workbenchCommands";
+import { TaskCancellationFeedback } from "./ExecutionTaskSession";
+import type { PluginToolQuerySession, ToolQueryIntent } from "./PluginToolQuerySession";
+import { useEffect, useLayoutEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { createToolQuery, ToolQueryError, type ToolQueryPresentation } from "../../../crates/plugin-sdk/javascript/tool-query.mjs";
@@ -13,14 +17,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 
 export interface ToolQueryState { busy: boolean; pending: boolean; hasDraft: boolean }
-export interface ToolQueryHandle { allowLeave: () => Promise<boolean>; addText: (text: string) => boolean }
-type DraftRow = { id: number; text: string };
-type Intent =
-  | { kind: "prepare"; request: PluginToolPrepareRequest; view: PluginToolView; sequence: number }
-  | { kind: "start"; request: PluginStartRequest; review: PluginToolPreflight; sequence: number }
-  | { kind: "discard"; request: PluginToolDiscardRequest }
-  | { kind: "cancel"; request: CancelRequest };
-type Capture = { review: PluginToolPreflight; sequence: number };
+export interface ToolQueryHandle { allowLeave: (current?: () => boolean, intentCurrent?: () => boolean) => Promise<boolean>; addText: (text: string) => boolean }
 
 function presentation(view: PluginToolView | undefined): { value: ToolQueryPresentation | null; failed: boolean } {
   if (!view) return { value: null, failed: false };
@@ -30,30 +27,30 @@ function presentation(view: PluginToolView | undefined): { value: ToolQueryPrese
 
 /** Shared SDK input construction, original execution consent and ledger reads.
  * Drafts survive hidden panels; references never become project mutations. */
-export function PluginToolQueries({ project, open, disabled, onState, onAttention, ref }: {
-  project: ProjectView; open: boolean; disabled: boolean;
+export function PluginToolQueries({ project, session, open, disabled, onState, onAttention, ref }: {
+  project: ProjectView; session: PluginToolQuerySession; open: boolean; disabled: boolean;
   onState: (state: ToolQueryState) => void; onAttention: () => void; ref?: Ref<ToolQueryHandle>;
 }) {
-  const { t } = useTranslation(), context = executionContext(project), reads = useSessionReads();
-  const [choiceKey, setChoiceKey] = useState(""), [runtimeKey, setRuntimeKey] = useState(""), [refresh, setRefresh] = useState(0);
-  const [rows, setRows] = useState<DraftRow[]>([{ id: 0, text: "" }]), nextRow = useRef(1);
-  const [target, setTarget] = useState(""), [selections, setSelections] = useState<string[]>([]);
-  const [capture, setCapture] = useState<Capture | null>(null), [run, setRun] = useState<Capture | null>(null);
-  const [consent, setConsent] = useState<string | null>(null), [submittedSequence, setSubmittedSequence] = useState(-1);
-  const [pending, setPending] = useState<Intent | null>(null), pendingRef = useRef<Intent | null>(null);
-  const [busy, setBusy] = useState(false), [failure, setFailure] = useState<CommandFailure | null>(null);
-  const [inputFailure, setInputFailure] = useState<ToolQueryError | null>(null), [leave, setLeave] = useState(false);
-  const draftSequence = useRef(0), mounted = useRef(true), running = useRef(false), requestSequence = useRef(0);
+  const { t } = useTranslation(), context = executionContext(project), reads = useSessionReads(), registry = useWorkbenchCommands();
+  const commandScope = { ...context, area: "resources" as const };
+  const { choiceKey, runtimeKey, refresh, rows, target, selections, capture, run, consent, submittedSequence, pending, busy, failure, inputFailure } = session.state;
+  const { setChoiceKey, setRuntimeKey, setRefresh, setRows, setTarget, setSelections, setCapture, setConsent, setFailure,
+    setInputFailure, draftSequence, nextRow, running, perform, submit, edit } = session;
+  const mounted = useRef(false);
+  const [leave, setLeave] = useState(false), leaveProof = useRef<(() => boolean) | null>(null);
+  const leaveIntent = useRef<(() => boolean) | null>(null);
   const leaveResolver = useRef<((answer: boolean) => void) | null>(null), leaveTrigger = useRef<HTMLElement | null>(null);
   const errorRegion = useRef<HTMLDivElement>(null);
-  const inventory = useSessionQuery({ key: ["tool-query-inventory", refresh], scopes: [], enabled: open && !disabled,
+  const inventoryKey = ["tool-query-inventory", refresh] as const;
+  const inventory = useSessionQuery({ key: inventoryKey, scopes: [], enabled: open && !disabled,
     read: readPluginToolChoices });
   const choices = inventory.data?.choices ?? [], effectiveChoice = choiceKey || (choices.length === 1 ? choices[0].key : "");
   const choice = choices.find(item => item.key === effectiveChoice);
   const runtimes = matchingPluginEnvironments(inventory.data?.runtimes ?? [], choice?.runtimeKinds ?? []);
   const effectiveRuntime = runtimeKey || (runtimes.length === 1 ? runtimes[0].environmentDigest : "");
   const toolRequest: PluginToolRequest | null = choice && effectiveRuntime ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: effectiveRuntime } : null;
-  const environment = useSessionQuery({ key: ["tool-query-environment", effectiveChoice, effectiveRuntime, refresh, inventory.dataUpdatedAt], scopes: [],
+  const environmentKey = ["tool-query-environment", effectiveChoice, effectiveRuntime, refresh, inventory.dataUpdatedAt] as const;
+  const environment = useSessionQuery({ key: environmentKey, scopes: [],
     enabled: open && !disabled && !!toolRequest && runtimes.some(item => item.environmentDigest === effectiveRuntime) && !inventory.error && !inventory.isFetching,
     read: async () => {
       if (!toolRequest) throw new Error("Missing tool choice");
@@ -73,12 +70,29 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
     read: async () => {
       if (!attemptId) return null;
       const value = await readCompleteAttempt(context, attemptId, "plugin-tool-query");
+      const known = session.current().knownTask;
+      if (value && known?.attemptId === attemptId && value.taskId !== known.taskId) throw new Error("Tool task association changed");
       if (value && visibleRun && (value.items.length !== visibleRun.review.items.length
         || value.items.some(item => !visibleRun.review.items.some(fixed => fixed.itemId === item.status.itemId)))) throw new Error("Tool result coverage changed");
       return value;
     } });
   const resultIds = detail.data?.items.flatMap(item => item.resultId ? [item.resultId] : []) ?? [];
-  const taskId = detail.data?.taskId;
+  const knownTask = session.state.knownTask;
+  const taskId = knownTask?.attemptId === attemptId ? knownTask.taskId : detail.data?.taskId;
+  useLayoutEffect(() => {
+    const state = reads.client.getQueryState(reads.key(["tool-query-attempt", attemptId]));
+    if (detail.data && state?.status === "success" && state.fetchStatus === "idle" && !state.isInvalidated && state.data === detail.data) session.observeTask(detail.data);
+  }, [detail.data, detail.isFetching, detail.error, reads, attemptId, session]);
+  function cancellationProof() {
+    const known = session.current().knownTask;
+    return !!known && known.taskId === taskId && known.attemptId === attemptId && known.operation === "plugin-tool-query";
+  }
+  function environmentCurrent() {
+    const inventoryState = reads.client.getQueryState(reads.key(inventoryKey));
+    const environmentState = reads.client.getQueryState(reads.key(environmentKey));
+    return inventoryState?.status === "success" && inventoryState.fetchStatus === "idle" && !inventoryState.isInvalidated && inventoryState.data === inventory.data
+      && environmentState?.status === "success" && environmentState.fetchStatus === "idle" && !environmentState.isInvalidated && environmentState.data === environment.data;
+  }
   const output = useSessionQuery({ key: ["tool-query-output", attemptId, ...resultIds], scopes: ["execution"], enabled: open && !!attemptId && !busy && !!resultIds.length,
     read: async () => {
       if (!attemptId) return [];
@@ -88,80 +102,113 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
   const locked = disabled || busy || !!pending;
   const draftLocked = disabled || (!!pending && pending.kind !== "prepare");
   const hasDraft = rows.some(row => row.text.length > 0) && draftSequence.current !== submittedSequence;
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; requestSequence.current++; leaveResolver.current?.(false); }; }, []);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; leaveResolver.current?.(false); }; }, []);
   useEffect(() => { onState({ busy: busy || working, pending: !!pending, hasDraft }); }, [busy, working, !!pending, hasDraft, onState]);
   useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
   useEffect(() => { const error = inventory.error ?? environment.error ?? detail.error ?? output.error; if (error) setFailure(commandFailure(error)); }, [inventory.error, environment.error, detail.error, output.error]);
 
-  function edit() { draftSequence.current++; setConsent(null); setInputFailure(null); }
-  function retain(intent: Intent | null) { pendingRef.current = intent; setPending(intent); }
-  async function perform(work: (current: () => boolean) => Promise<void>) {
-    if (running.current) return;
-    running.current = true; setBusy(true); setFailure(null);
-    const ticket = ++requestSequence.current, current = () => mounted.current && requestSequence.current === ticket;
-    try { await work(current); } catch (error) { if (current()) { if (error instanceof ToolQueryError) setInputFailure(error); else setFailure(commandFailure(error)); } }
-    finally { running.current = false; if (mounted.current) { setBusy(false); reads.invalidate(["execution"]); } }
-  }
-  async function submit(intent: Intent, current: () => boolean) {
-    retain(intent);
-    try {
-      switch (intent.kind) {
-        case "prepare": {
-          const value = await executionCommands.prepareTool(intent.request);
-          const expected = new Map<string | undefined, number>();
-          intent.request.payloads.forEach(payload => { const key = jsonIdentity(payload); expected.set(key, (expected.get(key) ?? 0) + 1); });
-          if (value.attemptId !== intent.request.attemptId || !matches(value.tool, intent.request.tool)
-            || jsonIdentity(value.tool.binding) !== jsonIdentity(intent.view.binding)
-            || jsonIdentity(value.tool.environment) !== jsonIdentity(intent.view.environment) || value.items.length !== intent.request.payloads.length
-            || new Set(value.items.map(item => item.itemId)).size !== value.items.length) throw new Error("Tool preparation identity changed");
-          for (const item of value.items) { const key = jsonIdentity(item.payload), count = expected.get(key) ?? 0; if (!count) throw new Error("Tool input coverage changed"); expected.set(key, count - 1); }
-          if (current()) { setCapture({ review: value, sequence: intent.sequence }); setConsent(null); retain(null); }
-          break;
-        }
-        case "start": {
-          const id = await executionCommands.startTool(intent.request);
-          if (id !== intent.request.attemptId) throw new Error("Tool attempt identity changed");
-          if (current()) { setRun({ review: intent.review, sequence: intent.sequence }); setSubmittedSequence(intent.sequence); retain(null); }
-          break;
-        }
-        case "discard": await executionCommands.discardTool(intent.request); if (current()) { setCapture(null); setConsent(null); retain(null); } break;
-        case "cancel": await executionCommands.cancel(intent.request); if (current()) retain(null); break;
-      }
-    } catch (error) { if (current() && !hasUnknownOutcome(error)) { retain(null); setConsent(null); } throw error; }
-  }
   async function prepare(current: () => boolean) {
     const helper = available.value;
     if (!helper || !environment.data || !toolRequest || unavailable) return;
     const sequence = draftSequence.current;
     const payloads = rows.map(row => helper.prepare({ text: row.text, target: effectiveTarget, selections }));
     const id = await executionCommands.identity(context);
-    if (current()) await submit({ kind: "prepare", request: { ...context, tool: toolRequest, attemptId: id, payloads }, view: environment.data, sequence }, current);
+    if (current() && environmentCurrent()) await submit({ kind: "prepare", request: { ...context, tool: toolRequest, attemptId: id, payloads }, view: environment.data, sequence }, current);
   }
   async function start(current: () => boolean) {
     if (!capture || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest) return;
     const grantId = await executionCommands.identity(context);
-    if (!current()) return;
+    if (!current() || !environmentCurrent()) return;
     if (capture.sequence !== draftSequence.current) throw new ToolQueryError("input-changed", "text");
     await submit({ kind: "start", review: capture.review, sequence: capture.sequence,
       request: { ...context, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest, grantId, expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true } }, current);
   }
   function answerLeave(answer: boolean) { setLeave(false); leaveResolver.current?.(answer); leaveResolver.current = null; }
-  useImperativeHandle(ref, () => ({ addText(text) {
-    if (!text.length || disabled || !mounted.current || (pendingRef.current && pendingRef.current.kind !== "prepare")
-      || (running.current && pendingRef.current?.kind !== "prepare")) return false;
-    const id = nextRow.current++;
-    setRows(values => values.length === 1 && values[0].text === "" ? [{ ...values[0], text }] : [...values, { id, text }]);
-    edit();
-    return true;
-  }, allowLeave() {
-    if (running.current || pendingRef.current || working) { onAttention(); return Promise.resolve(false); }
-    if (!hasDraft && !capture) return Promise.resolve(true);
-    onAttention(); leaveTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  useImperativeHandle(ref, () => ({ addText: text => !disabled && session.addText(text), allowLeave(current = () => true, intentCurrent = current) {
+    if (!current()) return Promise.resolve(false);
+    if (session.blocked()) { onAttention(); return Promise.resolve(false); }
+    if (!session.hasDraft()) return Promise.resolve(true);
+    onAttention(); leaveProof.current = current; leaveIntent.current = intentCurrent;
+    leaveTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
   } }));
   async function discard(current: () => boolean) {
     if (capture) await submit({ kind: "discard", request: { ...context, attemptId: capture.review.attemptId } }, current);
   }
+  async function discardAndLeave() {
+    let answer: boolean | null = null, settledSequence = draftSequence.current;
+    await perform(async current => {
+      if (!leaveProof.current?.()) { answer = false; return; }
+      const sequence = draftSequence.current;
+      await discard(current);
+      if (!current() || !leaveIntent.current?.() || draftSequence.current !== sequence || session.current().pending) { answer = false; return; }
+      setRows([{ id: nextRow.current++, text: "" }]); edit(); settledSequence = draftSequence.current; answer = true;
+    });
+    // Resolve after the owner has released its in-flight lock. The coordinator
+    // then inspects the settled owner rather than mistaking our own discard for new work.
+    if (mounted.current && answer !== null) answerLeave(answer && !!leaveIntent.current?.()
+      && draftSequence.current === settledSequence && !session.blocked());
+  }
+  const preparationPayload: ResourceToolPreparationCommandPayload | undefined = toolRequest && environment.data
+    ? { kind: "resource-tool-preparation", editSeq: draftSequence.current, tool: toolRequest, view: environment.data } : undefined;
+  const capturePayload: ResourceToolCaptureCommandPayload | undefined = capture
+    ? { kind: "resource-tool-capture", editSeq: capture.sequence, attemptId: capture.review.attemptId, inputDigest: capture.review.inputDigest } : undefined;
+  const pendingPayload: ResourceToolPendingCommandPayload | undefined = pending ? { kind: "resource-tool-pending", intent: pending } : undefined;
+  const cancelPayload: ExecutionCancellationCommandPayload | undefined = taskId && attemptId
+    ? { kind: "execution-cancellation", taskId, attemptId, origin: "resources" } : undefined;
+  function baseAvailability(): CommandAvailability {
+    return !open || leave || reads.retired ? { enabled: false, reason: "hidden" }
+      : disabled || session.running.current ? { enabled: false, reason: "busy" } : { enabled: true };
+  }
+  function preparationAvailability(payload?: ResourceToolPreparationCommandPayload): CommandAvailability {
+    const base = baseAvailability(); if (!base.enabled) return base;
+    return payload && preparationPayload && !session.current().pending && !working && !unavailable && !inventory.isFetching && !environment.isFetching && environmentCurrent()
+      && payload.editSeq === draftSequence.current && jsonIdentity(payload.tool) === jsonIdentity(preparationPayload.tool)
+      && jsonIdentity(payload.view) === jsonIdentity(preparationPayload.view) ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  function captureAvailability(payload?: ResourceToolCaptureCommandPayload, starting = false): CommandAvailability {
+    const base = baseAvailability(); if (!base.enabled) return base;
+    const fixed = session.current().capture;
+    return payload && fixed && !session.current().pending && payload.attemptId === fixed.review.attemptId && payload.inputDigest === fixed.review.inputDigest
+      && payload.editSeq === fixed.sequence && (!starting || !changed && !environmentChanged && !unavailable && !inventory.isFetching && !environment.isFetching && environmentCurrent()
+        && fixed.sequence === draftSequence.current && session.current().consent === fixed.review.inputDigest)
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  function pendingAvailability(payload?: ResourceToolPendingCommandPayload): CommandAvailability {
+    const base = baseAvailability(); if (!base.enabled) return base;
+    return payload && session.current().pending && jsonIdentity(payload.intent) === jsonIdentity(session.current().pending)
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  function cancelAvailability(payload?: ExecutionCancellationCommandPayload): CommandAvailability {
+    const base = baseAvailability(); if (!base.enabled) return base;
+    return payload && payload.origin === "resources" && payload.taskId === taskId && payload.attemptId === attemptId
+      && session.tasks.canCancel(payload, cancellationProof) ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  function retryCancelAvailability(payload?: ExecutionCancellationRetryCommandPayload): CommandAvailability {
+    const base = baseAvailability(); if (!base.enabled) return base;
+    const value = payload && session.tasks.current(payload.taskId);
+    return value?.phase === "unknown" && payload?.origin === "resources" && value.target.origin === payload.origin
+      && value.target.attemptId === payload.attemptId && value.request.requestId === payload.requestId
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  useLayoutEffect(() => {
+    const metadata = { category: "resources" as const, scope: commandScope, binding: null, confirmation: "none" as const };
+    const removals = [
+      registry.register({ ...metadata, id: "resource.prepare-tool", payloadKind: "resource-tool-preparation", nameKey: "toolQuery.prepare", risk: "captures-resources",
+        availability: preparationAvailability, handler: () => { void perform(prepare); } }),
+      registry.register({ ...metadata, id: "resource.start-tool", payloadKind: "resource-tool-capture", nameKey: "toolQuery.start", risk: "runs-resource-tool",
+        availability: payload => captureAvailability(payload, true), handler: () => { void perform(start); } }),
+      registry.register({ ...metadata, id: "resource.discard-tool", payloadKind: "resource-tool-capture", nameKey: "toolQuery.discardReview", risk: "retries-resource-action",
+        availability: payload => captureAvailability(payload), handler: () => { void perform(discard); } }),
+      registry.register({ ...metadata, id: "resource.retry-tool", payloadKind: "resource-tool-pending", nameKey: "toolQuery.retryOriginal", risk: "retries-resource-action",
+        availability: pendingAvailability, handler: payload => { void perform(current => submit(payload.intent, current)); } }),
+      registry.register({ ...metadata, id: "resource.cancel-tool", payloadKind: "execution-cancellation", nameKey: "toolQuery.cancel", risk: "cancels-execution-task",
+        availability: cancelAvailability, handler: payload => { void session.tasks.cancel(payload, cancellationProof); } }),
+      registry.register({ ...metadata, id: "resource.retry-tool-cancellation", payloadKind: "execution-cancellation-retry", nameKey: "execution.retryCancellation", risk: "retries-execution-action",
+        availability: retryCancelAvailability, handler: payload => { void session.tasks.retry(payload.taskId); } }),
+    ];
+    return () => removals.forEach(remove => remove());
+  });
   const runView = visibleRun?.review.tool;
   const runPresentation = useMemo(() => presentation(runView).value, [runView]);
   function entries(resultId: string, itemId: string): string[][] | null {
@@ -171,8 +218,14 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
   }
   return <>
     <section hidden={!open} aria-label={t("toolQuery.title")} aria-busy={busy || inventory.isFetching || environment.isFetching}>
+      <TaskCancellationFeedback origin="resources" taskId={taskId} disabled={disabled} visible={open} retryCommand={{ available: intent => retryCancelAvailability({ ...intent, kind: "execution-cancellation-retry" }).enabled,
+        dispatch: intent => { registry.dispatch("resource.retry-tool-cancellation", commandScope, { ...intent, kind: "execution-cancellation-retry" }); } }} />
       <h3>{t("toolQuery.title")}</h3><p>{t("toolQuery.help")}</p>
       {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("toolQuery.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
+      {detail.error ? <div role="alert"><p>{t("toolQuery.recordReadFailed")}</p><CommandFailureDetails failure={commandFailure(detail.error)} />
+        <button type="button" className="secondary-button" disabled={detail.isFetching} onClick={() => void detail.refetch()}>{t("toolQuery.retryRead")}</button></div> : null}
+      {output.error ? <div role="alert"><p>{t("toolQuery.outputReadFailed")}</p><CommandFailureDetails failure={commandFailure(output.error)} />
+        <button type="button" className="secondary-button" disabled={output.isFetching} onClick={() => void output.refetch()}>{t("toolQuery.retryRead")}</button></div> : null}
       {inventory.isFetching || environment.isFetching || busy || working ? <p role="status">{t("execution.working")}</p> : null}
       <label className="source-field">{t("toolQuery.provider")}<select value={effectiveChoice} disabled={locked || !!capture || working} onChange={event => { setChoiceKey(event.target.value); setRuntimeKey(""); setTarget(""); setSelections([]); edit(); }}>
         <option value="">{t("toolQuery.chooseProvider")}</option>{choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}
@@ -196,7 +249,7 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
       {inputFailure ? <p role="alert">{t(inputFailure.code === "text-required" ? "toolQuery.textRequired" : inputFailure.code === "invalid-selection" ? "toolQuery.selectionRequired" : inputFailure.code === "limit-exceeded" ? "toolQuery.tooLarge" : "toolQuery.inputChanged")}</p> : null}
       {changed ? <p role="status">{t("toolQuery.inputChanged")}</p> : null}
       {environmentChanged ? <p role="alert">{t("toolQuery.environmentChanged")}</p> : null}
-      <button className={capture && !changed && !environmentChanged && run?.review.attemptId !== capture.review.attemptId ? "secondary-button" : "primary-button"} disabled={locked || working || unavailable || inventory.isFetching || environment.isFetching} onClick={() => void perform(prepare)}>{t("toolQuery.prepare")}</button>
+      <button className={capture && !changed && !environmentChanged && run?.review.attemptId !== capture.review.attemptId ? "secondary-button" : "primary-button"} disabled={!preparationAvailability(preparationPayload).enabled} onClick={() => { if (preparationPayload) registry.dispatch("resource.prepare-tool", commandScope, preparationPayload); }}>{t("toolQuery.prepare")}</button>
       {capture ? <section aria-label={t("toolQuery.review")}>
         <p>{t(visibleRun?.review.attemptId === capture.review.attemptId ? "toolQuery.executionCaptured" : "toolQuery.captured", { count: capture.review.items.length })}</p>
         <PluginPermissions permissions={capture.review.tool.binding.capability.declaration.permissions} /><p>{t("sourcePlugin.unsandboxed")}</p>
@@ -204,10 +257,10 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
           {capture.review.items.map(item => <pre key={item.itemId}>{typeof field(item.payload, capture.review.tool.binding.declaration.query?.textPath ?? []) === "string" ? String(field(item.payload, capture.review.tool.binding.declaration.query?.textPath ?? [])) : t("toolQuery.invalidResult")}</pre>)}
         </details>
         {!run || run.review.attemptId !== capture.review.attemptId ? <><label className="source-check"><input type="checkbox" checked={consent === capture.review.inputDigest} disabled={locked || changed || environmentChanged || unavailable} onChange={event => setConsent(event.target.checked ? capture.review.inputDigest : null)} />{t("toolQuery.consent")}</label>
-          <button className="primary-button" disabled={locked || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest || inventory.isFetching || environment.isFetching} onClick={() => void perform(start)}>{t("toolQuery.start")}</button></> : null}
-        <button className="secondary-button" disabled={locked || working} onClick={() => void perform(discard)}>{t("toolQuery.discardReview")}</button>
+          <button className="primary-button" disabled={locked || changed || environmentChanged || unavailable || consent !== capture.review.inputDigest || inventory.isFetching || environment.isFetching} onClick={() => { if (capturePayload) registry.dispatch("resource.start-tool", commandScope, capturePayload); }}>{t("toolQuery.start")}</button></> : null}
+        <button className="secondary-button" disabled={locked || working} onClick={() => { if (capturePayload) registry.dispatch("resource.discard-tool", commandScope, capturePayload); }}>{t("toolQuery.discardReview")}</button>
       </section> : null}
-      {pending ? <button className="secondary-button" disabled={busy || disabled} onClick={() => void perform(current => submit(pending, current))}>{t("toolQuery.retryOriginal")}</button> : null}
+      {pending ? <button className="secondary-button" disabled={busy || disabled} onClick={() => { if (pendingPayload) registry.dispatch("resource.retry-tool", commandScope, pendingPayload); }}>{t("toolQuery.retryOriginal")}</button> : null}
       {detail.data && visibleRun ? <section aria-label={t("toolQuery.results")}><h4>{t("toolQuery.results")}</h4><p>{t("toolQuery.references")}</p>
         {detail.data.items.map(item => {
           const fixed = visibleRun.review.items.find(value => value.itemId === item.status.itemId);
@@ -215,17 +268,18 @@ export function PluginToolQueries({ project, open, disabled, onState, onAttentio
           const result = item.resultId ? entries(item.resultId, item.status.itemId) : null;
           return <article key={item.status.itemId}><blockquote><pre>{typeof text === "string" ? text : t("toolQuery.invalidResult")}</pre></blockquote><p>{t(`execution.states.${item.status.execution}`)}</p>
             {item.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary><p>{item.status.diagnostic}</p></details> : null}
-            {item.status.execution === "succeeded" && !output.isFetching && runPresentation ? result === null ? <p role="alert">{t("toolQuery.invalidResult")}</p>
+            {item.status.execution === "succeeded" && !output.isFetching && !output.error && runPresentation ? result === null ? <p role="alert">{t("toolQuery.invalidResult")}</p>
               : result.length === 0 ? <p>{runPresentation.query.output.emptyDescription}</p> : <div className="source-table-scroll"><table className="source-table"><thead><tr>{runPresentation.query.output.columns.map(column => <th key={jsonIdentity(column.path)} scope="col">{column.label}</th>)}</tr></thead><tbody>{result.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}><pre>{cell}</pre></td>)}</tr>)}</tbody></table></div> : null}
           </article>;
         })}
-        {working && taskId ? <button className="secondary-button" disabled={locked} onClick={() => void perform(async current => { const requestId = await executionCommands.identity(context); if (current()) await submit({ kind: "cancel", request: { ...context, taskId, requestId } }, current); })}>{t("toolQuery.cancel")}</button> : null}
+        {working && taskId && attemptId ? <button className="secondary-button" disabled={!cancelAvailability(cancelPayload).enabled}
+          onClick={() => { if (cancelPayload) registry.dispatch("resource.cancel-tool", commandScope, cancelPayload); }}>{t("toolQuery.cancel")}</button> : null}
       </section> : null}
     </section>
     <Dialog.Root open={leave} onOpenChange={value => { if (!value && !busy) answerLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onPointerDownOutside={event => event.preventDefault()} onCloseAutoFocus={event => { event.preventDefault(); leaveTrigger.current?.focus(); }}>
       <Dialog.Title>{t("toolQuery.leaveTitle")}</Dialog.Title><Dialog.Description>{t("toolQuery.leaveHelp")}</Dialog.Description><div className="form-actions">
         <button className="secondary-button" disabled={busy} onClick={() => answerLeave(false)}>{t("resource.stay")}</button>
-        <button className="primary-button" disabled={locked} onClick={() => void perform(async current => { await discard(current); if (current()) { setRows([{ id: nextRow.current++, text: "" }]); edit(); answerLeave(true); } })}>{t("resource.discardAndLeave")}</button>
+        <button className="primary-button" disabled={locked} onClick={() => void discardAndLeave()}>{t("resource.discardAndLeave")}</button>
       </div>
     </Dialog.Content></Dialog.Portal></Dialog.Root>
   </>;

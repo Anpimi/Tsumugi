@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { executionCommands, type SessionRequest } from "./executionCommands";
@@ -14,27 +14,49 @@ import { openWorkPlanAgentScope, type WorkPlanStatusView } from "./workPlanComma
 import { workPlanGenerationCommands } from "./workPlanGenerationCommands";
 import type { WorkPlanGenerationPreflight } from "./generated/ai.responses";
 import type { WorkPlanGenerationStartRequest } from "./generated/ai.requests";
+import type { WorkPlanContinuation } from "./AiPreparationSession";
+import { useWorkbenchCommands, type CommandAvailability, type AiComponentPrepareCommandPayload, type AiComponentCommandPayload } from "./workbenchCommands";
 import { enUS } from "./i18n/en-US";
 
 type Consent = Pick<WorkPlanGenerationStartRequest, "grantId" | "expiresAtMs" | "unsandboxedExecution">;
-type Operation = { prepared: WorkPlanGenerationPreflight; plan: WorkPlanStatusView["plan"]; lease: WorkPlanStatusView["lease"];
+export type ComponentOperation = { prepared: WorkPlanGenerationPreflight; plan: WorkPlanStatusView["plan"]; lease: WorkPlanStatusView["lease"];
   phase: "prepared" | "submitted" | "unknown" | "rejected"; consent: Consent | null };
 function unknown(): never { throw { outcome: "unknown", reason: "work-plan-pending" }; }
 
+export interface ComponentState { operation: ComponentOperation | null; consentDigest: string | null; discardUnknown: boolean }
+const initialComponent = (): ComponentState => ({ operation: null, consentDigest: null, discardUnknown: false });
+export function useWorkPlanGenerationSession(live: () => boolean) {
+  const [state, setState] = useState(initialComponent), ref = useRef(state), notified = useRef<string | null>(null);
+  const readCleanups = useRef(new Set<() => void>());
+  useLayoutEffect(() => () => { readCleanups.current.forEach(dispose => dispose()); readCleanups.current.clear(); }, []);
+  function update(change: (before: ComponentState) => ComponentState) {
+    if (!live()) return;
+    ref.current = change(ref.current); setState(ref.current);
+  }
+  return { state, current: () => ref.current, update, notified,
+    holdRead(dispose: () => void) { readCleanups.current.add(dispose); return () => { dispose(); readCleanups.current.delete(dispose); }; },
+    reset() { notified.current = null; update(initialComponent); } };
+}
+export type WorkPlanGenerationSession = ReturnType<typeof useWorkPlanGenerationSession>;
+
 /** Human component consent stays separate from the bounded Agent consumer. */
-export function WorkPlanGenerationControls({ context, status, selected, open, disabled, busy, run, onBlockedChange, onGenerated }: {
+export function WorkPlanGenerationControls({ context, status, selected, open, disabled, busy, run, onBlockedChange, onGenerated, session, ownerBusy }: {
+  session: WorkPlanGenerationSession; ownerBusy: () => boolean;
   context: SessionRequest; status: WorkPlanStatusView; selected: readonly string[]; open: boolean; disabled: boolean; busy: boolean;
-  run: (work: (current: () => boolean) => Promise<void>) => Promise<void>;
+  run: (work: (current: WorkPlanContinuation) => Promise<void>) => Promise<void>;
   onBlockedChange: (blocked: boolean) => void; onGenerated: (attemptId: string) => void;
 }) {
-  const { t } = useTranslation(), reads = useSessionReads();
+  const { t } = useTranslation(), reads = useSessionReads(), registry = useWorkbenchCommands();
   const [expanded, setExpanded] = useState(false), [choiceKey, setChoiceKey] = useState(""), [profileKey, setProfileKey] = useState("");
   const [runtimeKey, setRuntimeKey] = useState(""), [refresh, setRefresh] = useState(0);
-  const [operation, setOperation] = useState<Operation | null>(null), [consentDigest, setConsentDigest] = useState<string | null>(null);
-  const [discardUnknown, setDiscardUnknown] = useState(false);
-  const notified = useRef<string | null>(null);
+  const { operation, consentDigest, discardUnknown } = session.state;
+  const setOperation = (operation: ComponentOperation | null) => session.update(before => ({ ...before, operation }));
+  const setConsentDigest = (consentDigest: string | null) => session.update(before => ({ ...before, consentDigest }));
+  const setDiscardUnknown = (discardUnknown: boolean) => session.update(before => ({ ...before, discardUnknown }));
+  const notified = session.notified;
   const entryRef = useRef<HTMLButtonElement>(null), reviewRef = useRef<HTMLHeadingElement>(null), focusedReview = useRef<string | null>(null);
-  const inventory = useSessionQuery({ key: ["generation-component-inventory", refresh], scopes: [],
+  const inventoryKey = ["generation-component-inventory", refresh];
+  const inventory = useSessionQuery({ key: inventoryKey, scopes: [],
     enabled: open && expanded && !disabled && !busy && !operation, read: readPluginGenerationChoices });
   const choice = inventory.data?.choices.find(item => item.key === choiceKey);
   const runtime = inventory.data?.runtimes.find(item => item.environmentDigest === runtimeKey);
@@ -42,7 +64,8 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const completeProfile = !!choice && (choice.declaration.profiles.length === 0 ? profileKey === "none" : !!profile);
   const request = choice && runtime && completeProfile
     ? { provider: choice.provider, profile: profile ?? null, environmentDigest: runtime.environmentDigest } : null;
-  const environment = useSessionQuery({ key: ["generation-component-environment", choiceKey, profileKey, runtimeKey, refresh, inventory.dataUpdatedAt], scopes: [],
+  const environmentKey = ["generation-component-environment", choiceKey, profileKey, runtimeKey, refresh, inventory.dataUpdatedAt];
+  const environment = useSessionQuery({ key: environmentKey, scopes: [],
     enabled: open && expanded && !disabled && !busy && !operation && !!request && !inventory.error && !inventory.isFetching,
     read: async () => { if (!request) throw new Error("Missing generation component choice"); return pluginCommands.generationComponent(request); } });
   const active = status.state === "active" && BigInt(status.expiresAt) > BigInt(Math.floor(Date.now() / 1000));
@@ -84,31 +107,55 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const locked = disabled || busy || !!operation || !active;
   const readFailure = inventory.error ?? environment.error ?? observation.error;
   const preparingAllowed = !locked && validUnits && request && environment.data && !readFailure && !inventory.isFetching && !environment.isFetching;
-  async function prepare(current: () => boolean) {
+  async function prepare(current: WorkPlanContinuation) {
     if (!preparingAllowed || !request || !environment.data) return;
     const fixed = structuredClone({ request, component: environment.data, lease: status.lease, plan: status.plan, ids: selected });
+    const originalInventory = inventory.data;
+    const inventoryWitness = reads.watchExactQuery(inventoryKey), environmentWitness = reads.watchExactQuery(environmentKey);
+    const dispose = session.holdRead(() => { inventoryWitness.dispose(); environmentWitness.dispose(); });
+    const checked = () => {
+      const inventoryQuery = inventoryWitness.current(), environmentQuery = environmentWitness.current();
+      return current.fresh() && inventoryQuery?.state.status === "success" && inventoryQuery.state.error === null
+        && environmentQuery?.state.status === "success" && environmentQuery.state.error === null
+        && jsonIdentity(inventoryQuery.state.data) === jsonIdentity(originalInventory)
+        && jsonIdentity(environmentQuery.state.data) === jsonIdentity(fixed.component);
+    };
+    try {
     const scope = await openWorkPlanAgentScope({ ...context, lease: fixed.lease }, fixed.plan.scope);
+    if (!checked()) return;
     const [taskId, attemptId, outerId] = await Promise.all([
       executionCommands.identity(context), executionCommands.identity(context), executionCommands.identity(context),
     ]);
-    if (!current()) return;
+    if (!checked()) return;
+    const [first,...rest]=fixed.ids;
+    if(!first)return;
     const prepared = await workPlanGenerationCommands.prepare({ ...context, scopeId: scope.scopeId, attemptId: outerId,
-      component: fixed.request, generation: { taskId, attemptId, unitIds: fixed.ids as [string, ...string[]] } }, scope, fixed.component);
-    if (!current()) {
-      await workPlanGenerationCommands.discard({ ...context, attemptId: prepared.attemptId });
+      component: fixed.request, generation: { taskId, attemptId, unitIds: [first,...rest] } }, scope, fixed.component);
+    if (!checked()) {
+      if(current()) {
+        // Preserve the original Host capture until its disposal is acknowledged.
+        setOperation({ prepared, plan:fixed.plan, lease:fixed.lease, phase:"prepared", consent:null });
+        setConsentDigest(null); setDiscardUnknown(true);
+        const removed=await workPlanGenerationCommands.discard({ ...context, attemptId:prepared.attemptId });
+        if(current()) {
+          if(!removed)unknown();
+          setOperation(null); setDiscardUnknown(false);
+        }
+      }
       return;
     }
     setConsentDigest(null); setDiscardUnknown(false);
     setOperation({ prepared, plan: fixed.plan, lease: fixed.lease, phase: "prepared", consent: null });
+    } finally { dispose(); }
   }
-  async function start(current: () => boolean) {
+  async function start(current: WorkPlanContinuation) {
     if (!operation || !active || stale || consentDigest !== operation.prepared.inputDigest
       || !["prepared", "rejected"].includes(operation.phase)) return;
     const original = operation;
-    const consent = original.consent ?? { grantId: await executionCommands.identity(context),
-      expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true };
-    if (!current()) return;
-    const starting: Operation = { ...original, consent, phase: "unknown" };
+    const expiresAtMs=String(Date.now()+600_000);
+    const consent = original.consent ?? { grantId: await executionCommands.identity(context), expiresAtMs, unsandboxedExecution: true };
+    if (!current.fresh()) return;
+    const starting: ComponentOperation = { ...original, consent, phase: "unknown" };
     setOperation(starting);
     try {
       await workPlanGenerationCommands.start(original.prepared, consent);
@@ -118,7 +165,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
       throw error;
     }
   }
-  async function discard(current: () => boolean) {
+  async function discard(current: WorkPlanContinuation) {
     if (!operation) return;
     setDiscardUnknown(true);
     const removed = await workPlanGenerationCommands.discard({ ...context, attemptId: operation.prepared.attemptId });
@@ -129,10 +176,41 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
   const canStart = operation && ["prepared", "rejected"].includes(operation.phase) && !discardUnknown
     && active && !stale && !busy && !disabled && consentDigest === operation.prepared.inputDigest
     && (!operation.consent || BigInt(operation.consent.expiresAtMs) > BigInt(Date.now()));
+  const scope={projectId:context.projectId,sessionToken:context.sessionToken,area:"ai" as const};
+  const unavailable:CommandAvailability={enabled:false,reason:"unavailable"};
+  function planCurrent(){const query=reads.client.getQueryState<WorkPlanStatusView>(reads.key(["workPlan",status.lease.planId]));
+    return query?.status==="success"&&query.fetchStatus==="idle"&&!query.isInvalidated&&query.error===null
+      &&query.data?.plan.digest===status.plan.digest&&jsonIdentity(query.data.lease)===jsonIdentity(status.lease)&&query.data.state===status.state;}
+  function preparationPayload():AiComponentPrepareCommandPayload|undefined {return request?{kind:"ai-component-prepare",planId:status.lease.planId,
+    expectedGeneration:status.lease.generation,unitIds:[...selected],component:request}:undefined;}
+  function prepareAvailability(value?:AiComponentPrepareCommandPayload):CommandAvailability {
+    if(!open||reads.retired)return{enabled:false,reason:"hidden"};
+    if(ownerBusy()||busy)return{enabled:false,reason:"busy"};
+    const inventoryQuery=reads.client.getQueryState(reads.key(inventoryKey)), environmentQuery=reads.client.getQueryState(reads.key(environmentKey));
+    const fresh=[inventoryQuery,environmentQuery].every(query=>query?.status==="success"&&query.fetchStatus==="idle"&&query.error===null&&!query.isInvalidated);
+    return value&&preparingAllowed&&fresh&&planCurrent()&&!session.current().operation&&jsonIdentity(value)===jsonIdentity(preparationPayload())?{enabled:true}:unavailable;
+  }
+  function operationPayload():AiComponentCommandPayload|undefined {const operation=session.current().operation;
+    return operation?{kind:"ai-component",scopeId:operation.prepared.scopeId,attemptId:operation.prepared.attemptId,inputDigest:operation.prepared.inputDigest}:undefined;}
+  function operationAvailability(value?:AiComponentCommandPayload,discard=false):CommandAvailability {
+    if(!open||reads.retired)return{enabled:false,reason:"hidden"};
+    if(ownerBusy()||busy)return{enabled:false,reason:"busy"};
+    const operation=session.current().operation;
+    if(!value||!operation||jsonIdentity(value)!==jsonIdentity(operationPayload()))return unavailable;
+    if(discard)return operation.phase==="prepared"||operation.phase==="rejected"||session.current().discardUnknown||!active?{enabled:true}:unavailable;
+    return canStart&&planCurrent()?{enabled:true}:unavailable;
+  }
+  useLayoutEffect(()=>{
+    const metadata={category:"ai" as const,scope,binding:null,confirmation:"none" as const};
+    const remove=[registry.register({...metadata,id:"ai.component.prepare",nameKey:"ai.component.prepare",risk:"captures-ai",payloadKind:"ai-component-prepare",availability:prepareAvailability,handler:()=>{void run(prepare);}}),
+      registry.register({...metadata,id:"ai.component.start",nameKey:"ai.component.start",risk:"runs-ai",confirmation:"required",payloadKind:"ai-component",availability:value=>operationAvailability(value),handler:()=>{void run(start);}}),
+      registry.register({...metadata,id:"ai.component.discard",nameKey:"ai.component.discard",risk:"captures-ai",payloadKind:"ai-component",availability:value=>operationAvailability(value,true),handler:()=>{void run(discard);}})];
+    return()=>remove.forEach(dispose=>dispose());
+  });
   return <section aria-label={t("ai.component.title")} aria-busy={busy || inventory.isFetching || environment.isFetching || observation.isFetching}>
     <button type="button" className="secondary-button" ref={entryRef} aria-expanded={expanded} disabled={busy || !!operation}
       onClick={() => setExpanded(value => !value)}>{t("ai.component.title")}</button>
-    {expanded ? <>
+    {expanded || operation ? <>
       <p>{t("ai.component.help")}</p>
       <fieldset disabled={locked}><legend>{t("ai.component.choice")}</legend>
         <label className="field">{t("ai.component.provider")}<select value={choiceKey} onChange={event => { setChoiceKey(event.target.value); setProfileKey(""); setRuntimeKey(""); }}>
@@ -149,7 +227,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
           </option>)}
         </select></label>
         <button type="button" className="secondary-button" onClick={() => { setProfileKey(""); setRuntimeKey(""); setRefresh(value => value + 1); }}>{t("ai.component.refresh")}</button>
-        <button type="button" className="secondary-button" disabled={!preparingAllowed} onClick={() => void run(prepare)}>{t("ai.component.prepare")}</button>
+        <button type="button" className="secondary-button" disabled={!prepareAvailability(preparationPayload()).enabled} onClick={()=>{const value=preparationPayload();if(value)registry.dispatch("ai.component.prepare",scope,value);}}>{t("ai.component.prepare")}</button>
       </fieldset>
       {!inventory.isFetching && inventory.data?.choices.length === 0 ? <p role="status">{t("ai.component.unavailable")}</p> : null}
       {inventory.isFetching || environment.isFetching ? <p role="status">{t("execution.working")}</p> : null}
@@ -157,7 +235,7 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
       {readFailure ? <div role="alert"><p>{t("ai.component.failed")}</p><CommandFailureDetails failure={commandFailure(readFailure)} />
         </div> : null}
       {operation ? <section aria-label={t("ai.component.review")}>
-        <h4 tabIndex={-1} ref={reviewRef}>{t("ai.component.review")}</h4><p>{choice?.label}</p>
+        <h4 tabIndex={-1} ref={reviewRef}>{t("ai.component.review")}</h4><p>{`${operation.prepared.component.binding.provider.plugin.publisher}/${operation.prepared.component.binding.provider.plugin.id} ${operation.prepared.component.binding.provider.plugin.version} · ${operation.prepared.component.binding.provider.contributionId}`}</p>
         <p>{t("ai.component.budget", { ...operation.prepared.budget, defaultValue: enUS.ai.component.budget })}</p>
         {operation.plan.preview ? <p>{t("ai.component.fixedModel", { model: operation.plan.preview.config.model, locale: operation.plan.locale, defaultValue: enUS.ai.component.fixedModel })}</p> : null}
         <ul>{operation.prepared.scope.map(unit => <li key={unit.unitId}>{unit.nativeKey}</li>)}</ul>
@@ -174,10 +252,10 @@ export function WorkPlanGenerationControls({ context, status, selected, open, di
         <label className="source-check"><input type="checkbox" checked={consentDigest === operation.prepared.inputDigest}
           disabled={busy || stale || !active || !["prepared", "rejected"].includes(operation.phase) || discardUnknown}
           onChange={event => setConsentDigest(event.target.checked ? operation.prepared.inputDigest : null)} />{t("ai.component.consent")}</label>
-        {["prepared", "rejected"].includes(operation.phase) && !discardUnknown ? <button type="button" className="primary-button" disabled={!canStart}
-          onClick={() => void run(start)}>{t(operation.phase === "rejected" ? "ai.component.retryOriginal" : "ai.component.start")}</button> : null}
-        {operation.phase === "prepared" || operation.phase === "rejected" || discardUnknown || !active ? <button type="button" className="secondary-button" disabled={busy}
-          onClick={() => void run(discard)}>{t("ai.component.discard")}</button> : null}
+        {["prepared", "rejected"].includes(operation.phase) && !discardUnknown ? <button type="button" className="primary-button" disabled={!operationAvailability(operationPayload()).enabled}
+          onClick={()=>{const value=operationPayload();if(value)registry.dispatch("ai.component.start",scope,value);}}>{t(operation.phase === "rejected" ? "ai.component.retryOriginal" : "ai.component.start")}</button> : null}
+        {operation.phase === "prepared" || operation.phase === "rejected" || discardUnknown || !active ? <button type="button" className="secondary-button" disabled={!operationAvailability(operationPayload(),true).enabled}
+          onClick={()=>{const value=operationPayload();if(value)registry.dispatch("ai.component.discard",scope,value);}}>{t("ai.component.discard")}</button> : null}
         {operation.phase === "unknown" || discardUnknown ? <p role="status">{t("ai.component.unknown")}</p> : null}
         {operation.phase !== "prepared" || discardUnknown ? <>
           <button type="button" className="secondary-button" disabled={busy} onClick={() => reads.invalidate(["execution"])}>{t("ai.reconcile")}</button>

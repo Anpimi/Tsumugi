@@ -3,7 +3,7 @@ import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ReleaseWorkbench, type ReleaseHandle } from "./ReleaseWorkbench";
-import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { renderWorkbench as render, refreshWorkbenchReads } from "./testSupport/WorkbenchTestShell";
 import { pluginBuildInventory, pluginBuildPackage, pluginBuildView, pluginBuildWorkflow } from "./testSupport/pluginBuildFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
@@ -11,6 +11,7 @@ import type { ProjectView } from "./projectCommands";
 import type { AttemptDetail } from "./executionCommands";
 import type { PluginBuildPrepareRequest, ArtifactCheckPrepareRequest, PluginStartRequest, ReleaseView } from "./releaseCommands";
 import { i18n } from "./i18n";
+import { validateResponseAttempt } from "./generated/execution.validators";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -41,6 +42,7 @@ beforeEach(async () => {
       case "list_releases": return releases;
       case "list_deliveries": return [];
       case "create_execution_identity": return fixtureIdentity(serial++);
+      case "read_content_scope": return {currentSnapshot:fixtureIdentity(707),revision:"1"};
       case "read_review_eligibility": return { basis: "basis", sourceSnapshotId: fixtureIdentity(707), ready: true, policyVersion: "balanced-1",
         locales: (request.locales as string[]).map(locale => ({ locale, ready: true, blockers: [], exceptions: [], checkedUnits: 2, blockerCount: 0, exceptionCount: 0 })) };
       case "prepare_plugin_build": {
@@ -63,7 +65,7 @@ beforeEach(async () => {
         const item = build!.items.find(item => item.resultId === check.request.buildResultId)!;
         item.status.validation = "valid"; return null;
       }
-      case "prepare_execution_adoption": return { ...executionFixture.action, actionId: request.actionId, attemptId: request.attemptId, unitId: request.unitId, projectId: request.projectId, resultIds: request.resultIds, cancellationRevision: "0", operation: "locale-build" };
+      case "prepare_execution_adoption": return { ...executionFixture.action, actionId: request.actionId, attemptId: request.attemptId, unitId: request.unitId, projectId: request.projectId, resultIds: request.resultIds, cancellationRevision: "0", operation: "locale-build", parameters: null };
       case "adopt_execution": {
         const saved = receipt(String(request.actionId));
         releases = [{ releaseId: fixtureIdentity(702), actionId: saved.actionId, attemptId: build!.attemptId, sourceSnapshotId: fixtureIdentity(707),
@@ -186,14 +188,16 @@ it.each(["en-US", "zh-CN"])("records all languages and multiple exact paths only
 });
 
 it("reconciles an unrelated build acknowledgement using the same attempt, grant and expiry", async () => {
-  const { user, ref } = await ready();
+  const { user, ref, view } = await ready();
   const original = invoke.getMockImplementation()!;
   let starts = 0;
   invoke.mockImplementation(async (command, args) => { const value = await original(command, args); return command === "start_plugin_build" && ++starts === 1 ? fixtureIdentity(999) : value; });
   await start(user);
   await screen.findByText(i18n.t("releasePlugin.unknown"));
   expect(await ref.current!.allowLeave()).toBe(false);
-  expect(await ref.current!.allowNavigate()).toBe(false);
+  expect(await ref.current!.allowNavigate()).toBe(true);
+  view.rerender(null,project);view.rerender(<ReleaseWorkbench ref={ref} project={project} disabled={false}/>);
+  await screen.findByText(i18n.t("releasePlugin.unknown"));
   await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.reconcile") }));
   await screen.findByRole("button", { name: i18n.t("releasePlugin.prepareCheck", { locale: "zh-CN" }) });
   const calls = invoke.mock.calls.filter(([command]) => command === "start_plugin_build");
@@ -373,6 +377,11 @@ it("requires a successful absent-receipt read before retrying the same release a
   const calls = invoke.mock.calls.filter(([command]) => command === "adopt_execution");
   expect(calls).toHaveLength(2); expect(calls[0][1]).toEqual(calls[1][1]);
   expect(invoke.mock.calls.filter(([command]) => command === "prepare_execution_adoption")).toHaveLength(1);
+  expect(invoke.mock.calls.find(([command]) => command === "prepare_execution_adoption")![1].request).toEqual({
+    projectId: project.metadata.projectId, sessionToken: project.sessionToken, attemptId: captured!.attemptId,
+    unitId: fixtureIdentity(830), resultIds: [fixtureIdentity(800)], actionId: calls[0][1].request.actionId,
+  });
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(5);
 });
 
 it("ignores an environment response from the previous project session", async () => {
@@ -398,17 +407,21 @@ it("cancels a queued task with the original cancellation request after a lost re
   let cancellations = 0;
   invoke.mockImplementation(async (command, args) => {
     const value = await original(command, args);
-    if (command === "start_plugin_build") { build!.items.forEach(item => { item.status.execution = "queued"; item.resultId = null; }); }
+    if (command === "start_plugin_build") {
+      build!.items.forEach(item => { item.status.execution = "queued"; item.resultId = null; });
+      Object.assign(build!.progress, { queued: build!.items.length, succeeded: 0 });
+    }
     if (command === "cancel_execution_task") {
       build!.items.forEach(item => { item.status.execution = "cancelled-before-dispatch"; });
+      Object.assign(build!.progress, { queued: 0, cancelled: build!.items.length });
       if (++cancellations === 1) throw { code: "outcome-unknown" };
     }
     return value;
   });
   await start(user);
   await user.click(await screen.findByRole("button", { name: i18n.t("execution.cancel") }));
-  await screen.findByText(i18n.t("releasePlugin.unknown"));
-  await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.reconcile") }));
+  await screen.findByText(i18n.t("execution.cancelUnknown"));
+  await user.click(screen.getByRole("button", { name: i18n.t("execution.retryCancellation") }));
   await screen.findByText(i18n.t("releasePlugin.cancelled"));
   const calls = invoke.mock.calls.filter(([command]) => command === "cancel_execution_task");
   expect(calls).toHaveLength(2); expect(calls[0][1]).toEqual(calls[1][1]);
@@ -456,4 +469,90 @@ it("keeps Native build preparation unavailable when only Node is approved", asyn
   expect(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") })).toBeDisabled();
   expect(screen.queryByRole("option", { name: /^Node / })).not.toBeInTheDocument();
   expect(invoke.mock.calls.some(([command]) => command === "read_plugin_build" || command === "prepare_plugin_build" || command === "start_plugin_build")).toBe(false);
+});
+
+
+it("serializes a shared semantic inventory refresh before rereading its exact builder and retains the entered mapping",async()=>{
+  const original=invoke.getMockImplementation()!;let active=false,inventories=0,environments=0,releaseInventory!:()=>void;
+  const refresh=new Promise<void>(resolve=>{releaseInventory=resolve;});
+  invoke.mockImplementation(async(command,args)=>{
+    if(!["read_plugin_inventory","read_plugin_package","read_plugin_build"].includes(command))return original(command,args);
+    if(active)throw {code:"busy",stage:"read",outcome:"rejected",recoveryRequired:false};
+    active=true;
+    try { if(command==="read_plugin_inventory"&&++inventories===2)await refresh;if(command==="read_plugin_build")environments++;return await original(command,args); }
+    finally {active=false;}
+  });
+  const user=userEvent.setup();render(<ReleaseWorkbench project={project} disabled={false}/>);
+  await user.click(screen.getByRole("button",{name:i18n.t("release.title")}));
+  await screen.findByText(/Example text artifact/);await user.click(screen.getByRole("checkbox",{name:"zh-CN"}));
+  await user.type(screen.getByRole("textbox",{name:i18n.t("releasePlugin.paths",{locale:"zh-CN"})}),"outputs/retained.txt");
+  const refreshed=refreshWorkbenchReads(["execution"]);
+  await waitFor(()=>expect(inventories).toBe(2));expect(environments).toBe(1);
+  expect(screen.getByRole("button",{name:i18n.t("release.check")})).toBeDisabled();
+  await act(async()=>{releaseInventory();await refresh;});await refreshed;
+  await waitFor(()=>expect(environments).toBe(2));
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("release.check")})).toBeEnabled());
+  expect(screen.getByRole("textbox",{name:i18n.t("releasePlugin.paths",{locale:"zh-CN"})})).toHaveValue("outputs/retained.txt");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command])=>command==="prepare_plugin_build"||command==="start_plugin_build"||command==="create_execution_identity")).toBe(false);
+});
+
+it("retains independently captured checker consent and its proof request through complete consumer unmount",async()=>{
+  const {user,view}=await ready();await start(user);
+  await user.click(await screen.findByRole("button",{name:i18n.t("releasePlugin.prepareCheck",{locale:"zh-CN"})}));
+  const consent=await screen.findByRole("checkbox",{name:i18n.t("releasePlugin.checkerConsent")});
+  expect(consent).not.toBeChecked();await user.click(consent);
+  const capturedCheck=invoke.mock.calls.find(([command])=>command==="prepare_artifact_check")![1].request;
+  view.rerender(null,project);view.rerender(<ReleaseWorkbench project={project} disabled={false}/>);
+  expect(await screen.findByRole("checkbox",{name:i18n.t("releasePlugin.checkerConsent")})).toBeChecked();
+  await user.click(screen.getByRole("button",{name:i18n.t("releasePlugin.startCheck")}));
+  const record=await screen.findByRole("button",{name:i18n.t("releasePlugin.recordCheck")});
+  const original=invoke.getMockImplementation()!;let resolveProof!:(value:null)=>void;
+  const pending=new Promise<null>(resolve=>{resolveProof=resolve;});
+  invoke.mockImplementation(async(command,args)=>{const result=await original(command,args);return command==="finish_artifact_check"?pending:result;});
+  await user.click(record);await waitFor(()=>expect(invoke.mock.calls.filter(([command])=>command==="finish_artifact_check")).toHaveLength(1));
+  const proof=invoke.mock.calls.find(([command])=>command==="finish_artifact_check")![1].request;
+  view.rerender(null,project);await act(async()=>{resolveProof(null);await pending;});
+  view.rerender(<ReleaseWorkbench project={project} disabled={false}/>);
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("releasePlugin.recordRelease")})).toBeEnabled());
+  expect(screen.queryByRole("checkbox",{name:i18n.t("releasePlugin.checkerConsent")})).not.toBeInTheDocument();
+  expect(invoke.mock.calls.filter(([command])=>command==="prepare_artifact_check").map(([,args])=>args.request)).toEqual([capturedCheck]);
+  expect(invoke.mock.calls.filter(([command])=>command==="start_artifact_check")).toHaveLength(1);
+  expect(invoke.mock.calls.filter(([command])=>command==="finish_artifact_check").map(([,args])=>args.request)).toEqual([proof]);
+  expect(proof.attemptId).toBe(capturedCheck.attemptId);
+  expect(invoke.mock.calls.filter(([command])=>command==="adopt_execution")).toHaveLength(0);
+});
+
+it.each([null, "ja-JP"] as const)("does not offer an artifact check for a result outside the original build locale: %s", async locale => {
+  const { user } = await ready();
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    const response: unknown = await original(command, args);
+    if (command === "read_execution_attempt" && build?.attemptId === args.request.attemptId) {
+      if (!validateResponseAttempt(response)) throw new Error("Invalid complete build attempt fixture");
+      return { ...response, items: response.items.map(item => ({ ...item, scope: { ...item.scope, locale } })) };
+    }
+    return response;
+  });
+  await start(user);
+  const results = await screen.findByRole("region", { name: i18n.t("releasePlugin.results") });
+  await waitFor(() => expect(results).toHaveTextContent(i18n.t("releasePlugin.validation.pending")));
+  expect(within(results).getAllByRole("button")).toEqual([within(results).getByRole("button", { name: i18n.t("execution.refresh") })]);
+  expect(invoke.mock.calls.filter(([command]) => command === "prepare_artifact_check")).toHaveLength(0);
+  expect(invoke.mock.calls.filter(([command]) => command === "create_execution_identity")).toHaveLength(2);
+});
+
+it("opens Extensions for an unavailable builder without clearing the entered build mapping or starting work", async () => {
+  const user = userEvent.setup(), onOpenExtensions = vi.fn(), original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => command === "read_plugin_inventory"
+    ? { ...pluginBuildInventory, packages: [], packageDecisions: [] } : original(command, args));
+  render(<ReleaseWorkbench project={project} disabled={false} onOpenExtensions={onOpenExtensions} />);
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await screen.findByText(i18n.t("releasePlugin.unavailable"));
+  await user.click(screen.getByRole("checkbox", { name: "zh-CN" }));
+  const paths = screen.getByRole("textbox", { name: i18n.t("releasePlugin.paths", { locale: "zh-CN" }) });
+  await user.type(paths, "outputs/retained.txt");
+  await user.click(screen.getByRole("button", { name: i18n.t("plugins.open") }));
+  expect(onOpenExtensions).toHaveBeenCalledOnce(); expect(paths).toHaveValue("outputs/retained.txt");
+  expect(invoke.mock.calls.some(([command]) => ["create_execution_identity", "prepare_plugin_build", "start_plugin_build", "prepare_artifact_check", "adopt_execution"].includes(command))).toBe(false);
 });

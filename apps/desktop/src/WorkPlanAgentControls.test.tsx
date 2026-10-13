@@ -1,15 +1,17 @@
-import { type ReactNode } from "react";
+import { useLayoutEffect, type ReactNode } from "react";
 import { act, cleanup, render as renderUi, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { SessionReadProvider } from "./SessionReadProvider";
+import { SessionReadProvider, useSessionReads } from "./SessionReadProvider";
 import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import agentFixture from "../test/fixtures/workPlanAgent.contract.json";
 import toolFixture from "../test/fixtures/workPlanAgentTools.contract.json";
 import executionFixture from "../test/fixtures/executionCommands.contract.json";
-import { WorkPlanAgentControls } from "./WorkPlanAgentControls";
-import { WorkPlanControls } from "./WorkPlanControls";
+import { WorkPlanAgentControls as ProductionAgentControls, useWorkPlanAgentSession } from "./WorkPlanAgentControls";
+import { useWorkPlanGenerationSession } from "./WorkPlanGenerationControls";
+import { WorkbenchCommands, WorkbenchCommandsProvider } from "./workbenchCommands";
+import { WorkPlanControls as ProductionWorkPlanControls, useWorkPlanControlSession } from "./WorkPlanControls";
 import { i18n } from "./i18n";
 import type { AttemptDetail, SessionRequest } from "./executionCommands";
 import type { WorkPlanAgentToolPrepareRequest } from "./generated/ai.requests";
@@ -18,7 +20,25 @@ import type { WorkPlanStatusView } from "./workPlanCommands";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const context: SessionRequest = { projectId: agentFixture.requests.open.projectId, sessionToken: agentFixture.requests.open.sessionToken };
-function render(ui: ReactNode) { return renderUi(ui, { wrapper: ({ children }) => <SessionReadProvider context={context} bridge={false}>{children}</SessionReadProvider> }); }
+function render(ui: ReactNode) { const commands=new WorkbenchCommands(); return renderUi(ui, { wrapper: ({ children }) => <WorkbenchCommandsProvider commands={commands}><SessionReadProvider context={context} bridge={false}>{children}</SessionReadProvider></WorkbenchCommandsProvider> }); }
+type AgentProps=Omit<Parameters<typeof ProductionAgentControls>[0],"session"|"component"|"ownerBusy"|"run"> & {
+  run:(work:(current:()=>boolean)=>Promise<void>)=>Promise<void>;
+};
+function WorkPlanAgentControls(props:AgentProps) {
+  const session=useWorkPlanAgentSession(()=>true), component=useWorkPlanGenerationSession(()=>true), reads=useSessionReads();
+  useLayoutEffect(()=>{reads.client.setQueryData(reads.key(["workPlan",props.status.lease.planId]),props.status);},[props.status,reads]);
+  return <ProductionAgentControls {...props} session={session} component={component} ownerBusy={()=>false}
+    run={work=>props.run(current=>work(Object.assign(()=>current(),{fresh:()=>current(),acceptPlan:()=>current()})))}/>;
+}
+type ControlProps=Omit<Parameters<typeof ProductionWorkPlanControls>[0],"session"|"editSeq"|"open"|"canFresh"|"ownerBusy"|"run"|"onOpenTranslation"> & {
+  run:(work:(current:()=>boolean)=>Promise<void>)=>Promise<void>;onOpenTranslation:()=>unknown;
+};
+function WorkPlanControls(props:ControlProps) {
+  const session=useWorkPlanControlSession(()=>true), reads=useSessionReads();
+  useLayoutEffect(()=>{if(props.status)reads.client.setQueryData(reads.key(["workPlan",props.status.lease.planId]),props.status);},[props.status,reads]);
+  return <ProductionWorkPlanControls {...props} session={session} editSeq={0} open canFresh={()=>true} ownerBusy={()=>false}
+    run={work=>props.run(current=>work(Object.assign(()=>current(),{fresh:()=>current(),acceptPlan:()=>current()})))} onOpenTranslation={async()=>{await props.onOpenTranslation();return true;}}/>;
+}
 let identity: number, detail: AttemptDetail | null, unknown: boolean;
 beforeEach(async () => {
   await i18n.changeLanguage("en-US"); identity = 70; detail = null; unknown = false;

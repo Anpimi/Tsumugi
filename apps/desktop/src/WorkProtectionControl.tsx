@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useWorkbenchCommands, type TranslationProtectionCommandPayload, type TranslationProtectionPendingCommandPayload, type CommandAvailability } from "./workbenchCommands";
+import type { WorkProtectionSession, ProtectionRequest, ProtectionBasis } from "./WorkProtectionSession";
+import { protectionKey } from "./WorkProtectionSession";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { executionCommands, type SessionRequest } from "./executionCommands";
@@ -6,19 +9,8 @@ import { hasUnknownOutcome } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
 import { workPlanCommands } from "./workPlanCommands";
 
-type ProtectionRequest = Parameters<typeof workPlanCommands.setProtection>[0];
-interface ProtectionBasis {
-  request: Omit<ProtectionRequest, "actionId" | "protected" | "confirmedRelease">;
-  key: string;
-  sourceText: string | null;
-  selectionText: string | null;
-}
-interface PendingProtection {
-  request: ProtectionRequest;
-  key: string;
-  phase: "pending" | "unknown";
-}
 export interface WorkProtectionControlProps {
+  session: WorkProtectionSession;
   context: SessionRequest;
   target: { unitId: string; sourceRevisionId: string; key: string; sourceText?: string };
   locale: string;
@@ -36,9 +28,6 @@ export function editingProtectionScope(context: SessionRequest, target: { unitId
   return JSON.stringify([context.projectId, context.sessionToken, target.unitId, locale, target.sourceRevisionId]);
 }
 
-function protectionKey(unitId: string, locale: string, sourceRevisionId: string, selectionId: string | null) {
-  return ["work-protection", unitId, locale, sourceRevisionId, selectionId];
-}
 function scopeIdentity(request: Pick<ProtectionRequest, "projectId" | "sessionToken" | "unitId" | "locale" | "sourceRevisionId" | "selectionId">) {
   return JSON.stringify([request.projectId, request.sessionToken, request.unitId, request.locale,
     request.sourceRevisionId, request.selectionId]);
@@ -47,18 +36,19 @@ function protectionIdentity(request: Pick<ProtectionRequest, "projectId" | "sess
   return JSON.stringify([request.projectId, request.sessionToken, request.unitId, request.locale]);
 }
 
-/** The parent must retain this controller and guard navigation while blocked. */
-export function WorkProtectionControl({ context, target, locale, selectionId, selectionText, open, disabled,
+/** Current reads and the release dialog consume the stable translation protection owner. */
+export function WorkProtectionControl({ context, session, target, locale, selectionId, selectionText, open, disabled,
   draftBlocked, run, onBlockedChange, onEditingReadyChange }: WorkProtectionControlProps) {
   const { t } = useTranslation();
-  const reads = useSessionReads();
+  const reads = useSessionReads(), registry = useWorkbenchCommands();
+  const commandScope = { ...context, area: "translation" as const };
   const [release, setRelease] = useState<ProtectionBasis | null>(null);
-  const [pending, setPending] = useState<PendingProtection | null>(null);
+  const pending = session.state.pending;
   const mounted = useRef(false);
-  const inFlight = useRef(false);
+  const inFlight = session.inFlight;
   const section = useRef<HTMLElement>(null);
   const focusAfterRelease = useRef(false);
-  const attemptedEdit = useRef<string | null>(null);
+  const attemptedEdit = session.attemptedEdit;
   const editingScope = editingProtectionScope(context, target, locale);
   const scope = scopeIdentity({ ...context, ...target, locale, selectionId });
   const protectionScope = protectionIdentity({ ...context, unitId: target.unitId, locale });
@@ -70,11 +60,13 @@ export function WorkProtectionControl({ context, target, locale, selectionId, se
     read: () => workPlanCommands.protection({ ...context, unitId: target.unitId, locale }),
   });
   const latest = useRef({ scope, protectionScope, open, draftBlocked, refetch: query.refetch });
-  useEffect(() => { latest.current = { scope, protectionScope, open, draftBlocked, refetch: query.refetch }; },
+  useLayoutEffect(() => { latest.current = { scope, protectionScope, open, draftBlocked, refetch: query.refetch }; },
     [scope, protectionScope, open, draftBlocked, query.refetch]);
-  const ready = query.data !== undefined && !query.isFetching && !query.error;
-  const canProtect = ready && !query.data?.protected && !disabled && !pending;
-  const canRelease = ready && query.data?.protected && !disabled && !draftBlocked && !pending;
+  const queryState = reads.client.getQueryState(reads.key(protectionKey(target.unitId, locale, target.sourceRevisionId, selectionId)));
+  const ready = query.data !== undefined && !query.isFetching && !query.error && queryState?.status === "success"
+    && queryState.fetchStatus === "idle" && !queryState.isInvalidated && queryState.data === query.data;
+  const canProtect = ready && !query.data?.protected && !disabled && !session.blocked();
+  const canRelease = ready && query.data?.protected && !disabled && !draftBlocked && !session.blocked();
   const releaseCurrent = release !== null && scopeIdentity(release.request) === scope
     && release.request.expectedRevision === query.data?.revision;
 
@@ -92,73 +84,76 @@ export function WorkProtectionControl({ context, target, locale, selectionId, se
     attemptedEdit.current = scope;
     if (!query.data?.protected) {
       const basis = capture();
-      if (basis) void change(basis, true);
+      if (basis) registry.dispatch("translation.protect-work", commandScope, { kind: "translation-protection", basis, protected: true });
     }
     // Opening the editor establishes protection once. Explicit release keeps
     // the editor read-only until the user protects it again, without a loop.
   }, [scope, open, disabled, pending !== null, ready, query.data?.protected, onEditingReadyChange]);
 
   function capture(): ProtectionBasis | null {
-    if (!query.data || !ready) return null;
+    const current = reads.client.getQueryState(reads.key(protectionKey(target.unitId, locale, target.sourceRevisionId, selectionId)));
+    if (!query.data || !ready || current?.status !== "success" || current.fetchStatus !== "idle" || current.isInvalidated || current.data !== query.data) return null;
     return { key: target.key, sourceText: target.sourceText ?? null, selectionText: selectionText ?? null, request: { ...context, unitId: target.unitId, locale,
       sourceRevisionId: target.sourceRevisionId, selectionId, expectedRevision: query.data.revision } };
   }
 
-  async function submit(request: ProtectionRequest, key: string, current: () => boolean) {
-    // Publish the navigation barrier with the mutation, before a fast failure
-    // can render recovery controls ahead of the passive synchronization effect.
-    onBlockedChange(true);
-    setPending({ request, key, phase: "pending" });
-    try {
-      await workPlanCommands.setProtection(request);
-    } catch (error) {
-      if (mounted.current) {
-        const unknown = hasUnknownOutcome(error);
-        onBlockedChange(unknown);
-        setPending(unknown ? { request, key, phase: "unknown" } : null);
-      }
-      throw error;
-    }
-    if (mounted.current) { onBlockedChange(false); setPending(value => value?.request.actionId === request.actionId ? null : value); }
-    // An idempotent receipt may precede newer manual protection. Invalidate and
-    // read current facts; never copy that historical receipt into the cache.
-    await reads.client.invalidateQueries({
-      queryKey: reads.key(protectionKey(request.unitId, request.locale, request.sourceRevisionId, request.selectionId ?? null)),
-      exact: true, refetchType: "none",
-    });
-    if (mounted.current && current() && latest.current.open
-      && latest.current.protectionScope === protectionIdentity(request)) {
-      const refreshed = await latest.current.refetch();
-      if (refreshed.error) throw refreshed.error;
+  async function refreshAfter(request: ProtectionBasis["request"], current: () => boolean) {
+    if (mounted.current && current() && latest.current.open && latest.current.protectionScope === protectionIdentity(request)) {
+      const refreshed = await latest.current.refetch(); if (refreshed.error) throw refreshed.error;
     }
   }
-
   async function change(basis: ProtectionBasis, protectedValue: boolean) {
-    if (inFlight.current || pending || disabled || (!protectedValue && draftBlocked)) return;
-    inFlight.current = true;
-    try {
-      await run(async current => {
-        const actionId = await executionCommands.identity({
-          sessionToken: basis.request.sessionToken, projectId: basis.request.projectId,
-        });
-        if (!mounted.current || !current() || latest.current.scope !== scopeIdentity(basis.request)) return;
-        if (!protectedValue && latest.current.draftBlocked) return;
-        if (!protectedValue) { focusAfterRelease.current = true; setRelease(null); }
-        await submit({ ...basis.request, actionId, protected: protectedValue,
-          confirmedRelease: !protectedValue }, basis.key, current);
-      });
-    } finally { inFlight.current = false; }
+    if (session.blocked() || disabled || (!protectedValue && draftBlocked)) return;
+    await run(async current => {
+      const proof = () => {
+        const checked = reads.client.getQueryState<import("./workPlanCommands").WorkProtection>(reads.key(protectionKey(basis.request.unitId, basis.request.locale, basis.request.sourceRevisionId, basis.request.selectionId ?? null)));
+        return mounted.current && current() && latest.current.scope === scopeIdentity(basis.request)
+          && (protectedValue || !latest.current.draftBlocked) && checked?.status === "success" && checked.fetchStatus === "idle"
+          && !checked.isInvalidated && checked.data?.revision === basis.request.expectedRevision;
+      };
+      if (!protectedValue) { focusAfterRelease.current = true; setRelease(null); }
+      await session.change(basis, protectedValue, proof);
+      await refreshAfter(basis.request, current);
+    });
   }
-
   async function retry() {
-    if (!pending || pending.phase !== "unknown" || inFlight.current || disabled
-      || (!pending.request.protected && draftBlocked)) return;
-    const retained = pending;
-    inFlight.current = true;
-    try { await run(current => submit(retained.request, retained.key, current)); }
-    finally { inFlight.current = false; }
+    const original = session.current().pending;
+    if (original?.phase !== "unknown" || inFlight.current || disabled || (!original.request.protected && draftBlocked)) return;
+    await run(async current => {
+      await session.retry(() => mounted.current && current() && (original.request.protected || !latest.current.draftBlocked));
+      await refreshAfter(original.request, current);
+    });
   }
 
+  function baseAvailability(): CommandAvailability {
+    return !open || reads.retired ? { enabled: false, reason: "hidden" } : disabled || inFlight.current ? { enabled: false, reason: "busy" } : { enabled: true };
+  }
+  function protectionAvailability(payload?: TranslationProtectionCommandPayload): CommandAvailability {
+    const base = baseAvailability(); if (!base.enabled) return base;
+    const captured = capture();
+    return payload && captured && !session.blocked() && JSON.stringify(payload.basis) === JSON.stringify(captured)
+      && (payload.protected ? query.data?.protected === false : query.data?.protected === true && !draftBlocked
+        && release !== null && JSON.stringify(release) === JSON.stringify(payload.basis))
+      ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  function pendingAvailability(payload?: TranslationProtectionPendingCommandPayload): CommandAvailability {
+    const base = baseAvailability(); if (!base.enabled) return base;
+    const original = session.current().pending;
+    return payload && original?.phase === "unknown" && JSON.stringify(original.request) === JSON.stringify(payload.request) && original.key === payload.key
+      && (original.request.protected || !draftBlocked) ? { enabled: true } : { enabled: false, reason: "unavailable" };
+  }
+  useLayoutEffect(() => {
+    const metadata = { category: "translation" as const, scope: commandScope, binding: null, risk: "writes-translation" as const };
+    const removals = [
+      registry.register({ ...metadata, id: "translation.protect-work", nameKey: "protection.protect", payloadKind: "translation-protection", confirmation: "none",
+        availability: protectionAvailability, handler: payload => { void change(payload.basis, payload.protected); } }),
+      registry.register({ ...metadata, id: "translation.release-work", nameKey: "protection.confirmRelease", payloadKind: "translation-protection", confirmation: "required",
+        availability: protectionAvailability, handler: payload => { void change(payload.basis, payload.protected); } }),
+      registry.register({ ...metadata, id: "translation.retry-protection", nameKey: "protection.retry", payloadKind: "translation-protection-pending", confirmation: "none",
+        availability: pendingAvailability, handler: () => { void retry(); } }),
+    ];
+    return () => removals.forEach(remove => remove());
+  });
   if (!open) return null;
   return <section ref={section} tabIndex={-1} aria-label={t("protection.title")}>
     <p role="status">{query.isPending || query.isFetching ? t("protection.loading") : query.error
@@ -174,7 +169,7 @@ export function WorkProtectionControl({ context, target, locale, selectionId, se
       ? t("protection.unknown", { key: pending.key, locale: pending.request.locale }) : t("protection.pending")}</p> : null}
     <div className="form-actions">
       <button type="button" className="secondary-button" disabled={!canProtect} onClick={() => {
-        const basis = capture(); if (basis) void change(basis, true);
+        const basis = capture(); if (basis) registry.dispatch("translation.protect-work", commandScope, { kind: "translation-protection", basis, protected: true });
       }}>{t("protection.protect")}</button>
       <Dialog.Root open={release !== null} onOpenChange={value => {
         if (!value) setRelease(null);
@@ -208,13 +203,13 @@ export function WorkProtectionControl({ context, target, locale, selectionId, se
             <div className="form-actions">
               <Dialog.Close asChild><button type="button" className="secondary-button">{t("protection.cancel")}</button></Dialog.Close>
               <button type="button" className="primary-button" disabled={!canRelease || !releaseCurrent}
-                onClick={() => void change(release, false)}>{t("protection.confirmRelease")}</button>
+                onClick={() => registry.dispatch("translation.release-work", commandScope, { kind: "translation-protection", basis: release, protected: false })}>{t("protection.confirmRelease")}</button>
             </div>
           </> : null}
         </Dialog.Content></Dialog.Portal>
       </Dialog.Root>
       {pending?.phase === "unknown" ? <button type="button" className="secondary-button"
-        disabled={disabled || (!pending.request.protected && draftBlocked)} onClick={() => void retry()}>
+        disabled={disabled || (!pending.request.protected && draftBlocked)} onClick={() => { if (pending) registry.dispatch("translation.retry-protection", commandScope, { kind: "translation-protection-pending", request: pending.request, key: pending.key }); }}>
         {t("protection.retry")}
       </button> : null}
     </div>

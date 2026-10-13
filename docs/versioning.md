@@ -12,6 +12,19 @@ receipts remain readable without restoring grants; fresh dispatch still requires
 current authority and original deadlines. The storage geometry stays the same as
 the current service-call format; adding saved-build reads creates no new schema.
 
+Desktop work-plan controls, plugin source/translation/build actions, reference
+queries and editor protection now use their original stable project-session
+owners when their views unmount. Complete uncertain actions retain their
+original identity, consent and deadline across explicit retry; a later rejection
+does not erase an earlier unknown outcome. Current Query facts remain separate
+from captured requests and checked acknowledgements. Reference-query exit confirms
+the original draft before discarding, then checks the continuing exit intent and
+newer resource inputs after the original action settles. This frontend integration
+changes no storage, generated IPC, SDK/process contract, dependency or version
+source. It stays in the same undistributed alpha batch without another bump;
+both Unreleased changelogs describe the behavior. Native and whole-product
+acceptance remain separate.
+
 Package-scoped shutdown also retains the original sealed calling-package association
 through generation-service model children, active and retired workers, outcome
 queries and later selection effects. Revocation ends admission; cleanup still

@@ -1,229 +1,203 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import * as Dialog from "@radix-ui/react-dialog";
-import { commandFailure, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
+import type { QueryKey } from "@tanstack/react-query";
 import { PluginPermissions } from "./PluginManager";
 import { approvedPluginEnvironments, matchingPluginEnvironments, pluginEnvironmentVersion } from "./pluginEnvironments";
-import { pluginCommands, readEnabledPluginPackages, type PluginTranslationRequest, type PluginTranslationView } from "./pluginCommands";
-import { translationCommands as commands, type PluginTranslationCaptureRequest, type PluginTranslationPreflight, type PluginTranslationSelection, type PluginStartRequest, type TranslationCheckPrepareRequest, type TranslationCheckFinishRequest, type TranslationCheckReview, type TranslationProjectionPrepareRequest, type TranslationProjectionReview, type TranslationProjectionStartRequest } from "./translationCommands";
-import { executionCommands, executionContext, type AttemptDetail, type CancelRequest } from "./executionCommands";
+import { pluginCommands, readEnabledPluginPackages, type PluginTranslationView } from "./pluginCommands";
+import { translationCommands as commands, matchesTranslationEnvironment } from "./translationCommands";
+import { executionContext } from "./executionCommands";
 import { readCompleteAttempt } from "./executionRead";
-import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { useTranslationImportSession } from "./TranslationImportSession";
+import { useExecutionTaskSession, TaskCancellationFeedback } from "./ExecutionTaskSession";
+import { useWorkbenchState } from "./WorkbenchFrame";
+import { commandFailure, CommandFailureDetails } from "./CommandFailure";
+import { useWorkbenchCommands, type CommandAvailability, type TranslationImportSetupCommandPayload, type TranslationImportConsentCommandPayload,
+  type TranslationImportStartPendingCommandPayload, type TranslationPluginCommandPayload, type TranslationPluginPendingCommandPayload } from "./workbenchCommands";
+import type { ProjectView } from "./projectCommands";
 
-export interface PluginTranslationState { busy: boolean; pending: boolean; hasDraft: boolean }
-export interface PluginTranslationHandle { allowLeave: () => Promise<boolean>; allowNavigate: () => boolean }
-type Intent =
-  | { kind: "capture"; request: PluginTranslationCaptureRequest }
-  | { kind: "start" | "start-check"; request: PluginStartRequest }
-  | { kind: "prepare-check"; request: TranslationCheckPrepareRequest }
-  | { kind: "finish-check"; request: TranslationCheckFinishRequest }
-  | { kind: "prepare-projection"; request: TranslationProjectionPrepareRequest }
-  | { kind: "start-projection"; request: TranslationProjectionStartRequest }
-  | { kind: "cancel"; request: CancelRequest };
+const unavailable: CommandAvailability = { enabled: false, reason: "unavailable" };
 const sameProfile = (left: PluginTranslationView["declaration"]["profile"], right: PluginTranslationView["declaration"]["profile"]) => left.id === right.id && left.schemaVersion === right.schemaVersion && left.behaviorVersion === right.behaviorVersion;
-function matchesEnvironment(view: PluginTranslationView, request: PluginTranslationRequest) {
-  return view.resourceId === request.resourceId && view.environmentDigest === request.environmentDigest && [view.extractor.provider, view.checker.provider].every(provider => provider.packageDigest === request.package.packageDigest && provider.plugin.id === request.package.plugin.id && provider.plugin.version === request.package.plugin.version && provider.plugin.publisher === request.package.plugin.publisher);
-}
-
 function ExecutionReview({ view, checker }: { view: PluginTranslationView; checker: boolean }) {
   const { t } = useTranslation(), capability = checker ? view.checker : view.extractor;
   return <section aria-label={t(checker ? "translationPlugin.checkReview" : "translationPlugin.producerReview")}>
     <p>{view.declaration.displayName} · {capability.provider.plugin.id} {capability.provider.plugin.version}</p>
     <p>{t(view.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeDetails" : "sourcePlugin.nativeRuntimeDetails", { version: pluginEnvironmentVersion(view.environment), system: view.environment.platform.operatingSystem, architecture: view.environment.platform.architecture })}</p>
     <PluginPermissions permissions={capability.declaration.permissions} /><p>{t("sourcePlugin.unsandboxed")}</p>
-    <details><summary>{t("sourcePlugin.fixedDetails")}</summary><dl>
-      <dt>{t("sourcePlugin.packageDigest")}</dt><dd><code>{capability.provider.packageDigest}</code></dd>
-      <dt>{t("sourcePlugin.runtimeDigest")}</dt><dd><code>{view.environmentDigest}</code></dd>
-      <dt>{t("translationPlugin.profile")}</dt><dd><code>{view.declaration.profile.id}</code> ({view.declaration.profile.schemaVersion}/{view.declaration.profile.behaviorVersion})</dd>
-    </dl></details>
+    <details><summary>{t("sourcePlugin.fixedDetails")}</summary><dl><dt>{t("sourcePlugin.packageDigest")}</dt><dd><code>{capability.provider.packageDigest}</code></dd>
+      <dt>{t("sourcePlugin.runtimeDigest")}</dt><dd><code>{view.environmentDigest}</code></dd><dt>{t("translationPlugin.profile")}</dt><dd><code>{view.declaration.profile.id}</code> ({view.declaration.profile.schemaVersion}/{view.declaration.profile.behaviorVersion})</dd></dl></details>
   </section>;
 }
 
-/** Controls stay mounted with the workbench. Original requests survive unknown
- * acknowledgements; all qualification and mutation authority remains in Core. */
-export function PluginTranslationControls({ project, open, targetLocale, disabled, onState, onProjected, onReset, onAttention, ref }: {
-  project: ProjectView; open: boolean; targetLocale: string; disabled: boolean;
-  onState: (state: PluginTranslationState) => void; onProjected: (attempt: string) => void;
-  onReset: () => void; onAttention: () => void; ref?: Ref<PluginTranslationHandle>;
-}) {
-  const { t } = useTranslation(), context = executionContext(project), reads = useSessionReads();
-  const [choiceKey, setChoiceKey] = useState(""), [runtimeDigest, setRuntimeDigest] = useState("");
-  const [scopeIndex, setScopeIndex] = useState("0"), [refresh, setRefresh] = useState(0);
-  const [selection, setSelection] = useState<PluginTranslationSelection | null>(null);
-  const [files, setFiles] = useState<string[]>([]), [fileName, setFileName] = useState("");
-  const [languageConfirmed, setLanguageConfirmed] = useState(false);
-  const [prepared, setPrepared] = useState<PluginTranslationPreflight | null>(null);
-  const [producerConsent, setProducerConsent] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState<string | null>(null);
-  const [checkReview, setCheckReview] = useState<TranslationCheckReview | null>(null);
-  const [checkConsent, setCheckConsent] = useState<string | null>(null), [checkAttempt, setCheckAttempt] = useState<string | null>(null);
-  const [projection, setProjection] = useState<TranslationProjectionReview | null>(null), [projected, setProjected] = useState<string | null>(null);
-  const [pending, setPending] = useState<Intent | null>(null), pendingRef = useRef<Intent | null>(null);
-  const [busy, setBusy] = useState(false), [failure, setFailure] = useState<CommandFailure | null>(null), [leave, setLeave] = useState(false);
-  const mounted = useRef(true), running = useRef(false), sequence = useRef(0), errorRegion = useRef<HTMLDivElement>(null);
-  const leaveResolver = useRef<((answer: boolean) => void) | null>(null), leaveTrigger = useRef<HTMLElement | null>(null);
-  const inventory = useSessionQuery({ key: ["translation-plugin-inventory", refresh], scopes: [], enabled: open && !disabled,
-    read: async () => {
-      const value = await pluginCommands.inventory();
-      const packages = await readEnabledPluginPackages(value);
-      const choices = packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource" && contribution.contribution.schema.id === "tsumugi.translation-import-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1 ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`, package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : []));
-      return { choices, runtimes: approvedPluginEnvironments(value) };
-    } });
+/** Preparation and unknown requests remain in the stable import owner. */
+export function PluginTranslationControls({ project, open, targetLocale, disabled, onOpenExtensions }: { project: ProjectView; open: boolean; targetLocale: string; disabled: boolean; onOpenExtensions?: () => void }) {
+  const { t } = useTranslation(), owner = useTranslationImportSession(), tasks = useExecutionTaskSession(), reads = useSessionReads(), registry = useWorkbenchCommands();
+  const context = executionContext(project), commandScope = { ...context, area: "translation" as const }, state = owner.state;
+  const [choiceKey, setChoiceKey] = useWorkbenchState("translation", "import.pluginChoice", "");
+  const [runtimeDigest, setRuntimeDigest] = useWorkbenchState("translation", "import.pluginRuntime", "");
+  const [scopeIndex, setScopeIndex] = useWorkbenchState("translation", "import.nativeScope", "0");
+  const [refresh, setRefresh] = useWorkbenchState("translation", "import.pluginRefresh", 0);
+  const alive = useRef(false), committed = useRef({ project, open, targetLocale, disabled });
+  useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useLayoutEffect(() => { committed.current = { project, open, targetLocale, disabled }; });
+  const inventoryKey = ["translation-plugin-inventory", refresh];
+  const inventory = useSessionQuery({ key: inventoryKey, scopes: [], enabled: open && !disabled, read: async () => {
+    const value = await pluginCommands.inventory(), packages = await readEnabledPluginPackages(value);
+    return { choices: packages.flatMap(item => item.manifest.contributions.flatMap(contribution => contribution.contribution.kind === "resource"
+      && contribution.contribution.schema.id === "tsumugi.translation-import-declaration" && contribution.contribution.schema.schemaVersion === 1 && contribution.contribution.schema.behaviorVersion === 1
+      ? [{ key: `${item.packageDigest}:${contribution.id}`, label: `${item.manifest.plugin.id} ${item.manifest.plugin.version} · ${contribution.id}`,
+        package: { plugin: item.manifest.plugin, packageDigest: item.packageDigest }, resourceId: contribution.id, runtimeKinds: item.manifest.components.map(component => component.runtime) }] : [])),
+      runtimes: approvedPluginEnvironments(value) };
+  } });
   const choices = inventory.data?.choices ?? [], environments = inventory.data?.runtimes ?? [];
-  const effectiveChoice = choiceKey || choices[0]?.key || "";
-  const choice = choices.find(item => item.key === effectiveChoice);
-  const runtimes = matchingPluginEnvironments(environments, choice?.runtimeKinds ?? []);
-  const effectiveRuntime = runtimeDigest || runtimes[0]?.environmentDigest || "";
-  const translation: PluginTranslationRequest | null = choice && effectiveRuntime ? { package: choice.package, resourceId: choice.resourceId, environmentDigest: effectiveRuntime } : null;
-  const source = useSessionQuery({ key: ["translation-plugin-source", targetLocale], scopes: ["source"], enabled: open && !!targetLocale,
+  const effectiveChoice = state.translation ? `${state.translation.package.packageDigest}:${state.translation.resourceId}` : choiceKey;
+  const choice = choices.find(value => value.key === effectiveChoice), runtimes = matchingPluginEnvironments(environments, choice?.runtimeKinds ?? []);
+  const effectiveRuntime = state.translation?.environmentDigest ?? runtimeDigest, translation = state.translation;
+  const sourceKey = ["translation-plugin-source", targetLocale];
+  const source = useSessionQuery({ key: sourceKey, scopes: ["source"], enabled: open && !!targetLocale,
     read: () => commands.pluginSource({ ...context, targetLocale }) });
-  const environment = useSessionQuery({ key: ["translation-plugin-environment", effectiveChoice, effectiveRuntime, refresh, inventory.dataUpdatedAt], scopes: [], enabled: open && !disabled && !!translation && runtimes.some(item => item.environmentDigest === effectiveRuntime) && !inventory.error && !inventory.isFetching,
-    read: async () => { const value = await pluginCommands.translation(translation!); if (!matchesEnvironment(value, translation!)) throw new Error("Translation environment identity changed"); return value; } });
+  const environmentKey = ["translation-plugin-environment", translation, refresh];
+  const environment = useSessionQuery({ key: environmentKey, scopes: [],
+    enabled: open && !disabled && !!translation && !!inventory.data && !inventory.isFetching && !inventory.error,
+    read: async () => { if (!translation) throw new Error("Translation import requires an explicit package and runtime");
+      const view = await pluginCommands.translation(translation); if (!matchesTranslationEnvironment(view, translation)) throw new Error("Translation environment identity changed"); return view; } });
   const nativeScope = source.data?.nativeScopes[Number(scopeIndex)];
-  const unavailable = !!inventory.error || !!environment.error || !choice || !effectiveRuntime || !runtimes.some(item => item.environmentDigest === effectiveRuntime) || !environment.data || !source.data || !sameProfile(environment.data.declaration.profile, source.data.profile) || !nativeScope;
-  const producer = useSessionQuery({ key: ["translation-plugin-producer", attempt], scopes: ["execution"], enabled: open && !!attempt && !busy,
-    read: () => readCompleteAttempt(context, attempt!, "translation-extract") });
-  const check = useSessionQuery({ key: ["translation-plugin-checker", checkAttempt], scopes: ["execution"], enabled: open && !!checkAttempt && !busy,
-    read: () => readCompleteAttempt(context, checkAttempt!, "translation-semantic-check") });
-  const projectionRead = useSessionQuery({ key: ["translation-plugin-projection", projected], scopes: ["execution"], enabled: open && !!projected && !busy,
-    read: () => readCompleteAttempt(context, projected!, "translation-import") });
+  const environmentChanged = !!state.preflight && !!environment.data && JSON.stringify(state.preflight.translation) !== JSON.stringify(environment.data);
+  useLayoutEffect(() => {
+    if (environmentChanged) { owner.consentProducer(false); owner.consentChecker(false); }
+  }, [environmentChanged]);
+  const files = useSessionQuery({ key: ["translation-files", state.folder?.selectionId], scopes: ["source"], enabled: open && !!state.folder,
+    read: () => state.folder ? commands.pluginFiles({ ...context, selectionId: state.folder.selectionId }) : Promise.resolve([]) });
+  const producerKey = ["translation-plugin-producer", state.extractionAttempt];
+  const producer = useSessionQuery({ key: producerKey, scopes: ["execution"], enabled: open && !!state.extractionAttempt,
+    read: () => state.extractionAttempt ? readCompleteAttempt(context, state.extractionAttempt, "translation-extract") : Promise.resolve(null) });
+  const checkKey = ["translation-plugin-checker", state.checkAttempt];
+  const check = useSessionQuery({ key: checkKey, scopes: ["execution"], enabled: open && !!state.checkAttempt,
+    read: () => state.checkAttempt ? readCompleteAttempt(context, state.checkAttempt, "translation-semantic-check") : Promise.resolve(null) });
+  const projectionKey = ["translation-plugin-projection", state.attempt];
+  const projection = useSessionQuery({ key: projectionKey, scopes: ["execution"], enabled: open && !!state.attempt,
+    read: () => state.attempt ? readCompleteAttempt(context, state.attempt, "translation-import") : Promise.resolve(null) });
   const item = producer.data?.items.length === 1 ? producer.data.items[0] : null, checkedItem = check.data?.items.length === 1 ? check.data.items[0] : null;
-  const active = (id: string | null, value: AttemptDetail | null | undefined) => !!id && (!value || value.items.some(row => row.status.execution === "queued" || row.status.execution === "dispatched"));
-  const working = active(attempt, producer.data) || active(checkAttempt, check.data) || active(projected, projectionRead.data);
-  const locked = disabled || busy || !!pending, draftLocked = locked || !!prepared || !!attempt;
-  const hasDraft = !!selection && !projected;
-  const sourceChanged = !!selection && !!source.data && selection.source.sourceSnapshotId !== source.data.sourceSnapshotId;
-  const environmentChanged = !!prepared && !!environment.data && JSON.stringify(prepared.translation) !== JSON.stringify(environment.data);
-  const preparationBlocked = unavailable || sourceChanged || environmentChanged || inventory.isFetching || environment.isFetching;
-  const canCheck = !!item?.resultId && item.status.execution === "succeeded" && item.status.validation !== "valid" && !item.status.cancellationRequested;
-  const retryCheck = !!checkedItem && (checkedItem.status.cancellationRequested || checkedItem.status.execution === "failed" || checkedItem.status.execution === "unknown" || checkedItem.status.execution === "cancelled-before-dispatch");
-  const canProject = !!item?.resultId && item.status.execution === "succeeded" && item.status.validation === "valid" && !item.status.cancellationRequested;
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; sequence.current++; leaveResolver.current?.(false); }; }, []);
-  useEffect(() => { onState({ busy: busy || working, pending: !!pending, hasDraft }); }, [busy, working, !!pending, hasDraft, onState]);
-  useEffect(() => { if (failure && open) errorRegion.current?.focus(); }, [failure, open]);
-  useEffect(() => { const error = inventory.error ?? environment.error ?? source.error ?? producer.error ?? check.error ?? projectionRead.error; if (error) setFailure(commandFailure(error)); }, [inventory.error, environment.error, source.error, producer.error, check.error, projectionRead.error]);
-
-  function retain(intent: Intent | null) { pendingRef.current = intent; setPending(intent); }
-  async function perform(work: (current: () => boolean) => Promise<void>) {
-    if (running.current) return;
-    running.current = true; setBusy(true); setFailure(null);
-    const ticket = ++sequence.current, current = () => mounted.current && sequence.current === ticket;
-    try { await work(current); } catch (error) { if (current()) setFailure(commandFailure(error)); }
-    finally { running.current = false; if (mounted.current) { setBusy(false); reads.invalidate(["execution"]); } }
+  function active(id: string | null, detail: typeof producer.data) { return !!id && (!detail || detail.items.some(row => row.status.execution === "queued" || row.status.execution === "dispatched")); }
+  const working = active(state.extractionAttempt, producer.data) || active(state.checkAttempt, check.data) || active(state.attempt, projection.data);
+  const locked = disabled || state.busy || owner.hasPending(), draftLocked = locked || !!state.preflight || !!state.extractionAttempt;
+  const failure = inventory.error ?? source.error ?? environment.error ?? files.error ?? producer.error ?? check.error ?? projection.error;
+  function ready(key: QueryKey) { const record = reads.client.getQueryState(reads.key(key)); return record?.status === "success" && record.error === null && record.fetchStatus === "idle" && !record.isInvalidated; }
+  function live(recovery = false) { const value = committed.current; return alive.current && !reads.retired && value.open && !value.disabled
+    && value.project.sessionToken === context.sessionToken && value.project.metadata.projectId === context.projectId
+    && (recovery || value.targetLocale === owner.current().targetLocale && value.project.metadata.targetLocales.includes(value.targetLocale)); }
+  function common(recovery = false): CommandAvailability {
+    if (!live(recovery)) return { enabled: false, reason: "hidden" };
+    if (owner.current().busy) return { enabled: false, reason: "busy" };
+    return !recovery && owner.hasPending() ? { enabled: false, reason: "pending-action" } : { enabled: true };
   }
-  async function submit(intent: Intent, current: () => boolean) {
-    if (!current()) return;
-    retain(intent);
-    try {
-      switch (intent.kind) {
-        case "capture": {
-          const value = await commands.preflightPlugin(intent.request);
-          if (value.attemptId !== intent.request.attemptId || !selection || value.targetLocale !== selection.targetLocale || JSON.stringify(value.source) !== JSON.stringify(selection.source) || JSON.stringify(value.translation) !== JSON.stringify(selection.translation)) throw new Error("Translation capture identity changed");
-          if (current()) { setPrepared(value); setProducerConsent(null); retain(null); }
-          break;
-        }
-        case "start": case "start-check": {
-          const id = intent.kind === "start" ? await commands.startPlugin(intent.request) : await commands.startCheck(intent.request);
-          if (id !== intent.request.attemptId) throw new Error("Translation attempt identity changed");
-          if (current()) { if (intent.kind === "start") setAttempt(id); else setCheckAttempt(id); retain(null); }
-          break;
-        }
-        case "prepare-check": {
-          const value = await commands.prepareCheck(intent.request);
-          if (value.attemptId !== intent.request.attemptId || value.translationAttemptId !== intent.request.translationAttemptId || value.translationResultId !== intent.request.translationResultId || !matchesEnvironment(value.translation, intent.request.translation)) throw new Error("Translation check identity changed");
-          if (current()) { setCheckReview(value); setCheckConsent(null); setCheckAttempt(null); retain(null); }
-          break;
-        }
-        case "finish-check": await commands.finishCheck(intent.request); if (current()) { setCheckReview(null); setCheckConsent(null); retain(null); } break;
-        case "prepare-projection": {
-          const value = await commands.prepareProjection(intent.request);
-          if (value.attemptId !== intent.request.attemptId || value.translationAttemptId !== intent.request.translationAttemptId || value.translationResultId !== intent.request.translationResultId) throw new Error("Translation projection identity changed");
-          if (current()) { setProjection(value); retain(null); }
-          break;
-        }
-        case "start-projection": {
-          const id = await commands.startProjection(intent.request);
-          if (id !== intent.request.attemptId) throw new Error("Translation preview identity changed");
-          if (current()) { setProjected(id); onProjected(id); retain(null); }
-          break;
-        }
-        case "cancel": await executionCommands.cancel(intent.request); if (current()) retain(null); break;
-      }
-    } catch (error) { if (current() && !hasUnknownOutcome(error)) { retain(null); setProducerConsent(null); setCheckConsent(null); } throw error; }
+  function preparationReady() { return ready(inventoryKey) && ready(sourceKey) && ready(environmentKey) && !!nativeScope && !!environment.data && !!source.data
+    && sameProfile(environment.data.declaration.profile, source.data.profile) && runtimes.some(value => value.environmentDigest === effectiveRuntime)
+    && (!state.folder || state.folder.source.sourceSnapshotId === source.data.sourceSnapshotId)
+    && (!state.preflight || JSON.stringify(state.preflight.translation) === JSON.stringify(environment.data)); }
+  function selected(key: string, digest: string) {
+    if (draftLocked) return;
+    setChoiceKey(key); setRuntimeDigest(digest);
+    const selected = choices.find(value => value.key === key);
+    owner.setTranslation(selected && digest ? { package: selected.package, resourceId: selected.resourceId, environmentDigest: digest } : null);
   }
-  async function authorize(review: { attemptId: string; inputDigest: string }): Promise<PluginStartRequest> {
-    return { ...context, attemptId: review.attemptId, inputDigest: review.inputDigest, grantId: await executionCommands.identity(context), expiresAtMs: String(Date.now() + 600_000), unsandboxedExecution: true };
+  function setupPayload(): TranslationImportSetupCommandPayload { return { kind: "translation-import-setup", editSeq: state.editSeq, locale: state.targetLocale, selectionId: state.folder?.selectionId ?? null, fileName: state.fileName }; }
+  function setupAvailability(input?: TranslationImportSetupCommandPayload, capture = false): CommandAvailability {
+    const allowed = common(); return allowed.enabled && input && JSON.stringify(input) === JSON.stringify(setupPayload()) && preparationReady()
+      && (!capture || !!state.folder && !!state.fileName && state.confirmed && ready(["translation-files", state.folder.selectionId]) && files.data?.includes(state.fileName)) ? allowed : allowed.enabled ? unavailable : allowed;
   }
-  function reset() {
-    setSelection(null); setFiles([]); setFileName(""); setLanguageConfirmed(false); setPrepared(null); setProducerConsent(null); setAttempt(null); setCheckReview(null); setCheckConsent(null); setCheckAttempt(null); setProjection(null); setProjected(null); setFailure(null); onReset();
+  function consentPayload(confirmed = state.confirmed): TranslationImportConsentCommandPayload | null {
+    return state.folder ? { ...setupPayload(), kind: "translation-import-consent", sourceSnapshotId: state.preflight?.source.sourceSnapshotId ?? state.folder.source.sourceSnapshotId,
+      fileDigest: state.preflight?.file.sha256 ?? null, inputDigest: state.preflight?.inputDigest ?? null,
+      producerConsent: !!state.preflight && state.producerConsent === state.preflight.inputDigest, confirmed } : null;
   }
-  async function choose(current: () => boolean) {
-    if (!translation || !source.data || !nativeScope || unavailable) return;
-    const selected = await commands.selectPlugin({ ...context, translation, targetLocale, expectedSourceSnapshotId: source.data.sourceSnapshotId, nativeScope });
-    if (!current() || !selected) return;
-    if (selected.targetLocale !== targetLocale || JSON.stringify(selected.source) !== JSON.stringify(source.data) || !matchesEnvironment(selected.translation, translation) || selected.nativeScope.namespace !== nativeScope.namespace || !sameProfile(selected.nativeScope.policy, nativeScope.policy)) throw new Error("Translation selection identity changed");
-    reset(); setChoiceKey(effectiveChoice); setRuntimeDigest(effectiveRuntime); setSelection(selected);
-    const found = await commands.pluginFiles({ ...context, selectionId: selected.selectionId });
-    if (current()) { setFiles(found); setFileName(found[0] ?? ""); }
+  function consentAvailability(input?: TranslationImportConsentCommandPayload, start = false): CommandAvailability {
+    const allowed = common(), expected = consentPayload(input?.confirmed);
+    return allowed.enabled && input && expected && JSON.stringify(input) === JSON.stringify(expected) && preparationReady() && !!state.fileName
+      && (!start || !!state.preflight && input.confirmed && input.producerConsent && !state.extractionAttempt) ? allowed : allowed.enabled ? unavailable : allowed;
   }
-  function answerLeave(answer: boolean) { setLeave(false); leaveResolver.current?.(answer); leaveResolver.current = null; }
-  useImperativeHandle(ref, () => ({
-    allowNavigate: () => !running.current && !pendingRef.current,
-    allowLeave() {
-      if (running.current || pendingRef.current || working) { onAttention(); return Promise.resolve(false); }
-      if (!hasDraft) return Promise.resolve(true);
-      onAttention(); leaveTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      setLeave(true); return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
-    },
-  }));
-  async function cancel(detail: AttemptDetail, current: () => boolean) { await submit({ kind: "cancel", request: { ...context, taskId: detail.taskId, requestId: await executionCommands.identity(context) } }, current); }
-  return <>
-    <section aria-label={t("translationPlugin.controls")} aria-busy={busy || inventory.isFetching || environment.isFetching}>
-      <h3>{t("translationPlugin.controls")}</h3>
-      {failure ? <div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("translationPlugin.failed")}</p><CommandFailureDetails failure={failure} /></div> : null}
-      {inventory.isFetching || environment.isFetching || busy || working ? <p role="status">{t("execution.working")}</p> : null}
-      <label className="source-field">{t("translationPlugin.package")}<select value={effectiveChoice} disabled={draftLocked} onChange={event => { setChoiceKey(event.target.value); setRuntimeDigest(""); setLanguageConfirmed(false); }}>
-        {!choice ? <option value={effectiveChoice}>{t("translationPlugin.choosePackage")}</option> : null}{choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}
-      </select></label>
-      <label className="source-field">{t("sourcePlugin.runtime")}<select value={effectiveRuntime} disabled={draftLocked} onChange={event => { setRuntimeDigest(event.target.value); setLanguageConfirmed(false); }}>
-        {!runtimes.some(value => value.environmentDigest === effectiveRuntime) ? <option value={effectiveRuntime}>{t("sourcePlugin.chooseRuntime")}</option> : null}
-        {runtimes.map(value => <option key={value.environmentDigest} value={value.environmentDigest}>{t(value.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(value.environment), system: value.environment.platform.operatingSystem, architecture: value.environment.platform.architecture })}</option>)}
-      </select></label>
-      <button className="secondary-button" disabled={locked} onClick={() => { setFailure(null); setRefresh(value => value + 1); reads.invalidate(["execution", "source"]); }}>{t("translationPlugin.refresh")}</button>
-      {sourceChanged ? <p role="alert">{t("translation.sourceChanged")}</p> : null}
-      {environmentChanged ? <p role="alert">{t("translationPlugin.environmentChanged")}</p> : null}
-      {unavailable && !inventory.isFetching && !environment.isFetching ? <p role="status">{t("translationPlugin.unavailable")}</p> : null}
-      {(source.data?.nativeScopes.length ?? 0) > 1 ? <label className="source-field">{t("translationPlugin.scope")}<select value={scopeIndex} disabled={draftLocked} onChange={event => { setScopeIndex(event.target.value); setSelection(null); setFiles([]); setFileName(""); setLanguageConfirmed(false); }}>{source.data?.nativeScopes.map((value, index) => <option value={String(index)} key={`${value.namespace}:${value.policy.id}:${value.policy.schemaVersion}:${value.policy.behaviorVersion}`}>{value.namespace} · {value.policy.id}</option>)}</select></label> : null}
-      {!prepared && !attempt ? <>
-        {environment.data ? <p>{t("translationPlugin.material", { directory: environment.data.declaration.material.logicalDirectory, extension: environment.data.declaration.material.extension, bytes: String(environment.data.declaration.material.maxBytes) })}</p> : null}
-        <button className="secondary-button" disabled={draftLocked || unavailable || inventory.isFetching || environment.isFetching} onClick={() => void perform(choose)}>{t("translation.chooseFolder")}</button>
-        {selection ? <><p>{t("translation.folder", { name: selection.folderName })}</p>{files.length ? <label className="source-field">{t("translation.file")}<select value={fileName} disabled={draftLocked} onChange={event => { setFileName(event.target.value); setLanguageConfirmed(false); }}>{files.map(file => <option key={file} value={file}>{file}</option>)}</select></label> : <p role="status">{t("translation.noFiles")}</p>}
-          <label className="source-check"><input type="checkbox" checked={languageConfirmed} disabled={draftLocked || !fileName || selection.targetLocale !== targetLocale} onChange={event => setLanguageConfirmed(event.target.checked)} />{t("translationPlugin.languageConfirm", { file: fileName, target: selection.targetLocale })}</label>
-          <button className="primary-button" disabled={draftLocked || sourceChanged || !languageConfirmed || !fileName || selection.targetLocale !== targetLocale} onClick={() => void perform(async current => { await submit({ kind: "capture", request: { ...context, selectionId: selection.selectionId, fileName, languageConfirmed: true, attemptId: await executionCommands.identity(context) } }, current); })}>{t("translationPlugin.capture")}</button>
-        </> : null}
+  function pluginPayload(): TranslationPluginCommandPayload { return { kind: "translation-plugin", editSeq: state.editSeq, extractionAttemptId: state.extractionAttempt ?? "",
+    extractionResultId: item?.resultId ?? null, checkAttemptId: state.checkReview?.attemptId ?? null, checkInputDigest: state.checkReview?.inputDigest ?? null,
+    checkResultId: checkedItem?.resultId ?? null, projectionAttemptId: state.projection?.attemptId ?? null, projectionInputDigest: state.projection?.inputDigest ?? null,
+    checkerConsent: !!state.checkReview && state.checkerConsent === state.checkReview.inputDigest }; }
+  function pluginAvailability(input?: TranslationPluginCommandPayload, phase: "prepare-check" | "start-check" | "finish-check" | "prepare-projection" | "start-projection" = "prepare-check"): CommandAvailability {
+    const allowed = common(); if (!allowed.enabled) return allowed;
+    if (!input || JSON.stringify(input) !== JSON.stringify(pluginPayload()) || !state.extractionAttempt || producer.data?.attemptId !== state.extractionAttempt) return unavailable;
+    if (phase === "finish-check") return ready(checkKey) && checkedItem?.status.execution === "succeeded" && !checkedItem.status.cancellationRequested && !!checkedItem.resultId ? allowed : unavailable;
+    if (phase === "start-projection") return state.projection && !state.attempt ? allowed : unavailable;
+    if (!preparationReady() || !ready(producerKey) || !item?.resultId || item.status.execution !== "succeeded" || item.status.cancellationRequested) return unavailable;
+    if (phase === "start-check") return !!state.checkReview && !state.checkAttempt && state.checkerConsent === state.checkReview.inputDigest ? allowed : unavailable;
+    if (phase === "prepare-projection") return item.status.validation === "valid" && !state.projection ? allowed : unavailable;
+    return item.status.validation !== "valid" && !active(state.checkAttempt, check.data)
+      && (!state.checkReview || checkedItem && (checkedItem.status.cancellationRequested || ["failed", "unknown", "cancelled-before-dispatch"].includes(checkedItem.status.execution))) ? allowed : unavailable;
+  }
+  function pendingPayload(): TranslationPluginPendingCommandPayload | null { return state.pendingPlugin ? { kind: "translation-plugin-pending", ...state.pendingPlugin } : null; }
+  function proof() {
+    const capturedSource = source.data, capturedEnvironment = environment.data, capturedTranslation = state.translation;
+    const sourceWitness = reads.watchExactQuery(sourceKey), environmentWitness = reads.watchExactQuery(environmentKey);
+    return { current: () => !reads.retired && reads.context.sessionToken === context.sessionToken && reads.context.projectId === context.projectId && JSON.stringify(owner.current().translation) === JSON.stringify(capturedTranslation)
+      && [sourceWitness.current(), environmentWitness.current()].every((record, index) => !record || record.state.status === "success" && record.state.error === null
+        && JSON.stringify(record.state.data) === JSON.stringify(index === 0 ? capturedSource : capturedEnvironment)),
+      dispose: () => { sourceWitness.dispose(); environmentWitness.dispose(); } };
+  }
+  useLayoutEffect(() => {
+    const meta = { category: "translation" as const, scope: commandScope, binding: null, confirmation: "none" as const, risk: "captures-translation-import" as const };
+    const removals = [
+      registry.register({ ...meta, id: "translation.choose-import-folder", nameKey: "translation.chooseFolder", payloadKind: "translation-import-setup", availability: input => setupAvailability(input), handler: () => {
+        if (!translation || !source.data || !nativeScope) return; const captured = proof();
+        void owner.chooseFolder({ translation, source: source.data, nativeScope }, captured.current).finally(captured.dispose);
+      } }),
+      registry.register({ ...meta, id: "translation.inspect-import", nameKey: "translation.inspect", payloadKind: "translation-import-setup", availability: input => setupAvailability(input, true), handler: () => { const captured = proof(); void owner.preflight(captured.current, captured.dispose); } }),
+      registry.register({ ...meta, id: "translation.confirm-import-language", nameKey: "translation.languageConfirm", payloadKind: "translation-import-consent", availability: input => consentAvailability(input), handler: input => owner.confirmLanguage(input.confirmed) }),
+      registry.register({ ...meta, id: "translation.start-import", nameKey: "translation.start", payloadKind: "translation-import-consent", availability: input => consentAvailability(input, true), handler: () => { const captured = proof(); void owner.start(captured.current, captured.dispose); } }),
+      registry.register({ ...meta, id: "translation.retry-import-start", nameKey: "translationPlugin.retryOriginal", payloadKind: "translation-import-start-pending", availability: input => common(true).enabled && input && JSON.stringify(input.request) === JSON.stringify(owner.current().pendingStart) ? common(true) : unavailable, handler: () => void owner.retryStart() }),
+      registry.register({ ...meta, id: "translation.prepare-import-check", nameKey: "translationPlugin.prepareCheck", payloadKind: "translation-plugin", availability: input => pluginAvailability(input), handler: input => { if (!input.extractionResultId) return; const captured = proof(); void owner.prepareCheck(input.extractionResultId, captured.current).finally(captured.dispose); } }),
+      registry.register({ ...meta, id: "translation.start-import-check", nameKey: "translationPlugin.startCheck", payloadKind: "translation-plugin", availability: input => pluginAvailability(input, "start-check"), handler: () => { const captured = proof(); void owner.startCheck(captured.current).finally(captured.dispose); } }),
+      registry.register({ ...meta, id: "translation.finish-import-check", nameKey: "translationPlugin.recordCheck", payloadKind: "translation-plugin", availability: input => pluginAvailability(input, "finish-check"), handler: input => { if (input.checkResultId) void owner.finishCheck(input.checkResultId); } }),
+      registry.register({ ...meta, id: "translation.prepare-import-projection", nameKey: "translationPlugin.preparePreview", payloadKind: "translation-plugin", availability: input => pluginAvailability(input, "prepare-projection"), handler: input => { if (!input.extractionResultId) return; const captured = proof(); void owner.prepareProjection(input.extractionResultId, captured.current).finally(captured.dispose); } }),
+      registry.register({ ...meta, id: "translation.start-import-projection", nameKey: "translationPlugin.openPreview", payloadKind: "translation-plugin", availability: input => pluginAvailability(input, "start-projection"), handler: () => void owner.startProjection() }),
+      registry.register({ ...meta, id: "translation.retry-import-plugin", nameKey: "translationPlugin.retryOriginal", payloadKind: "translation-plugin-pending", availability: input => { const allowed = common(true), expected = pendingPayload(); return allowed.enabled && input && expected && JSON.stringify(input) === JSON.stringify(expected) ? allowed : unavailable; }, handler: () => void owner.retryPlugin() }),
+    ];
+    return () => removals.forEach(remove => remove());
+  });
+  const command = pluginPayload(), consent = consentPayload(), pending = pendingPayload();
+  const startPending: TranslationImportStartPendingCommandPayload | null = state.pendingStart ? { kind: "translation-import-start-pending", request: state.pendingStart } : null;
+  return <section aria-label={t("translationPlugin.controls")} aria-busy={state.busy || inventory.isFetching || environment.isFetching}>
+    <h3>{t("translationPlugin.controls")}</h3>
+    {failure ? <div role="alert"><p>{t("translationPlugin.failed")}</p><CommandFailureDetails failure={commandFailure(failure)} /></div> : null}
+    {inventory.isFetching || environment.isFetching || state.busy || working ? <p role="status">{t("execution.working")}</p> : null}
+    <label className="source-field">{t("translationPlugin.package")}<select value={effectiveChoice} disabled={draftLocked} onChange={event => selected(event.target.value, "")}><option value="">{t("translationPlugin.choosePackage")}</option>{choices.map(value => <option key={value.key} value={value.key}>{value.label}</option>)}</select></label>
+    <label className="source-field">{t("sourcePlugin.runtime")}<select value={effectiveRuntime} disabled={draftLocked || !choice} onChange={event => selected(effectiveChoice, event.target.value)}><option value="">{t("sourcePlugin.chooseRuntime")}</option>{runtimes.map(value => <option key={value.environmentDigest} value={value.environmentDigest}>{t(value.environment.profile === "node-system-libraries-v1" ? "sourcePlugin.runtimeOption" : "sourcePlugin.nativeRuntimeOption", { version: pluginEnvironmentVersion(value.environment), system: value.environment.platform.operatingSystem, architecture: value.environment.platform.architecture })}</option>)}</select></label>
+    <button className="secondary-button" disabled={locked} onClick={() => { setRefresh(value => value + 1); reads.invalidate(["execution", "source"]); }}>{t("translationPlugin.refresh")}</button>
+    {environmentChanged ? <p role="alert">{t("translationPlugin.environmentChanged")}</p> : null}
+    {!preparationReady() && !inventory.isFetching && !environment.isFetching ? <p role="status">{t("translationPlugin.unavailable")}</p> : null}
+    {onOpenExtensions ? <button className="text-button" disabled={state.busy} onClick={onOpenExtensions}>{t("plugins.open")}</button> : null}
+    {(source.data?.nativeScopes.length ?? 0) > 1 ? <label className="source-field">{t("translationPlugin.scope")}<select value={scopeIndex} disabled={draftLocked} onChange={event => { if (owner.resetPlugin()) setScopeIndex(event.target.value); }}>{source.data?.nativeScopes.map((value,index) => <option key={`${value.namespace}:${value.policy.id}`} value={String(index)}>{value.namespace} · {value.policy.id}</option>)}</select></label> : null}
+    {!state.preflight && !state.extractionAttempt ? <>
+      {environment.data ? <p>{t("translationPlugin.material", { directory: environment.data.declaration.material.logicalDirectory, extension: environment.data.declaration.material.extension, bytes: String(environment.data.declaration.material.maxBytes) })}</p> : null}
+      <button className="secondary-button" disabled={!setupAvailability(setupPayload()).enabled} onClick={() => registry.dispatch("translation.choose-import-folder", commandScope, setupPayload())}>{t("translation.chooseFolder")}</button>
+      {state.folder ? <><p>{t("translation.folder", { name: state.folder.folderName })}</p>
+        {files.data?.length ? <label className="source-field">{t("translation.file")}<select value={state.fileName} disabled={draftLocked} onChange={event => owner.setFile(event.target.value)}><option value="">{t("translation.file")}</option>{files.data.map(file => <option key={file} value={file}>{file}</option>)}</select></label> : <p role="status">{t(files.isFetching ? "execution.loading" : "translation.noFiles")}</p>}
+        {consent ? <label className="source-check"><input type="checkbox" checked={state.confirmed} disabled={!consentAvailability(consent).enabled} onChange={event => registry.dispatch("translation.confirm-import-language", commandScope, { ...consent, confirmed: event.target.checked })} />{t("translationPlugin.languageConfirm", { file: state.fileName, target: state.folder.targetLocale })}</label> : null}
+        <button className="primary-button" disabled={!setupAvailability(setupPayload(), true).enabled} onClick={() => registry.dispatch("translation.inspect-import", commandScope, setupPayload())}>{t("translationPlugin.capture")}</button>
       </> : null}
-      {prepared ? <><p>{t("translationPlugin.captured", { file: prepared.file.logicalPath, bytes: String(prepared.file.byteLength), target: prepared.targetLocale })}</p>
-        {!attempt ? <><ExecutionReview view={prepared.translation} checker={false} /><label className="source-check"><input type="checkbox" checked={producerConsent === prepared.inputDigest} disabled={locked} onChange={event => setProducerConsent(event.target.checked ? prepared.inputDigest : null)} />{t("translationPlugin.producerConsent")}</label>
-          <button className="primary-button" disabled={locked || preparationBlocked || producerConsent !== prepared.inputDigest} onClick={() => void perform(async current => { await submit({ kind: "start", request: await authorize(prepared) }, current); })}>{t("translation.start")}</button></> : null}
-      </> : null}
-      {item ? <p role="status">{t(`execution.states.${item.status.execution}`)} · {t(`releasePlugin.validation.${item.status.validation}`)}</p> : null}
-      {item?.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary>{item.status.diagnostic}</details> : null}
-      {canCheck && prepared && attempt && (!checkReview || retryCheck) ? <button className="secondary-button" disabled={locked || preparationBlocked || active(checkAttempt, check.data)} onClick={() => void perform(async current => { await submit({ kind: "prepare-check", request: { ...context, translationAttemptId: attempt, translationResultId: item!.resultId!, attemptId: await executionCommands.identity(context), translation: { package: { plugin: prepared.translation.extractor.provider.plugin, packageDigest: prepared.translation.extractor.provider.packageDigest }, resourceId: prepared.translation.resourceId, environmentDigest: prepared.translation.environmentDigest } } }, current); })}>{t("translationPlugin.prepareCheck")}</button> : null}
-      {checkReview && !checkAttempt ? <><ExecutionReview view={checkReview.translation} checker /><p>{t("translationPlugin.rules", { count: checkReview.rules.length })}</p>
-        <label className="source-check"><input type="checkbox" checked={checkConsent === checkReview.inputDigest} disabled={locked} onChange={event => setCheckConsent(event.target.checked ? checkReview.inputDigest : null)} />{t("translationPlugin.checkerConsent")}</label>
-        <button className="primary-button" disabled={locked || preparationBlocked || checkConsent !== checkReview.inputDigest} onClick={() => void perform(async current => { await submit({ kind: "start-check", request: await authorize(checkReview) }, current); })}>{t("translationPlugin.startCheck")}</button>
-      </> : null}
-      {checkedItem ? <p role="status">{t(`execution.states.${checkedItem.status.execution}`)}</p> : null}
-      {checkedItem?.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary>{checkedItem.status.diagnostic}</details> : null}
-      {checkReview && checkedItem?.resultId && checkedItem.status.execution === "succeeded" && !checkedItem.status.cancellationRequested ? <button className="primary-button" disabled={locked} onClick={() => void perform(async current => { await submit({ kind: "finish-check", request: { ...context, translationAttemptId: checkReview.translationAttemptId, translationResultId: checkReview.translationResultId, attemptId: checkReview.attemptId, resultId: checkedItem.resultId! } }, current); })}>{t("translationPlugin.recordCheck")}</button> : null}
-      {item?.status.validation === "invalid" ? <p role="alert">{t("translationPlugin.invalid")}</p> : null}
-      {canProject && !projection && attempt ? <button className="primary-button" disabled={locked || preparationBlocked} onClick={() => void perform(async current => { await submit({ kind: "prepare-projection", request: { ...context, translationAttemptId: attempt, translationResultId: item!.resultId!, attemptId: await executionCommands.identity(context) } }, current); })}>{t("translationPlugin.preparePreview")}</button> : null}
-      {projection && !projected ? <><p>{t("translationPlugin.checked", { target: projection.targetLocale })}</p><button className="primary-button" disabled={locked} onClick={() => void perform(async current => { await submit({ kind: "start-projection", request: { ...context, attemptId: projection.attemptId, inputDigest: projection.inputDigest } }, current); })}>{t("translationPlugin.openPreview")}</button></> : null}
-      {pending ? <div role="status"><p>{t("translationPlugin.unknown")}</p><button className="secondary-button" disabled={disabled || busy} onClick={() => void perform(current => submit(pending, current))}>{t("translationPlugin.retryOriginal")}</button></div> : null}
-      {[producer.data, check.data, projectionRead.data].map(detail => detail && detail.items.some(row => row.status.execution === "queued" || row.status.execution === "dispatched") ? <button className="secondary-button" key={detail.attemptId} disabled={locked} onClick={() => void perform(current => cancel(detail, current))}>{t("execution.cancel")}</button> : null)}
-      {selection ? <button className="text-button" disabled={locked || working} onClick={reset}>{t("translationPlugin.newInput")}</button> : null}
-    </section>
-    <Dialog.Root open={leave} onOpenChange={value => { if (!value) answerLeave(false); }}><Dialog.Portal><Dialog.Overlay className="dialog-backdrop" /><Dialog.Content className="confirm-dialog" onCloseAutoFocus={event => { event.preventDefault(); if (leaveTrigger.current?.isConnected && !leaveTrigger.current.closest("[hidden]")) leaveTrigger.current.focus(); }}><Dialog.Title>{t("translationPlugin.leaveTitle")}</Dialog.Title><Dialog.Description>{t("translationPlugin.leaveHelp")}</Dialog.Description><div className="form-actions"><button className="secondary-button" onClick={() => answerLeave(false)}>{t("translation.stay")}</button><button className="primary-button" onClick={() => { reset(); answerLeave(true); }}>{t("translation.discard")}</button></div></Dialog.Content></Dialog.Portal></Dialog.Root>
-  </>;
+    </> : null}
+    {state.preflight ? <><p>{t("translationPlugin.captured", { file: state.preflight.file.logicalPath, bytes: String(state.preflight.file.byteLength), target: state.preflight.targetLocale })}</p>
+      {!state.extractionAttempt ? <><ExecutionReview view={state.preflight.translation} checker={false} /><label className="source-check"><input type="checkbox" checked={state.producerConsent === state.preflight.inputDigest} disabled={locked} onChange={event => owner.consentProducer(event.target.checked)} />{t("translationPlugin.producerConsent")}</label><button className="primary-button" disabled={!consent || !consentAvailability(consent, true).enabled} onClick={() => { if (consent) registry.dispatch("translation.start-import", commandScope, consent); }}>{t("translation.start")}</button></> : null}
+    </> : null}
+    {item ? <p role="status">{t(`execution.states.${item.status.execution}`)} · {t(`releasePlugin.validation.${item.status.validation}`)}</p> : null}
+    {item?.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary>{item.status.diagnostic}</details> : null}
+    {state.extractionAttempt && item?.status.validation !== "valid" ? <button className="secondary-button" disabled={!pluginAvailability(command).enabled} onClick={() => registry.dispatch("translation.prepare-import-check", commandScope, command)}>{t("translationPlugin.prepareCheck")}</button> : null}
+    {state.checkReview && !state.checkAttempt ? <><ExecutionReview view={state.checkReview.translation} checker /><p>{t("translationPlugin.rules", { count: state.checkReview.rules.length })}</p><label className="source-check"><input type="checkbox" checked={state.checkerConsent === state.checkReview.inputDigest} disabled={locked} onChange={event => owner.consentChecker(event.target.checked)} />{t("translationPlugin.checkerConsent")}</label><button className="primary-button" disabled={!pluginAvailability(command, "start-check").enabled} onClick={() => registry.dispatch("translation.start-import-check", commandScope, command)}>{t("translationPlugin.startCheck")}</button></> : null}
+    {checkedItem ? <p role="status">{t(`execution.states.${checkedItem.status.execution}`)}</p> : null}
+    {checkedItem?.status.diagnostic ? <details><summary>{t("execution.diagnostic")}</summary>{checkedItem.status.diagnostic}</details> : null}
+    {checkedItem?.status.execution === "succeeded" ? <button className="primary-button" disabled={!pluginAvailability(command, "finish-check").enabled} onClick={() => registry.dispatch("translation.finish-import-check", commandScope, command)}>{t("translationPlugin.recordCheck")}</button> : null}
+    {item?.status.validation === "invalid" ? <p role="alert">{t("translationPlugin.invalid")}</p> : null}
+    {item?.status.validation === "valid" && !state.projection ? <button className="primary-button" disabled={!pluginAvailability(command, "prepare-projection").enabled} onClick={() => registry.dispatch("translation.prepare-import-projection", commandScope, command)}>{t("translationPlugin.preparePreview")}</button> : null}
+    {state.projection && !state.attempt ? <><p>{t("translationPlugin.checked", { target: state.projection.targetLocale })}</p><button className="primary-button" disabled={!pluginAvailability(command, "start-projection").enabled} onClick={() => registry.dispatch("translation.start-import-projection", commandScope, command)}>{t("translationPlugin.openPreview")}</button></> : null}
+    {pending ? <div role="status"><p>{t("translationPlugin.unknown")}</p><button className="secondary-button" disabled={!common(true).enabled} onClick={() => registry.dispatch("translation.retry-import-plugin", commandScope, pending)}>{t("translationPlugin.retryOriginal")}</button></div> : null}
+    {startPending ? <div role="status"><p>{t("translation.startUnknown")}</p><button className="secondary-button" disabled={!common(true).enabled} onClick={() => registry.dispatch("translation.retry-import-start", commandScope, startPending)}>{t("translationPlugin.retryOriginal")}</button></div> : null}
+    {[producer.data, check.data, projection.data].map(detail => detail && detail.items.some(row => row.status.execution === "queued" || row.status.execution === "dispatched") ? <div key={detail.attemptId}><button className="secondary-button" disabled={locked || !tasks.canCancel({ taskId: detail.taskId, attemptId: detail.attemptId, origin: "tasks" })} onClick={() => void owner.cancelTask(detail)}>{t("execution.cancel")}</button><TaskCancellationFeedback origin="tasks" taskId={detail.taskId} disabled={locked} visible={open} /></div> : null)}
+    {state.folder ? <button className="text-button" disabled={locked || working} onClick={() => owner.resetPlugin()}>{t("translationPlugin.newInput")}</button> : null}
+  </section>;
 }

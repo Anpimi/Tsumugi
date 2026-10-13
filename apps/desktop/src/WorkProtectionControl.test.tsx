@@ -1,8 +1,10 @@
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
+import { useTranslationDraftSession } from "./TranslationDraftSession";
+import type { ProjectView } from "./projectCommands";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WorkProtectionControl, type WorkProtectionControlProps } from "./WorkProtectionControl";
-import { SessionReadProvider } from "./SessionReadProvider";
 import { i18n } from "./i18n";
 import { enUS } from "./i18n/en-US";
 import type { WorkProtection } from "./workPlanCommands";
@@ -52,19 +54,25 @@ beforeEach(async () => {
 });
 afterEach(cleanup);
 
-function setup(overrides: Partial<WorkProtectionControlProps> = {}) {
+type ConsumerProps = Omit<WorkProtectionControlProps, "session">;
+const project: ProjectView = { ...context, locator: "/synthetic/protection-project", reconciliationState: "settled",
+  metadata: { projectId: context.projectId, displayName: "Protection demo", sourceLocale: "en", targetLocales: [locale], metadataRevision: "1" } };
+function ProtectionConsumer(props: ConsumerProps) {
+  const owner = useTranslationDraftSession();
+  return <WorkProtectionControl {...props} session={owner.protection} />;
+}
+function setup(overrides: Partial<ConsumerProps> = {}) {
   const failures = vi.fn(), onBlockedChange = vi.fn();
   const run: WorkProtectionControlProps["run"] = vi.fn(async (work: Parameters<WorkProtectionControlProps["run"]>[0]) => {
     try { await work(() => true); } catch (error) { failures(error); }
   });
-  let props: WorkProtectionControlProps = { context, target, locale, selectionId,
+  let props: ConsumerProps = { context, target, locale, selectionId,
     open: true, disabled: false, draftBlocked: false, run, onBlockedChange, ...overrides };
-  const ui = () => <SessionReadProvider context={context} bridge={false}>
-    <WorkProtectionControl {...props} />
-  </SessionReadProvider>;
-  const rendered = render(ui());
-  return { ...rendered, failures, onBlockedChange, rerenderControl: (next: Partial<WorkProtectionControlProps>) => {
-    props = { ...props, ...next }; rendered.rerender(ui());
+  let visible = true;
+  const ui = () => visible ? <ProtectionConsumer {...props} /> : <span>Consumer is unmounted</span>;
+  const rendered = render(ui(), project);
+  return { ...rendered, failures, onBlockedChange, setConsumerVisible: (next: boolean) => { visible = next; rendered.rerender(ui(), project); }, rerenderControl: (next: Partial<ConsumerProps>) => {
+    props = { ...props, ...next }; rendered.rerender(ui(), project);
   } };
 }
 
@@ -213,4 +221,37 @@ it("clears a known rejection but retains the current protection status", async (
   expect(view.onBlockedChange).toHaveBeenLastCalledWith(false);
   expect(screen.queryByRole("button", { name: label("retry") })).not.toBeInTheDocument();
   expect(screen.getByText(label("protected"), { exact: true })).toBeVisible();
+});
+
+
+it("retains the original protection reservation across consumer unmount and a rejected retry", async () => {
+  setCurrent({ unitId: target.unitId, locale, revision: "8", protected: false });
+  const native = invoke.getMockImplementation()!;
+  let phase = 0;
+  invoke.mockImplementation(async (command: string, args: Request) => {
+    if (command === "set_work_protection") {
+      phase++;
+      if (phase === 1) { await native(command, args); throw new Error("Lost response"); }
+      if (phase === 2) throw errorFixture.errors[1];
+    }
+    return native(command, args);
+  });
+  const view = setup(), user = userEvent.setup();
+  await screen.findByText(label("unprotected"), { exact: true });
+  await user.click(screen.getByRole("button", { name: label("protect") }));
+  await screen.findByRole("button", { name: label("retry") });
+  const first = calls("set_work_protection")[0][1].request;
+  view.setConsumerVisible(false);
+  await act(async () => {});
+  view.setConsumerVisible(true);
+  await user.click(await screen.findByRole("button", { name: label("retry") }));
+  await waitFor(() => expect(view.failures).toHaveBeenCalledTimes(2));
+  expect(view.onBlockedChange).toHaveBeenLastCalledWith(true);
+  expect(screen.getByRole("button", { name: label("protect") })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: label("retry") }));
+  await waitFor(() => expect(view.onBlockedChange).toHaveBeenLastCalledWith(false));
+  expect(calls("set_work_protection")).toHaveLength(3);
+  calls("set_work_protection").forEach(([, args]) => expect(args.request).toEqual(first));
+  expect(calls("create_execution_identity")).toHaveLength(1);
+  expect(await screen.findByText(label("protected"), { exact: true })).toBeVisible();
 });

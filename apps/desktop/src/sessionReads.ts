@@ -1,5 +1,5 @@
 import { isCommandError } from "./projectCommands";
-import { QueryClient, type QueryKey, type Query } from "@tanstack/react-query";
+import { QueryClient, matchQuery, type QueryKey, type Query } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { validateResponseChanges, validateResponseNotification } from "./generated/validators";
 import type { ChangeScope, ProjectChanges, ChangeNotification } from "./generated/responses";
@@ -39,6 +39,8 @@ export class SessionReads {
   private life = 0;
   private reconciliation = 0;
   private running = false;
+  private closed = false;
+  private stopBridge: (() => void) | undefined;
   private epoch: string | null = null;
   private retiredEpochs = new Set<string>();
   private sequence = "0";
@@ -55,13 +57,41 @@ export class SessionReads {
   private affected = new Set<ChangeScope>();
   private failed = false;
   private statusListeners = new Set<() => void>();
+  private changeListeners = new Set<(scopes: readonly ChangeScope[]) => void>();
   constructor(readonly context: SessionRequest, private readonly wire = transport) {}
+  get retired() { return this.closed; }
+  /** Keep local draft owners for recovery after Core has closed or replaced this session. */
+  retire() {
+    if (this.closed) return;
+    this.closed = true;
+    this.stopBridge?.();
+    void this.client.cancelQueries();
+    this.client.clear();
+  }
   key(key: QueryKey): QueryKey { return [this.context.projectId, this.context.sessionToken, ...key]; }
+  /** Observe an exact session-relative Query record for one caller-owned wait. */
+  watchExactQuery(key: QueryKey) {
+    const cache = this.client.getQueryCache(), filters = { queryKey: this.key(key), exact: true };
+    let witness = cache.find(filters), listening = true;
+    const unsubscribe = cache.subscribe(event => {
+      if (!matchQuery(filters, event.query) || !["added", "updated", "removed"].includes(event.type)) return;
+      // Retain the latest record even after removal. An old record's late
+      // notification cannot replace evidence from a newer exact Query.
+      if (event.type === "added" || event.query === witness || cache.find(filters) === event.query) witness = event.query;
+    });
+    return {
+      current: () => witness,
+      dispose() { if (listening) { listening = false; unsubscribe(); } },
+    };
+  }
   status = () => this.failed;
   subscribeStatus = (receive: () => void) => { this.statusListeners.add(receive); return () => { this.statusListeners.delete(receive); }; };
+  subscribeChanges = (receive: (scopes: readonly ChangeScope[]) => void) => { this.changeListeners.add(receive); return () => { this.changeListeners.delete(receive); }; };
+  private notifyChanges(scopes: readonly ChangeScope[]) { this.changeListeners.forEach(receive => receive(scopes)); }
   private report(failed: boolean) { if (this.failed !== failed) { this.failed = failed; this.statusListeners.forEach(receive => receive()); } }
 
   start(): () => void {
+    if (this.closed) return () => {};
     this.running = true;
     const life = ++this.life;
     this.uncache = this.client.getQueryCache().subscribe(event => {
@@ -84,7 +114,7 @@ export class SessionReads {
     void beat();
     const focus = () => { void this.synchronize(true); };
     window.addEventListener("focus", focus);
-    return () => {
+    const stop = () => {
       window.removeEventListener("focus", focus);
       if (this.life !== life) return;
       this.running = false; this.life++;
@@ -97,9 +127,13 @@ export class SessionReads {
       void this.client.cancelQueries(); this.client.clear();
       this.sequence = this.progress = this.verified = this.verifiedProgress = "0";
     };
+    this.stopBridge = stop;
+    return stop;
   }
 
-  invalidate(affected: readonly ChangeScope[]) {
+  invalidate(affected: readonly ChangeScope[], semanticChange = true) {
+    if (this.closed) return;
+    if (semanticChange) this.notifyChanges(affected);
     const queries = this.client.getQueryCache().findAll({ predicate: query => depends(query, affected) });
     for (const query of queries) {
       if (query.state.fetchStatus === "fetching") this.pending.add(query.queryHash);
@@ -116,6 +150,7 @@ export class SessionReads {
       this.observeEpoch(event.epoch);
       this.sequence = this.verified = event.sequence;
       this.progress = this.verifiedProgress = "0";
+      this.notifyChanges(["project"]);
       void this.synchronize(true); return;
     }
     const previous = event.kind === "progress" ? this.progress : this.sequence;
@@ -154,7 +189,9 @@ export class SessionReads {
         this.sequence = this.verified = next.sequence; this.progress = this.verifiedProgress = next.progressSequence;
         const oldRuntime = this.client.getQueryData<RuntimeStatus>(this.key(["runtime"]));
         this.client.setQueryData(this.key(["runtime"]), next.runtime);
-        if (force || reset || this.failed) this.invalidate(["project"]);
+        // A routine focus/registration check refreshes Query but must not revoke
+        // an unchanged, explicitly consented AI preparation.
+        if (force || reset || this.failed) this.invalidate(["project"], reset || changed);
         else {
           if (changed) this.invalidate(next.scopes);
           if (progressed || JSON.stringify(oldRuntime) !== JSON.stringify(next.runtime)) this.invalidate(["execution"]);

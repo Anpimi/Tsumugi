@@ -3,6 +3,7 @@ import { checkedInvoke } from "./ipc";
 import type { ReviewPageRequest, ReviewTargetRequest, ReviewSummaryPageRequest, ReviewNeighborRequest, ReviewScopeRequest, ReviewHistoryRequest, ReviewCheckRequest, ReviewCheckStartRequest, ReviewCancelCheckRequest, ReviewWorkRequest, EligibilityRequest, ReviewWrite, WaiverWrite, FallbackWrite } from "./generated/review.requests";
 import * as validators from "./generated/review.validators";
 import { checkerIdentity, contractIdentity } from "./reviewIdentity";
+import type { ReviewSummaryPage } from "./generated/review.responses";
 
 export type { ReviewWrite, WaiverWrite, FallbackWrite, ReviewCheckRequest, ReviewCheckStartRequest } from "./generated/review.requests";
 export type { ReviewCheckPreparation, ReviewPluginCheckView, ReviewDecisionKind as DecisionKind, ReviewCheckOutcome, ReviewBasis, ReviewDecision, CheckFinding, CheckRuleResult, CheckRun, Waiver, FallbackDecision, ReviewTarget, ReviewPage, ReviewSummary, ReviewSummaryDecision, ReviewSummaryCheck, ReviewSummaryPage, ReviewEditorSnapshot, ReviewNeighbor, ReviewScopeCapture, ReviewScopeUnit, ReviewHistoryPage, WorkItem, WorkPage, EligibilityReason, EligibilityLocale, Eligibility } from "./generated/review.responses";
@@ -15,7 +16,12 @@ function sameAction(actual: { actionId: string; unitId: string; locale: string }
 }
 
 export const reviewCommands = {
-  summaryPage: (request: ReviewSummaryPageRequest) => checkedInvoke("read_review_summary_page", request, validators.validateResponseSummary),
+  // A captured list is one source snapshot. Keep response correlation at the
+  // transport boundary alongside the generated shape validator.
+  summaryPage: (request: ReviewSummaryPageRequest) => checkedInvoke("read_review_summary_page", request,
+    (page): page is ReviewSummaryPage => validators.validateResponseSummary(page)
+      && (request.scopeId == null || page.scopeId === request.scopeId)
+      && page.rows.every(row => row.locale === request.locale && row.sourceSnapshotId === page.sourceSnapshotId)),
   editorSnapshot: (request: ReviewTargetRequest) => checkedInvoke("read_review_editor_snapshot", request, validators.validateResponseEditor),
   neighbor: (request: ReviewNeighborRequest) => checkedInvoke("read_review_neighbor", request, validators.validateResponseNeighbor),
   captureScope: (request: ReviewScopeRequest) => checkedInvoke("capture_review_scope", request, validators.validateResponseScope),

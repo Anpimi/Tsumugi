@@ -363,6 +363,67 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 ### Fixed
 
 - Package removal waits for generation-service children, outcome queries and selection effects owned by the original calling package, including retired workers. Independent packages keep their existing model runtime and authority.
+- Project overview rereads source availability through the shared session cache after source changes and when returning to the view. Refreshing or failed reads cannot keep the translation shortcut ready, and responses from a previous project cannot change the current overview.
+
+- Project metadata recovery checks the original saved request through scoped commands. While its result is being checked, users may edit the text and folder checkbox without changing that request; confirmation keeps newer edits unsaved, and repeated reads or late responses cannot clear another draft or continue navigation.
+
+- Translation import, fixed match application and historical revision selection share scoped commands and preserve their original requests. A later rejected retry cannot erase an earlier uncertain import or selection; checked history and current-source reads remain separate from captured import work.
+
+- Build and export actions share scoped commands with exact mappings, saved release identities and destination consent. Original uncertain requests remain recoverable across view changes; historical release export stays available when current readiness or history reads fail.
+
+- Task recovery, saved-result application, cancellation and preview navigation verify the exact workspace and original scope through the shared command context. Confirmed requests retain their identities across view changes; uncertain results require an exact lookup before explicit replay, and changed or failed reads cannot authorize new task actions.
+
+- Arena actions verify their exact workspace scope, comparison basis, draft or saved candidate through the shared command context. Original uncertain requests remain recoverable, checked Task cancellation stays available during view refreshes, and captured work survives view changes without accepting a replaced or failed read.
+
+- AI actions share the current workspace command context and verify the selected scope or saved candidate before starting. Original uncertain requests remain available for explicit recovery, and approved captured work continues across view switches without applying late results to a replacement project.
+
+- Translation and review workspaces refresh their current references and history through the project session while preserving drafts and captured scopes. Failed reads keep completed saves distinct from uncertain writes; returning to a workspace does not restore stale editing or navigation permission.
+
+- Keep workspace positions and unsaved work when inactive views unmount. Work-plan controls, plugin capture/check/build stages, reference queries and editor protection keep complete original pending actions in the project session. Explicit recovery retains original consent and deadlines, including after a later retry is rejected. Project close and replacement check unfinished work in every workspace, retain unknown operations for recovery, and reject stale navigation or newer input after saving. Discarding captured reference input completes its original exit confirmation after the action settles; newer query or resource edits and unresolved discards still prevent exit. Confirmed project changes still settle when newer input arrives during opening or closing; local work from the ended session stays read-only for copying until explicitly discarded, and its operations cannot continue into the new session.
+
+- Tasks preserve complete application decisions and original requests across view remounts, including groups spanning result pages. Shared translation writes and same-task cancellation are coordinated before application starts. Uncertain applications require matching preparation and receipt evidence before settling; keeping output or refreshing progress cannot discard an unknown outcome. Recovery actions without a provable original result retain their scope and uncertainty.
+
+- Build mappings, destination checks and original build/export recovery survive release-workspace remounts. Late build confirmations preserve newer input, complete file receipts are checked before confirmation, and selecting a folder again authorizes checking the original export without treating a missing record in that folder as proof that no export occurred. Ordinary navigation retains preparation; leaving the project asks before discarding it.
+
+- Arena settings, explicit generation consent, fixed merge drafts and original start, comparison, reveal, selection and candidate-save requests survive view remounts. Recovery checks complete rounds and the original action, preserves newer input and confirmed saves after read failures, and shares the translation write reservation for selection, merging and candidate saving.
+
+- AI generation and candidate saving keep their original preview, complete selected scope and requests across view remounts. Explicit recovery checks the original attempt or action; confirmed saves remain recorded when result reads fail, and late confirmations preserve newer settings.
+
+- Task, Source, AI and Arena cancellation share the original request across workspace changes and remounts. Explicit retries reuse its identity, and a checked cancellation acknowledgement is kept separate from later task reads and actual worker stopping.
+
+- Translation import preparations, fixed match previews, complete-file confirmations and original uncertain actions survive leaving their view. Checked adoption keeps newer manual input, and import, manual saves and revision selection share one write reservation. Uncertain revision selections retain their captured text and can reconcile the original action after source or language changes.
+
+- Source content, history, identity evidence and translation impact refresh with current project facts. Paged searches retry their original filter and cursor, hidden views stop reads, and removed languages block stale navigation. Automatic comparison reads preserve fixed identity decisions and confirmation evidence; viewing current content remains separate from reading an earlier applied snapshot, including beside newer decisions retained after a late confirmation.
+
+- Source selections, declarations, fixed previews and identity decisions survive view remounts. Original uncertain actions retain their exact request for checked recovery; preparation and adoption confirmations must match that request and its frozen unit. Confirmed application remains saved when a later content read fails, and late confirmations keep newer decisions.
+
+- Current glossary, context, translation-memory and impact reads refresh with project changes, retain paged read recovery, and stop when their view closes. Fresh resource actions recheck their exact target and current read evidence after preparation; automatic comparison refreshes retain the original captured comparison until it is explicitly read again.
+
+- Resource term and context drafts, captured file comparisons and fixed input evidence survive navigation and view remounts. Late saves keep newer edits; removed languages block new work while original uncertain saves, decisions and context captures can be retried with the same request. A captured file remains available when its preview read fails.
+
+- Review fallback and waiver actions recheck the displayed entry, issue and existing exception before dispatch. Batch approvals keep their displayed confirmation scope, recheck availability before starting, and retain the stop control while an entry is being recorded.
+
+- Build-readiness assessments keep the explicitly selected languages, refresh after relevant project changes, and show loading and retry separately. Changing the language selection or leaving the assessment prevents late reads from replacing current results or interfering with review drafts and pending actions.
+
+- Review work queues open without waiting for summaries, show loading separately from empty results, and refresh after relevant project changes. Leaving the queue releases its view wait; a failed page can be retried at its original cursor without replacing captured review work.
+- Review history loads independently of the selected entry and current evidence. Failed history pages have their own retry and first-page recovery, while new review results return to current history without replacing reasons, fixed selections or pending actions.
+
+- Save-and-next retains newer edits and original uncertain save requests, and stops late navigation after leaving the workspace or changing the target language.
+
+- Validate project names and target languages before saving from the leave dialog, keeping invalid drafts available to edit.
+
+- Review reasons, reviewer details, fixed selections and original pending actions survive closing the panel or remounting its view. Late confirmations preserve newer edits, while checks and batches retain their original cancellation controls. Returning to an entry retains the content its reason refers to; changed content can be compared and explicitly accepted without losing the reason. Stale checks remain separate from current evidence, and actual project leave still requires confirmation.
+
+- Review retains reasons and original unknown actions when a target language is removed. It blocks new work for that language, checks the scope again after waiting, and reports unstarted entries when a batch stops. An uncertain request remains reserved for exact reconciliation even after its language is restored.
+
+- Translation drafts and their original save requests belong to the project session. Leaving the editing view keeps newer input and pending confirmations; a late save acknowledgement updates its basis without replacing edits made while saving.
+
+- AI preparation keeps connection settings, selected scope, preview and consent when navigating between workspaces. Source, resource or sharing changes require a fresh preview and consent; late previews cannot restore obsolete preparation.
+
+- Target-language changes recheck the active translation scope. Drafts for removed languages remain available with a return-to-settings recovery action, while new reads and writes for an unavailable language are blocked.
+
+- Ctrl+S and Command+S save the active translation draft from its list or reference panel. Project-name shortcuts use the same required-name validation as the save button and keep invalid input available for correction. Composition, modal dialogs, pending saves and unknown outcomes prevent unintended shortcut mutations; an uncertain translation save can only be checked or retried explicitly.
+- Resuming undispatched work and retrying safe failures retain the original action, selected items and cancellation basis after a lost confirmation. Exact lookup or replay returns the recorded attempt without another enqueue or dispatch. Modified requests conflict; an unrecorded request cannot refresh its cancellation basis. The Tasks view can inspect the original recovery history. Anonymous resume/retry IPC calls are now refused; outcome queries and output validation keep their existing behavior.
 
 - Development runtime bundles pin the current independently built WebVTT and SMAPI packages and their exact SDK snapshot. Existing installed bindings and historical releases keep their original package identities; installing a new selected package remains explicit.
 
