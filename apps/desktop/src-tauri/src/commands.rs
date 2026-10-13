@@ -393,12 +393,13 @@ impl AppState {
 
 impl Default for AppState {
     fn default() -> Self {
+        let plugins = Arc::new(plugins::ApplicationPlugins::default());
         Self {
-            sessions: dispatch::SessionExecutor::default(),
+            sessions: dispatch::SessionExecutor::new(plugins.clone()),
             io: dispatch::BlockingExecutor::new(4),
             dialogs: dispatch::BlockingExecutor::new(1),
             review_check_cancellations: Arc::default(),
-            plugins: Arc::default(),
+            plugins,
             #[cfg(test)]
             review_compute_probe: Mutex::default(),
         }
@@ -411,8 +412,17 @@ impl Drop for AppState {
     }
 }
 
+/// Trusted application context. Cached workers receive only its weak admission
+/// callback; they never retain a project connection or create another executor.
+#[derive(Clone)]
+struct ProjectServiceContext {
+    callback: dispatch::SessionCallback,
+    plugins: Arc<plugins::ApplicationPlugins>,
+}
+
 #[derive(Default)]
 struct SessionManager {
+    services: Option<ProjectServiceContext>,
     active: Option<ActiveSession>,
     directory_recovery: Option<DirectoryRecovery>,
     package_operation: Option<SessionPackageOperation>,
@@ -433,6 +443,7 @@ struct DirectoryRecovery {
 }
 
 struct ActiveSession {
+    services: Option<ProjectServiceContext>,
     token: String,
     locator: PathBuf,
     store: ProjectStore,
@@ -558,6 +569,7 @@ impl SessionManager {
         let token = new_session_token();
         let view = project_view(&token, &locator, &metadata, ReconciliationState::Settled);
         self.active = Some(ActiveSession {
+            services: self.services.clone(),
             token,
             locator,
             store,
@@ -588,6 +600,7 @@ impl SessionManager {
         let token = new_session_token();
         let view = project_view(&token, &locator, &metadata, ReconciliationState::Settled);
         let mut candidate = ActiveSession {
+            services: self.services.clone(),
             token,
             locator,
             store,
@@ -628,6 +641,7 @@ impl SessionManager {
             };
             let view = project_view(&recovery.token, &recovery.locator, &metadata, state);
             self.active = Some(ActiveSession {
+                services: self.services.clone(),
                 token: recovery.token.clone(),
                 locator: recovery.locator.clone(),
                 store,
@@ -842,6 +856,7 @@ impl SessionManager {
             Err(error) => {
                 if matches!(error, PersistenceError::OutcomeUnknown { .. }) {
                     self.active = Some(ActiveSession {
+                        services: self.services.clone(),
                         token,
                         locator: new_locator,
                         store: new_store,
@@ -865,6 +880,7 @@ impl SessionManager {
         };
         let view = metadata_mutation_view(&token, &new_locator, &change, true);
         self.active = Some(ActiveSession {
+            services: self.services.clone(),
             token,
             locator: new_locator,
             store: new_store,

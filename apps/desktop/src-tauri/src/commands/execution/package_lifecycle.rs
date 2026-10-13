@@ -43,7 +43,7 @@ pub(super) struct RetiredQuery {
 impl RetiredQuery {
     pub(super) fn new(job: QueryJob) -> Self {
         Self {
-            package: input_package(&job.query.request.input),
+            package: request_package(&job.query.request),
             thread: job.thread,
         }
     }
@@ -54,6 +54,16 @@ pub(super) fn input_package(input: &FixedInput) -> Option<PluginPackageRequest> 
         .plugin
         .as_ref()
         .map(|binding| binding_package(binding))
+}
+fn request_package(request: &DispatchRequest) -> Option<PluginPackageRequest> {
+    input_package(&request.input).or_else(|| {
+        request
+            .originating_service_package()
+            .map(|(plugin, digest)| PluginPackageRequest {
+                plugin: plugin.clone(),
+                package_digest: digest.into(),
+            })
+    })
 }
 pub(super) fn binding_package(binding: &PluginExecutionBinding) -> PluginPackageRequest {
     provider_package(&binding.capability.provider)
@@ -188,7 +198,7 @@ impl ExecutionHost {
         self.work_plans.stop_package(&package);
         let mut remaining = Vec::new();
         for job in self.queries.drain(..) {
-            if matches_input(&package, &job.query.request.input) {
+            if request_package(&job.query.request).as_ref() == Some(&package) {
                 // No delivery path remains, but the actual thread is still owned.
                 self.retired_queries.push(RetiredQuery::new(job));
             } else {

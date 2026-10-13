@@ -2,6 +2,31 @@
   "requests": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "definitions": {
+      "ContractRef": {
+        "additionalProperties": false,
+        "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
+        "properties": {
+          "behaviorVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "schemaVersion",
+          "behaviorVersion"
+        ],
+        "type": "object"
+      },
       "ExecutionId": {
         "type": "string"
       },
@@ -94,6 +119,33 @@
           "enabled",
           "expectedRevision",
           "actionId"
+        ],
+        "type": "object"
+      },
+      "PluginGenerationComponentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "profile",
+          "environmentDigest"
         ],
         "type": "object"
       },
@@ -398,6 +450,9 @@
       "enable": {
         "$ref": "#/definitions/PluginEnableRequest"
       },
+      "generationComponent": {
+        "$ref": "#/definitions/PluginGenerationComponentRequest"
+      },
       "install": {
         "$ref": "#/definitions/PluginInstallRequest"
       },
@@ -451,6 +506,7 @@
       "translation",
       "build",
       "tool",
+      "generationComponent",
       "textReview"
     ],
     "title": "Requests",
@@ -1771,6 +1827,49 @@
           "packages",
           "runtimeEnvironmentDigest",
           "availability"
+        ],
+        "type": "object"
+      },
+      "PluginGenerationComponentView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "binding",
+          "profile",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
         ],
         "type": "object"
       },
@@ -3181,6 +3280,9 @@
       "error": {
         "$ref": "#/definitions/CommandError"
       },
+      "generationComponent": {
+        "$ref": "#/definitions/PluginGenerationComponentView"
+      },
       "inventory": {
         "$ref": "#/definitions/PluginInventoryView"
       },
@@ -3216,6 +3318,7 @@
       "translation",
       "build",
       "tool",
+      "generationComponent",
       "textReview",
       "textReviews",
       "error"

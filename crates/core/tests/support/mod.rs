@@ -106,7 +106,7 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
     let lines: Vec<_> = source.artifacts[0].utf8.split('\n').collect();
     let count = lines.len();
     let mut order = Vec::with_capacity(count);
-    let mut start = 0;
+    let mut start = 0u32;
     let units = (0..count)
         .map(|index| {
             let key = if count == 2 {
@@ -117,8 +117,7 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
             order.push(format!("occurrence-{key}"));
             let end = start + lines[index].len() as u32;
             let range_start = start;
-            start = end + 1;
-            sdk::ContentUnit {
+            let unit = sdk::ContentUnit {
                 id: format!("unit-{key}"),
                 source_revision_id: format!("source-{key}"),
                 text: lines[index].into(),
@@ -143,7 +142,9 @@ fn proposal(source: &sdk::SourceExtractionInput) -> sdk::ContentExchange {
                     }),
                 }],
                 protected_fragments: vec![],
-            }
+            };
+            start = end + 1;
+            unit
         })
         .collect();
     sdk::ContentExchange {
@@ -445,14 +446,19 @@ fn source_fixture_config(
 }
 
 pub fn source_runtime(store: &ProjectStore) -> ExecutionRuntime {
-    let binding = declaration();
     let mut runtime = ExecutionRuntime::new(store).unwrap();
+    register_source_runners(&mut runtime);
+    runtime
+}
+
+#[allow(dead_code)]
+pub fn register_source_runners(runtime: &mut ExecutionRuntime) {
+    let binding = declaration();
     for capability in [binding.extractor, binding.checker] {
         runtime
             .register_read_only(Arc::new(FixtureRunner(selected(capability))))
             .unwrap();
     }
-    runtime
 }
 
 #[allow(dead_code)]

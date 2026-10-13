@@ -114,6 +114,82 @@ impl Runner for Checker {
     }
 }
 
+fn declared_options(store: &ProjectStore, unit: ExecutionId, advisory: bool) -> PlanOptions {
+    let mut options = PlanOptions {
+        selection_policy: tsumugi_core::application::SelectionPolicy::MissingOnly,
+        ..Default::default()
+    };
+    options
+        .stages
+        .iter_mut()
+        .find(|stage| stage.stage == WorkStage::Checks)
+        .unwrap()
+        .mode = StageMode::Assisted;
+    if advisory {
+        let project =
+            ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
+        let target = store.review_target(project, unit, "zh-CN").unwrap();
+        let format = store
+            .capture_review_check_plan(project, unit, "zh-CN", &target.basis, &[])
+            .unwrap();
+        let manifest = sdk::parse_manifest(include_bytes!(
+            "../../../../../../../../crates/plugin-sdk/tests/fixtures/text-review.manifest.json"
+        ))
+        .unwrap();
+        let declaration = sdk::parse_text_review_declaration(include_bytes!(
+            "../../../../../../../../crates/plugin-sdk/tests/fixtures/text-review.declaration.json"
+        ))
+        .unwrap();
+        let binding = declaration.bind(&manifest, &"d".repeat(64)).unwrap();
+        let pins = binding
+            .resources
+            .iter()
+            .map(|r| sdk::TextReviewResourcePin {
+                contribution_id: r.contribution_id.clone(),
+                schema: r.schema.clone(),
+                sha256: "e".repeat(64),
+            })
+            .collect();
+        let rules = vec![binding.declaration.rules[0].rule.clone()];
+        options.advisory_checks = vec![
+            AdvisoryReviewCheck::capture(
+                &binding,
+                &format.binding().checker.environment,
+                "text-review-profile",
+                pins,
+                rules,
+            )
+            .unwrap(),
+        ];
+    }
+    options
+}
+
+fn declared_tool(
+    revision: UnsignedDecimal,
+    environment: sdk::ExecutionEnvironmentDescriptor,
+) -> tsumugi_core::application::WorkPlanToolSpec {
+    let manifest = sdk::parse_manifest(include_bytes!(
+        "../../../../../../../../crates/plugin-sdk/tests/fixtures/tool.manifest.json"
+    ))
+    .unwrap();
+    let declaration = sdk::parse_tool_declaration(include_bytes!(
+        "../../../../../../../../crates/plugin-sdk/tests/fixtures/tool.query.json"
+    ))
+    .unwrap();
+    tsumugi_core::application::WorkPlanToolSpec {
+        handle: ExecutionId::new(),
+        binding: declaration.bind(&manifest, &"a".repeat(64)).unwrap(),
+        resource_id: "query-tool".into(),
+        settings_revision: revision,
+        package_origin: json!({"sourceId":"synthetic-settings","publisherId":"synthetic-publisher"}),
+        runtime_origin: json!({"sourceId":"synthetic-settings","publisherId":"synthetic-publisher"}),
+        target: "zh-CN".into(),
+        selections: vec!["term".into()],
+        environment,
+    }
+}
+
 impl Fixture {
     fn declared() -> (Self, InstalledFixture, RuntimeApproval, Arc<AtomicUsize>) {
         let (directory, store, rows) = source_fixture::source_fixture();
@@ -188,43 +264,63 @@ impl Fixture {
         // start command, runtime, settings guards and all derived QA are real.
         let (plan, receipt) = self.app.state::<AppState>().sessions.with(move |sessions| {
             let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
-            let mut options = PlanOptions { selection_policy: tsumugi_core::application::SelectionPolicy::MissingOnly, ..Default::default() };
-            options.stages.iter_mut().find(|stage| stage.stage == WorkStage::Checks).unwrap().mode = StageMode::Assisted;
-            if advisory {
-                let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
-                let target = store.review_target(project, unit, "zh-CN").unwrap();
-                let format = store.capture_review_check_plan(project, unit, "zh-CN", &target.basis, &[]).unwrap();
-                let manifest = sdk::parse_manifest(include_bytes!("../../../../../../../../crates/plugin-sdk/tests/fixtures/text-review.manifest.json")).unwrap();
-                let declaration = sdk::parse_text_review_declaration(include_bytes!("../../../../../../../../crates/plugin-sdk/tests/fixtures/text-review.declaration.json")).unwrap();
-                let binding = declaration.bind(&manifest, &"d".repeat(64)).unwrap();
-                let pins = binding.resources.iter().map(|r| sdk::TextReviewResourcePin { contribution_id: r.contribution_id.clone(), schema: r.schema.clone(), sha256: "e".repeat(64) }).collect();
-                let rules = vec![binding.declaration.rules[0].rule.clone()];
-                options.advisory_checks = vec![AdvisoryReviewCheck::capture(&binding, &format.binding().checker.environment, "text-review-profile", pins, rules).unwrap()];
-            }
-            let plan = store.prepare_work_plan(Some(config), "zh-CN", &[unit], options).unwrap();
+            let options = declared_options(store, unit, advisory);
+            let plan = store
+                .prepare_work_plan(Some(config), "zh-CN", &[unit], options)
+                .unwrap();
             let bindings = store.work_plan_review_checkers(&plan).unwrap();
             let expires_at = expiry().parse::<u64>().unwrap();
-            let receipt = plugins.with_environment_revision(revision, || {
-                for checker in &bindings {
-                    if host.plugin_registrations.contains(&checker.binding) { continue; }
-                    host.runtime.register_read_only(Arc::new(Checker {
-                        binding: checker.binding.clone(), calls: calls.clone(),
-                        text: checker.kind == tsumugi_core::ReviewCheckerKind::AdvisoryText,
-                        omit_result: unknown && checker.kind == tsumugi_core::ReviewCheckerKind::AdvisoryText,
-                    })).unwrap();
-                    host.plugin_registrations.push(checker.binding.clone());
-                }
-                let receipt = store.authorize_work_plan(&plan, &AuthorizeWorkPlan {
-                    action_id: ExecutionId::new(), plan_digest: plan.digest.clone(), confirmed: true,
-                    effects: vec![AutomationEffect::SaveCandidate, AutomationEffect::RunChecks, AutomationEffect::SelectMissing], expires_at,
-                }).unwrap();
-                host.work_plans.checker_consents.insert(plan.plan_id, CheckerConsent {
-                    lease: receipt.lease, bindings, expires_at_ms: expires_at.saturating_mul(1000),
-                    settings_revision: revision, plugins: consent_plugins,
-                });
-                Ok(receipt)
-            }).unwrap();
-            (serde_json::to_value(WorkPlanView::try_from(&plan).unwrap()).unwrap(), serde_json::to_value(WorkPlanReceiptView::from(receipt)).unwrap())
+            let receipt = plugins
+                .with_environment_revision(revision, || {
+                    for checker in &bindings {
+                        if host.plugin_registrations.contains(&checker.binding) {
+                            continue;
+                        }
+                        host.runtime
+                            .register_read_only(Arc::new(Checker {
+                                binding: checker.binding.clone(),
+                                calls: calls.clone(),
+                                text: checker.kind == tsumugi_core::ReviewCheckerKind::AdvisoryText,
+                                omit_result: unknown
+                                    && checker.kind
+                                        == tsumugi_core::ReviewCheckerKind::AdvisoryText,
+                            }))
+                            .unwrap();
+                        host.plugin_registrations.push(checker.binding.clone());
+                    }
+                    let receipt = store
+                        .authorize_work_plan(
+                            &plan,
+                            &AuthorizeWorkPlan {
+                                action_id: ExecutionId::new(),
+                                plan_digest: plan.digest.clone(),
+                                confirmed: true,
+                                effects: vec![
+                                    AutomationEffect::SaveCandidate,
+                                    AutomationEffect::RunChecks,
+                                    AutomationEffect::SelectMissing,
+                                ],
+                                expires_at,
+                            },
+                        )
+                        .unwrap();
+                    host.work_plans.checker_consents.insert(
+                        plan.plan_id,
+                        CheckerConsent {
+                            lease: receipt.lease,
+                            bindings,
+                            expires_at_ms: expires_at.saturating_mul(1000),
+                            settings_revision: revision,
+                            plugins: consent_plugins,
+                        },
+                    );
+                    Ok(receipt)
+                })
+                .unwrap();
+            (
+                serde_json::to_value(WorkPlanView::try_from(&plan).unwrap()).unwrap(),
+                serde_json::to_value(WorkPlanReceiptView::from(receipt)).unwrap(),
+            )
         });
         let result = self.call("start_work_plan", json!({"planId":plan["planId"],"actionId":receipt["actionId"],"expectedGeneration":receipt["lease"]["generation"]})).unwrap();
         assert_eq!(result, plan["attemptId"]);
@@ -388,7 +484,7 @@ fn pause_after_partial_checker_submission_revokes_every_grant_and_keeps_finished
             Err(error) => panic!("{error}"),
         }
     };
-    fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"expiresAt":null})).unwrap();
+    fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
     // Drive the same host boundary that drains cancellation before dispatch.
     fixture
         .app
@@ -569,4 +665,216 @@ fn unknown_checker_retry_retains_all_original_grants_deadlines_and_finished_slot
         "no result cannot become passed QA evidence"
     );
     assert_eq!(fixture.count("translation_selections"), 0);
+}
+
+#[test]
+fn joint_settings_guard_and_replay_require_original_tools_and_complete_checker_consent() {
+    let (mut fixture, installed, runtime, _calls) = Fixture::declared();
+    let plugins = fixture.app.state::<AppState>().plugins.clone();
+    let revision = plugins.environment_settings_revision().unwrap();
+    let unit = fixture.unit;
+    let context = fixture.context.clone();
+    let guarded_plugins = plugins.clone();
+    let environment = runtime.environment.clone();
+    let (plan_id, request, receipt, consent, checker_consent) =
+        fixture.app.state::<AppState>().sessions.with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            let plan = store.prepare_work_plan_with_tools(
+                Some(AiConfig {
+                    endpoint: "http://127.0.0.1:9".into(),
+                    model: "synthetic".into(),
+                    credential_env: String::new(),
+                    ..AiConfig::default()
+                }),
+                "zh-CN", &[unit], declared_options(store, unit, true),
+                Some(WorkPlanTools {
+                    max_invocations: 2,
+                    entries: vec![declared_tool(revision, environment)],
+                }),
+            ).unwrap();
+            let bindings = store.work_plan_review_checkers(&plan).unwrap();
+            assert_eq!(bindings.len(), 2, "mandatory and advisory checker identities");
+            let request: WorkPlanAuthorizeRequest = serde_json::from_value(json!({
+                "sessionToken":context["sessionToken"], "projectId":context["projectId"],
+                "planId":plan.plan_id, "digest":plan.digest, "actionId":ExecutionId::new(),
+                "confirmed":true, "toolExecution":true,
+                "checkerExecutions":bindings.iter().map(|checker| checker.key.clone()).collect::<Vec<_>>(),
+                "effects":["save-candidate","run-checks","select-missing","query-tools"],
+                "expiresAt":expiry(),
+            })).unwrap();
+            broker::capture_human_intent(host, &plan, request.action_id, request.expires_at.get(), &request).unwrap();
+            let receipt = with_plan_environment_revision(&guarded_plugins, &plan, Some(revision), || {
+                let receipt = store.authorize_work_plan(&plan, &AuthorizeWorkPlan {
+                    action_id: request.action_id, plan_digest: request.digest.clone(),
+                    confirmed: request.confirmed, effects: request.effects.clone(),
+                    expires_at: request.expires_at.get(),
+                }).map_err(map_recover)?;
+                broker::save_consent(host, store, &plan, &receipt)?;
+                host.work_plans.checker_consents.insert(plan.plan_id, CheckerConsent {
+                    lease: receipt.lease, bindings: bindings.clone(),
+                    expires_at_ms: request.expires_at.get().checked_mul(1000).unwrap(),
+                    settings_revision: revision, plugins: guarded_plugins.clone(),
+                });
+                Ok(receipt)
+            }).unwrap();
+            // Both real consent clocks retain the original human authorization.
+            let consent = host.work_plans.tool_consents[&plan.plan_id].1.clone();
+            current_checker_consent(host, store, &plan, receipt.lease).unwrap().unwrap();
+            host.work_plans.checker_consents.get_mut(&plan.plan_id).unwrap().bindings.pop();
+            assert_eq!(current_checker_consent(host, store, &plan, receipt.lease).err().unwrap().reason.as_deref(), Some("plugin-consent-required"));
+            host.work_plans.checker_consents.get_mut(&plan.plan_id).unwrap().bindings = bindings;
+            let mut mismatched = plan.clone();
+            mismatched.tools.as_mut().unwrap().entries[0].settings_revision = (revision.get() + 1).into();
+            let mut admitted = false;
+            assert!(with_plan_environment_revision(&guarded_plugins, &mismatched, Some(revision), || {
+                admitted = true;
+                Ok(())
+            }).is_err());
+            assert!(!admitted);
+            host.work_plans.tool_consents.remove(&plan.plan_id);
+            let checker_consent = host.work_plans.checker_consents.remove(&plan.plan_id).unwrap();
+            (plan.plan_id, serde_json::to_value(request).unwrap(),
+                serde_json::to_value(WorkPlanReceiptView::from(receipt)).unwrap(), consent, checker_consent)
+        });
+    // Losing a checker acknowledgement never restores tools from the same live
+    // human intent. The exact durable receipt remains readable.
+    assert_eq!(
+        fixture
+            .call("authorize_work_plan", request.clone())
+            .unwrap(),
+        receipt
+    );
+    fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let host = sessions
+                .active
+                .as_mut()
+                .unwrap()
+                .execution
+                .as_mut()
+                .unwrap();
+            assert!(!host.work_plans.tool_consents.contains_key(&plan_id));
+            assert!(host.work_plans.tool_intents.contains_key(
+                &serde_json::from_value::<ExecutionId>(receipt["actionId"].clone()).unwrap()
+            ));
+            host.work_plans
+                .checker_consents
+                .insert(plan_id, checker_consent);
+        });
+    let mut altered = request.clone();
+    altered["toolExecution"] = json!(false);
+    assert!(fixture.call("authorize_work_plan", altered).is_err());
+    installed.decide(false, vec![runtime]);
+    let request_replay = request.clone();
+    let plugins_for_check = plugins.clone();
+    fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
+            let plan = store.work_plan(plan_id).unwrap();
+            let mut admitted = false;
+            let error =
+                with_plan_environment_revision(&plugins_for_check, &plan, Some(revision), || {
+                    admitted = true;
+                    Ok(())
+                })
+                .unwrap_err();
+            assert_eq!(error.reason.as_deref(), Some("plugin-settings-changed"));
+            assert!(!admitted);
+            let receipt = store
+                .work_plan_receipt(
+                    serde_json::from_value(request_replay["actionId"].clone()).unwrap(),
+                )
+                .unwrap()
+                .unwrap();
+            broker::restore_consent(
+                host,
+                store,
+                &plan,
+                &receipt,
+                &serde_json::from_value::<WorkPlanAuthorizeRequest>(request_replay).unwrap(),
+                &plugins_for_check,
+            )
+            .unwrap();
+            assert!(!host.work_plans.tool_consents.contains_key(&plan_id));
+        });
+    let original_expiry = consent.expires_at_ms();
+    fixture.reopen();
+    assert_eq!(
+        fixture
+            .call("authorize_work_plan", request.clone())
+            .unwrap_err()["code"],
+        "session-invalid"
+    );
+    let mut historical_request = request.clone();
+    historical_request["sessionToken"] = fixture.context["sessionToken"].clone();
+    assert_eq!(
+        fixture
+            .call("authorize_work_plan", historical_request)
+            .unwrap()["actionId"],
+        request["actionId"]
+    );
+    fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let host = sessions
+                .active
+                .as_ref()
+                .unwrap()
+                .execution
+                .as_ref()
+                .unwrap();
+            assert!(host.work_plans.checker_consents.is_empty());
+            assert!(host.work_plans.tool_consents.is_empty());
+            assert!(host.work_plans.tool_intents.is_empty());
+        });
+    assert_eq!(consent.expires_at_ms(), original_expiry);
+}
+
+#[test]
+fn agent_generation_start_rechecks_installed_settings_before_child_enqueue() {
+    let (fixture, installed, runtime, calls) = Fixture::declared();
+    let (config, provider) = local_provider("原始候选");
+    let (plan, receipt) = fixture.start_declared(config, calls, false, false);
+    assert_eq!(
+        fixture.wait_effect(&plan)["rows"][0]["automation"]["phase"],
+        "selected"
+    );
+    provider.join().unwrap();
+    let agent = fixture
+        .call(
+            "open_work_plan_agent_scope",
+            json!({"lease":receipt["lease"]}),
+        )
+        .unwrap();
+    let child_task = ExecutionId::new();
+    let child_attempt = ExecutionId::new();
+    let mut request = json!({
+        "scopeId":agent["scopeId"],
+        "generation":{"taskId":child_task,"attemptId":child_attempt,"unitIds":[fixture.unit]}
+    });
+    let prepared = fixture
+        .call("prepare_work_plan_agent_generation", request.clone())
+        .unwrap();
+    request["inputDigest"] = prepared["inputDigest"].clone();
+    installed.decide(false, vec![runtime]);
+    let error = fixture
+        .call("start_work_plan_agent_generation", request)
+        .unwrap_err();
+    assert_eq!(error["reason"], "plugin-settings-changed", "{error}");
+    fixture
+        .app
+        .state::<AppState>()
+        .sessions
+        .with(move |sessions| {
+            let store = &sessions.active.as_ref().unwrap().store;
+            assert!(store.execution_attempt_ids(child_task).unwrap().is_empty());
+        });
 }

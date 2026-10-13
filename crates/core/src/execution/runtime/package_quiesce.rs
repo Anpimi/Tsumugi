@@ -1,6 +1,7 @@
 //! Package-scoped shutdown belongs to the runtime that owns its registrations.
 //! A control receipt is not execution permission or an installation decision.
 use super::*;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tsumugi_plugin_sdk as sdk;
 
@@ -13,10 +14,19 @@ pub(crate) struct PackageKey {
     pub(super) digest: String,
 }
 impl PackageKey {
+    pub(crate) fn plugin(&self) -> &sdk::PluginIdentity {
+        &self.plugin
+    }
+    pub(crate) fn digest(&self) -> &str {
+        &self.digest
+    }
     pub(crate) fn from_provider(provider: &sdk::ProviderSelectionBinding) -> Self {
+        Self::from_package(&provider.plugin, &provider.package_digest)
+    }
+    pub(crate) fn from_package(plugin: &sdk::PluginIdentity, digest: &str) -> Self {
         Self {
-            plugin: provider.plugin.clone(),
-            digest: provider.package_digest.clone(),
+            plugin: plugin.clone(),
+            digest: digest.into(),
         }
     }
     fn from_input(input: &FixedInput) -> Option<Self> {
@@ -26,8 +36,13 @@ impl PackageKey {
             .as_ref()
             .map(|binding| Self::from_provider(&binding.capability.provider))
     }
-    fn matches(&self, input: &FixedInput) -> bool {
-        Self::from_input(input).as_ref() == Some(self)
+    fn from_request(request: &DispatchRequest) -> Option<Self> {
+        Self::from_input(&request.input).or_else(|| {
+            request
+                .service_origin
+                .as_ref()
+                .map(|origin| origin.permit.original_package().clone())
+        })
     }
 }
 
@@ -50,50 +65,105 @@ pub(super) struct PackageControl {
 pub(super) struct QueryGate {
     stopped: AtomicBool,
     active: AtomicUsize,
+    packages: Mutex<BTreeMap<PackageKey, Arc<PackageQueries>>>,
+}
+#[derive(Default)]
+pub(super) struct PackageQueries {
+    stopped: AtomicBool,
+    active: AtomicUsize,
 }
 impl QueryGate {
-    fn enter(self: &Arc<Self>) -> Result<QueryCall, ExecutionError> {
-        if self.stopped.load(Ordering::Acquire) {
+    pub(super) fn capture_package(
+        &self,
+        package: Option<&PackageKey>,
+    ) -> Result<Option<Arc<PackageQueries>>, ExecutionError> {
+        let Some(package) = package else {
+            return Ok(None);
+        };
+        let mut packages = self.packages.lock().map_err(|_| stopped())?;
+        Ok(Some(packages.entry(package.clone()).or_default().clone()))
+    }
+    fn enter(
+        self: &Arc<Self>,
+        package: Option<&Arc<PackageQueries>>,
+    ) -> Result<QueryCall, ExecutionError> {
+        // Admission and stop share this lock. An accepted call is counted before
+        // stop can return, so cleanup cannot finish while that call can do I/O.
+        let _packages = self.packages.lock().map_err(|_| stopped())?;
+        if self.stopped(package.map(Arc::as_ref)) {
             return Err(stopped());
         }
-        let mut current = self.active.load(Ordering::Acquire);
-        loop {
-            if current >= MAX_QUERIES {
-                return Err(ExecutionError::new(
-                    ErrorCode::LimitExceeded,
-                    "outcome-query-limit",
-                ));
-            }
-            match self.active.compare_exchange_weak(
-                current,
-                current + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break,
-                Err(observed) => current = observed,
-            }
+        if self.active.load(Ordering::Acquire) >= MAX_QUERIES {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "outcome-query-limit",
+            ));
         }
-        let call = QueryCall(self.clone());
-        if self.stopped.load(Ordering::Acquire) {
-            return Err(stopped());
+        self.active.fetch_add(1, Ordering::AcqRel);
+        if let Some(package) = package {
+            package.active.fetch_add(1, Ordering::AcqRel);
         }
-        Ok(call)
+        Ok(QueryCall {
+            gate: self.clone(),
+            package: package.cloned(),
+        })
     }
     pub(super) fn active(&self) -> bool {
         self.active.load(Ordering::Acquire) != 0
     }
-    pub(super) fn stopped(&self) -> bool {
+    pub(super) fn stopped(&self, package: Option<&PackageQueries>) -> bool {
         self.stopped.load(Ordering::Acquire)
+            || package.is_some_and(|package| package.stopped.load(Ordering::Acquire))
     }
     pub(super) fn stop(&self) {
+        // A poisoned gate still fails closed, including cached query handles.
+        let _packages = self
+            .packages
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         self.stopped.store(true, Ordering::Release);
     }
+    fn stop_package(&self, package: &PackageKey) -> Result<(), ExecutionError> {
+        let mut packages = self.packages.lock().map_err(|_| stopped())?;
+        packages
+            .entry(package.clone())
+            .or_default()
+            .stopped
+            .store(true, Ordering::Release);
+        Ok(())
+    }
+    fn package_active(&self, package: &PackageKey) -> Result<bool, ExecutionError> {
+        Ok(self
+            .packages
+            .lock()
+            .map_err(|_| stopped())?
+            .get(package)
+            .is_some_and(|queries| queries.active.load(Ordering::Acquire) != 0))
+    }
+    fn finish_package(&self, package: &PackageKey) -> Result<(), ExecutionError> {
+        let mut packages = self.packages.lock().map_err(|_| stopped())?;
+        if packages
+            .get(package)
+            .is_some_and(|queries| queries.active.load(Ordering::Acquire) != 0)
+        {
+            return Err(ExecutionError::new(ErrorCode::Busy, "package-draining"));
+        }
+        // Old captures keep their stopped scope. New calls can obtain a fresh
+        // scope only after the original package has completely drained.
+        packages.remove(package);
+        Ok(())
+    }
 }
-struct QueryCall(Arc<QueryGate>);
+struct QueryCall {
+    gate: Arc<QueryGate>,
+    package: Option<Arc<PackageQueries>>,
+}
 impl Drop for QueryCall {
     fn drop(&mut self) {
-        self.0.active.fetch_sub(1, Ordering::AcqRel);
+        if let Some(package) = &self.package {
+            package.active.fetch_sub(1, Ordering::AcqRel);
+        }
+        self.gate.active.fetch_sub(1, Ordering::AcqRel);
     }
 }
 fn stopped() -> ExecutionError {
@@ -125,7 +195,7 @@ impl RetiredWorker {
     pub(super) fn new(worker: Worker) -> Self {
         Self {
             attempt: worker.request.input.envelope().attempt_id,
-            package: PackageKey::from_input(&worker.request.input),
+            package: PackageKey::from_request(&worker.request),
             thread: worker.thread,
         }
     }
@@ -148,6 +218,34 @@ impl ExecutionRuntime {
                 .as_ref()
                 .map(|binding| &binding.capability.provider),
         )
+    }
+    pub(super) fn original_package_stopped(&self, package: Option<&PackageKey>) -> bool {
+        package.is_some_and(|package| {
+            self.package_controls
+                .values()
+                .any(|control| !control.complete && &control.token.package == package)
+        })
+    }
+    pub(super) fn stored_input_package(
+        store: &ProjectStore,
+        input: &FixedInput,
+    ) -> Result<Option<PackageKey>, ExecutionError> {
+        let service = store.work_plan_service_package(input)?;
+        let direct = PackageKey::from_input(input);
+        if direct.is_some() && service.is_some() {
+            return Err(ExecutionError::new(
+                ErrorCode::CorruptLedger,
+                "service-call-association",
+            ));
+        }
+        Ok(direct.or(service))
+    }
+    pub(super) fn stored_input_package_stopped(
+        &self,
+        store: &ProjectStore,
+        input: &FixedInput,
+    ) -> Result<bool, ExecutionError> {
+        Ok(self.original_package_stopped(Self::stored_input_package(store, input)?.as_ref()))
     }
     /// Stop admission and existing query calls for this exact package, revoke
     /// its original grants, and cancel only its queued/running tasks. Errors
@@ -217,12 +315,8 @@ impl ExecutionRuntime {
             );
             token
         };
-        for entry in self
-            .runners
-            .values()
-            .filter(|entry| entry.package().as_ref() == Some(&package))
-        {
-            entry.queries.stop();
+        for entry in self.runners.values() {
+            entry.queries.stop_package(&package)?;
         }
         self.drive_package_quiesce(store, &token)?;
         Ok(token)
@@ -239,13 +333,13 @@ impl ExecutionRuntime {
         store.revoke_plugin_grants(self.generation, &control.grants)?;
         let mut tasks = BTreeSet::new();
         for worker in &self.workers {
-            if token.package.matches(&worker.request.input) {
+            if PackageKey::from_request(&worker.request).as_ref() == Some(&token.package) {
                 tasks.insert(worker.request.input.envelope().task_id);
             }
         }
         for attempt in store.queued_execution_attempts(self.initial_sequence)? {
             let input = store.execution_input_cached(attempt)?;
-            if token.package.matches(&input) {
+            if Self::stored_input_package(store, &input)?.as_ref() == Some(&token.package) {
                 tasks.insert(input.envelope().task_id);
             }
         }
@@ -289,26 +383,28 @@ impl ExecutionRuntime {
         self.drive_package_quiesce(store, token)?;
         self.tick(store)?;
         for attempt in store.queued_execution_attempts(self.initial_sequence)? {
-            if token
-                .package
-                .matches(&store.execution_input_cached(attempt)?)
+            if Self::stored_input_package(store, &store.execution_input_cached(attempt)?)?.as_ref()
+                == Some(&token.package)
             {
                 return Err(ExecutionError::new(ErrorCode::Busy, "package-draining"));
             }
         }
-        if self
-            .workers
+        if self.workers.iter().any(|worker| {
+            PackageKey::from_request(&worker.request).as_ref() == Some(&token.package)
+        }) || self
+            .retired
             .iter()
-            .any(|worker| token.package.matches(&worker.request.input))
-            || self
-                .retired
-                .iter()
-                .any(|worker| worker.package.as_ref() == Some(&token.package))
-            || self.runners.values().any(|entry| {
-                entry.package().as_ref() == Some(&token.package) && entry.queries.active()
-            })
+            .any(|worker| worker.package.as_ref() == Some(&token.package))
         {
             return Err(ExecutionError::new(ErrorCode::Busy, "package-draining"));
+        }
+        for entry in self.runners.values() {
+            if entry.queries.package_active(&token.package)? {
+                return Err(ExecutionError::new(ErrorCode::Busy, "package-draining"));
+            }
+        }
+        for entry in self.runners.values() {
+            entry.queries.finish_package(&token.package)?;
         }
         let keys: Vec<_> = self
             .runners
@@ -330,7 +426,8 @@ impl ExecutionRuntime {
 
 impl OutcomeQuery {
     pub fn run(&self) -> Result<QueryOutcome, ExecutionError> {
-        let _call = self.queries.enter()?;
+        let _call = self.queries.enter(self.package_queries.as_ref())?;
+        self.request.check_service_dispatch()?;
         self.runner.query(&self.request)
     }
 }

@@ -1,5 +1,31 @@
 # Application versioning and changelog maintenance
 
+The combined development format is current-only project schema 33. Its layout
+retains the original application execution associations, work-plan service calls,
+captured chunks, ancestor budgets and exact continuation links. Saved plugin build
+views are read-only projections of the original plans and artifacts. Project
+opening refuses other development formats before application DDL, without an
+upgrade, rebuild, reset or fallback; SQLite may recover its own hot journal.
+Preserve unsupported directories and reimport source files into a new project.
+Regenerate typed execution and plugin IPC from their Rust owners. Historical
+receipts remain readable without restoring grants; fresh dispatch still requires
+current authority and original deadlines. The storage geometry stays the same as
+the current service-call format; adding saved-build reads creates no new schema.
+
+Package-scoped shutdown also retains the original sealed calling-package association
+through generation-service model children, active and retired workers, outcome
+queries and later selection effects. Revocation ends admission; cleanup still
+waits for the owned work to leave. Shared model queries from independent packages
+keep their existing authority. This lifetime correction adds no storage layout,
+IPC, SDK contract, grant, deadline renewal or additional version bump.
+
+SDK/process/Store profiles, dependencies and lockfiles have separate identities.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch; this integration needs no additional SemVer bump or publication. Both
+Unreleased changelogs preserve the compatibility and behavior changes. Earlier
+paragraphs retain intermediate development boundaries, rather than alternative
+current formats or migration paths.
+
 The experimental SDK now defines bounded work-plan generation-service input,
 child-identity receipts and finite errors from one Rust source. The new service,
 input, receipt and error contract references each use schema/behavior 1/1.
@@ -7,27 +33,14 @@ The existing generator emits their JavaScript types and standalone validators;
 the SDK's declared text-query payload helper checks exact text, explicit options,
 fixed template paths and complete encoded input bounds. These data helpers do
 not supply application scopes, execution grants, model access or new budgets.
-Process protocol 2, existing shared contract versions, project schema 32,
-Core/Host/desktop IPC, dependencies and lockfiles remain unchanged. Application
+The SDK data update itself leaves process protocol 2 and shared contracts,
+dependencies and lockfiles unchanged; application integration has its own
+current storage and IPC boundary described above. Application
 `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` stay in the same undistributed batch,
 without an additional SemVer bump or publication. Regenerate contracts before
 packaging a new fixed SDK snapshot; earlier archives and consumer selections
 remain unchanged until an explicit artifact update. Both Unreleased changelogs
 describe this SDK source alignment.
-
-The combined execution continuation boundary adds exact request/receipt links
-atomically with the existing chunked input, plugin grants, budget and release
-checks. The current-only project format advances from this branch's schema 30
-to schema 32; schema 31 is already used by a distinct development input layout.
-Other development snapshots are refused before application DDL without migration
-or reset. Historical exact receipts remain readable without restoring grants;
-fresh plugin attempts require their own authorization. Experimental Core callers
-must use the typed continuation action, and desktop clients must regenerate the
-execution contracts rather than use anonymous resume/retry. SDK/process/Store
-profiles, dependencies, lockfiles, runtime material and application/SDK version
-sources are unchanged. This remains the same undistributed application
-`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch, without an additional SemVer bump
-or publication. Both Unreleased changelogs describe the behavior.
 
 Experimental Desktop approval-removal and exact-install uninstall IPC are
 additive within the same undistributed application `0.2.0-alpha.1` batch. The
@@ -104,9 +117,133 @@ both Unreleased changelogs record the Host feature. Desktop removal controls
 and their lifecycle handoff use this Store owner. Full native lifecycle
 acceptance and cache collection remain separate work.
 
+The current combined development format is project schema 33. It retains the
+original six-column application execution associations, work-plan service calls,
+captured input chunks and ancestor budgets, and adds exact continuation identities
+with the new attempt in one ledger transaction. Earlier development formats are
+refused before application DDL without upgrade, rebuild, reset or fallback.
+Internal execution consumers must regenerate the typed continuation contracts;
+work-plan controls, service consents, SDK process2 and dependencies remain distinct
+and unchanged. Bilingual Unreleased entries describe this compatibility change.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` are the same undistributed batch,
+so this integration does not require an additional bump. The individual entries
+below retain their original format boundaries and do not define alternate current
+profiles. Native and full product acceptance remain separate.
+
+The AI workbench supports explicit multiple reference-provider choices, each with
+independent query options and captured provenance under the existing total tool
+allowance. This additive frontend flow changes no Core/Host/SDK contract,
+persistent format or dependency. Bilingual Unreleased entries are synchronized;
+the same undistributed `0.2.0-alpha.1` batch requires no additional bump.
+
+The workbench adds explicit installed generation component, profile and environment
+choices with separate human consent and original-record recovery. Its internal
+preflight adds the existing outer task identity so the UI can observe waiting
+children through task pages before calling the non-null detail API. Regenerate
+AI-domain consumers. This additive UI/internal IPC change modifies no SDK/process
+contract, persistent format or dependency; it remains in the same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch without an additional bump.
+The bilingual Unreleased entries describe the user-facing flow; native and wider
+product acceptance remain separate.
+Discard now idempotently confirms absence of an unused preparation while still
+refusing a started action. This recovery correction adds no schema or grant.
+
+Desktop adds an internal read-only generation-component selection request and
+response, generated from their Rust/Serde definitions. The request fixes the
+complete provider, an explicitly present profile (reference or null) and an
+approved environment; observation supplies no execution or WorkPlan authority.
+Regenerate the internal IPC consumers. Public SDK/process contracts, project
+schema31, WorkPlan2, settings2, receipt1 and dependencies are unchanged. The same
+undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no
+additional bump; bilingual Unreleased entries describe this additive boundary.
+Desktop adds strict internal human prepare/start/discard IPC for ordinary generation
+components and a trusted per-dispatch service broker on the existing executor.
+Regenerate the AI-domain consumers. The outer plugin grant, sealed child origin,
+original AI/candidate owners and per-child terminal release introduce no persistent
+format or SDK/process contract change. The same undistributed application/SDK
+batch needs no extra bump. Full workbench/native acceptance remains in development.
+Canonical generation results use the existing bounded JSON frame allowance;
+the declared raw payload limit remains separate and unchanged. This internal
+budget correction and Core's independent captured-payload-limit check change no
+wire shape, persistent format, dependency or version.
+
+The SDK adds public work-plan generation service/input/receipt/error contracts
+with independent schema/behavior 1/1. Core's experimental service adapter now
+requires those exact references and the original External effect, and decodes
+the request through the SDK's bounded parser. Consumers of earlier experimental
+bindings must use the current contracts; no alternate namespace or legacy
+payload decoder is retained. Generated public schemas, JavaScript types and
+validators share the Rust definition. Process2, project schema31, WorkPlan2,
+installed settings2, receipt1 and dependencies remain unchanged. Application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` remain the same undistributed batch, with
+synchronized Unreleased entries and no additional bump or historical migration.
+Full workbench/native product acceptance remains separate.
+
+The trusted service caller can validate the original sealed preparation before
+its first enqueue, then commit already prepared Desktop effect tracking without
+fallible storage reads. This is an additive Rust/internal-owner boundary; accepted
+historical children cannot recreate live tracking. Wire shapes, persistent formats,
+dependencies and versions remain unchanged in the same undistributed batch.
+
+Core work-plan project-service children add durable associations to the original
+execution ledger, retaining actual service descriptors, original caller grants,
+absolute deadlines and ancestor budgets. Current project format is schema 31;
+earlier development formats are refused unchanged. The format preserves the six
+application execution columns for model/tool delegation. This Core API requires
+the matching Process-2 SDK and Host. Internal WorkPlan format 2, installed
+settings 2 and dependencies remain unchanged. Application `0.2.0-alpha.1` and
+SDK `0.1.0-alpha.1` remain the same undistributed batch; synchronized Unreleased
+entries require no additional SemVer bump or historical migration. Production
+Desktop workbench/native acceptance remains in development.
+
+Core service-origin capture also requires the installation owner's original
+one-way revocation signal. This changes the experimental Rust adapter API;
+the signal is session-local and is not a stored credential or additional
+persistent format. WorkPlan Desktop IPC combines reference-tool selection,
+the full checker set and independent consents. Regenerate strict consumers;
+historical acknowledgements do not renew missing consent. These changes stay
+in the same undistributed batch and require no additional version bump.
+The existing installation owner publishes one session-local settings signal and
+withdraws it before settings promotion or closure. A failed or uncertain write
+cannot restore the old signal; fresh capture rereads actual settings without
+renewing Core grants. This adds no persistent settings field, dependency or
+wire shape, and is covered by the same Unreleased entries and version boundary.
+
+The combined current development profile is project schema 33, internal WorkPlan
+format 2, process protocol 2, installed settings 2 and receipt format 1. The
+individual assessments below retain the format boundaries at which each change
+was introduced; they do not create alternate current profiles.
+
+Bounded work-plan tools add fixed installed SDK bindings, independent local
+execution consent, source-derived Agent queries and one cumulative invocation
+limit to the original Core/Host/Desktop execution chain. Current project schema
+advances to 29 and internal WorkPlan format to 2; earlier development formats
+are refused unchanged without migration. Internal AI IPC adds strict tool
+selection, consent, usage and scoped prepare/start shapes; consumers regenerate
+their contracts. The SDK's Rust query-payload builder is additive. SDK tool
+schema/behavior 1/1, process frames, installed settings 2, JavaScript runtime and
+dependencies are unchanged. Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1`
+remain the same undistributed batch with synchronized Unreleased entries and no
+extra version bump. Full autonomous orchestration and native product acceptance
+remain in development.
+
+The application adds scoped Agent generation entry points to the existing
+work-plan service and generated internal Desktop IPC. Child inputs derive from
+the original plan and charge its ancestor budget. The existing candidate service
+now honors explicit candidate-only saving and adds its terminal `saved` effect
+status to generated IPC and both supported languages; selection and checks stay
+separate. No authority, storage table,
+project schema 28, settings format 2, SDK/process profile or dependency changes
+are introduced. Internal IPC consumers must regenerate their contracts.
+Application `0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed
+batch, with synchronized Unreleased entries and no extra bump or historical
+migration. Full plugin-tool and autonomous Agent acceptance remains separate.
+
 The optional Core Host adapter now captures a service broker separately for
 each actual dispatch, permit and cancellation handle. This changes the
-experimental Rust adapter API without changing wire contracts, persistent
+experimental Rust adapter API; service selection and process execution retain
+the original Core dispatch deadline. Historical query requests cannot establish
+a new execution deadline. These changes do not change wire contracts, persistent
 formats or dependencies. It remains in the same undistributed application
 `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch; both Unreleased changelogs describe
 the behavior, with no additional version bump or historical migration.

@@ -9,6 +9,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 const TABLES: &[(&str, &str)] = &[
+    super::services::TABLE,
     (
         "application_plans",
         "CREATE TABLE application_plans (plan_id TEXT PRIMARY KEY NOT NULL, plan BLOB NOT NULL CHECK(length(plan) BETWEEN 1 AND 1048576), digest TEXT NOT NULL CHECK(length(digest)=64), generation INTEGER NOT NULL CHECK(generation>0), state TEXT NOT NULL CHECK(state IN ('active','paused','stopped','taken-over')), effects BLOB NOT NULL CHECK(length(effects) BETWEEN 1 AND 1024), expires_at INTEGER NOT NULL CHECK(expires_at>0), cancellation_revision INTEGER NOT NULL CHECK(cancellation_revision>=0))",
@@ -19,7 +20,7 @@ const TABLES: &[(&str, &str)] = &[
     ),
     (
         "application_executions",
-        "CREATE TABLE application_executions (attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_attempts(attempt_id), plan_id TEXT NOT NULL REFERENCES application_plans(plan_id), generation INTEGER NOT NULL CHECK(generation>0))",
+        "CREATE TABLE application_executions (attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES execution_attempts(attempt_id), plan_id TEXT NOT NULL REFERENCES application_plans(plan_id), generation INTEGER NOT NULL CHECK(generation>0), kind TEXT NOT NULL CHECK(kind IN ('model','tool')), delegation BLOB CHECK(delegation IS NULL OR length(delegation) BETWEEN 1 AND 4096), root_task TEXT NOT NULL REFERENCES execution_tasks(task_id), CHECK((kind='model' AND delegation IS NULL) OR (kind='tool' AND delegation IS NOT NULL)))",
     ),
     (
         "application_protections",
@@ -99,7 +100,7 @@ pub(super) fn load(c: &Connection, id: ExecutionId) -> Result<StoredPlan, Execut
         || generation <= 0
         || expires <= 0
         || cancellation < 0
-        || plan.options.authorization_effects().ok().as_ref() != Some(&effects)
+        || plan.authorization_effects().ok().as_ref() != Some(&effects)
     {
         return Err(err(ErrorCode::CorruptLedger, "work-plan-authority"));
     }
@@ -346,11 +347,16 @@ pub(in crate::persistence) fn record_input(
 ) -> Result<(), ExecutionError> {
     if let Some(lease) = input.envelope().automation {
         c.execute(
-            "INSERT INTO application_executions VALUES (?1,?2,?3)",
+            "INSERT INTO application_executions VALUES (?1,?2,?3,'model',NULL,?4)",
             params![
                 input.envelope().attempt_id.to_string(),
                 lease.plan_id.to_string(),
-                lease.generation.get() as i64
+                lease.generation.get() as i64,
+                load(c, lease.plan_id)?
+                    .plan
+                    .execution_input()?
+                    .task_id
+                    .to_string()
             ],
         )
         .map_err(sql)?;
@@ -361,6 +367,20 @@ pub(in crate::persistence) fn check_input(
     c: &Connection,
     input: &FixedInput,
 ) -> Result<(), ExecutionError> {
+    if input.envelope().plugin.is_some() && input.envelope().automation.is_some() {
+        let bytes: Option<Vec<u8>> = c
+            .query_row(
+                "SELECT delegation FROM application_executions WHERE attempt_id=?1 AND kind='tool'",
+                [input.envelope().attempt_id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sql)?;
+        let bytes =
+            bytes.ok_or_else(|| err(ErrorCode::Unauthorized, "work-plan-tool-association"))?;
+        let delegation: WorkPlanToolDelegation = codec::decode(&bytes, 4096)?;
+        return super::tools::check_tool_delegation(c, input, &delegation);
+    }
     let association: Option<(String, i64)> = c
         .query_row(
             "SELECT plan_id,generation FROM application_executions WHERE attempt_id=?1",
@@ -485,12 +505,94 @@ impl ProjectStore {
     }
 }
 impl ProjectStore {
+    /// Open a bounded application handle only after the original task's durable
+    /// budget exists. This reads authority; it cannot issue or renew a grant.
+    pub fn work_plan_agent_scope(
+        &self,
+        lease: AutomationLease,
+    ) -> Result<WorkPlanAgentScope, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        super::super::review::read_snapshot(c, |_| {
+            let stored = load(c, lease.plan_id)?;
+            let root = stored.plan.execution_input()?;
+            let scope = WorkPlanAgentScope {
+                project_id: root.project_id,
+                lease,
+                parent_task: root.task_id,
+                store_epoch: self.changes.snapshot(Revision::new(0)?).epoch,
+                caller_id: ExecutionId::new(),
+            };
+            self.check_work_plan_agent_scope(&scope)?;
+            Ok(scope)
+        })
+    }
+
+    pub fn check_work_plan_agent_scope(
+        &self,
+        scope: &WorkPlanAgentScope,
+    ) -> Result<(), ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        if scope.store_epoch != self.changes.snapshot(Revision::new(0)?).epoch {
+            return Err(err(ErrorCode::Unauthorized, "work-plan-agent-session"));
+        }
+        let stored = load(c, scope.lease.plan_id)?;
+        if stored.lease != scope.lease
+            || stored.state != WorkPlanState::Active
+            || stored.expires_at <= now()?
+        {
+            return Err(err(ErrorCode::Cancelled, "work-plan-control"));
+        }
+        let root = stored.plan.execution_input()?;
+        if root.project_id != scope.project_id
+            || root.task_id != scope.parent_task
+            || !stored.effects.contains(&AutomationEffect::SaveCandidate)
+        {
+            return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
+        }
+        let registered: bool = c
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM execution_budgets WHERE task_id=?1)",
+                [scope.parent_task.to_string()],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        if !registered {
+            return Err(err(ErrorCode::Unauthorized, "work-plan-budget-owner"));
+        }
+        Ok(())
+    }
+
+    /// Derive exact child bytes in one read snapshot. The caller selects only
+    /// captured units; original configuration, sharing, evidence and limits stay
+    /// fixed. Enqueue and HTTP dispatch still check the durable control lease.
+    pub fn prepare_work_plan_agent_generation(
+        &self,
+        scope: &WorkPlanAgentScope,
+        request: &AgentGenerationRequest,
+    ) -> Result<FixedInput, ExecutionError> {
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        super::super::review::read_snapshot(c, |_| {
+            self.check_work_plan_agent_scope(scope)?;
+            let stored = load(c, scope.lease.plan_id)?;
+            let input = derive_agent_generation(&stored.plan, scope, request)?;
+            self.verify_work_plan(&stored.plan)?;
+            check_enqueue(c, &input, Some(scope.parent_task))?;
+            Ok(input)
+        })
+    }
+
     pub fn check_work_plan_input(&self, input: &FixedInput) -> Result<(), ExecutionError> {
-        check_input(
-            self.connection()
-                .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?,
-            input,
-        )
+        let c = self
+            .connection()
+            .map_err(|_| err(ErrorCode::StorageFailed, "work-plan-read"))?;
+        check_input(c, input)?;
+        super::services::check_input(c, input, &self.plugin_authority)
     }
     pub fn work_plan(&self, plan_id: ExecutionId) -> Result<WorkPlan, ExecutionError> {
         let c = self
@@ -585,7 +687,7 @@ impl ProjectStore {
         }
         if !authorization.confirmed
             || authorization.plan_digest != plan.digest
-            || plan.options.authorization_effects().ok().as_ref() != Some(&authorization.effects)
+            || plan.authorization_effects().ok().as_ref() != Some(&authorization.effects)
         {
             return Err(err(ErrorCode::Unauthorized, "work-plan-consent"));
         }
@@ -640,6 +742,7 @@ impl ProjectStore {
         let request = Request::Control {
             request: control.clone(),
         };
+        let authority = self.plugin_authority.clone();
         let mut tx = self.execution_write()?;
         if let Some(receipt) = existing(&tx, &request)? {
             return Ok(receipt);
@@ -705,6 +808,7 @@ impl ProjectStore {
             ],
         )
         .map_err(sql)?;
+        revoke_tools_in(&tx, &authority, control.plan_id, lease.generation)?;
         tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND generation<?2)",params![control.plan_id.to_string(),lease.generation.get() as i64]).map_err(sql)?;
         let receipt = WorkPlanReceipt {
             cancellation_revision,
@@ -951,9 +1055,23 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
                     && lease.generation.get() as i64 == generation =>
             {
                 let stored = load(c, lease.plan_id)?;
+                let (kind, delegation, root): (String, Option<Vec<u8>>, String) = c.query_row("SELECT kind,delegation,root_task FROM application_executions WHERE attempt_id=?1", [&attempt], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).map_err(sql)?;
+                let valid_scope = if kind == "tool" {
+                    let bytes = delegation.ok_or_else(|| {
+                        err(ErrorCode::CorruptLedger, "work-plan-tool-association")
+                    })?;
+                    let delegation: WorkPlanToolDelegation = codec::decode(&bytes, 4096)?;
+                    super::tools::validate_tool_input(c, &input, &delegation)?;
+                    true
+                } else {
+                    kind == "model"
+                        && delegation.is_none()
+                        && matches_scope(input.envelope(), stored.plan.execution_input()?)
+                };
                 if generation == 0
                     || generation as u64 > stored.lease.generation.get()
-                    || !matches_scope(input.envelope(), stored.plan.execution_input()?)
+                    || root != stored.plan.execution_input()?.task_id.to_string()
+                    || !valid_scope
                 {
                     return Err(err(ErrorCode::CorruptLedger, "work-plan-execution"));
                 }
@@ -1035,5 +1153,75 @@ pub(in crate::persistence) fn validate(c: &Connection) -> Result<(), ExecutionEr
         ));
     }
     super::selection::validate(c)?;
+    super::services::validate(c)?;
     Ok(())
+}
+
+fn revoke_tools_in(
+    c: &Connection,
+    authority: &crate::execution::plugin_authority::PluginAuthority,
+    plan: ExecutionId,
+    generation: Revision,
+) -> Result<(), ExecutionError> {
+    let mut statement = c.prepare("SELECT a.task_id FROM application_executions x JOIN execution_attempts a USING(attempt_id) WHERE x.plan_id=?1 AND x.kind='tool' AND x.generation<?2").map_err(sql)?;
+    let tasks = statement
+        .query_map(params![plan.to_string(), generation.get() as i64], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(sql)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sql)?;
+    for task in tasks {
+        authority.revoke_task(ExecutionId::parse(&task)?)?;
+    }
+    c.execute("UPDATE plugin_execution_grants SET revoked=1 WHERE attempt_id IN (SELECT attempt_id FROM application_executions WHERE plan_id=?1 AND kind='tool' AND generation<?2)", params![plan.to_string(), generation.get() as i64]).map_err(sql)?;
+    Ok(())
+}
+
+pub(super) fn derive_agent_generation(
+    plan: &WorkPlan,
+    scope: &WorkPlanAgentScope,
+    request: &AgentGenerationRequest,
+) -> Result<FixedInput, ExecutionError> {
+    let original = plan.fixed_input()?;
+    if request.unit_ids.len() > tsumugi_plugin_sdk::MAX_GENERATION_SERVICE_UNITS {
+        return Err(err(ErrorCode::LimitExceeded, "work-plan-agent-items"));
+    }
+    let selected = request
+        .unit_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if selected.is_empty()
+        || selected.len() != request.unit_ids.len()
+        || selected.len() > original.envelope().items.len()
+        || request.task_id == scope.parent_task
+        || request.attempt_id == original.envelope().attempt_id
+        || selected
+            .iter()
+            .any(|id| !plan.selection_basis.iter().any(|b| b.unit_id == *id))
+    {
+        return Err(err(ErrorCode::Unauthorized, "work-plan-agent-scope"));
+    }
+    let mut envelope = original.envelope().clone();
+    envelope.task_id = request.task_id;
+    envelope.attempt_id = request.attempt_id;
+    envelope.automation = Some(scope.lease);
+    let scopes = selected
+        .iter()
+        .map(ToString::to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+    envelope
+        .items
+        .retain(|item| scopes.contains(&item.scope.id));
+    let item_ids = envelope
+        .items
+        .iter()
+        .map(|item| item.item_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    envelope
+        .units
+        .retain(|unit| unit.item_ids.iter().all(|id| item_ids.contains(id)));
+    let input = FixedInput::capture(envelope)?;
+    Ok(input)
 }

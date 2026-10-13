@@ -197,3 +197,72 @@ fn source_cannot_mix_native_and_node_providers_in_one_environment() {
         Some("plugin-binding-invalid")
     );
 }
+
+#[test]
+fn same_settings_revision_shares_one_epoch_until_immediate_close() {
+    let fixture = Fixture::new(|_, _| {});
+    let revision = fixture.owner.environment_settings_revision().unwrap();
+    let first = fixture
+        .owner
+        .with_environment_authority(revision, Ok)
+        .unwrap();
+    let second = fixture
+        .owner
+        .with_environment_authority(revision, Ok)
+        .unwrap();
+    fixture
+        .owner
+        .with_environment_revision(revision, || Ok(()))
+        .unwrap();
+    assert!(!first.is_requested());
+    assert!(!second.is_requested());
+    fixture.owner.close();
+    assert!(first.is_requested());
+    assert!(second.is_requested());
+    assert!(
+        fixture
+            .owner
+            .with_environment_authority(revision, Ok)
+            .is_err()
+    );
+}
+
+#[test]
+fn close_revokes_settings_epoch_without_waiting_for_manager_operation() {
+    use std::{sync::mpsc, thread, time::Duration};
+    let fixture = Fixture::new(|_, _| {});
+    let revision = fixture.owner.environment_settings_revision().unwrap();
+    let owner = fixture.owner.clone();
+    let (entered, observed) = mpsc::channel();
+    let (release, wait) = mpsc::channel();
+    let operation = thread::spawn(move || {
+        owner
+            .with_environment_authority(revision, |cancellation| {
+                entered.send(cancellation.clone()).unwrap();
+                wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(())
+            })
+            .unwrap();
+    });
+    let original = observed.recv_timeout(Duration::from_secs(3)).unwrap();
+    let owner = fixture.owner.clone();
+    let (closed, completed) = mpsc::channel();
+    let close = thread::spawn(move || {
+        owner.close();
+        closed.send(()).unwrap();
+    });
+    let result = completed.recv_timeout(Duration::from_secs(1));
+    let revoked_before_manager_release = original.is_requested();
+    // Release even on failure, so a regression cannot strand either thread.
+    release.send(()).unwrap();
+    operation.join().unwrap();
+    close.join().unwrap();
+    assert!(result.is_ok(), "close waited for the manager operation");
+    assert!(revoked_before_manager_release);
+    assert!(
+        fixture
+            .owner
+            .with_environment_authority(revision, Ok)
+            .is_err()
+    );
+}

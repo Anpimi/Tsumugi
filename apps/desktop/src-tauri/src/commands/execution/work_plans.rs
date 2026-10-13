@@ -1,4 +1,7 @@
-//! Human-facing work-plan commands share the ordinary project session and runtime.
+//! Work-plan commands share the ordinary project session and runtime.
+pub(crate) mod agent;
+pub(crate) mod broker;
+pub(crate) mod generation;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
@@ -11,8 +14,9 @@ use tsumugi_core::{
     ai::{self, AiConfig, AiPreview},
     application::{
         AuthorizeWorkPlan, AutomationEffect, AutomationLease, ControlWorkPlan, PlanOptions,
-        PlanSelectionBasis, SetWorkProtection, WorkPlan, WorkPlanCommand, WorkPlanReceipt,
-        WorkPlanState, WorkPlanStatus, WorkProtection,
+        PlanSelectionBasis, SetWorkProtection, WorkPlan, WorkPlanAgentScope, WorkPlanCommand,
+        WorkPlanReceipt, WorkPlanState, WorkPlanStatus, WorkPlanToolConsent, WorkPlanTools,
+        WorkProtection,
     },
 };
 use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
@@ -20,8 +24,13 @@ use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
 #[derive(Default)]
 pub(super) struct WorkPlanSession {
     prepared: Option<WorkPlan>,
+    generation: generation::GenerationSession,
     environments: BTreeMap<ExecutionId, (String, Vec<CheckerEnvironment>)>,
     checker_consents: BTreeMap<ExecutionId, CheckerConsent>,
+    agent_scopes: BTreeMap<ExecutionId, WorkPlanAgentScope>,
+    tool_consents: BTreeMap<ExecutionId, (AutomationLease, Arc<WorkPlanToolConsent>)>,
+    tool_starts: BTreeMap<ExecutionId, broker::ToolStart>,
+    tool_intents: BTreeMap<ExecutionId, broker::HumanToolIntent>,
 }
 impl WorkPlanSession {
     pub(super) fn stop_package(
@@ -57,10 +66,18 @@ impl WorkPlanSession {
                 .any(|checker| package_lifecycle::binding_package(&checker.binding) == *package)
         });
     }
+    pub(super) fn generation_preparation_active(&self) -> bool {
+        self.generation.active()
+    }
     pub(super) fn stop(&mut self) {
         self.prepared = None;
+        self.generation.stop();
         self.environments.clear();
         self.checker_consents.clear();
+        self.agent_scopes.clear();
+        self.tool_consents.clear();
+        self.tool_starts.clear();
+        self.tool_intents.clear();
     }
 }
 
@@ -80,6 +97,63 @@ impl CheckerConsent {
         self.plugins
             .with_environment_revision(self.settings_revision, operation)
     }
+}
+
+fn current_checker_consent(
+    host: &ExecutionHost,
+    store: &ProjectStore,
+    plan: &WorkPlan,
+    lease: AutomationLease,
+) -> Result<Option<CheckerConsent>, CommandError> {
+    let checker = host
+        .work_plans
+        .checker_consents
+        .get(&plan.plan_id)
+        .filter(|consent| consent.lease == lease)
+        .cloned();
+    let bindings = store.work_plan_review_checkers(plan).map_err(map_recover)?;
+    if checker
+        .as_ref()
+        .map_or(!bindings.is_empty(), |consent| consent.bindings != bindings)
+    {
+        return Err(map_recover(ExecutionError::new(
+            ErrorCode::Unauthorized,
+            "plugin-consent-required",
+        )));
+    }
+    Ok(checker)
+}
+
+/// The two approvals share one settings owner. Compare both captured revisions
+/// before taking its guard once; nesting its guards would lock the same manager.
+fn with_plan_environment_revision<T>(
+    plugins: &ApplicationPlugins,
+    plan: &WorkPlan,
+    checker_revision: Option<UnsignedDecimal>,
+    operation: impl FnOnce() -> Result<T, CommandError>,
+) -> Result<T, CommandError> {
+    let Some(checker_revision) = checker_revision else {
+        return broker::with_tools_revision(plugins, plan, operation);
+    };
+    if broker::tools_revision(plan)?.is_some_and(|revision| revision != checker_revision) {
+        return Err(super::review::checkers::stale());
+    }
+    plugins.with_environment_revision(checker_revision, operation)
+}
+
+fn checker_environment_revision(
+    environments: &[CheckerEnvironment],
+) -> Result<Option<UnsignedDecimal>, CommandError> {
+    let revision = environments
+        .first()
+        .map(CheckerEnvironment::settings_revision);
+    if environments
+        .iter()
+        .any(|environment| Some(environment.settings_revision()) != revision)
+    {
+        return Err(super::review::checkers::stale());
+    }
+    Ok(revision)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -225,7 +299,8 @@ request!(
         locale: String,
         unit_ids: Vec<ExecutionId>,
         options: PlanOptions,
-        advisory_checks: Vec<PluginTextReviewSelection>
+        advisory_checks: Vec<PluginTextReviewSelection>,
+        tool_selection: Option<broker::WorkPlanToolSelection>
     }
 );
 request!(
@@ -236,6 +311,7 @@ request!(
         action_id: ExecutionId,
         confirmed: bool,
         checker_executions: Vec<ReviewCheckerKey>,
+        tool_execution: bool,
         effects: Vec<AutomationEffect>,
         expires_at: UnsignedDecimal
     }
@@ -257,6 +333,7 @@ request!(
         command: WorkPlanCommand,
         confirmed: bool,
         checker_executions: Vec<ReviewCheckerKey>,
+        tool_execution: bool,
         expires_at: Option<UnsignedDecimal>
     }
 );
@@ -305,6 +382,7 @@ pub struct WorkPlanView {
     pub preview: Option<AiPreviewView>,
     pub attempt_id: Option<ExecutionId>,
     pub checkers: Vec<WorkPlanCheckerView>,
+    pub tools: Option<WorkPlanTools>,
 }
 
 impl TryFrom<&WorkPlan> for WorkPlanView {
@@ -340,6 +418,7 @@ impl TryFrom<&WorkPlan> for WorkPlanView {
             preview,
             attempt_id: plan.input.as_ref().map(|input| input.attempt_id),
             checkers: Vec::new(),
+            tools: plan.tools.clone(),
         })
     }
 }
@@ -376,6 +455,7 @@ pub struct WorkPlanStatusView {
     pub state: WorkPlanState,
     pub effects: Vec<AutomationEffect>,
     pub expires_at: UnsignedDecimal,
+    pub tool_invocations: Option<broker::WorkPlanToolUsage>,
 }
 
 impl WorkPlanStatusView {
@@ -386,6 +466,7 @@ impl WorkPlanStatusView {
             state: status.state,
             effects: status.effects,
             expires_at: status.expires_at.into(),
+            tool_invocations: None,
         })
     }
 }
@@ -464,16 +545,24 @@ pub async fn prepare_work_plan(
                     .map(|checker| package_lifecycle::binding_package(&checker.binding))
                     .collect(),
             )?;
-            Ok((plan, source, checkers, work))
+            Ok((plan, source, checkers, work, host.runtime.generation()))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, source, checkers, work) = captured.await?;
+        let (plan, source, checkers, work, generation) = captured.await?;
+        let selected = request.tool_selection.clone();
+        let current_plugins = plugins.clone();
+        let tools = io
+            .clone()
+            .run(CommandStage::ExecutionRead, move || {
+                broker::capture_selection(&current_plugins, selected.as_ref())
+            })
+            .await?;
         let (environments, views) = load_checkers(
             io,
-            plugins,
+            plugins.clone(),
             source,
             checkers,
             plan.options.advisory_checks.clone(),
@@ -481,6 +570,7 @@ pub async fn prepare_work_plan(
             work.clone(),
         )
         .await?;
+        let checker_revision = checker_environment_revision(&environments)?;
         lease
             .run(
                 "prepare_work_plan.finish",
@@ -495,21 +585,42 @@ pub async fn prepare_work_plan(
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
                     work.check()?;
-                    store.verify_work_plan(&plan).map_err(map_read)?;
-                    let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
-                    view.checkers = views;
-                    if !environments.is_empty() {
-                        if host.work_plans.environments.len() >= 8 {
-                            host.work_plans.environments.clear();
-                        }
-                        host.work_plans
-                            .environments
-                            .insert(plan.plan_id, (plan.digest.clone(), environments));
-                    } else {
-                        host.work_plans.environments.remove(&plan.plan_id);
+                    if host.runtime.generation() != generation {
+                        return Err(map_read(ExecutionError::new(
+                            ErrorCode::DependencyConflict,
+                            "work-plan-session",
+                        )));
                     }
-                    host.work_plans.prepared = Some(plan);
-                    Ok(view)
+                    store.verify_work_plan(&plan).map_err(map_read)?;
+                    let plan = if tools.is_some() {
+                        store
+                            .prepare_work_plan_with_tools(
+                                request.config.clone(),
+                                &request.locale,
+                                &request.unit_ids,
+                                plan.options.clone(),
+                                tools,
+                            )
+                            .map_err(map_read)?
+                    } else {
+                        plan
+                    };
+                    with_plan_environment_revision(&plugins, &plan, checker_revision, || {
+                        let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
+                        view.checkers = views;
+                        if !environments.is_empty() {
+                            if host.work_plans.environments.len() >= 8 {
+                                host.work_plans.environments.clear();
+                            }
+                            host.work_plans
+                                .environments
+                                .insert(plan.plan_id, (plan.digest.clone(), environments));
+                        } else {
+                            host.work_plans.environments.remove(&plan.plan_id);
+                        }
+                        host.work_plans.prepared = Some(plan.clone());
+                        Ok(view)
+                    })
                 },
             )
             .await
@@ -524,6 +635,7 @@ pub async fn authorize_work_plan(
     request: WorkPlanAuthorizeRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionRecover)?;
+    let captured_plugins = state.plugins.clone();
     let initial = request.clone();
     let captured = lease.submit(
         "authorize_work_plan.capture",
@@ -555,21 +667,31 @@ pub async fn authorize_work_plan(
                         &plan,
                         &AuthorizeWorkPlan {
                             action_id: initial.action_id,
-                            plan_digest: initial.digest,
+                            plan_digest: initial.digest.clone(),
                             confirmed: initial.confirmed,
-                            effects: initial.effects,
+                            effects: initial.effects.clone(),
                             expires_at: initial.expires_at.get(),
                         },
                     )
                     .map_err(map_recover)?;
+                broker::restore_consent(host, store, &plan, &receipt, &initial, &captured_plugins)?;
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
             }
-            let prepared =
-                host.work_plans.prepared.as_ref().filter(|plan| {
-                    plan.plan_id == initial.plan_id && plan.digest == initial.digest
-                });
+            let prepared = host
+                .work_plans
+                .prepared
+                .as_ref()
+                .filter(|plan| plan.plan_id == initial.plan_id && plan.digest == initial.digest)
+                .cloned();
             if let Some(plan) = prepared {
-                let plan = plan.clone();
+                broker::require_consent(&plan, initial.tool_execution, Some(&initial.effects))?;
+                broker::capture_human_intent(
+                    host,
+                    &plan,
+                    initial.action_id,
+                    initial.expires_at.get(),
+                    &initial,
+                )?;
                 let environments =
                     consent_environments(host, store, &plan, &initial.checker_executions)?;
                 let work = host.begin_package_work(
@@ -578,7 +700,7 @@ pub async fn authorize_work_plan(
                         .map(|(_, checker)| package_lifecycle::binding_package(&checker.binding))
                         .collect(),
                 )?;
-                Ok(Ok((plan, environments, work)))
+                Ok(Ok((plan, environments, work, host.runtime.generation())))
             } else {
                 // Read-only replay returns historical authority without recreating local consent.
                 let receipt = store
@@ -613,7 +735,7 @@ pub async fn authorize_work_plan(
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (plan, environment, work) = match captured.await? {
+        let (plan, environment, work, generation) = match captured.await? {
             Ok(value) => value,
             Err(receipt) => return Ok(receipt),
         };
@@ -633,6 +755,12 @@ pub async fn authorize_work_plan(
                     let (host, store) = active.execution_parts()?;
                     host.allow_mutation()?;
                     work.check()?;
+                    if host.runtime.generation() != generation {
+                        return Err(map_recover(ExecutionError::new(
+                            ErrorCode::Unauthorized,
+                            "work-plan-session",
+                        )));
+                    }
                     let finish = || {
                         store.verify_work_plan(&plan).map_err(map_recover)?;
                         let mut bindings = Vec::new();
@@ -653,6 +781,8 @@ pub async fn authorize_work_plan(
                                 },
                             )
                             .map_err(map_recover)?;
+                        broker::save_consent(host, store, &plan, &receipt)
+                            .map_err(|_| CommandError::unknown(CommandStage::ExecutionRecover))?;
                         if !bindings.is_empty() {
                             let status = store.work_plan_status(plan.plan_id).map_err(|_| {
                                 CommandError::unknown(CommandStage::ExecutionRecover)
@@ -676,10 +806,7 @@ pub async fn authorize_work_plan(
                         }
                         Ok(receipt.into())
                     };
-                    match settings_revision {
-                        Some(revision) => plugins.with_environment_revision(revision, finish),
-                        None => finish(),
-                    }
+                    with_plan_environment_revision(&plugins, &plan, settings_revision, finish)
                 },
             )
             .await
@@ -693,6 +820,7 @@ pub async fn start_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanStartRequest,
 ) -> Result<ExecutionId, CommandError> {
+    let plugins = state.plugins.clone();
     state
         .sessions
         .run(
@@ -766,27 +894,8 @@ pub async fn start_work_plan(
                     Err(error) => return Err(map_recover(error)),
                 }
                 let plan = store.work_plan(request.plan_id).map_err(map_recover)?;
-                let checker = host
-                    .work_plans
-                    .checker_consents
-                    .get(&request.plan_id)
-                    .filter(|consent| consent.lease == receipt.lease)
-                    .cloned();
-                let bindings = store
-                    .work_plan_review_checkers(&plan)
-                    .map_err(map_recover)?;
-                if !bindings.is_empty() {
-                    if checker
-                        .as_ref()
-                        .is_none_or(|consent| consent.bindings != bindings)
-                    {
-                        return Err(map_recover(ExecutionError::new(
-                            ErrorCode::Unauthorized,
-                            "plugin-consent-required",
-                        )));
-                    }
-                }
-                let consent = checker.clone();
+                let checker = current_checker_consent(host, store, &plan, receipt.lease)?;
+                let checker_revision = checker.as_ref().map(|consent| consent.settings_revision);
                 let start = || {
                     if let Some(parent) = receipt.parent_task {
                         host.runtime
@@ -798,10 +907,7 @@ pub async fn start_work_plan(
                     host.ai.track(store, &input, checker).map_err(map_recover)?;
                     Ok(input.envelope().attempt_id)
                 };
-                match consent {
-                    Some(consent) => consent.with_current_environment(start),
-                    None => start(),
-                }
+                with_plan_environment_revision(&plugins, &plan, checker_revision, start)
             },
         )
         .await
@@ -813,6 +919,7 @@ pub async fn control_work_plan(
     request: WorkPlanControlRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
     let lease = state.sessions.lease(CommandStage::ExecutionCancel)?;
+    let captured_plugins = state.plugins.clone();
     let initial = request.clone();
     let captured = lease.submit(
         "control_work_plan.capture",
@@ -841,14 +948,33 @@ pub async fn control_work_plan(
                         expires_at: initial.expires_at.map(UnsignedDecimal::get),
                     })
                     .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
+                let plan = active
+                    .store
+                    .work_plan(receipt.lease.plan_id)
+                    .map_err(map_recover)?;
+                let (host, store) = active.execution_parts()?;
+                broker::restore_consent(host, store, &plan, &receipt, &initial, &captured_plugins)?;
                 return Ok(Err(WorkPlanReceiptView::from(receipt)));
             }
             if initial.command != WorkPlanCommand::Continue {
-                return Ok(Ok((Vec::new(), None)));
+                return Ok(Ok((None, Vec::new(), None, None)));
             }
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
             let plan = store.work_plan(initial.plan_id).map_err(map_recover)?;
+            broker::require_consent(&plan, initial.tool_execution, None)?;
+            if plan.tools.is_some() {
+                let expiry = initial
+                    .expires_at
+                    .ok_or_else(|| {
+                        map_recover(ExecutionError::new(
+                            ErrorCode::InvalidInput,
+                            "work-plan-expiry",
+                        ))
+                    })?
+                    .get();
+                broker::capture_human_intent(host, &plan, initial.action_id, expiry, &initial)?;
+            }
             let environments =
                 consent_environments(host, store, &plan, &initial.checker_executions)?;
             let work = host.begin_package_work(
@@ -857,13 +983,18 @@ pub async fn control_work_plan(
                     .map(|(_, checker)| package_lifecycle::binding_package(&checker.binding))
                     .collect(),
             )?;
-            Ok(Ok((environments, Some(work))))
+            Ok(Ok((
+                Some(plan),
+                environments,
+                Some(work),
+                Some(host.runtime.generation()),
+            )))
         },
     )?;
     let io = state.io.clone();
     let plugins = state.plugins.clone();
     tauri::async_runtime::spawn(async move {
-        let (environment, work) = match captured.await? {
+        let (plan, environment, work, generation) = match captured.await? {
             Ok(environment) => environment,
             Err(receipt) => return Ok(receipt),
         };
@@ -884,6 +1015,16 @@ pub async fn control_work_plan(
                         work.check()?;
                     }
                     let finish = || {
+                        if let Some(generation) = generation {
+                            let (host, _) = active.execution_parts()?;
+                            host.allow_mutation()?;
+                            if host.runtime.generation() != generation {
+                                return Err(map_recover(ExecutionError::new(
+                                    ErrorCode::Unauthorized,
+                                    "work-plan-session",
+                                )));
+                            }
+                        }
                         let mut bindings = Vec::new();
                         for (runner, checker) in runners {
                             let (host, _) = active.execution_parts()?;
@@ -903,6 +1044,14 @@ pub async fn control_work_plan(
                                 expires_at: request.expires_at.map(UnsignedDecimal::get),
                             })
                             .map_err(|error| map_execution(error, CommandStage::ExecutionCancel))?;
+                        if let Some(plan) = &plan {
+                            let (host, store) = active.execution_parts()?;
+                            broker::save_consent(host, store, plan, &receipt).map_err(|_| {
+                                CommandError::unknown(CommandStage::ExecutionCancel)
+                            })?;
+                        } else if let Some(host) = active.execution.as_mut() {
+                            host.work_plans.tool_consents.remove(&request.plan_id);
+                        }
                         if !bindings.is_empty() {
                             let (host, store) = active.execution_parts()?;
                             let status = store.work_plan_status(request.plan_id).map_err(|_| {
@@ -926,8 +1075,13 @@ pub async fn control_work_plan(
                         }
                         Ok(receipt.into())
                     };
-                    match settings_revision {
-                        Some(revision) => plugins.with_environment_revision(revision, finish),
+                    match &plan {
+                        Some(plan) => with_plan_environment_revision(
+                            &plugins,
+                            plan,
+                            settings_revision,
+                            finish,
+                        ),
                         None => finish(),
                     }
                 },
@@ -1009,6 +1163,14 @@ pub async fn read_work_plan_status(
                     work.check()?;
                     let status = store.work_plan_status(request.plan_id).map_err(map_read)?;
                     let mut view = WorkPlanStatusView::capture(&plan, status).map_err(map_read)?;
+                    if let Some(tools) = &plan.tools {
+                        view.tool_invocations = Some(broker::WorkPlanToolUsage {
+                            reserved: store
+                                .work_plan_tool_invocations(plan.plan_id)
+                                .map_err(map_read)?,
+                            limit: tools.max_invocations,
+                        });
+                    }
                     view.plan.checkers = views;
                     if !environments.is_empty() {
                         if host.work_plans.environments.len() >= 8 {
@@ -1121,6 +1283,8 @@ pub async fn set_work_protection(
 
 #[cfg(test)]
 mod tests {
+    mod broker_tests;
+    mod generation_tests;
     mod settings;
     use super::*;
     use serde_json::{Value, json};
@@ -1131,6 +1295,15 @@ mod tests {
         webview::InvokeRequest,
     };
     use tsumugi_core::application::{StageChoice, StageMode, WorkStage};
+
+    fn checker_keys(plan: &Value) -> Vec<Value> {
+        plan["checkers"]
+            .as_array()
+            .expect("actual checker preview required")
+            .iter()
+            .map(|checker| checker["checker"].clone())
+            .collect()
+    }
 
     #[test]
     fn shared_work_plan_fixture_round_trips_through_serde() {
@@ -1165,6 +1338,38 @@ mod tests {
         let mut invalid = fixture["requests"]["control"].clone();
         invalid["expectedGeneration"] = json!("9223372036854775808");
         assert!(serde_json::from_value::<WorkPlanControlRequest>(invalid).is_err());
+    }
+
+    #[test]
+    fn shared_work_plan_agent_tool_fixture_round_trips_through_serde() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../../test/fixtures/workPlanAgentTools.contract.json"
+        ))
+        .unwrap();
+        macro_rules! round_trip {
+            ($value:expr, $ty:ty) => {{
+                let value = $value.clone();
+                let decoded: $ty = serde_json::from_value(value.clone()).unwrap();
+                assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+            }};
+        }
+        round_trip!(
+            fixture["requests"]["prepare"],
+            broker::WorkPlanAgentToolPrepareRequest
+        );
+        round_trip!(
+            fixture["requests"]["start"],
+            broker::WorkPlanAgentToolStartRequest
+        );
+        round_trip!(
+            fixture["responses"]["prepared"],
+            broker::WorkPlanAgentToolView
+        );
+        round_trip!(
+            fixture["toolView"],
+            crate::commands::plugins::PluginToolView
+        );
+        round_trip!(fixture["spec"], tsumugi_core::application::WorkPlanToolSpec);
     }
 
     type MockWebview = tauri::WebviewWindow<tauri::test::MockRuntime>;
@@ -1213,8 +1418,14 @@ mod tests {
         request
     }
 
-    impl Fixture {
-        fn create() -> Self {
+    struct ProjectFixture {
+        directory: tempfile::TempDir,
+        app: tauri::App<tauri::test::MockRuntime>,
+        webview: MockWebview,
+        context: Value,
+    }
+    impl ProjectFixture {
+        fn create(source_locale: &str) -> Self {
             let directory = tempfile::tempdir().unwrap();
             let app = crate::commands::register_commands(tauri::test::mock_builder())
                 .build(tauri::test::mock_context(tauri::test::noop_assets()))
@@ -1231,18 +1442,40 @@ mod tests {
                 "create_project",
                 json!({
                     "destination":directory.path().join("project"), "displayName":"Work plan test",
-                    "sourceLocale":"en-US", "targetLocales":["zh-CN"]
+                    "sourceLocale":source_locale, "targetLocales":["zh-CN"]
                 }),
             )
             .unwrap();
             let context = json!({
                 "sessionToken":view["sessionToken"], "projectId":view["metadata"]["projectId"]
             });
-            let (unit, source_revision, snapshot) = app.state::<AppState>().sessions.with(|sessions| {
+            Self {
+                directory,
+                app,
+                webview,
+                context,
+            }
+        }
+    }
+
+    impl Fixture {
+        fn create() -> Self {
+            Self::create_with_source(br#"{"first":"Hello"}"#)
+        }
+
+        fn create_with_source(source_bytes: &[u8]) -> Self {
+            let source_bytes = source_bytes.to_vec();
+            let ProjectFixture {
+                directory,
+                app,
+                webview,
+                context,
+            } = ProjectFixture::create("en-US");
+            let (unit, source_revision, snapshot) = app.state::<AppState>().sessions.with(move |sessions| {
                 let (host, store) = sessions.active.as_mut().unwrap().execution_parts().unwrap();
                 let source = tsumugi_core::content::SourceBundle::capture(
                     br#"{"UniqueID":"Example.Mod","Name":"Example","Version":"1.0.0","EntryDll":"Example.dll"}"#,
-                    br#"{"first":"Hello"}"#,
+                    &source_bytes,
                     "en-US",
                 ).unwrap();
                 let input = source.fixed_input(store.metadata().unwrap().project_id()).unwrap();
@@ -1349,7 +1582,71 @@ mod tests {
     }
     fn local_provider_sequence(
         texts: Vec<&'static str>,
-        mut gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_sequence_after_setup(texts, gate, None)
+    }
+    /// Acquisition can precede dispatch without consuming the HTTP accept
+    /// deadline. The original model timeout and request/usage budgets remain fixed.
+    fn local_provider_after_setup(
+        text: &'static str,
+    ) -> (AiConfig, mpsc::Sender<()>, JoinHandle<Value>) {
+        let (ready, setup) = mpsc::channel();
+        let (config, thread) = local_provider_sequence_after_setup(vec![text], None, Some(setup));
+        (config, ready, thread)
+    }
+    fn local_provider_sequence_after_setup(
+        texts: Vec<&'static str>,
+        gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        setup: Option<mpsc::Receiver<()>>,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_sequence_with_accept_timeout(texts, gate, setup, Duration::from_secs(5))
+    }
+    // Installed artifact hashing can precede an actual child HTTP dispatch.
+    // This fixture wait does not alter the model's request timeout or budget.
+    fn local_provider_sequence_with_accept_timeout(
+        texts: Vec<&'static str>,
+        gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+        setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_sequence_at_request(
+            texts,
+            gate.map(|channels| (0, channels)),
+            setup,
+            accept_timeout,
+            Duration::from_secs(3),
+        )
+    }
+
+    /// Hold an exact synthetic HTTP request, including a component's child,
+    /// without blocking its original plan's setup request.
+    fn local_provider_sequence_at_request(
+        texts: Vec<&'static str>,
+        gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
+        setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
+        gate_timeout: Duration,
+    ) -> (AiConfig, JoinHandle<Value>) {
+        local_provider_responses_at_request(
+            texts.len(),
+            move |ordinal, _| Some(texts[ordinal]),
+            gate,
+            setup,
+            accept_timeout,
+            gate_timeout,
+        )
+    }
+
+    /// Read the full production POST before an explicit synthetic disconnect.
+    /// Unknown is produced by the actual HTTP runner, not an injected ledger state.
+    fn local_provider_responses_at_request(
+        request_count: usize,
+        mut response_text: impl FnMut(usize, &Value) -> Option<&'static str> + Send + 'static,
+        mut gate: Option<(usize, (mpsc::Sender<()>, mpsc::Receiver<()>))>,
+        setup: Option<mpsc::Receiver<()>>,
+        accept_timeout: Duration,
+        gate_timeout: Duration,
     ) -> (AiConfig, JoinHandle<Value>) {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1361,14 +1658,19 @@ mod tests {
             ),
             model: "synthetic-work-effects".into(),
             credential_env: String::new(),
-            max_requests: texts.len().try_into().unwrap(),
+            max_requests: request_count.try_into().unwrap(),
             timeout_seconds: 2,
             ..AiConfig::default()
         };
         let thread = std::thread::spawn(move || {
+            if let Some(setup) = setup {
+                setup
+                    .recv_timeout(Duration::from_secs(60))
+                    .expect("provider setup did not reach the dispatch gate");
+            }
             let mut last = Value::Null;
-            for text in texts {
-                let deadline = Instant::now() + Duration::from_secs(5);
+            for ordinal in 0..request_count {
+                let deadline = Instant::now() + accept_timeout;
                 let mut stream = loop {
                     match listener.accept() {
                         Ok((stream, _)) => break stream,
@@ -1413,10 +1715,15 @@ mod tests {
                 let item: Value =
                     serde_json::from_str(request["messages"][1]["content"].as_str().unwrap())
                         .unwrap();
-                if let Some((started, release)) = gate.take() {
+                if gate.as_ref().is_some_and(|(index, _)| *index == ordinal) {
+                    let (_, (started, release)) = gate.take().unwrap();
                     started.send(()).unwrap();
-                    release.recv_timeout(Duration::from_secs(3)).unwrap();
+                    release.recv_timeout(gate_timeout).unwrap();
                 }
+                let Some(text) = response_text(ordinal, &item) else {
+                    last = item;
+                    continue;
+                };
                 let output = json!({"unitId":item["unitId"], "targetLocale":item["targetLocale"], "text":text});
                 let response = json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":output.to_string()}}], "usage":{"prompt_tokens":1,"completion_tokens":1}}).to_string();
                 let _ = write!(
@@ -1448,7 +1755,7 @@ mod tests {
                 .find(|stage| stage.stage == WorkStage::Checks)
                 .unwrap()
                 .mode = StageMode::Assisted;
-            let plan = self.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN","unitIds":[self.unit],"options":options,"advisoryChecks":[]})).unwrap();
+            let plan = self.call("prepare_work_plan", json!({"config":config,"locale":"zh-CN","unitIds":[self.unit],"options":options,"advisoryChecks":[],"toolSelection":null})).unwrap();
             let effects = match policy {
                 tsumugi_core::application::SelectionPolicy::MissingOnly => {
                     json!(["save-candidate", "run-checks", "select-missing"])
@@ -1458,7 +1765,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             };
-            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":[],"effects":effects,"expiresAt":expiry()})).unwrap();
+            let grant = self.call("authorize_work_plan", json!({"planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),"confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":effects,"expiresAt":expiry()})).unwrap();
             assert_eq!(self.call("start_work_plan", json!({"planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]})).unwrap(), plan["attemptId"]);
             plan
         }
@@ -1482,6 +1789,398 @@ mod tests {
         }
     }
 
+    impl Fixture {
+        fn start_candidates(&self, config: AiConfig) -> (Value, Value) {
+            self.start_candidates_in_units(config, &[self.unit])
+        }
+
+        fn start_candidates_in_units(
+            &self,
+            config: AiConfig,
+            units: &[ExecutionId],
+        ) -> (Value, Value) {
+            let plan = self.call("prepare_work_plan", json!({
+                "config":config,"locale":"zh-CN","unitIds":units,"options":PlanOptions::default(),"advisoryChecks":[],"toolSelection":null
+            })).unwrap();
+            let grant = self.call("authorize_work_plan", json!({
+                "planId":plan["planId"],"digest":plan["digest"],"actionId":ExecutionId::new(),
+                "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"effects":["save-candidate"],"expiresAt":expiry()
+            })).unwrap();
+            assert!(
+                self.call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":grant["lease"]})
+                )
+                .is_err()
+            );
+            assert_eq!(self.call("start_work_plan", json!({
+                "planId":plan["planId"],"actionId":grant["actionId"],"expectedGeneration":grant["lease"]["generation"]
+            })).unwrap(), plan["attemptId"]);
+            (plan, grant)
+        }
+
+        fn wait_saved(&self, attempt: &Value) -> Value {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let view = self
+                    .call("read_ai_translation", json!({"attemptId":attempt}))
+                    .unwrap();
+                if view["rows"][0]["savedRevisionId"].is_string()
+                    && view["rows"][0]["automation"]["phase"] == "saved"
+                {
+                    return view;
+                }
+                assert!(Instant::now() < deadline, "{view}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
+    #[test]
+    fn agent_generation_uses_original_runtime_candidates_and_cumulative_budget() {
+        let fixture = Fixture::create();
+        let (config, provider) = local_provider_sequence(vec!["根候选", "子候选"], None);
+        let (plan, grant) = fixture.start_candidates(config);
+        let first = fixture.wait_saved(&plan["attemptId"]);
+        assert_eq!(first["rows"][0]["output"]["text"], "根候选");
+        let open = json!({"lease":grant["lease"]});
+        let before = fixture.bytes();
+        let agent = fixture
+            .call("open_work_plan_agent_scope", open.clone())
+            .unwrap();
+        assert_eq!(
+            fixture
+                .call("open_work_plan_agent_scope", open.clone())
+                .unwrap(),
+            agent
+        );
+        assert_eq!(agent["scope"], plan["scope"]);
+        assert_eq!(agent["budget"]["dispatched"], 1);
+        let generation = json!({"taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]});
+        let request = json!({"scopeId":agent["scopeId"],"generation":generation});
+        let count = fixture.attempt_count();
+        let prepared = fixture
+            .call("prepare_work_plan_agent_generation", request.clone())
+            .unwrap();
+        assert_eq!(
+            fixture
+                .call("prepare_work_plan_agent_generation", request.clone())
+                .unwrap(),
+            prepared
+        );
+        assert_eq!(fixture.bytes(), before);
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(prepared["parentTask"], agent["parentTask"]);
+        assert_eq!(prepared["scope"], plan["scope"]);
+        let mut forged = request.clone();
+        forged["scopeId"] = json!(ExecutionId::new());
+        assert!(
+            fixture
+                .call("prepare_work_plan_agent_generation", forged)
+                .is_err()
+        );
+        for ids in [
+            json!([]),
+            json!([fixture.unit, fixture.unit]),
+            json!([ExecutionId::new()]),
+        ] {
+            let mut forged = request.clone();
+            forged["generation"]["unitIds"] = ids;
+            assert!(
+                fixture
+                    .call("prepare_work_plan_agent_generation", forged)
+                    .is_err()
+            );
+        }
+        for field in [
+            "confirmed",
+            "effects",
+            "config",
+            "payload",
+            "lease",
+            "parentTask",
+        ] {
+            let mut forged = request.clone();
+            forged["generation"][field] = json!(true);
+            assert!(
+                fixture
+                    .call("prepare_work_plan_agent_generation", forged)
+                    .is_err()
+            );
+        }
+        let mut start = request.clone();
+        start["inputDigest"] = prepared["inputDigest"].clone();
+        let mut forged = start.clone();
+        forged["inputDigest"] = json!("b".repeat(64));
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", forged)
+                .is_err()
+        );
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(
+            fixture
+                .call("start_work_plan_agent_generation", start.clone())
+                .unwrap(),
+            generation["attemptId"]
+        );
+        let second = fixture.wait_saved(&generation["attemptId"]);
+        assert_eq!(second["rows"][0]["output"]["text"], "子候选");
+        assert_ne!(
+            second["rows"][0]["savedRevisionId"],
+            first["rows"][0]["savedRevisionId"]
+        );
+        assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+        let saved = fixture.bytes();
+        assert_eq!(
+            fixture
+                .call("start_work_plan_agent_generation", start)
+                .unwrap(),
+            generation["attemptId"]
+        );
+        assert_eq!(fixture.attempt_count(), count + 1);
+        assert_eq!(fixture.bytes(), saved);
+        let budget = fixture.call("open_work_plan_agent_scope", open).unwrap()["budget"].clone();
+        assert_eq!(budget["limit"], 2);
+        assert_eq!(budget["dispatched"], 2);
+        assert_eq!(budget["unresolved"], 0);
+        assert_eq!(budget["promptTokens"], "2");
+        assert_eq!(budget["completionTokens"], "2");
+        let exhausted_request = json!({"scopeId":agent["scopeId"],"generation":{
+            "taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]
+        }});
+        let exhausted_prepared = fixture
+            .call(
+                "prepare_work_plan_agent_generation",
+                exhausted_request.clone(),
+            )
+            .unwrap();
+        let mut exhausted_start = exhausted_request.clone();
+        exhausted_start["inputDigest"] = exhausted_prepared["inputDigest"].clone();
+        fixture
+            .call("start_work_plan_agent_generation", exhausted_start)
+            .unwrap();
+        let exhausted =
+            fixture.wait_effect(&json!({"attemptId":exhausted_request["generation"]["attemptId"]}));
+        assert_eq!(
+            exhausted["detail"]["items"][0]["status"]["diagnostic"],
+            "ai-budget"
+        );
+        assert!(exhausted["rows"][0]["output"].is_null());
+        assert!(exhausted["rows"][0]["savedRevisionId"].is_null());
+        assert_eq!(
+            fixture
+                .call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":grant["lease"]})
+                )
+                .unwrap()["budget"],
+            budget
+        );
+        let parent: ExecutionId = serde_json::from_value(agent["parentTask"].clone()).unwrap();
+        let attempt: ExecutionId = serde_json::from_value(generation["attemptId"].clone()).unwrap();
+        fixture
+            .app
+            .state::<AppState>()
+            .sessions
+            .with(move |sessions| {
+                let store = &sessions.active.as_ref().unwrap().store;
+                let root = FixedInput::capture(
+                    store
+                        .work_plan_receipt(
+                            serde_json::from_value(grant["actionId"].clone()).unwrap(),
+                        )
+                        .unwrap()
+                        .unwrap()
+                        .input
+                        .unwrap(),
+                )
+                .unwrap();
+                let child = store.execution_input(attempt).unwrap();
+                assert_eq!(child.envelope().items, root.envelope().items);
+                assert_eq!(child.envelope().settings, root.envelope().settings);
+                assert_eq!(child.envelope().limits, root.envelope().limits);
+                assert_eq!(
+                    store.provider_budget(parent).unwrap().unwrap().dispatched,
+                    2
+                );
+                let project =
+                    ExecutionId::parse(&store.metadata().unwrap().project_id().to_string())
+                        .unwrap();
+                let history = store
+                    .translation_history(project, fixture.unit, "zh-CN", 0, 100)
+                    .unwrap();
+                assert_eq!(history.rows.len(), 2);
+                assert!(history.current.is_none());
+                assert!(
+                    store
+                        .review_target(project, fixture.unit, "zh-CN")
+                        .unwrap()
+                        .current_check
+                        .is_none()
+                );
+            });
+    }
+
+    #[test]
+    fn agent_scope_cannot_resume_control_or_survive_reopen() {
+        let mut fixture = Fixture::create();
+        let (config, provider) = local_provider("保留候选");
+        let (plan, grant) = fixture.start_candidates(config);
+        fixture.wait_saved(&plan["attemptId"]);
+        provider.join().unwrap();
+        let agent = fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":grant["lease"]}),
+            )
+            .unwrap();
+        let request = json!({"scopeId":agent["scopeId"],"generation":{
+            "taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]
+        }});
+        let prepared = fixture
+            .call("prepare_work_plan_agent_generation", request.clone())
+            .unwrap();
+        let mut start = request.clone();
+        start["inputDigest"] = prepared["inputDigest"].clone();
+        let count = fixture.attempt_count();
+        let paused = fixture.call("control_work_plan", json!({
+            "planId":plan["planId"],"actionId":ExecutionId::new(),
+            "expectedGeneration":grant["lease"]["generation"],"command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false
+        })).unwrap();
+        assert!(
+            fixture
+                .call("prepare_work_plan_agent_generation", request.clone())
+                .is_err()
+        );
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", start.clone())
+                .is_err()
+        );
+        let resumed = fixture
+            .call(
+                "control_work_plan",
+                json!({
+                    "planId":plan["planId"],"actionId":ExecutionId::new(),
+                    "expectedGeneration":paused["lease"]["generation"],"command":"continue",
+                    "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()
+                }),
+            )
+            .unwrap();
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", start.clone())
+                .is_err()
+        );
+        let fresh = fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":resumed["lease"]}),
+            )
+            .unwrap();
+        assert_ne!(fresh["scopeId"], agent["scopeId"]);
+        assert_eq!(fresh["parentTask"], agent["parentTask"]);
+        assert_eq!(fresh["budget"], agent["budget"]);
+        assert_eq!(fixture.attempt_count(), count);
+        let mut fresh_request = request.clone();
+        fresh_request["scopeId"] = fresh["scopeId"].clone();
+        fixture
+            .call("prepare_work_plan_agent_generation", fresh_request.clone())
+            .unwrap();
+        fixture.reopen();
+        let before = fixture.bytes();
+        assert!(
+            fixture
+                .call("prepare_work_plan_agent_generation", fresh_request)
+                .is_err()
+        );
+        assert!(
+            fixture
+                .call("start_work_plan_agent_generation", start)
+                .is_err()
+        );
+        assert!(
+            fixture
+                .call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":resumed["lease"]})
+                )
+                .is_err()
+        );
+        assert_eq!(fixture.attempt_count(), count);
+        assert_eq!(fixture.bytes(), before);
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        assert_eq!(status["state"], "paused");
+        assert_eq!(
+            fixture
+                .call(
+                    "read_ai_translation",
+                    json!({"attemptId":plan["attemptId"]})
+                )
+                .unwrap()["budget"],
+            agent["budget"]
+        );
+    }
+
+    #[test]
+    fn agent_generation_reuses_independent_checks_and_original_selection_service() {
+        let fixture = Fixture::create();
+        let (config, provider) = local_provider_sequence(vec!["第一稿", "第二稿"], None);
+        let plan = fixture.start_checked(
+            config,
+            tsumugi_core::application::SelectionPolicy::ReplaceCapturedSelection,
+        );
+        let first = fixture.wait_effect(&plan);
+        assert_eq!(
+            first["rows"][0]["automation"]["phase"], "selected",
+            "{first}"
+        );
+        let status = fixture
+            .call("read_work_plan_status", json!({"planId":plan["planId"]}))
+            .unwrap();
+        let agent = fixture
+            .call(
+                "open_work_plan_agent_scope",
+                json!({"lease":status["lease"]}),
+            )
+            .unwrap();
+        let mut request = json!({"scopeId":agent["scopeId"],"generation":{
+            "taskId":ExecutionId::new(),"attemptId":ExecutionId::new(),"unitIds":[fixture.unit]
+        }});
+        let prepared = fixture
+            .call("prepare_work_plan_agent_generation", request.clone())
+            .unwrap();
+        request["inputDigest"] = prepared["inputDigest"].clone();
+        fixture
+            .call("start_work_plan_agent_generation", request.clone())
+            .unwrap();
+        let second = fixture.wait_effect(&json!({"attemptId":request["generation"]["attemptId"]}));
+        assert_eq!(
+            second["rows"][0]["automation"]["phase"], "selected",
+            "{second}"
+        );
+        let receipt = &second["rows"][0]["automation"]["receipt"];
+        assert_eq!(receipt["request"]["lease"], agent["lease"]);
+        assert_eq!(
+            receipt["request"]["revisionId"],
+            second["rows"][0]["savedRevisionId"]
+        );
+        assert!(receipt["checkRunId"].is_string());
+        assert_eq!(receipt["rules"].as_array().unwrap().len(), 4);
+        assert_eq!(provider.join().unwrap()["unitId"], json!(fixture.unit));
+        assert_eq!(
+            fixture
+                .call(
+                    "open_work_plan_agent_scope",
+                    json!({"lease":status["lease"]})
+                )
+                .unwrap()["budget"]["dispatched"],
+            2
+        );
+    }
     #[test]
     fn checked_worker_selects_ordinary_candidate_and_reopen_only_reads_receipt() {
         let mut fixture = Fixture::create();
@@ -1571,7 +2270,7 @@ mod tests {
         assert_eq!(status["state"], "paused");
         let continue_request = json!({"planId":plan["planId"],"actionId":ExecutionId::new(),
             "expectedGeneration":status["lease"]["generation"],"command":"continue",
-            "confirmed":true,"checkerExecutions":[],"expiresAt":expiry()});
+            "confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()});
         let resumed = fixture
             .call("control_work_plan", continue_request.clone())
             .unwrap();
@@ -1659,7 +2358,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":"3","command":"pause",
-            "confirmed":false,"checkerExecutions":[],"expiresAt":null}),
+            "confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null}),
             )
             .unwrap();
         let third = fixture
@@ -1667,7 +2366,7 @@ mod tests {
                 "control_work_plan",
                 json!({"planId":plan["planId"],
             "actionId":ExecutionId::new(),"expectedGeneration":paused["lease"]["generation"],
-            "command":"continue","confirmed":true,"checkerExecutions":[],"expiresAt":expiry()}),
+            "command":"continue","confirmed":true,"checkerExecutions":checker_keys(&plan),"toolExecution":false,"expiresAt":expiry()}),
             )
             .unwrap();
         fixture
@@ -1819,7 +2518,7 @@ mod tests {
             tsumugi_core::application::SelectionPolicy::MissingOnly,
         );
         waiting.recv_timeout(Duration::from_secs(3)).unwrap();
-        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"expiresAt":null})).unwrap();
+        fixture.call("control_work_plan", json!({"actionId":ExecutionId::new(),"planId":plan["planId"],"expectedGeneration":"1","command":"pause","confirmed":false,"checkerExecutions":[],"toolExecution":false,"expiresAt":null})).unwrap();
         release.send(()).unwrap();
         provider.join().unwrap();
         let view = fixture.wait_effect(&plan);
@@ -2072,7 +2771,7 @@ mod tests {
         let fixture = Fixture::create();
         let before = fixture.bytes();
         let prepared = fixture.call("prepare_work_plan", json!({
-            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(), "advisoryChecks":[]
+            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(), "advisoryChecks":[],"toolSelection":null
         })).unwrap();
         assert_eq!(prepared["locale"], "zh-CN");
         assert_eq!(prepared["scope"][0]["unitId"], json!(fixture.unit));
@@ -2089,20 +2788,20 @@ mod tests {
         assert!(prepared.get("input").is_none());
         assert_eq!(fixture.bytes(), before);
         assert!(fixture.call("prepare_work_plan", json!({
-            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default(), "advisoryChecks":[]
+            "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default(), "advisoryChecks":[],"toolSelection":null
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "checkerExecutions":[], "effects":["save-candidate"], "expiresAt":expiry(),
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry(),
             "semanticAnswer":"yes"
         })).is_err());
         assert!(fixture.call("authorize_work_plan", json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "checkerExecutions":[], "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         })).is_err());
         assert!(fixture.call("prepare_work_plan", json!({
             "config":null, "locale":"zh-CN", "unitIds":[fixture.unit], "options":manual_options(),
-            "advisoryChecks":[], "input":{}
+            "advisoryChecks":[],"toolSelection":null, "input":{}
         })).is_err());
         assert!(
             fixture
@@ -2165,14 +2864,14 @@ mod tests {
         let count = fixture.attempt_count();
         let before = fixture.bytes();
         let prepared = fixture.call("prepare_work_plan", json!({
-            "config":config, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default(), "advisoryChecks":[]
+            "config":config, "locale":"zh-CN", "unitIds":[fixture.unit], "options":PlanOptions::default(), "advisoryChecks":[],"toolSelection":null
         })).unwrap();
         assert!(prepared["preview"].is_object());
         assert!(prepared["preview"]["items"][0]["resourceBaseline"].is_string());
         assert_eq!(fixture.bytes(), before);
         let grant = json!({
             "planId":prepared["planId"], "digest":prepared["digest"], "actionId":ExecutionId::new(),
-            "confirmed":true, "checkerExecutions":[], "effects":["save-candidate"], "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "effects":["save-candidate"], "expiresAt":expiry()
         });
         let mut unconfirmed = grant.clone();
         unconfirmed["confirmed"] = json!(false);
@@ -2227,7 +2926,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":receipt["lease"]["generation"], "command":"pause",
-                    "confirmed":false, "checkerExecutions":[], "expiresAt":null
+                    "confirmed":false, "checkerExecutions":[],"toolExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();
@@ -2236,7 +2935,7 @@ mod tests {
         let resume = json!({
             "planId":prepared["planId"], "actionId":ExecutionId::new(),
             "expectedGeneration":paused["lease"]["generation"], "command":"continue",
-            "confirmed":true, "checkerExecutions":[], "expiresAt":expiry()
+            "confirmed":true, "checkerExecutions":checker_keys(&prepared),"toolExecution":false, "expiresAt":expiry()
         });
         let resumed = fixture.call("control_work_plan", resume.clone()).unwrap();
         assert_eq!(resumed["state"], "active");
@@ -2264,7 +2963,7 @@ mod tests {
                 json!({
                     "planId":prepared["planId"], "actionId":ExecutionId::new(),
                     "expectedGeneration":resumed["lease"]["generation"], "command":"take-over",
-                    "confirmed":false, "checkerExecutions":[], "expiresAt":null
+                    "confirmed":false, "checkerExecutions":[],"toolExecution":false, "expiresAt":null
                 }),
             )
             .unwrap();

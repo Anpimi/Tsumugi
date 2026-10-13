@@ -57,23 +57,42 @@ impl ApplicationPlugins {
         expected: UnsignedDecimal,
         operation: impl FnOnce() -> Result<T, CommandError>,
     ) -> Result<T, CommandError> {
+        self.with_environment_authority(expected, |_| operation())
+    }
+
+    /// Capture a one-way settings token while admitting the same bounded owner
+    /// operation. Consumers keep this token until their authorized effects end.
+    /// A fresh token proves freshly read settings only; it restores no previous
+    /// Core grant, consent, runtime generation or deadline.
+    pub(in crate::commands) fn with_environment_authority<T>(
+        &self,
+        expected: UnsignedDecimal,
+        operation: impl FnOnce(Cancellation) -> Result<T, CommandError>,
+    ) -> Result<T, CommandError> {
         let mut manager = self.try_manager()?;
         self.provision(&mut manager)?;
+        if manager
+            .pending
+            .as_ref()
+            .is_some_and(packages::PendingMutation::settings_outcome_unknown)
+        {
+            self.revoke_environment_authority()?;
+            let mut error = CommandError::unknown(CommandStage::ExecutionRecover);
+            error.reason = Some("plugin-result-unconfirmed".into());
+            return Err(error);
+        }
         let settings = manager
             .store
             .as_ref()
             .expect("store provisioned")
             .settings(|| self.open.load(Ordering::Acquire))
-            .map_err(map_store_error)?;
-        if settings.revision() != expected.get() {
-            let mut error = CommandError::simple(
-                CommandErrorCode::DependencyConflict,
-                CommandStage::ExecutionRecover,
-            );
-            error.reason = Some("plugin-settings-changed".into());
-            return Err(error);
-        }
-        operation()
+            .map_err(|error| match self.revoke_environment_authority() {
+                Ok(()) => map_store_error(error),
+                Err(error) => error,
+            })?;
+        let cancellation =
+            self.capture_environment_authority(expected, settings.revision().into())?;
+        operation(cancellation)
     }
 
     pub(in crate::commands) fn environment_settings_revision(

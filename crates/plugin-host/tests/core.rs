@@ -1645,3 +1645,47 @@ fn unfinished_service_selection_is_bounded_and_never_launches_a_child() {
     );
     assert_eq!(std::fs::read_dir(staging).unwrap().count(), 0);
 }
+
+#[test]
+fn service_selection_keeps_the_original_dispatch_deadline_without_another_core_tick() {
+    let temp = tempfile::tempdir().unwrap();
+    let staging = temp.path().join("staging");
+    std::fs::create_dir(&staging).unwrap();
+    let factory = Arc::new(DispatchServiceFactory {
+        selected: Arc::default(),
+        calls: Arc::default(),
+        released: Arc::default(),
+        pending: true,
+    });
+    let proxy = service_proxy(&staging, factory.clone(), 3000);
+    let mut store = store(temp.path());
+    let mut envelope = input(&mut store, &proxy).envelope().clone();
+    envelope.limits.timeout_ms = 150;
+    let input = FixedInput::capture(envelope).unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy.clone()).unwrap();
+    authorize(&runtime, &mut store, &input);
+    runtime.submit(&mut store, &input).unwrap();
+    let dispatch = store
+        .dispatch_execution_item(
+            input.envelope().attempt_id,
+            input.envelope().items[0].item_id,
+        )
+        .unwrap();
+    let original_deadline = dispatch.deadline().unwrap();
+    let (results, _receiver) = result_channel();
+    let start = Instant::now();
+    let error = proxy
+        .run(dispatch, Cancellation::default(), results)
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::OutcomeUnknown);
+    assert!(Instant::now() >= original_deadline);
+    assert!(start.elapsed() < Duration::from_secs(1));
+    assert_eq!(factory.selected.lock().unwrap().len(), 1);
+    assert!(factory.calls.lock().unwrap().is_empty());
+    assert_eq!(
+        factory.released.load(std::sync::atomic::Ordering::Acquire),
+        0
+    );
+    assert_eq!(std::fs::read_dir(staging).unwrap().count(), 0);
+}

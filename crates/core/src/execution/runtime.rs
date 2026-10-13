@@ -12,7 +12,7 @@ use std::{
 mod package_quiesce;
 pub(crate) use package_quiesce::PackageKey;
 pub use package_quiesce::PackageQuiescence;
-use package_quiesce::{PackageControl, QueryGate, RetiredWorker, RunnerEntry};
+use package_quiesce::{PackageControl, PackageQueries, QueryGate, RetiredWorker, RunnerEntry};
 
 type RunnerKey = (String, String, Option<String>, Option<String>);
 fn runner_key(
@@ -134,6 +134,39 @@ impl ExecutionRuntime {
     pub fn generation(&self) -> ExecutionId {
         self.plugin_epoch.generation()
     }
+    fn retire_completed_tool(
+        &self,
+        store: &mut ProjectStore,
+        request: &DispatchRequest,
+    ) -> Result<(), ExecutionError> {
+        let attempt = request.input.envelope().attempt_id;
+        let Some(permit) = request
+            .plugin_permit
+            .as_ref()
+            .filter(|permit| permit.is_work_plan_tool() && permit.is_authorized())
+        else {
+            return Ok(());
+        };
+        if self.is_active(attempt) || self.retired.iter().any(|worker| worker.attempt == attempt) {
+            return Ok(());
+        }
+        if store
+            .execution_attempt(attempt, false)?
+            .items
+            .iter()
+            .any(|item| {
+                matches!(
+                    item.execution,
+                    ExecutionState::Queued | ExecutionState::Dispatched
+                )
+            })
+        {
+            return Ok(());
+        }
+        // Query tools cannot adopt output. Once every child item is durable and
+        // its producer has ended, retain provenance but release the live slot.
+        self.revoke_plugin(store, permit.grant_id())
+    }
     pub fn register(&mut self, runner: Arc<dyn Runner>) -> Result<(), ExecutionError> {
         self.register_with_policy(runner, RecoveryPolicy::ExternalUnknown)
     }
@@ -201,6 +234,93 @@ impl ExecutionRuntime {
         }
         store.authorize_plugin_input(self.generation, grant_id, input, expires_at_ms, consent)
     }
+    /// Trusted human entry only: capture independent process consent now, even
+    /// before the model root is queued. Later calls cannot extend its deadline.
+    pub fn authorize_work_plan_tools(
+        &self,
+        store: &ProjectStore,
+        lease: crate::application::AutomationLease,
+        expires_at_ms: u64,
+        deadline: Instant,
+        consent: PluginConsent,
+    ) -> Result<crate::application::WorkPlanToolConsent, ExecutionError> {
+        if !self.accepting || !self.plugin_epoch.is_active() {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        store.check_plugin_epoch_owner(&self.plugin_epoch)?;
+        store.capture_work_plan_tool_consent(
+            lease,
+            self.generation,
+            expires_at_ms,
+            deadline,
+            consent,
+        )
+    }
+
+    pub fn submit_work_plan_tool(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedWorkPlanTool,
+        consent: &crate::application::WorkPlanToolConsent,
+        grant_id: ExecutionId,
+    ) -> Result<(), ExecutionError> {
+        let input = prepared.input();
+        if !self.accepting
+            || !self.plugin_epoch.is_active()
+            || self.input_package_stopped(input)
+            || !self.runners.contains_key(&input_key(input)?)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        if store
+            .execution_input_if_present(input.envelope().attempt_id)?
+            .is_none()
+            && (store.queued_execution_item_count(self.initial_sequence)?
+                + input.envelope().items.len()
+                > MAX_QUEUED_ITEMS
+                || store
+                    .queued_execution_attempts(self.initial_sequence)?
+                    .len()
+                    >= MAX_QUEUED_ATTEMPTS)
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "execution-queue",
+            ));
+        }
+        store.enqueue_work_plan_tool(
+            prepared,
+            consent,
+            grant_id,
+            self.generation,
+            self.policies[&input_key(input)?],
+        )
+    }
+
+    pub fn check_work_plan_tool_consent(
+        &self,
+        store: &ProjectStore,
+        scope: &crate::application::WorkPlanAgentScope,
+        consent: &crate::application::WorkPlanToolConsent,
+    ) -> Result<(), ExecutionError> {
+        if !self.accepting
+            || !self.plugin_epoch.is_active()
+            || self.generation != consent.runtime_generation
+        {
+            return Err(ExecutionError::new(
+                ErrorCode::Unauthorized,
+                "plugin-runtime",
+            ));
+        }
+        store.check_work_plan_tool_consent(scope, consent)
+    }
+
     pub fn revoke_plugin(
         &self,
         store: &mut ProjectStore,
@@ -224,14 +344,70 @@ impl ExecutionRuntime {
     ) -> Result<(), ExecutionError> {
         self.submit_with_parent(store, input, Some(parent))
     }
+    /// A component proposal uses the same queue and ancestor budget, with its
+    /// original caller recorded atomically alongside the child attempt.
+    pub fn submit_work_plan_service_child(
+        &mut self,
+        store: &mut ProjectStore,
+        prepared: &crate::application::PreparedWorkPlanServiceGeneration,
+    ) -> Result<crate::application::WorkPlanServiceReceipt, ExecutionError> {
+        let identity = prepared.identity()?;
+        if let Some(receipt) = store.work_plan_service_receipt(&identity, &prepared.call)? {
+            if receipt.input_digest != prepared.input().digest() {
+                return Err(ExecutionError::new(
+                    ErrorCode::ResultMismatch,
+                    "service-child-identity",
+                ));
+            }
+            // A historical ACK is data only, even after stop, expiry or reopen.
+            return Ok(receipt);
+        }
+        self.submit_with_origin(
+            store,
+            prepared.input(),
+            Some(prepared.parent_task()),
+            Some(prepared),
+        )?;
+        store
+            .work_plan_service_receipt(&identity, &prepared.call)
+            .map_err(|mut error| {
+                // Enqueue and activation already succeeded. Failure to read
+                // their ACK cannot retract the accepted child or its tracking.
+                error.code = ErrorCode::OutcomeUnknown;
+                error
+            })?
+            .ok_or_else(|| ExecutionError::new(ErrorCode::OutcomeUnknown, "service-child-receipt"))
+    }
     fn submit_with_parent(
         &mut self,
         store: &mut ProjectStore,
         input: &FixedInput,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
+        self.submit_with_origin(store, input, parent, None)
+    }
+    fn submit_with_origin(
+        &mut self,
+        store: &mut ProjectStore,
+        input: &FixedInput,
+        parent: Option<ExecutionId>,
+        service: Option<&crate::application::PreparedWorkPlanServiceGeneration>,
+    ) -> Result<(), ExecutionError> {
+        if let Some(prepared) = service {
+            let (plugin, digest) = prepared.original_caller_package();
+            if self.original_package_stopped(Some(&PackageKey {
+                plugin: plugin.clone(),
+                digest: digest.into(),
+            })) {
+                return Err(ExecutionError::new(ErrorCode::Busy, "package-quiescing"));
+            }
+        }
         let policy = self.submission_policy(store, input, parent)?;
-        store.enqueue_execution_with_policy(input, policy, parent)
+        if let Some(prepared) = service {
+            store.enqueue_work_plan_service_generation(prepared, policy)
+        } else {
+            store.enqueue_execution_with_policy(input, policy, parent)
+        }
     }
     fn submission_policy(
         &self,
@@ -239,7 +415,7 @@ impl ExecutionRuntime {
         input: &FixedInput,
         parent: Option<ExecutionId>,
     ) -> Result<RecoveryPolicy, ExecutionError> {
-        if !self.accepting || self.input_package_stopped(input) {
+        if !self.accepting || self.stored_input_package_stopped(store, input)? {
             return Err(ExecutionError::new(ErrorCode::Busy, "quiescing"));
         }
         if input.envelope().plugin.is_some() && (!self.plugin_epoch.is_active() || parent.is_some())
@@ -268,12 +444,51 @@ impl ExecutionRuntime {
                 "execution-queue",
             ));
         }
-        Ok(self.policies[&input_key(input)?])
+        self.policies
+            .get(&input_key(input)?)
+            .copied()
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "capability"))
     }
     pub fn is_active(&self, attempt: ExecutionId) -> bool {
         self.workers
             .iter()
             .any(|worker| worker.request.input.envelope().attempt_id == attempt)
+    }
+    /// Read the original ledger's explicit presence result without granting or
+    /// restoring execution authority. Storage errors remain errors.
+    pub fn input_if_present(
+        &self,
+        store: &ProjectStore,
+        attempt: ExecutionId,
+    ) -> Result<Option<FixedInput>, ExecutionError> {
+        store.execution_input_if_present(attempt)
+    }
+
+    /// An ended channel or an idle scheduler does not settle an attempt. Retired
+    /// producers and unresolved outcomes retain their original association.
+    pub fn has_unsettled_attempt(
+        &self,
+        store: &ProjectStore,
+        attempt: ExecutionId,
+    ) -> Result<bool, ExecutionError> {
+        if self.is_active(attempt) || self.retired.iter().any(|worker| worker.attempt == attempt) {
+            return Ok(true);
+        }
+        if self.input_if_present(store, attempt)?.is_none() {
+            return Ok(false);
+        }
+        // Preserve the ledger's actual Dispatched state. A nonexecuting view
+        // projects it to Unknown for recovery presentation instead.
+        Ok(store
+            .execution_attempt(attempt, true)?
+            .items
+            .iter()
+            .any(|item| {
+                matches!(
+                    item.execution,
+                    ExecutionState::Queued | ExecutionState::Dispatched | ExecutionState::Unknown
+                )
+            }))
     }
     /// Exact replay returns durable evidence before consulting live controls.
     /// It does not schedule historical queued work after a process reopens.
@@ -336,14 +551,15 @@ impl ExecutionRuntime {
     ) -> Result<bool, ExecutionError> {
         if !self.accepting
             || self.generation != query.generation
-            || query.queries.stopped()
-            || self.input_package_stopped(&query.request.input)
+            || query.queries.stopped(query.package_queries.as_deref())
+            || self.stored_input_package_stopped(store, &query.request.input)?
         {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
                 "session-generation",
             ));
         }
+        query.request.check_service_dispatch()?;
         match outcome {
             QueryOutcome::Known(result) => {
                 let envelope = result.envelope();
@@ -405,6 +621,20 @@ impl ExecutionRuntime {
                 .and_then(|_| store.check_plugin_input(&worker.request.input))
             {
                 if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
+                    if worker.cancellation_started.is_none()
+                        && worker
+                            .request
+                            .plugin_permit
+                            .as_ref()
+                            .is_some_and(PluginPermit::is_work_plan_tool)
+                    {
+                        // Retire only this broker child. Root/model control and
+                        // unrelated human plugin grants keep their own lifecycle.
+                        store.cancel_execution(
+                            worker.request.input.envelope().task_id,
+                            ExecutionId::new(),
+                        )?;
+                    }
                     worker.cancellation.request();
                     worker.cancellation_started.get_or_insert(now);
                 } else {
@@ -510,6 +740,7 @@ impl ExecutionRuntime {
                 store.note_execution_unknown(attempt, item, reason)?;
                 let worker = self.workers.remove(index);
                 let _ = worker.thread.join();
+                self.retire_completed_tool(store, &worker.request)?;
                 continue;
             }
             index += 1;
@@ -533,7 +764,7 @@ impl ExecutionRuntime {
                 continue;
             }
             let input = store.execution_input_cached(attempt)?;
-            if self.input_package_stopped(&input) {
+            if self.stored_input_package_stopped(store, &input)? {
                 continue;
             }
             if input.envelope().plugin.is_some() && !self.plugin_epoch.is_active() {
@@ -659,8 +890,9 @@ impl ExecutionRuntime {
                 "query-eligibility",
             ));
         }
-        let request = store.execution_dispatch(attempt, item)?;
-        if self.input_package_stopped(&request.input) {
+        let mut request = store.execution_dispatch(attempt, item)?;
+        request.service_origin = store.work_plan_service_query_origin(&request.input)?;
+        if self.stored_input_package_stopped(store, &request.input)? {
             return Err(ExecutionError::new(
                 ErrorCode::Unauthorized,
                 "package-quiescing",
@@ -675,10 +907,13 @@ impl ExecutionRuntime {
         let Some(runner) = self.runners.get(&input_key(&request.input)?) else {
             return Ok(None);
         };
+        let package = Self::stored_input_package(store, &request.input)?;
+        let package_queries = runner.queries.capture_package(package.as_ref())?;
         Ok(Some(OutcomeQuery {
             request,
             runner: runner.runner.clone(),
             queries: runner.queries.clone(),
+            package_queries,
             generation: self.generation,
         }))
     }
@@ -777,6 +1012,7 @@ pub struct OutcomeQuery {
     pub generation: ExecutionId,
     runner: Arc<dyn Runner>,
     queries: Arc<QueryGate>,
+    package_queries: Option<Arc<PackageQueries>>,
 }
 
 #[cfg(test)]

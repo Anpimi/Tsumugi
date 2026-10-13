@@ -1,6 +1,7 @@
 //! Session-local revocation handles for grants owned by the project ledger.
 //! A handle cannot create, renew, or restore a durable authorization.
-use super::{ErrorCode, ExecutionError, ExecutionId, FixedInput};
+pub(crate) use super::runtime::PackageKey;
+use super::{Cancellation, ErrorCode, ExecutionError, ExecutionId, FixedInput};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -71,6 +72,7 @@ struct GrantState {
     generation: ExecutionId,
     expires_at_ms: u64,
     deadline: Instant,
+    delegation: Option<crate::application::WorkPlanToolDelegation>,
     revoked: AtomicBool,
 }
 impl GrantState {
@@ -91,7 +93,10 @@ impl GrantState {
     fn matches(&self, input: &FixedInput) -> bool {
         let envelope = input.envelope();
         envelope.plugin.is_some()
-            && envelope.automation.is_none()
+            && match &self.delegation {
+                None => envelope.automation.is_none(),
+                Some(delegation) => envelope.automation == Some(delegation.lease),
+            }
             && self.attempt_id == envelope.attempt_id
             && self.task_id == envelope.task_id
             && self.input_digest == input.digest()
@@ -105,6 +110,18 @@ pub struct PluginPermit {
     grant: Arc<GrantState>,
 }
 impl PluginPermit {
+    pub(crate) fn original_package(&self) -> &super::runtime::PackageKey {
+        &self.grant.package
+    }
+    pub(crate) fn original_deadline(&self) -> Instant {
+        self.grant.deadline
+    }
+    pub(crate) fn expires_at_ms(&self) -> u64 {
+        self.grant.expires_at_ms
+    }
+    pub(crate) fn generation(&self) -> ExecutionId {
+        self.grant.generation
+    }
     pub fn is_authorized(&self) -> bool {
         self.epoch.upgrade().is_some_and(|epoch| {
             epoch.generation == self.grant.generation
@@ -116,6 +133,23 @@ impl PluginPermit {
 
     pub fn matches(&self, input: &FixedInput) -> bool {
         self.grant.matches(input)
+    }
+
+    /// Only Core can issue this delegated mode; an envelope lease is not proof.
+    pub fn is_work_plan_tool(&self) -> bool {
+        self.grant.delegation.is_some()
+    }
+    pub fn originating_caller_id(&self) -> Option<ExecutionId> {
+        self.grant.delegation.as_ref().map(|d| d.caller_id)
+    }
+    pub fn originating_caller(&self) -> Option<&str> {
+        self.grant.delegation.as_ref().map(|d| d.caller.as_str())
+    }
+    pub fn parent_task(&self) -> Option<ExecutionId> {
+        self.grant.delegation.as_ref().map(|d| d.root_task)
+    }
+    pub(crate) fn delegation(&self) -> Option<&crate::application::WorkPlanToolDelegation> {
+        self.grant.delegation.as_ref()
     }
 
     pub fn grant_id(&self) -> ExecutionId {
@@ -142,6 +176,30 @@ pub(crate) struct PluginEpoch {
     generation: ExecutionId,
     revoked: AtomicBool,
     grants: Mutex<BTreeMap<ExecutionId, Arc<GrantState>>>,
+    service_origins: Mutex<BTreeMap<ExecutionId, Arc<ServiceOriginGuard>>>,
+}
+
+/// The original grant and absolute dispatch deadline outlive the process channel.
+/// Reopening a store cannot recreate this handle from a durable receipt.
+#[derive(Debug)]
+pub(crate) struct ServiceOriginGuard {
+    pub(crate) permit: PluginPermit,
+    pub(crate) cancellation: Cancellation,
+    pub(crate) settings_revocation: Cancellation,
+    pub(crate) revoked: Cancellation,
+    pub(crate) deadline: Instant,
+    pub(crate) digest: String,
+}
+impl ServiceOriginGuard {
+    pub(crate) fn live(&self) -> bool {
+        if Instant::now() >= self.deadline {
+            self.revoked.request();
+        }
+        !self.cancellation.is_requested()
+            && !self.settings_revocation.is_requested()
+            && !self.revoked.is_requested()
+            && self.permit.is_authorized()
+    }
 }
 impl PluginEpoch {
     pub(crate) fn revoke_package(
@@ -215,6 +273,7 @@ impl PluginAuthority {
             generation,
             revoked: AtomicBool::new(false),
             grants: Mutex::new(BTreeMap::new()),
+            service_origins: Mutex::new(BTreeMap::new()),
         });
         *current = Some(epoch.clone());
         Ok(epoch)
@@ -248,6 +307,7 @@ impl PluginAuthority {
             generation,
             revoked: AtomicBool::new(false),
             grants: Mutex::new(BTreeMap::new()),
+            service_origins: Mutex::new(BTreeMap::new()),
         });
         *current = Some(epoch.clone());
         Ok(epoch)
@@ -295,6 +355,18 @@ impl PluginAuthority {
         expires_at_ms: u64,
         deadline: Instant,
     ) -> Result<PluginPermit, ExecutionError> {
+        self.activate_with_delegation(generation, grant_id, input, expires_at_ms, deadline, None)
+    }
+
+    pub(crate) fn activate_with_delegation(
+        &self,
+        generation: ExecutionId,
+        grant_id: ExecutionId,
+        input: &FixedInput,
+        expires_at_ms: u64,
+        deadline: Instant,
+        delegation: Option<crate::application::WorkPlanToolDelegation>,
+    ) -> Result<PluginPermit, ExecutionError> {
         let epoch = self.require_generation(generation)?;
         plugin_grant_deadline(expires_at_ms).map_err(|error| {
             if error.stage == "plugin-grant-expiry" {
@@ -338,6 +410,7 @@ impl PluginAuthority {
             generation,
             expires_at_ms,
             deadline,
+            delegation,
             revoked: AtomicBool::new(false),
         });
         let permit = PluginPermit {
@@ -367,6 +440,92 @@ impl PluginAuthority {
             return Err(denied());
         }
         Ok(permit)
+    }
+
+    pub(crate) fn register_service_origin(
+        &self,
+        child: ExecutionId,
+        guard: Arc<ServiceOriginGuard>,
+    ) -> Result<(), ExecutionError> {
+        let epoch = self.require_generation(guard.permit.generation())?;
+        if !guard.live() {
+            return Err(denied());
+        }
+        let mut origins = epoch.service_origins.lock().map_err(|_| denied())?;
+        if let Some(existing) = origins.get(&child) {
+            return if Arc::ptr_eq(existing, &guard) {
+                Ok(())
+            } else {
+                Err(denied())
+            };
+        }
+        origins.retain(|_, origin| origin.live());
+        if origins.len() >= MAX_LIVE_GRANTS {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "service-origins",
+            ));
+        }
+        origins.insert(child, guard);
+        Ok(())
+    }
+
+    pub(crate) fn check_service_origin(
+        &self,
+        child: ExecutionId,
+        digest: &str,
+    ) -> Result<(), ExecutionError> {
+        let epoch = self.current_epoch()?;
+        let guard = epoch
+            .service_origins
+            .lock()
+            .map_err(|_| denied())?
+            .get(&child)
+            .cloned()
+            .ok_or_else(denied)?;
+        if guard.digest != digest || !guard.live() {
+            return Err(denied());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn service_origin(
+        &self,
+        child: ExecutionId,
+    ) -> Result<Option<Arc<ServiceOriginGuard>>, ExecutionError> {
+        let origin = self.retained_service_origin(child)?;
+        if origin.as_ref().is_some_and(|origin| !origin.live()) {
+            return Err(denied());
+        }
+        Ok(origin)
+    }
+
+    /// Attribution survives revocation; this does not check or grant dispatch.
+    pub(crate) fn retained_service_origin(
+        &self,
+        child: ExecutionId,
+    ) -> Result<Option<Arc<ServiceOriginGuard>>, ExecutionError> {
+        let current = self.current_lock()?;
+        let Some(epoch) = current.as_ref() else {
+            return Ok(None);
+        };
+        let origin = epoch
+            .service_origins
+            .lock()
+            .map_err(|_| denied())?
+            .get(&child)
+            .cloned();
+        Ok(origin)
+    }
+
+    pub(crate) fn release_service_origin(&self, child: ExecutionId) -> Result<(), ExecutionError> {
+        let epoch = self.current_epoch()?;
+        epoch
+            .service_origins
+            .lock()
+            .map_err(|_| denied())?
+            .remove(&child);
+        Ok(())
     }
 
     pub(crate) fn revoke_grant(

@@ -1,10 +1,11 @@
 //! Real independently installed format and advisory workers through production IPC.
 use super::*;
+use crate::commands::execution::test_fixtures::{
+    OwnedDirectory, approved_runtime, provision_packages, selected_package,
+};
 use serde_json::{Value, json};
 use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{
@@ -14,41 +15,11 @@ use tauri::{
 };
 use tsumugi_core::content::{SourceBundle, SourceReviewBinding, SourceSettings};
 use tsumugi_plugin_host::{
-    ApprovedPackageSetting, HostLimits, PackageImage, PackageStore, PluginSettingsUpdate,
-    RuntimeApproval,
-    catalog::{PackageApproval, PackageCatalog, PackageOrigin},
-    core::RunnerProxy,
+    HostLimits, RuntimeApproval, catalog::PackageApproval, core::RunnerProxy,
 };
 use tsumugi_plugin_sdk as sdk;
 
-mod runtime_fixture {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../crates/plugin-host/tests/support/runtime.rs"
-    ));
-}
-
 type Window = tauri::WebviewWindow<tauri::test::MockRuntime>;
-
-struct OwnedDirectory(tempfile::TempDir);
-impl Drop for OwnedDirectory {
-    fn drop(&mut self) {
-        fn removable(path: &Path) {
-            let Ok(metadata) = fs::symlink_metadata(path) else {
-                return;
-            };
-            if metadata.is_dir() && !metadata.file_type().is_symlink() {
-                fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-                for child in fs::read_dir(path).unwrap() {
-                    removable(&child.unwrap().path());
-                }
-            }
-        }
-        // Only this test's sealed Store directories are made removable. Never
-        // follow a link into the independently selected package/runtime inputs.
-        removable(self.0.path());
-    }
-}
 
 fn call(window: &Window, command: &str, request: Option<Value>) -> Result<Value, Value> {
     tauri::test::get_ipc_response(
@@ -115,30 +86,6 @@ fn completed_result(window: &Window, context: &Value, attempt: Value) -> Value {
     }
 }
 
-fn selected_package(
-    path_variable: &str,
-    digest_variable: &str,
-    expected_id: &str,
-) -> (PackageImage, PackageApproval) {
-    let path = PathBuf::from(
-        std::env::var_os(path_variable).expect("explicit independently built package required"),
-    );
-    let digest =
-        std::env::var(digest_variable).expect("independently approved package digest required");
-    let image = PackageImage::capture_directory(&path, &digest, || true).unwrap();
-    let plugin = image.manifest().manifest().plugin.clone();
-    assert_eq!(plugin.id, expected_id);
-    let approval = PackageApproval {
-        plugin,
-        package_digest: digest,
-        origin: PackageOrigin {
-            source_id: "explicit-joint-review-test".into(),
-            publisher_id: "reviewed-public-source".into(),
-        },
-    };
-    (image, approval)
-}
-
 fn assert_no_worker_stages(application: &Path) {
     assert!(
         !application.read_dir().unwrap().any(|entry| entry
@@ -175,55 +122,21 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
         .unwrap()
         .rule
         .clone();
-    let runtime = runtime_fixture::approved_runtime();
+    let runtime = approved_runtime();
     let runtime_approval = RuntimeApproval {
         environment: runtime.descriptor().clone().into(),
         origin: crate::runtime_bundle::bundled_origin(),
     };
     let environment_digest = runtime_approval.environment.digest().unwrap();
-    let mut catalog = PackageCatalog::new();
-    catalog.register(format, format_approval.clone()).unwrap();
-    catalog
-        .register(knowledge, knowledge_approval.clone())
-        .unwrap();
-    let mut installation =
-        PackageStore::provision(root, &["application", "plugins"], || true).unwrap();
-    for approval in [&format_approval, &knowledge_approval] {
-        installation
-            .install(
-                &ExecutionId::new().to_string(),
-                catalog.registered(&approval.plugin).unwrap(),
-                || true,
-            )
-            .unwrap();
-    }
-    installation
-        .install_runtime(
-            &ExecutionId::new().to_string(),
-            &runtime,
-            &runtime_approval,
-            || true,
-        )
-        .unwrap();
-    installation
-        .update_settings(
-            0,
-            &ExecutionId::new().to_string(),
-            &PluginSettingsUpdate {
-                packages: vec![format_approval.clone(), knowledge_approval.clone()]
-                    .into_iter()
-                    .map(|approval| ApprovedPackageSetting {
-                        approval,
-                        enabled: true,
-                    })
-                    .collect(),
-                runtimes: vec![runtime_approval.clone()],
-            },
-            || true,
-        )
-        .unwrap();
-    drop(installation);
-    drop(catalog);
+    provision_packages(
+        root,
+        &[
+            (format, format_approval.clone()),
+            (knowledge, knowledge_approval.clone()),
+        ],
+        &runtime,
+        &runtime_approval,
+    );
     drop(runtime);
 
     let app = crate::commands::register_commands(tauri::test::mock_builder())

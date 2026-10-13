@@ -269,7 +269,7 @@ fn assert_unsupported_snapshot_unchanged(path: &std::path::Path, version: i64) {
 }
 
 #[test]
-fn direct_ai_current_reopen_preserves_manual_history() {
+fn direct_ai_current_manual_history_reopens_and_schema_nine_is_refused() {
     let (temp, mut store, rows) = source_project();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let saved = store
@@ -296,6 +296,10 @@ fn direct_ai_current_reopen_preserves_manual_history() {
     reopened.close().unwrap();
     let path = temp.path().join("project");
     let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+    connection
+        .execute_batch("DROP TABLE execution_continuations;")
+        .unwrap();
+    crate::persistence::prepare_unsupported_translation_fixture(&connection).unwrap();
     connection.pragma_update(None, "user_version", 9).unwrap();
     drop(connection);
     assert_unsupported_snapshot_unchanged(&path, 9);

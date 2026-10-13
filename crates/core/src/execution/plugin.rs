@@ -111,8 +111,11 @@ impl FixedInput {
                 | crate::content::TRANSLATION_EXTRACTION_OPERATION
                 | TRANSLATION_CHECK_OPERATION
                 | REVIEW_CHECK_OPERATION
-        );
-        // Content/check/build output is strict JSON with bounded integer/string fields.
+        ) || (declaration.input_schema
+            == sdk::generation_service_input_contract()
+            && declaration.output_schema == sdk::generation_service_receipt_contract()
+            && declaration.error_schema == sdk::generation_service_error_contract());
+        // These contracts return strict JSON with bounded integer/string fields.
         // Quoting its original JSON costs at most twice the raw bytes; the
         // checked canonical projection is no larger. Reserve metadata separately.
         // Other contracts keep their conservative opaque-payload budget.
@@ -189,6 +192,24 @@ impl PluginResultEvidence {
         };
         let bytes = codec::encode(&document, sdk::MAX_PROCESS_FRAME_BYTES)?;
         sdk::receive_invocation_result(&bytes, &request, &self.channel).map_err(contract_error)?;
+        let payload = match &self.result.outcome {
+            sdk::InvocationOutcome::Succeeded { output } => output,
+            sdk::InvocationOutcome::Failed { error }
+            | sdk::InvocationOutcome::Unknown { error } => error,
+        };
+        let binding = input
+            .envelope()
+            .plugin
+            .as_ref()
+            .ok_or_else(|| ExecutionError::new(ErrorCode::InvalidInput, "plugin-binding"))?;
+        // Frame metadata and JSON quoting have their own allowance. The exact
+        // captured raw payload limit still applies to success and both errors.
+        if payload.utf8.len() > binding.capability.declaration.limits.max_output_bytes as usize {
+            return Err(ExecutionError::new(
+                ErrorCode::LimitExceeded,
+                "plugin-output-budget",
+            ));
+        }
         match &self.result.outcome {
             sdk::InvocationOutcome::Succeeded { output } => {
                 let projected = ledger_output(input, output)?;

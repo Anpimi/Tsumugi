@@ -30,6 +30,8 @@ mod translation;
 pub use ai::{AiAdoptionHandler, ArenaAdoptionHandler};
 pub use application::{
     CapturedAutomaticSelection, ComputedAutomaticSelection, PreparedAutomaticSelection,
+    PreparedWorkPlanServiceGeneration, WorkPlanServiceCall, WorkPlanServiceCallIdentity,
+    WorkPlanServiceOrigin, WorkPlanServiceReceipt,
 };
 pub use arena::{
     ComparisonEntry, ComparisonRequest, ComparisonSummary, ComparisonView, MergeBasis,
@@ -73,7 +75,86 @@ pub use translation::{
 const DATABASE_FILENAME: &str = "project.sqlite3";
 const LOCK_FILENAME: &str = ".tsumugi.lock";
 const APPLICATION_ID: i64 = 0x5453_4D47;
-pub(crate) const SCHEMA_VERSION: i64 = 32;
+pub(crate) const SCHEMA_VERSION: i64 = 33;
+#[cfg(test)]
+pub(crate) enum UnsupportedFixtureDomain {
+    Arena,
+    Provider,
+    Release,
+    Review,
+    Resources,
+}
+
+/// Remove an absent domain from an owned rejection fixture. These deliberately
+/// reduced snapshots exercise refusal before DDL, not historical compatibility.
+#[cfg(test)]
+pub(crate) fn remove_unsupported_fixture_domain(
+    connection: &Connection,
+    domain: UnsupportedFixtureDomain,
+) -> rusqlite::Result<()> {
+    let tables: Vec<String> = match domain {
+        UnsupportedFixtureDomain::Arena => arena::table_names().collect(),
+        UnsupportedFixtureDomain::Provider => ledger::provider::table_names().collect(),
+        UnsupportedFixtureDomain::Release => release::table_names().collect(),
+        UnsupportedFixtureDomain::Review => review::table_names().collect(),
+        UnsupportedFixtureDomain::Resources => resources::table_names().collect(),
+    };
+    for table in tables.into_iter().rev() {
+        connection.execute_batch(&format!("DROP TABLE {table}"))?;
+    }
+    Ok(())
+}
+
+/// A real pre-AI origin constraint for an isolated unsupported snapshot. Only
+/// fixture construction can call this; project opening has no upgrade path.
+#[cfg(test)]
+pub(crate) fn prepare_unsupported_translation_fixture(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    const HISTORICAL_REVISIONS: &str = "CREATE TABLE translation_revisions (
+            revision_id TEXT PRIMARY KEY NOT NULL,
+            project_id TEXT NOT NULL,
+            unit_id TEXT NOT NULL REFERENCES source_units(unit_id),
+            locale TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal > 0),
+            text TEXT NOT NULL CHECK(length(CAST(text AS BLOB)) <= 16384),
+            source_snapshot_id TEXT NOT NULL REFERENCES source_snapshots(snapshot_id),
+            source_revision_id TEXT NOT NULL,
+            origin_kind TEXT NOT NULL CHECK(origin_kind IN ('import','manual')),
+            action_id TEXT NOT NULL UNIQUE,
+            request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
+            attempt_id TEXT REFERENCES execution_attempts(attempt_id),
+            result_id TEXT REFERENCES execution_results(result_id),
+            item_id TEXT,
+            artifact_id TEXT,
+            logical_path TEXT,
+            declared_locale TEXT,
+            native_key TEXT,
+            file_digest TEXT,
+            UNIQUE(unit_id,locale,ordinal),
+            UNIQUE(unit_id,locale,revision_id),
+            FOREIGN KEY(unit_id,source_revision_id) REFERENCES source_revisions(unit_id,revision_id),
+            CHECK((origin_kind='manual' AND attempt_id IS NULL AND result_id IS NULL AND item_id IS NULL AND artifact_id IS NULL AND logical_path IS NULL AND declared_locale IS NULL AND native_key IS NULL AND file_digest IS NULL)
+               OR (origin_kind='import' AND attempt_id IS NOT NULL AND result_id IS NOT NULL AND item_id IS NOT NULL AND artifact_id IS NOT NULL AND logical_path IS NOT NULL AND declared_locale IS NOT NULL AND native_key IS NOT NULL AND file_digest IS NOT NULL)))";
+    const COLUMNS: &str = "revision_id,project_id,unit_id,locale,ordinal,text,source_snapshot_id,source_revision_id,origin_kind,action_id,request_digest,attempt_id,result_id,item_id,artifact_id,logical_path,declared_locale,native_key,file_digest";
+    remove_unsupported_fixture_domain(connection, UnsupportedFixtureDomain::Arena)?;
+    remove_unsupported_fixture_domain(connection, UnsupportedFixtureDomain::Provider)?;
+    let foreign_keys: bool =
+        connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    connection.pragma_update(None, "foreign_keys", false)?;
+    let outcome = (|| {
+        let transaction = rusqlite::Transaction::new_unchecked(
+            connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        transaction.execute_batch(&format!("CREATE TEMP TABLE unsupported_translation_fixture AS SELECT {COLUMNS} FROM translation_revisions; DROP TABLE translation_revisions;"))?;
+        transaction.execute_batch(HISTORICAL_REVISIONS)?;
+        transaction.execute_batch(&format!("INSERT INTO translation_revisions ({COLUMNS}) SELECT {COLUMNS} FROM unsupported_translation_fixture; DROP TABLE unsupported_translation_fixture;"))?;
+        transaction.commit()
+    })();
+    connection.pragma_update(None, "foreign_keys", foreign_keys)?;
+    outcome
+}
 const BUSY_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 const CREATE_METADATA_TABLE: &str = "\

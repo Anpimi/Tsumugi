@@ -369,7 +369,7 @@ fn current_unsupported_profile_is_distinct_and_never_converted() {
 }
 
 #[test]
-fn current_format_reopens_and_every_unsupported_snapshot_preserves_bytes() {
+fn current_layout_reopens_and_every_unsupported_snapshot_preserves_bytes() {
     for version in (0..SCHEMA_VERSION).chain([SCHEMA_VERSION + 1]) {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("project");
@@ -402,4 +402,81 @@ fn current_format_reopens_and_every_unsupported_snapshot_preserves_bytes() {
             .collect();
         assert_eq!(after, entries);
     }
+}
+
+#[test]
+fn current_layout_keeps_application_service_and_continuation_owners_on_reopen() {
+    fn assert_layout(store: &ProjectStore) {
+        assert_current(store);
+        let connection = store.connection().unwrap();
+        for (table, expected) in [
+            (
+                "application_executions",
+                &[
+                    "attempt_id",
+                    "plan_id",
+                    "generation",
+                    "kind",
+                    "delegation",
+                    "root_task",
+                ][..],
+            ),
+            (
+                "application_service_calls",
+                &[
+                    "child_attempt",
+                    "outer_attempt",
+                    "outer_item",
+                    "outer_dispatch",
+                    "grant_id",
+                    "handle_id",
+                    "call_id",
+                    "origin",
+                    "origin_digest",
+                    "call",
+                    "call_digest",
+                ][..],
+            ),
+            (
+                "execution_continuations",
+                &[
+                    "action_id",
+                    "source_attempt_id",
+                    "unit_id",
+                    "attempt_id",
+                    "receipt",
+                    "digest",
+                ][..],
+            ),
+        ] {
+            let columns = connection
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(
+                columns,
+                expected
+                    .iter()
+                    .map(|column| (*column).to_owned())
+                    .collect::<Vec<_>>(),
+                "{table}"
+            );
+        }
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let store = ProjectStore::create(
+        &path,
+        ProjectMetadata::create("Current owners", "en-US", ["zh-CN"]).unwrap(),
+    )
+    .unwrap();
+    assert_layout(&store);
+    store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    assert_layout(&reopened);
+    reopened.close().unwrap();
 }

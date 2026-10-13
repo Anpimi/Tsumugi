@@ -142,6 +142,14 @@ fn generic_read_refuses_wrong_kind_identity_behavior_and_executable_content() {
 #[path = "support/official.rs"]
 mod official;
 
+#[cfg(all(unix, feature = "javascript-conformance", feature = "core-adapter"))]
+#[path = "../../core/tests/support/mod.rs"]
+#[allow(dead_code)]
+mod captured_content;
+#[cfg(all(unix, feature = "javascript-conformance", feature = "core-adapter"))]
+#[path = "support/runtime.rs"]
+mod tool_runtime;
+
 #[cfg(all(unix, feature = "javascript-conformance"))]
 #[path = "support/runtime.rs"]
 mod runtime_fixture;
@@ -183,6 +191,228 @@ impl Drop for OwnedTemporary {
         }
         writable(self.path());
     }
+}
+
+#[cfg(all(unix, feature = "javascript-conformance", feature = "core-adapter"))]
+#[test]
+fn actual_knowledge_worker_obeys_original_work_plan_grant_and_control() {
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
+    use tsumugi_core::{ai::AiConfig, application::*, execution::*};
+    use tsumugi_plugin_host::{HostLimits, core::RunnerProxy};
+    let temporary = OwnedTemporary::new();
+    let image = official::installed(temporary.path(), "philosophy");
+    let binding = image.capability_tool("agent-query-tool").unwrap();
+    let captured_runtime = tool_runtime::approved_runtime();
+    let environment = captured_runtime.descriptor().clone();
+    let proxy = Arc::new(
+        RunnerProxy::new(
+            image,
+            "query",
+            captured_runtime,
+            temporary.path(),
+            HostLimits::default(),
+        )
+        .unwrap(),
+    );
+    let (_content, mut store, rows) = captured_content::source_fixture();
+    let units = rows
+        .iter()
+        .map(|row| row.unit_id.unwrap())
+        .collect::<Vec<_>>();
+    let selected = binding
+        .declaration
+        .query
+        .as_ref()
+        .unwrap()
+        .selections
+        .options[0]
+        .value
+        .clone();
+    let spec = WorkPlanToolSpec {
+        handle: ExecutionId::new(),
+        binding,
+        environment: environment.into(),
+        resource_id: "agent-query-tool".into(),
+        settings_revision: 1u64.into(),
+        package_origin: serde_json::json!({"sourceId":"explicit-test","publisherId":"reviewed-public-source"}),
+        runtime_origin: serde_json::json!({"sourceId":"explicit-test","publisherId":"reviewed-public-source"}),
+        target: "zh-CN".into(),
+        selections: vec![selected],
+    };
+    let plan = store
+        .prepare_work_plan_with_tools(
+            Some(AiConfig {
+                endpoint: "http://127.0.0.1:9/v1/chat/completions".into(),
+                model: "synthetic".into(),
+                ..AiConfig::default()
+            }),
+            "zh-CN",
+            &units,
+            PlanOptions::default(),
+            Some(WorkPlanTools {
+                max_invocations: 2,
+                entries: vec![spec.clone()],
+            }),
+        )
+        .unwrap();
+    let now_ms = || {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    };
+    let receipt = store
+        .authorize_work_plan(
+            &plan,
+            &AuthorizeWorkPlan {
+                action_id: ExecutionId::new(),
+                plan_digest: plan.digest.clone(),
+                confirmed: true,
+                effects: plan.authorization_effects().unwrap(),
+                expires_at: now_ms() / 1000 + 600,
+            },
+        )
+        .unwrap();
+    let mut runtime = ExecutionRuntime::new(&store).unwrap();
+    runtime.register(proxy.clone()).unwrap();
+    let consent = runtime
+        .authorize_work_plan_tools(
+            &store,
+            receipt.lease,
+            now_ms() + 60_000,
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+            PluginConsent {
+                unsandboxed_execution: true,
+            },
+        )
+        .unwrap();
+    store
+        .enqueue_execution(&FixedInput::capture(receipt.input.unwrap()).unwrap())
+        .unwrap();
+    let scope = store.work_plan_agent_scope(receipt.lease).unwrap();
+    let request = AgentToolRequest {
+        task_id: ExecutionId::new(),
+        attempt_id: ExecutionId::new(),
+        tool_handle: spec.handle,
+        unit_ids: vec![units[0]],
+    };
+    let prepared = store
+        .prepare_work_plan_agent_tool(&scope, &request)
+        .unwrap();
+    assert_eq!(
+        prepared.input().envelope().items[0].payload["queries"][0]["text"],
+        "same"
+    );
+    assert!(runtime.submit(&mut store, prepared.input()).is_err());
+    let grant_id = ExecutionId::new();
+    runtime
+        .submit_work_plan_tool(&mut store, &prepared, &consent, grant_id)
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let result_id = loop {
+        runtime.tick(&mut store).unwrap();
+        if !runtime.is_active(request.attempt_id) {
+            if let Some(result) = store
+                .execution_current_result(
+                    request.attempt_id,
+                    prepared.input().envelope().items[0].item_id,
+                )
+                .unwrap()
+            {
+                break result;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "delegated knowledge worker completion deadline"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    let result = store
+        .execution_result(request.attempt_id, result_id)
+        .unwrap();
+    assert_eq!(result.envelope().outcome, ExecutionState::Succeeded);
+    let evidence = result.envelope().plugin.as_ref().unwrap();
+    assert_eq!(evidence.authorization_id, grant_id);
+    assert!(!evidence.channel.instance_id.is_empty());
+    assert!(evidence.channel.activation_generation > 0);
+    assert_eq!(
+        evidence.channel.selection(),
+        spec.binding.capability.provider
+    );
+    assert_eq!(
+        store
+            .execution_attempt(request.attempt_id, false)
+            .unwrap()
+            .items[0]
+            .adoption,
+        AdoptionState::Unapplied
+    );
+    assert!(store.provider_budget(request.task_id).unwrap().is_none());
+    let queued_request = AgentToolRequest {
+        task_id: ExecutionId::new(),
+        attempt_id: ExecutionId::new(),
+        unit_ids: vec![units[1]],
+        ..request
+    };
+    let queued = store
+        .prepare_work_plan_agent_tool(&scope, &queued_request)
+        .unwrap();
+    runtime
+        .submit_work_plan_tool(&mut store, &queued, &consent, ExecutionId::new())
+        .unwrap();
+    let dispatch = store
+        .dispatch_execution_item(
+            queued_request.attempt_id,
+            queued.input().envelope().items[0].item_id,
+        )
+        .unwrap();
+    assert_eq!(
+        dispatch.plugin_permit().unwrap().originating_caller_id(),
+        Some(scope.caller_id())
+    );
+    store
+        .control_work_plan(&ControlWorkPlan {
+            action_id: ExecutionId::new(),
+            plan_id: plan.plan_id,
+            expected_generation: receipt.lease.generation,
+            command: WorkPlanCommand::Pause,
+            confirmed: false,
+            expires_at: None,
+        })
+        .unwrap();
+    let (sender, _) = result_channel();
+    assert_eq!(
+        proxy
+            .run(dispatch, Cancellation::default(), sender)
+            .unwrap_err()
+            .code,
+        ErrorCode::Unauthorized
+    );
+    assert_eq!(store.work_plan_tool_invocations(plan.plan_id).unwrap(), 2);
+    assert_eq!(
+        store
+            .execution_result(request.attempt_id, result_id)
+            .unwrap()
+            .bytes(),
+        result.bytes()
+    );
+    let path = store.directory().to_owned();
+    drop(runtime);
+    drop(store);
+    let reopened = tsumugi_core::ProjectStore::open(path).unwrap();
+    assert_eq!(
+        reopened.work_plan_tool_invocations(plan.plan_id).unwrap(),
+        2
+    );
+    assert_eq!(
+        reopened.work_plan_status(plan.plan_id).unwrap().state,
+        WorkPlanState::Paused
+    );
+    assert!(reopened.work_plan_agent_scope(receipt.lease).is_err());
 }
 
 #[cfg(all(unix, feature = "javascript-conformance"))]

@@ -2,6 +2,7 @@ use super::ai_wire::{AiItemView, AiOutputView, AiPreviewView};
 use super::*;
 use tsumugi_core::ai::{AiConfig, AiPreview};
 mod automation;
+pub(super) use automation::PreparedTracking;
 #[cfg(test)]
 pub(super) use automation::commit_candidate;
 pub use automation::{EffectPhase, EffectView};
@@ -35,8 +36,25 @@ impl AiSession {
     ) -> Result<(), ExecutionError> {
         self.automation.track(store, input, consent)
     }
+    pub(super) fn prepare_service_tracking(
+        &mut self,
+        store: &ProjectStore,
+        prepared: &tsumugi_core::application::PreparedWorkPlanServiceGeneration,
+        consent: Option<work_plans::CheckerConsent>,
+    ) -> Result<PreparedTracking<'_>, ExecutionError> {
+        self.automation
+            .prepare_service_tracking(store, prepared, consent)
+    }
     pub(super) fn tick(&mut self, store: &mut ProjectStore, runtime: &mut ExecutionRuntime) {
         self.automation.tick(store, runtime);
+    }
+    pub(super) fn release_terminal_service_origins(
+        &mut self,
+        store: &ProjectStore,
+        runtime: &mut ExecutionRuntime,
+    ) -> Result<(), ExecutionError> {
+        self.automation
+            .release_terminal_service_origins(store, runtime)
     }
     pub(super) fn prepare_runtime_tick(
         &mut self,

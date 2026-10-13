@@ -167,8 +167,14 @@ impl RunnerProxy {
         };
         require_live(request, permit, cancellation)?;
         let mut selection = factory.capture(request.clone(), permit.clone(), cancellation.clone());
-        let deadline = tokio::time::Instant::now()
+        let handshake_deadline = tokio::time::Instant::now()
             + Duration::from_millis(self.limits.handshake_timeout_ms.into());
+        let deadline = request
+            .deadline()
+            .map(tokio::time::Instant::from_std)
+            .map_or(handshake_deadline, |original| {
+                original.min(handshake_deadline)
+            });
         loop {
             require_live(request, permit, cancellation)?;
             tokio::select! {
@@ -211,7 +217,10 @@ impl RunnerProxy {
         if *captured != expected
             || envelope.capability_id != self.capability_id()
             || envelope.capability_version != self.capability_version()
-            || envelope.automation.is_some()
+            || (envelope.automation.is_some()
+                && !request.plugin_permit().is_some_and(|permit| {
+                    permit.is_work_plan_tool() && permit.matches(&request.input)
+                }))
         {
             return Err(ExecutionError::new(
                 ErrorCode::InvalidInput,
@@ -405,7 +414,12 @@ impl Runner for RunnerProxy {
 }
 
 fn is_live(request: &DispatchRequest, permit: &PluginPermit, cancellation: &Cancellation) -> bool {
-    !cancellation.is_requested() && permit.matches(&request.input) && permit.is_authorized()
+    !cancellation.is_requested()
+        && request
+            .deadline()
+            .is_some_and(|deadline| std::time::Instant::now() < deadline)
+        && permit.matches(&request.input)
+        && permit.is_authorized()
 }
 
 fn require_live(
@@ -417,6 +431,15 @@ fn require_live(
         return Err(ExecutionError::new(
             ErrorCode::Cancelled,
             "plugin-cancelled",
+        ));
+    }
+    if !request
+        .deadline()
+        .is_some_and(|deadline| std::time::Instant::now() < deadline)
+    {
+        return Err(ExecutionError::new(
+            ErrorCode::OutcomeUnknown,
+            "plugin-timeout",
         ));
     }
     if !permit.matches(&request.input) || !permit.is_authorized() {

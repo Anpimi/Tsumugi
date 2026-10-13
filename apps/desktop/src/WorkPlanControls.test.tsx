@@ -8,6 +8,7 @@ import { validateResponseWorkPlan, validateResponseWorkPlanReceipt } from "./gen
 import { formatReviewSlotFixture, textReviewSlotFixture, textReviewViewFixture } from "./testSupport/textReviewFixture";
 import { i18n } from "./i18n";
 import { executionCommands } from "./executionCommands";
+import { workPlanToolStatus } from "./testSupport/workPlanToolFixture";
 
 function planFixture(): WorkPlanView {
   const base = wire.responses.plan;
@@ -35,7 +36,7 @@ it("authorizes all captured checker identities only after their separate confirm
   const authorize = vi.spyOn(workPlanCommands, "authorize").mockResolvedValue(receipt);
   vi.spyOn(workPlanCommands, "start").mockResolvedValue(attemptId);
   const status: WorkPlanStatusView = { plan, lease: receipt.lease, state: "active",
-    effects: ["save-candidate", "run-checks", "select-missing"], expiresAt: "9007199254740994" };
+    effects: ["save-candidate", "run-checks", "select-missing"], expiresAt: "9007199254740994", toolInvocations: null };
   const refresh = vi.fn().mockResolvedValue(status);
   const started = vi.fn();
   const context = { sessionToken: "session", projectId: wire.requests.prepare.projectId };
@@ -71,4 +72,64 @@ it("keeps an unavailable selected checker visible and prevents authorization", a
   expect(screen.getByText("example/first-support 0.1.0")).toBeVisible();
   expect(screen.getByRole("button", { name: "Send and generate candidates" })).toBeDisabled();
   expect(authorize).not.toHaveBeenCalled();
+});
+
+it("keeps tool execution consent independent of every captured checker and invalidates it on tool changes", async () => {
+  const tools = workPlanToolStatus.plan.tools;
+  if (!tools) throw new Error("Captured tool fixture required");
+  const plan = { ...planFixture(), tools: structuredClone(tools) };
+  const receipt = wire.responses.receipt;
+  if (!validateResponseWorkPlanReceipt(receipt) || !receipt.attemptId) throw new Error("Invalid receipt fixture");
+  vi.spyOn(executionCommands, "identity").mockResolvedValue(receipt.actionId);
+  const authorize = vi.spyOn(workPlanCommands, "authorize").mockResolvedValue(receipt);
+  vi.spyOn(workPlanCommands, "start").mockResolvedValue(receipt.attemptId);
+  const status: WorkPlanStatusView = { plan, lease: receipt.lease, state: "active",
+    effects: ["save-candidate", "run-checks", "select-missing", "query-tools"], expiresAt: "9007199254740994",
+    toolInvocations: { reserved: 0, limit: tools.maxInvocations } };
+  const refresh = vi.fn().mockResolvedValue(status);
+  const props = { context: { sessionToken: "session", projectId: wire.requests.prepare.projectId },
+    prepared: plan, status: null, busy: false, disabled: false, consent: true, refresh,
+    run: async (work: (current: () => boolean) => Promise<void>) => { await work(() => true); },
+    onPlan: vi.fn(), onStarted: vi.fn(), onBlockedChange: vi.fn(), onOpenTranslation: vi.fn() };
+  const user = userEvent.setup();
+  const rendered = render(<WorkPlanControls {...props} />);
+  for (const consent of screen.getAllByRole("checkbox", { name: i18n.t("ai.plan.checkerConsent") })) await user.click(consent);
+  const generate = screen.getByRole("button", { name: "Send and generate candidates" });
+  expect(generate).toBeDisabled();
+  expect(authorize).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.tools.consent") }));
+  await user.click(generate);
+  await waitFor(() => expect(props.onStarted).toHaveBeenCalled());
+  expect(authorize.mock.calls[0][0].checkerExecutions).toEqual(plan.checkers.map(checker => checker.checker));
+  expect(authorize.mock.calls[0][0].toolExecution).toBe(true);
+  expect(authorize.mock.calls[0][0].effects).toEqual(["save-candidate", "run-checks", "select-missing", "query-tools"]);
+
+  const paused = { ...status, state: "paused" as const, lease: { ...status.lease, generation: "2" } };
+  rendered.rerender(<WorkPlanControls {...props} prepared={null} status={paused} />);
+  expect(screen.getByRole("checkbox", { name: i18n.t("ai.tools.consent") })).not.toBeChecked();
+  for (const consent of screen.getAllByRole("checkbox", { name: i18n.t("ai.plan.checkerConsent") })) {
+    expect(consent).not.toBeChecked();
+    await user.click(consent);
+  }
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.plan.renewConsent") }));
+  const continueButton = screen.getByRole("button", { name: "Continue with renewed authorization" });
+  expect(continueButton).toBeDisabled();
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.tools.consent") }));
+  expect(continueButton).toBeEnabled();
+  const changedTools = structuredClone(plan.tools);
+  for (const entry of changedTools.entries) entry.settingsRevision = entry.settingsRevision === "0" ? "1" : "0";
+  const changed = { ...paused, plan: { ...plan, tools: changedTools } };
+  rendered.rerender(<WorkPlanControls {...props} prepared={null} status={changed} />);
+  expect(screen.getByRole("checkbox", { name: i18n.t("ai.tools.consent") })).not.toBeChecked();
+  expect(continueButton).toBeDisabled();
+  for (const consent of screen.getAllByRole("checkbox", { name: i18n.t("ai.plan.checkerConsent") })) expect(consent).toBeChecked();
+  const continued = { ...receipt, lease: { ...receipt.lease, generation: "3" }, parentTask: receipt.lease.planId };
+  const control = vi.spyOn(workPlanCommands, "control").mockResolvedValue(continued);
+  refresh.mockResolvedValue({ ...status, plan: changed.plan, lease: continued.lease });
+  await user.click(screen.getByRole("checkbox", { name: i18n.t("ai.tools.consent") }));
+  await user.click(continueButton);
+  await waitFor(() => expect(control).toHaveBeenCalled());
+  expect(control.mock.calls[0][0].checkerExecutions).toEqual(plan.checkers.map(checker => checker.checker));
+  expect(control.mock.calls[0][0].toolExecution).toBe(true);
+  expect(control.mock.calls[0][0].expectedGeneration).toBe("2");
 });

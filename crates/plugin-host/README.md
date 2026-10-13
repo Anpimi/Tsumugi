@@ -28,9 +28,13 @@ required dependencies. Service availability never grants execution permission.
 With `core-adapter`, a cached `RunnerProxy` can accept a trusted
 `ProjectServiceFactory`. It captures a separate broker for each real
 `DispatchRequest`, matching Core permit and cancellation handle. Capture shares
-the bounded startup allowance and continuously checks authority; failure never
+the bounded startup allowance and original Core dispatch deadline, and
+continuously checks authority; failure never
 launches a child without the requested services. The factory cannot retain a
 particular invocation's work-plan scope as the cached proxy's authority.
+The actual dispatch deadline remains required through launch, invocation and
+result delivery, including while Core is waiting for its next runtime tick.
+Historical outcome queries cannot reconstruct a fresh deadline for execution.
 
 For each call, the Host supplies a `ServiceCaller` derived from the actual channel
 and original invocation, then checks the exact handle, context, contract, payload

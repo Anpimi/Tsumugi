@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+The combined development build opens project schema 33 only. Earlier Unreleased
+entries retain intermediate format boundaries from this undistributed batch;
+they do not define alternate current project formats.
+
 - The experimental standalone SDK defines bounded work-plan generation-service
   input, child-identity receipts and finite errors at schema/behavior 1/1, with
   Rust receivers and generated JavaScript contracts. Configuration, model
@@ -70,11 +74,96 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   settings and project data remain separate. Callers must first stop and drain
   the original execution instances. Desktop removal controls and cache collection
   remain under development.
+- Tasks retain the complete original cancellation request when its outcome cannot
+  be confirmed. Explicit retry uses the same request identity; a missing, malformed
+  or zero revision cannot clear recovery. Deferred recovery preserves the request
+  and blocks project closure until its result is confirmed.
+
+- The AI workbench can explicitly add, configure and remove multiple reference
+  providers. Each keeps its own target, options and captured source while all
+  providers share the plan's total tool allowance. Duplicate or unavailable
+  choices require correction before preparation; refreshing preserves inputs.
+
+- The AI workbench can choose an installed generation component, explicit profile
+  and approved JavaScript environment for a subset of the original plan. Users
+  review fixed material, permissions and shared budget before separate local
+  execution consent. Waiting and unknown actions check original task records;
+  known-rejection retries keep the original grant and expiry. Recorded children
+  open the existing progress, candidate and recovery view. Changed authority
+  prevents stale starts, and confirmed discard or closing a settled review
+  preserves saved records. Native and wider product acceptance remain in development.
+  Repeating an uncertain discard confirms absence without cancelling started work.
+
+- Experimental Desktop generation-component commands prepare a fixed source subset
+  and require a separate ordinary component execution grant. A cached runner captures
+  its original WorkPlan scope for each real dispatch; actual Host calls enqueue AI
+  children through the existing ledger, ancestor budget and candidate owner. Original
+  consent, settings revocation and deadlines survive the short acknowledgement.
+  Unknown outcomes reconcile without renewal; each child retains its association
+  until execution and authorized effects settle. An unreadable enqueue acknowledgement
+  remains unknown, and terminal release preserves the completed effect view.
+  Canonical generation results reserve frame metadata separately from the unchanged
+  payload limit; Core also verifies that captured payload limit for success,
+  failure and unknown outcomes. Full workbench/native acceptance remains in development.
+
+- Desktop can read an installed generation component's exact provider, explicit
+  profile, approved environment and provenance without running it or granting
+  execution. Incompatible service dependencies, effects and SDK data contracts
+  are refused. This selection does not authorize a WorkPlan or complete the
+  workbench/native product acceptance.
+
+- SDK work-plan generation now has public bounded input, child acknowledgement
+  and finite error contracts. Core requires their exact schema/behavior 1/1
+  references and the original External effect, using the same SDK parser.
+  Requests cannot override model, sharing, effects or budget; acknowledgements
+  expose no grant or renewal handle. Earlier experimental bindings must use
+  the current contracts. Full workbench/native product acceptance remains
+  separate work.
+
+- Experimental Core project-service generation retains actual component and
+  service provenance with the original WorkPlan scope, grant, deadline and
+  ancestor budget. Durable call receipts reconcile without resubmitting or
+  renewing authority. HTTP dispatch and candidate adoption recheck the original
+  caller; IO waits share its remaining deadline. Current project schema is 31;
+  earlier development projects are refused unchanged. Matching Process-2
+  SDK/Host and production Desktop integration are required.
+
+- Installed-settings changes withdraw the original service revocation signal
+  before writing, including failed or uncertain writes. Closing the installation
+  owner revokes it without waiting for Store operations. Fresh captures reread
+  actual settings; they cannot revive previous grants or deadlines. Core retains
+  the signal after component completion and checks it before child HTTP sends.
+
+- Work plans retain reference tools and the complete required/advisory checker
+  set together. Their independent consents share one installed-settings guard;
+  historical acknowledgements do not restore missing consent. Agent generation
+  starts reject changed settings before child enqueue, and candidate-only plans
+  continue saving explicitly authorized candidates.
+
+- Work plans can capture read-only reference tools with exact installed package,
+  runtime and query options, and one shared invocation limit. Independent local
+  execution consent lasts at most ten minutes; recovering the same action cannot
+  renew it. Bounded Agent controls query captured source subsets through the
+  original worker and ledger, show escaped unapplied references, and generate
+  further candidates through the original model service. Pause, source changes,
+  expiry and reopen preserve history without restoring authority. Current
+  development projects use schema 31 and WorkPlan format 2; earlier development
+  formats are refused unchanged without migration. Full autonomous orchestration
+  and native product acceptance remain in development.
+
+- Scoped Agent generation can prepare captured source subsets and run them
+  through the original work-plan runtime, candidate service and ancestor budget.
+  Model, destination, sharing and effects stay fixed; pause, takeover, expiry and
+  project closure revoke the scope. Human controls and plugin execution consent
+  remain separate. Complete autonomous tool integration is still in development.
+  Candidate-only plans now honor explicitly authorized candidate saving and
+  report completion without running checks, selecting a translation or approval.
 
 - Experimental Core Host adapters now select project-service brokers separately
   for every actual dispatch and grant, including when a capability proxy is
   cached. Unfinished selection is bounded; selection failure does not launch a
-  component with omitted services.
+  component with omitted services. Selection, invocation and result delivery
+  retain the original Core dispatch deadline independently of later runtime ticks.
 
 - Experimental SDK and Host add bounded project-service calls for JavaScript
   components. Exact selected providers, scopes, schemas, effects and original
@@ -112,7 +201,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   Editors can add source or explicitly selected draft text to the same query
   inputs while retaining unsaved edits and existing rows. Routing grants no
   execution and invalidates earlier query consent; composition and unknown
-  actions are protected. Agent integration and native acceptance remain in development.
+  actions are protected. Bounded work-plan integration uses separate explicit
+  scope and consent; full autonomous orchestration and native acceptance remain
+  in development.
 
 - Experimental Host consumers can read explicitly selected opaque Resources and
   Skills from immutable captured packages, with exact resource schema/behavior
@@ -133,7 +224,7 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
   checked selection distinguish required coverage from advisory findings and
   invocation failures; history preserves typed rules and text diagnostics.
   Desktop previews and WorkPlans require consent for each selected checker.
-  The current project format is schema 32; earlier development directories are
+  The current project format is schema 33; earlier development directories are
   refused unchanged without migration. Knowledge Resources remain unadopted.
 
 - Experimental SDK advisory text checks now declare explicit rule subsets and
@@ -251,8 +342,13 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Execution continuation identities and their unique new attempt are stored in one transaction with the existing chunked input, package, grant, budget and release checks. Current development project compatibility is described in the [README](README.md#development); earlier formats are preserved and refused without conversion.
 
-- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 32 and refuse earlier development directories unchanged.
-- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 32 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
+- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 33 and refuse earlier development directories unchanged.
+- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 33 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
+- Current development projects use schema 33, combining exact recovery intent and cancellation associations with the original work-plan service children, captured input chunks and ancestor budgets. Other development formats are refused before application schema changes, without an upgrade, rebuild or reset. Keep their directories and reimport source files into a new project. Internal execution consumers regenerate the typed continuation requests; stored receipt replay does not renew a grant, lease or scheduling authority.
+
+
+- Normal Core and desktop source imports now require the declared plugin extractor and independent checker. Former SMAPI/WebVTT source parsers, default capability selection, capture APIs and source selection/integration IPC are isolated to execution test fixtures. Captured material, generic identities, source revisions, semantic proof and original receipts retain their existing representation. Current projects use schema 33 and refuse earlier development directories unchanged.
+- Normal Core and desktop builds now require the installed plugin build pipeline. Former built-in SMAPI/WebVTT builders, domain artifact parsers, build requests and persistence variants are available only to explicit execution test fixtures. Current projects use schema 33 and refuse earlier development directories unchanged. Plugin release plans, independently checked original artifacts, adoption receipts and local delivery keep their existing owners and representation.
 
 - Desktop translation imports use declared installed plugin capabilities only. Production omits the built-in file listing, preflight and import commands and no longer registers their extractor runner; regenerate earlier development IPC consumers. Normal Core builds also exclude the built-in translation parser and runner and reject its former captured inputs without recording an attempt. Experimental Rust consumers must use the checked plugin projection workflow; the former importer is available only for tests or the explicit `execution-test-host` feature. Generic editing, history, preview and adoption remain available.
 
@@ -260,11 +356,15 @@ This initial backfill summarizes development commits `e76ef39` through `7febd7e`
 
 - Source, translation, AI candidate, and build adoption validate domain output before opening their write transaction; commit rechecks current scope, cancellation and receipts atomically. Experimental plugin source adoption fixes mandatory semantic checks to the original source, proposal and selected checker, stores their exact result link and rechecks both permissions at commit. Core maps generic SDK units to project identities and derives revisions from the captured policy's opaque evidence. Source history displays original names and encoded references, with local retry when file details are unavailable.
 - Manual translation saves and selections now persist unit protection. The translation editor confirms persistent protection before enabling draft input, keeps uncertain actions for reconciliation, and releases protection only after confirming the current entry, language, source, selection and protection revision. Dirty or pending saves block release; old acknowledgements cannot clear newer protection.
-- Project storage now uses schema 32 for durable work-plan authorization, human control, checked-selection policy receipts, plugin execution grants, complete captured runtime-environment bindings, generic source-unit mappings, mandatory source/artifact-check provenance and immutable multi-artifact releases. This development build opens schema 32 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
+- Project storage now uses schema 33 for durable work-plan authorization, human control, checked-selection policy receipts, plugin execution grants, complete captured runtime-environment bindings, generic source-unit mappings, mandatory source/artifact-check provenance and immutable multi-artifact releases. This development build opens schema 33 only and removes automatic upgrades from earlier development schemas. Preserve previous project directories and create a new project to reimport source files. Unsupported versions, unsupported storage settings and corrupt databases are refused without conversion or reset.
 - The desktop workspace keeps view inputs and navigation context, places current guidance beside translations, and exposes task inspection and advanced build or AI details when needed.
 - Application metadata now identifies the `0.2.0-alpha.1` development batch. Storage schemas, bundled integration versions, and capability/profile versions retain their independent meanings.
 
 ### Fixed
+
+- Package removal waits for generation-service children, outcome queries and selection effects owned by the original calling package, including retired workers. Independent packages keep their existing model runtime and authority.
+
+- Development runtime bundles pin the current independently built WebVTT and SMAPI packages and their exact SDK snapshot. Existing installed bindings and historical releases keep their original package identities; installing a new selected package remains explicit.
 
 - Resuming undispatched work and retrying safe failures retain the original action, exact selected items and cancellation basis. A recorded request returns the original continuation receipt before fresh eligibility and cannot enqueue or dispatch again. The old anonymous recovery route refuses these actions; consumers must use the typed continuation and history API. New plugin attempts do not inherit the original execution grant.
 

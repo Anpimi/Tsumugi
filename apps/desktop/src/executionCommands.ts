@@ -55,6 +55,13 @@ async function readTaskView(request: TaskViewRequest): Promise<TaskView> {
   if (task.taskId !== request.taskId || task.projectId !== request.projectId) throw new Error("Invalid task view scope");
   return task;
 }
+async function cancelExecution(request: CancelRequest) {
+  const revision = await checkedInvoke("cancel_execution_task", request, validateResponseCancellation);
+  // A committed cancellation advances the ledger; zero is only an uncancelled
+  // continuation basis, never acknowledgement of this cancellation request.
+  if (revision === "0") throw new Error("Invalid cancellation acknowledgement");
+  return revision;
+}
 
 export const executionCommands = {
   identity: (request: SessionRequest) => checkedInvoke("create_execution_identity", request, validateResponseIdentity),
@@ -63,7 +70,7 @@ export const executionCommands = {
   task: (request: TaskRequest) => checkedInvoke("read_execution_task", request, validateResponseAttempts),
   attempt: (request: AttemptRequest) => checkedInvoke("read_execution_attempt", request, validateResponseAttempt),
   output: (request: OutputRequest) => checkedInvoke("read_execution_output", request, validateResponseOutput),
-  cancel: (request: CancelRequest) => checkedInvoke("cancel_execution_task", request, validateResponseCancellation),
+  cancel: cancelExecution,
   continue: continueExecution,
   continuation: readContinuation,
   continuations: readContinuations,

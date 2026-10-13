@@ -463,7 +463,6 @@ impl InputEnvelope {
             binding.validate()?;
             if self.capability_id != binding.capability.declaration.contract.id
                 || self.capability_version != binding.capability_version()
-                || self.automation.is_some()
             {
                 return Err(ExecutionError::new(ErrorCode::InvalidInput, "plugin-input"));
             }

@@ -115,7 +115,8 @@ export type CommandStage =
   | "execution-recover"
   | "execution-adopt"
   | "execution-quiesce";
-export type EffectPhase = "waiting" | "saving-candidate" | "checking" | "selected" | "blocked" | "failed" | "cancelled";
+export type EffectPhase =
+  "waiting" | "saving-candidate" | "saved" | "checking" | "selected" | "blocked" | "failed" | "cancelled";
 export type AutomaticSelectionBlock = "protected" | "already-selected" | "checks";
 /**
  * Read-only concerns project state; proposals are not already-adopted changes.
@@ -233,12 +234,19 @@ export type ReviewCheckerView =
     };
 export type StageMode = "manual" | "assisted" | "skipped";
 export type WorkStage = "understanding" | "resources" | "generation" | "checks" | "delivery";
+export type ToolQueryPathPart = string | number;
 export type WorkPlanState = "active" | "paused" | "stopped" | "taken-over";
 /**
  * Requested automatic effects, never a human language-review approval.
  */
 export type AutomationEffect =
-  "save-candidate" | "run-checks" | "select-missing" | "replace-captured-selection" | "adopt-resources" | "deliver";
+  | "save-candidate"
+  | "run-checks"
+  | "select-missing"
+  | "replace-captured-selection"
+  | "adopt-resources"
+  | "deliver"
+  | "query-tools";
 
 export interface Responses {
   effectRetry: boolean;
@@ -247,6 +255,10 @@ export interface Responses {
   view: AiView;
   workPlan: WorkPlanView;
   workPlanAction: WorkPlanReceiptView | null;
+  workPlanAgent: WorkPlanAgentView;
+  workPlanAgentGeneration: WorkPlanAgentGenerationView;
+  workPlanAgentTool: WorkPlanAgentToolView;
+  workPlanGenerationPreflight: WorkPlanGenerationPreflight;
   workPlanReceipt: WorkPlanReceiptView;
   workPlanStatus: WorkPlanStatusView;
   workProtection: WorkProtection;
@@ -759,6 +771,7 @@ export interface WorkPlanView {
   planId: ExecutionId;
   preview: AiPreviewView | null;
   scope: PlanSelectionBasis[];
+  tools: WorkPlanTools | null;
 }
 export interface PluginReviewView {
   checker: CapabilityBinding;
@@ -802,6 +815,99 @@ export interface PlanSelectionBasis {
   sourceSnapshotId: ExecutionId;
   unitId: ExecutionId;
 }
+export interface WorkPlanTools {
+  /**
+   * @minItems 1
+   * @maxItems 32
+   */
+  entries: [WorkPlanToolSpec, ...WorkPlanToolSpec[]];
+  maxInvocations: number;
+}
+/**
+ * Captured by the trusted host from an installed package, never model text.
+ */
+export interface WorkPlanToolSpec {
+  binding: CapabilityToolBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  handle: ExecutionId;
+  packageOrigin: unknown;
+  resourceId: string;
+  runtimeOrigin: unknown;
+  selections: string[];
+  settingsRevision: UnsignedDecimal;
+  target: string;
+}
+/**
+ * A fixed selection, not an execution grant or a trusted model instruction.
+ * Deserialized claims must be rebound against the actual captured package.
+ */
+export interface CapabilityToolBinding {
+  capability: CapabilityBinding;
+  declaration: CapabilityToolDeclaration;
+  resources: ToolResourceBinding[];
+}
+/**
+ * A package-local adapter to one declared, read-only capability. Input/output
+ * contracts, limits and permissions are taken from that capability, rather
+ * than repeated in a model-specific descriptor. A profile is an exact choice.
+ */
+export interface CapabilityToolDeclaration {
+  capabilityId: string;
+  description: string;
+  name: string;
+  profile: ContractRef | null;
+  /**
+   * Optional bounded semantic text-query presentation. It grants no access
+   * beyond the original capability and remains untrusted package data.
+   */
+  query?: ToolQueryDeclaration | null;
+  skill: string | null;
+  supportingResources: string[];
+  title: string;
+}
+export interface ToolQueryDeclaration {
+  inputSchema: ContractRef;
+  inputTemplate: unknown;
+  maxTextBytes: number;
+  output: ToolQueryOutput;
+  outputSchema: ContractRef;
+  /**
+   * Explicit senses or categories. Matching text alone does not select them.
+   */
+  selections: ToolQuerySelection;
+  /**
+   * One explicit target option; no host-side locale or value normalization.
+   */
+  target: ToolQuerySelection;
+  textPath: ToolQueryPathPart[];
+}
+export interface ToolQueryOutput {
+  columns: ToolQueryColumn[];
+  emptyDescription: string;
+  entriesPath: ToolQueryPathPart[];
+  maxEntries: number;
+}
+export interface ToolQueryColumn {
+  label: string;
+  path: ToolQueryPathPart[];
+}
+export interface ToolQuerySelection {
+  description: string;
+  label: string;
+  maxSelected: number;
+  minSelected: number;
+  options: ToolQueryOption[];
+  path: ToolQueryPathPart[];
+}
+export interface ToolQueryOption {
+  description: string;
+  label: string;
+  value: string;
+}
+export interface ToolResourceBinding {
+  contributionId: string;
+  schema: ContractRef;
+}
 export interface WorkPlanReceiptView {
   actionId: ExecutionId;
   attemptId: ExecutionId | null;
@@ -809,12 +915,75 @@ export interface WorkPlanReceiptView {
   parentTask: ExecutionId | null;
   state: WorkPlanState;
 }
+export interface WorkPlanAgentView {
+  budget: ProviderBudget;
+  lease: AutomationLease;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+}
+export interface WorkPlanAgentGenerationView {
+  attemptId: ExecutionId;
+  budget: ProviderBudget;
+  inputDigest: string;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+  taskId: ExecutionId;
+}
+export interface WorkPlanAgentToolView {
+  attemptId: ExecutionId;
+  inputDigest: string;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+  taskId: ExecutionId;
+  toolHandle: ExecutionId;
+}
+export interface WorkPlanGenerationPreflight {
+  attemptId: ExecutionId;
+  budget: ProviderBudget;
+  component: PluginGenerationComponentView;
+  generation: GenerationServiceInput;
+  inputDigest: string;
+  parentTask: ExecutionId;
+  scope: PlanSelectionBasis[];
+  scopeId: ExecutionId;
+  taskId: ExecutionId;
+}
+export interface PluginGenerationComponentView {
+  binding: CapabilityBinding;
+  environment: ExecutionEnvironmentDescriptor;
+  environmentDigest: string;
+  packageOrigin: PluginOriginView;
+  profile: ContractRef | null;
+  runtimeOrigin: PluginOriginView;
+  settingsRevision: UnsignedDecimal;
+}
+/**
+ * No model, text payload, destination, consent, lease or budget can be supplied.
+ * The real Host derives input from the original plan and checks current scope.
+ */
+export interface GenerationServiceInput {
+  attemptId: string;
+  taskId: string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unitIds: [string, ...string[]];
+}
 export interface WorkPlanStatusView {
   effects: AutomationEffect[];
   expiresAt: UnsignedDecimal;
   lease: AutomationLease;
   plan: WorkPlanView;
   state: WorkPlanState;
+  toolInvocations: WorkPlanToolUsage | null;
+}
+export interface WorkPlanToolUsage {
+  limit: number;
+  reserved: number;
 }
 export interface WorkProtection {
   locale: string;

@@ -45,6 +45,7 @@ struct PluginRequests {
     translation: plugins::PluginTranslationRequest,
     build: plugins::PluginBuildRequest,
     tool: plugins::PluginToolRequest,
+    generation_component: plugins::PluginGenerationComponentRequest,
     text_review: plugins::PluginTextReviewRequest,
 }
 #[derive(JsonSchema)]
@@ -60,6 +61,7 @@ struct PluginResponses {
     translation: plugins::PluginTranslationView,
     build: plugins::PluginBuildView,
     tool: plugins::PluginToolView,
+    generation_component: plugins::PluginGenerationComponentView,
     text_review: plugins::PluginTextReviewView,
     text_reviews: plugins::PluginTextReviewListView,
     error: CommandError,
@@ -304,6 +306,16 @@ struct AiRequests {
     work_plan_prepare: execution::work_plans::WorkPlanPrepareRequest,
     work_plan_authorize: execution::work_plans::WorkPlanAuthorizeRequest,
     work_plan_start: execution::work_plans::WorkPlanStartRequest,
+    work_plan_generation_prepare:
+        execution::work_plans::generation::WorkPlanGenerationPrepareRequest,
+    work_plan_generation_start: execution::work_plans::generation::WorkPlanGenerationStartRequest,
+    work_plan_generation_discard:
+        execution::work_plans::generation::WorkPlanGenerationDiscardRequest,
+    work_plan_agent_open: execution::work_plans::agent::WorkPlanAgentOpenRequest,
+    work_plan_agent_prepare: execution::work_plans::agent::WorkPlanAgentPrepareRequest,
+    work_plan_agent_start: execution::work_plans::agent::WorkPlanAgentStartRequest,
+    work_plan_agent_tool_prepare: execution::work_plans::broker::WorkPlanAgentToolPrepareRequest,
+    work_plan_agent_tool_start: execution::work_plans::broker::WorkPlanAgentToolStartRequest,
     work_plan_control: execution::work_plans::WorkPlanControlRequest,
     work_plan_status: execution::work_plans::WorkPlanStatusRequest,
     work_plan_action: execution::work_plans::WorkPlanActionRequest,
@@ -319,6 +331,10 @@ struct AiResponses {
     view: execution::ai::AiView,
     effect_retry: bool,
     work_plan: execution::work_plans::WorkPlanView,
+    work_plan_generation_preflight: execution::work_plans::generation::WorkPlanGenerationPreflight,
+    work_plan_agent: execution::work_plans::agent::WorkPlanAgentView,
+    work_plan_agent_generation: execution::work_plans::agent::WorkPlanAgentGenerationView,
+    work_plan_agent_tool: execution::work_plans::broker::WorkPlanAgentToolView,
     work_plan_receipt: execution::work_plans::WorkPlanReceiptView,
     work_plan_status: execution::work_plans::WorkPlanStatusView,
     work_plan_action: Option<execution::work_plans::WorkPlanReceiptView>,

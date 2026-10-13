@@ -637,7 +637,7 @@ fn versions_and_corrupt_inputs_are_rejected_without_rebuilding_and_bad_output_is
 }
 
 #[test]
-fn current_reopen_preserves_results_adoption_receipts_and_relations() {
+fn current_reopen_preserves_results_adoption_receipts_relations_and_refuses_schema_three() {
     let parent = tempfile::tempdir().unwrap();
     let path = parent.path().join("project");
     let mut store = store(&path);
@@ -759,6 +759,75 @@ fn current_reopen_preserves_results_adoption_receipts_and_relations() {
         )
         .unwrap();
     assert_eq!(result_references, 1);
+    reopened.close().unwrap();
+
+    let database = path.join(super::super::DATABASE_FILENAME);
+    let mut connection = Connection::open(&database).unwrap();
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .unwrap();
+    transaction
+        .pragma_update(None, "defer_foreign_keys", true)
+        .unwrap();
+    for domain in [
+        crate::persistence::UnsupportedFixtureDomain::Arena,
+        crate::persistence::UnsupportedFixtureDomain::Provider,
+        crate::persistence::UnsupportedFixtureDomain::Release,
+        crate::persistence::UnsupportedFixtureDomain::Review,
+        crate::persistence::UnsupportedFixtureDomain::Resources,
+    ] {
+        crate::persistence::remove_unsupported_fixture_domain(&transaction, domain).unwrap();
+    }
+    transaction
+        .execute_batch(
+            "CREATE TEMP TABLE execution_results_copy AS SELECT * FROM main.execution_results;
+             DROP TABLE main.execution_results;",
+        )
+        .unwrap();
+    transaction
+        .execute_batch("CREATE TABLE execution_results (
+        result_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL, item_id TEXT NOT NULL, dispatch_token TEXT NOT NULL,
+        bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 262144), digest TEXT NOT NULL CHECK(length(digest) = 64),
+        FOREIGN KEY(attempt_id,item_id,dispatch_token) REFERENCES execution_items(attempt_id,item_id,dispatch_token))")
+        .unwrap();
+    transaction
+        .execute_batch(
+            "INSERT INTO main.execution_results SELECT * FROM temp.execution_results_copy;
+             DROP TABLE temp.execution_results_copy;",
+        )
+        .unwrap();
+    transaction
+        .execute_batch("DROP TABLE translation_selections; DROP TABLE translation_revisions;")
+        .unwrap();
+    transaction
+        .execute_batch("DROP TABLE source_lineage_evidence; DROP TABLE source_lineage;")
+        .unwrap();
+    transaction
+        .pragma_update(None, "user_version", 3i64)
+        .unwrap();
+    transaction.commit().unwrap();
+    drop(connection);
+
+    let before = std::fs::read(&database).unwrap();
+    let entries = || {
+        std::fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<std::collections::BTreeSet<_>>>()
+            .unwrap()
+    };
+    let before_entries = entries();
+    let error = ProjectStore::open(&path).unwrap_err();
+    assert_eq!(error.code(), PersistenceErrorCode::UnsupportedSchema);
+    assert_eq!(error.found_schema_version(), Some(3));
+    assert_eq!(std::fs::read(&database).unwrap(), before);
+    assert_eq!(entries(), before_entries);
+    let unchanged =
+        Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let version: i64 = unchanged
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 3);
 }
 
 #[test]
@@ -990,6 +1059,7 @@ fn grouped_retry_reuses_successes_and_adopts_the_whole_unit_after_reopen() {
     let continuation_receipt = store
         .enqueue_continuation(&continuation, &retry, RecoveryPolicy::ReadOnly)
         .unwrap();
+
     store.close().unwrap();
     let mut reopened = ProjectStore::open(&path).unwrap();
     assert_eq!(
@@ -1556,6 +1626,8 @@ fn complete_projection_cache_rechecks_current_coverage_bytes_and_dispatch() {
                     dispatch_token: token,
                     provider: None,
                     plugin_permit: None,
+                    service_origin: None,
+                    original_deadline: None,
                 },
                 Cancellation::default(),
                 sender,
@@ -1827,6 +1899,102 @@ fn continuation_commit_crashes_preserve_exact_intent_and_one_attempt() {
                 .is_empty()
         );
     }
+}
+
+#[test]
+fn continuation_keeps_large_captured_frames_in_the_original_chunk_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("project");
+    let mut store = store(&path);
+    let material = "captured-🧵;".repeat(4096);
+    let mut envelope = fixture_input(&store, false).envelope().clone();
+    envelope.settings = json!({"material": material});
+    let original = FixedInput::capture(envelope).unwrap();
+    store.enqueue_read_only_execution(&original).unwrap();
+    let action = crate::execution::test_continuation_action(
+        &store,
+        original.envelope().attempt_id,
+        &[original.envelope().items[0].item_id],
+    );
+    let next = store
+        .execution_retry_input(action.source_attempt_id, &action.item_ids)
+        .unwrap();
+    assert!(original.bytes().len() > input_storage::MAX_STORED_INPUT_BYTES);
+    assert!(next.bytes().len() > input_storage::MAX_STORED_INPUT_BYTES);
+    let receipt = store
+        .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+        .unwrap();
+    assert_eq!(receipt.action, action.canonical().unwrap());
+    assert_eq!(receipt.source_input_digest, original.digest());
+    assert_eq!(receipt.input_digest, next.digest());
+    assert_eq!(receipt.task_id, original.envelope().task_id);
+    assert_eq!(receipt.attempt_id, next.envelope().attempt_id);
+    for input in [&original, &next] {
+        let bytes: Vec<u8> = store
+            .execution_connection()
+            .unwrap()
+            .query_row(
+                "SELECT input FROM execution_attempts WHERE attempt_id=?1",
+                [input.envelope().attempt_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(bytes.len() <= input_storage::MAX_STORED_INPUT_BYTES);
+        let stored: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(stored["rawBytes"], json!(input.bytes().len()));
+        assert!(stored["chunks"].as_array().unwrap().len() > 1);
+        assert_eq!(
+            store
+                .execution_input(input.envelope().attempt_id)
+                .unwrap()
+                .bytes(),
+            input.bytes()
+        );
+        assert_eq!(
+            input.envelope().settings["material"],
+            json!("captured-🧵;".repeat(4096))
+        );
+    }
+    assert_eq!(
+        store
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        store.execution_attempt_ids(receipt.task_id).unwrap().len(),
+        2
+    );
+    store.close().unwrap();
+    let mut reopened = ProjectStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.execution_continuation(action.action_id).unwrap(),
+        Some(receipt.clone())
+    );
+    for input in [&original, &next] {
+        let restored = reopened
+            .execution_input(input.envelope().attempt_id)
+            .unwrap();
+        assert_eq!(restored.bytes(), input.bytes());
+        assert_eq!(restored.digest(), input.digest());
+        assert_eq!(
+            restored.envelope().settings["material"],
+            json!("captured-🧵;".repeat(4096))
+        );
+    }
+    assert_eq!(
+        reopened
+            .enqueue_continuation(&action, &next, RecoveryPolicy::ReadOnly)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        reopened
+            .execution_attempt_ids(receipt.task_id)
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[test]

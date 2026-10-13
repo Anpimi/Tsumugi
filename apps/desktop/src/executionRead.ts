@@ -24,3 +24,25 @@ export async function readCompleteAttempt(context: ReturnType<typeof executionCo
     offset = page.nextOffset;
   }
 }
+
+/** An absent task page is a read-only observation, not a failed detail read or
+ * permission to resend. The detail IPC requires an existing execution. */
+export async function readRecordedAttempt(context: ReturnType<typeof executionContext>, taskId: string, attemptId: string, operation: string): Promise<AttemptDetail | null> {
+  let after = "0";
+  const seen = new Set<string>();
+  for (;;) {
+    const page = await executionCommands.task({ ...context, taskId, after, limit: 100 });
+    let found = false;
+    for (const item of page) {
+      if (seen.has(item.attemptId) || BigInt(item.sequence) <= BigInt(after)) throw new Error("Execution task cursor changed");
+      seen.add(item.attemptId); after = item.sequence;
+      found ||= item.attemptId === attemptId;
+    }
+    if (found) {
+      const detail = await readCompleteAttempt(context, attemptId, operation);
+      if (!detail || detail.taskId !== taskId) throw new Error("Execution task identity changed");
+      return detail;
+    }
+    if (page.length < 100) return null;
+  }
+}

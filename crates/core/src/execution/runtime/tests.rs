@@ -236,6 +236,202 @@ fn runtime_restart_does_not_automatically_replay_queued_or_unknown_work() {
 }
 
 #[test]
+fn unsettled_attempt_reads_explicit_presence_and_raw_execution_states() {
+    let (_temp, mut store, runtime, _calls) = setup();
+    let fixed = input(&store);
+    let attempt = fixed.envelope().attempt_id;
+    let before = store.execution_sequence().unwrap();
+    assert!(runtime.input_if_present(&store, attempt).unwrap().is_none());
+    assert!(!runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    assert_eq!(store.execution_sequence().unwrap(), before);
+
+    store.enqueue_execution(&fixed).unwrap();
+    assert_eq!(
+        runtime
+            .input_if_present(&store, attempt)
+            .unwrap()
+            .unwrap()
+            .bytes(),
+        fixed.bytes()
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    let request = store
+        .dispatch_execution_item(attempt, fixed.envelope().items[0].item_id)
+        .unwrap();
+    assert!(!runtime.is_active(attempt));
+    assert_eq!(
+        store
+            .execution_attempt(attempt, true)
+            .unwrap()
+            .progress
+            .running,
+        1
+    );
+    assert_eq!(
+        store
+            .execution_attempt(attempt, false)
+            .unwrap()
+            .progress
+            .unknown,
+        1
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    store
+        .cancel_execution(fixed.envelope().task_id, ExecutionId::new())
+        .unwrap();
+    store
+        .note_execution_unknown(attempt, request.item_id, "synthetic-unknown")
+        .unwrap();
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    let result = FixedResult::capture(
+        ResultEnvelope {
+            plugin: None,
+            project_id: fixed.envelope().project_id,
+            attempt_id: attempt,
+            item_id: request.item_id,
+            result_id: ExecutionId::new(),
+            supersedes: None,
+            dispatch_token: request.dispatch_token,
+            capability_id: fixed.envelope().capability_id.clone(),
+            capability_version: fixed.envelope().capability_version.clone(),
+            outcome: ExecutionState::Failed,
+            output: None,
+            diagnostic: Some(Diagnostic {
+                code: "synthetic-known-failure".into(),
+                retry_safe: false,
+            }),
+        },
+        &fixed,
+        request.dispatch_token,
+    )
+    .unwrap();
+    store.save_execution_result(&result).unwrap();
+    let sequence = store.execution_sequence().unwrap();
+    assert!(!runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    assert_eq!(store.execution_sequence().unwrap(), sequence);
+    let status = store.execution_attempt(attempt, true).unwrap();
+    assert_eq!((status.progress.failed, status.progress.cancelled), (1, 2));
+}
+
+#[test]
+fn unsettled_attempt_does_not_turn_storage_errors_into_absence() {
+    let (temp, store, runtime, _calls) = setup();
+    let attempt = ExecutionId::new();
+    let connection =
+        rusqlite::Connection::open(temp.path().join("project/project.sqlite3")).unwrap();
+    connection
+        .execute_batch("DROP TABLE execution_attempts;")
+        .unwrap();
+    assert_eq!(
+        runtime.input_if_present(&store, attempt).unwrap_err().code,
+        ErrorCode::StorageFailed
+    );
+    assert_eq!(
+        runtime
+            .has_unsettled_attempt(&store, attempt)
+            .unwrap_err()
+            .code,
+        ErrorCode::StorageFailed
+    );
+}
+
+#[test]
+fn unsettled_attempt_keeps_active_and_retired_producers_after_a_known_result() {
+    struct HeldAfterResult(mpsc::Sender<mpsc::Sender<()>>);
+    impl Runner for HeldAfterResult {
+        fn capability_id(&self) -> &str {
+            "held-after-result"
+        }
+        fn capability_version(&self) -> &str {
+            "1"
+        }
+        fn run(
+            &self,
+            request: DispatchRequest,
+            _: Cancellation,
+            results: ResultSender,
+        ) -> Result<(), ExecutionError> {
+            results.send(FixedResult::capture(
+                ResultEnvelope {
+                    plugin: None,
+                    project_id: request.input.envelope().project_id,
+                    attempt_id: request.input.envelope().attempt_id,
+                    item_id: request.item_id,
+                    result_id: ExecutionId::new(),
+                    supersedes: None,
+                    dispatch_token: request.dispatch_token,
+                    capability_id: self.capability_id().into(),
+                    capability_version: self.capability_version().into(),
+                    outcome: ExecutionState::Failed,
+                    output: None,
+                    diagnostic: Some(Diagnostic {
+                        code: "synthetic-known-failure".into(),
+                        retry_safe: false,
+                    }),
+                },
+                &request.input,
+                request.dispatch_token,
+            )?)?;
+            let (release, held) = mpsc::channel();
+            self.0.send(release).unwrap();
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
+            Ok(())
+        }
+    }
+    let (_temp, mut store, mut runtime, _calls) = setup();
+    let (reached, ready) = mpsc::channel();
+    runtime
+        .register_read_only(Arc::new(HeldAfterResult(reached)))
+        .unwrap();
+    let item = input(&store).envelope().items[0].clone();
+    let fixed = FixedInput::capture(
+        InputEnvelope::new(
+            store.metadata().unwrap().project_id(),
+            "fixture",
+            "held-after-result",
+            "1",
+            vec![item],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let attempt = fixed.envelope().attempt_id;
+    runtime.submit(&mut store, &fixed).unwrap();
+    runtime.tick(&mut store).unwrap();
+    let release = ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    runtime.tick(&mut store).unwrap();
+    assert_eq!(
+        store
+            .execution_attempt(attempt, true)
+            .unwrap()
+            .progress
+            .failed,
+        1
+    );
+    assert!(runtime.is_active(attempt));
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    runtime
+        .tick_at(&mut store, Instant::now() + Duration::from_secs(61))
+        .unwrap();
+    assert!(!runtime.is_active(attempt));
+    assert_eq!(runtime.retired.len(), 1);
+    assert_eq!(
+        store
+            .execution_attempt(attempt, true)
+            .unwrap()
+            .progress
+            .failed,
+        1
+    );
+    assert!(runtime.has_unsettled_attempt(&store, attempt).unwrap());
+    release.send(()).unwrap();
+    pump_until(&mut runtime, &mut store, |runtime, _| {
+        runtime.retired.is_empty()
+    });
+    assert!(!runtime.has_unsettled_attempt(&store, attempt).unwrap());
+}
+
+#[test]
 fn concurrency_is_bounded_and_quiesce_revokes_late_writes() {
     let (temp, mut store, mut runtime, calls) = setup();
     let mut inputs = Vec::new();
@@ -360,6 +556,11 @@ fn timed_out_producer_remains_unknown_and_holds_its_concurrency_slot() {
         .unwrap();
     assert_eq!(runtime.retired.len(), 1);
     assert!(!runtime.is_active(fixed.envelope().attempt_id));
+    assert!(
+        runtime
+            .has_unsettled_attempt(&store, fixed.envelope().attempt_id)
+            .unwrap()
+    );
     let view = runtime
         .attempt(&store, fixed.envelope().attempt_id)
         .unwrap();
@@ -963,6 +1164,110 @@ fn plugin_input(store: &ProjectStore, binding: PluginExecutionBinding) -> FixedI
     FixedInput::capture(envelope).unwrap()
 }
 
+#[test]
+fn generation_receipt_budget_keeps_payload_and_complete_frame_limits_distinct() {
+    let (_temp, store, _runtime, _calls) = setup();
+    let mut binding = plugin_binding("b");
+    let declaration = &mut binding.capability.declaration;
+    declaration.input_schema = sdk::generation_service_input_contract();
+    declaration.output_schema = sdk::generation_service_receipt_contract();
+    declaration.error_schema = sdk::generation_service_error_contract();
+    declaration.limits.max_output_bytes = sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES as u32;
+    let mut envelope = plugin_input(&store, binding.clone()).envelope().clone();
+    envelope.limits.max_result_bytes = 64 * 1024 + 3 * 1024;
+    let fixed = FixedInput::capture(envelope.clone()).unwrap();
+    let provider = &binding.capability.provider;
+    let channel = sdk::ProviderBinding {
+        plugin: provider.plugin.clone(),
+        component_id: provider.component_id.clone(),
+        contribution_id: provider.contribution_id.clone(),
+        package_digest: provider.package_digest.clone(),
+        instance_id: "instance".repeat(16),
+        activation_generation: 1,
+    };
+    let item = envelope.items[0].item_id;
+    let dispatch = ExecutionId::new();
+    let request = fixed.plugin_request(item, dispatch, &channel).unwrap();
+    let receipt = sdk::GenerationServiceReceipt {
+        task_id: "t".repeat(128),
+        attempt_id: "a".repeat(128),
+        input_digest: "d".repeat(64),
+    };
+    receipt.validate().unwrap();
+    let output = sdk::EncodedPayload::capture(
+        request.output_schema.clone(),
+        serde_json::to_string(&receipt).unwrap(),
+    )
+    .unwrap();
+    assert!(output.utf8.len() <= binding.capability.declaration.limits.max_output_bytes as usize);
+    let result = sdk::InvocationResult {
+        context: request.context.clone(),
+        provider: channel.clone(),
+        capability: request.capability.clone(),
+        profile: request.profile.clone(),
+        result_id: "result".repeat(20),
+        outcome: sdk::InvocationOutcome::Succeeded { output },
+    };
+    let frame = sdk::ProcessFrame::new(sdk::ProcessBody::Result(result.clone()))
+        .encode()
+        .unwrap();
+    assert!(frame.len() > sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES);
+    assert!(frame.len() <= request.max_result_bytes as usize);
+    let evidence = PluginResultEvidence {
+        authorization_id: ExecutionId::new(),
+        channel,
+        result,
+    };
+    let captured = FixedResult::capture_plugin(&fixed, item, dispatch, evidence.clone()).unwrap();
+    assert!(captured.bytes().len() <= envelope.limits.max_result_bytes as usize);
+
+    let oversized = format!("\"{}\"", "x".repeat(1023));
+    assert_eq!(
+        oversized.len(),
+        sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES + 1
+    );
+    let output =
+        sdk::EncodedPayload::capture(request.output_schema.clone(), oversized.clone()).unwrap();
+    let error = sdk::EncodedPayload::capture(request.error_schema.clone(), oversized).unwrap();
+    for outcome in [
+        sdk::InvocationOutcome::Succeeded { output },
+        sdk::InvocationOutcome::Failed {
+            error: error.clone(),
+        },
+        sdk::InvocationOutcome::Unknown { error },
+    ] {
+        let mut oversized_evidence = evidence.clone();
+        oversized_evidence.result.outcome = outcome;
+        let result_frame =
+            sdk::ProcessFrame::new(sdk::ProcessBody::Result(oversized_evidence.result.clone()))
+                .encode()
+                .unwrap();
+        assert!(result_frame.len() <= request.max_result_bytes as usize);
+        let rejected =
+            FixedResult::capture_plugin(&fixed, item, dispatch, oversized_evidence).unwrap_err();
+        assert_eq!(rejected.code, ErrorCode::LimitExceeded);
+        assert_eq!(rejected.stage, "plugin-output-budget");
+    }
+
+    // Only the exact canonical references use this bounded JSON allowance.
+    envelope
+        .plugin
+        .as_mut()
+        .unwrap()
+        .capability
+        .declaration
+        .error_schema
+        .behavior_version = 2;
+    let changed = FixedInput::capture(envelope).unwrap();
+    assert_eq!(
+        changed
+            .plugin_request(item, dispatch, &request.provider)
+            .unwrap()
+            .max_result_bytes,
+        sdk::MAX_GENERATION_SERVICE_RECEIPT_BYTES as u32
+    );
+}
+
 struct PluginCall {
     request: DispatchRequest,
     environment_digest: String,
@@ -1486,6 +1791,53 @@ fn continuation_lost_ack_replays_original_intent_without_dispatch_after_reopen()
     new_runtime.tick(&mut reopened).unwrap();
     assert!(!new_runtime.has_active_work(&reopened).unwrap());
     assert_eq!(reopened.execution_attempt_ids(task).unwrap().len(), 2);
+}
+
+#[test]
+fn fresh_plugin_continuation_cannot_inherit_the_original_attempt_grant() {
+    let (_temp, mut store, mut runtime, _) = setup();
+    let (sent, calls) = mpsc::channel();
+    let binding = plugin_binding("b");
+    let original = plugin_input(&store, binding.clone());
+    runtime
+        .register_read_only(Arc::new(SelectedPlugin::new(&binding, sent)))
+        .unwrap();
+    authorize(&runtime, &mut store, &original);
+    runtime.submit(&mut store, &original).unwrap();
+    let source = original.envelope().attempt_id;
+    let task = original.envelope().task_id;
+    let action = crate::execution::test_continuation_action(
+        &store,
+        source,
+        &[original.envelope().items[0].item_id],
+    );
+
+    for _ in 0..2 {
+        let error = runtime.resume(&mut store, &action).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unauthorized);
+        assert_eq!(error.stage, "plugin-grant");
+        assert!(
+            store
+                .execution_continuation(action.action_id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(store.execution_attempt_ids(task).unwrap(), vec![source]);
+        assert_eq!(
+            store.execution_input(source).unwrap().bytes(),
+            original.bytes()
+        );
+        assert_eq!(
+            store
+                .execution_attempt(source, false)
+                .unwrap()
+                .progress
+                .queued,
+            1
+        );
+        assert!(store.plugin_permit(&original).unwrap().matches(&original));
+        assert!(calls.try_recv().is_err());
+    }
 }
 
 #[test]

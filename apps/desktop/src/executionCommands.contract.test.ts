@@ -161,3 +161,27 @@ it("reads a reused raw Plugin result under its logical continuation without rewr
   expect(output.attemptId).not.toBe(request.attemptId);
   expect(invoke.mock.calls.some(([command]) => command === "continue_execution" || command === "start_plugin_tool")).toBe(false);
 });
+
+it("preserves revision zero and rejects wrong Task-view authority before constructing a continuation", async () => {
+  const request:ContinuationRequest={...fixture.continuation,action:{...fixture.continuation.action,kind:"resume-undispatched",expectedCancellationRevision:"0"}};
+  const saved={...fixture.continuationReceipt,action:structuredClone(request.action)};
+  expect(validators.validateRequestContinuation(request)).toBe(true);
+  invoke.mockResolvedValueOnce(saved);expect(await executionCommands.continue(request)).toEqual(saved);
+  expect(invoke).toHaveBeenLastCalledWith("continue_execution",{request});
+  invoke.mockResolvedValueOnce(null);expect(await executionCommands.continuation(fixture.continuationRead)).toBeNull();
+  for(const value of [{...fixture.task,taskId:fixture.prepare.actionId},{...fixture.task,projectId:fixture.prepare.actionId}]){
+    invoke.mockResolvedValueOnce(value);await expect(executionCommands.taskView(fixture.taskViewRequest)).rejects.toThrow();
+  }
+  invoke.mockResolvedValueOnce({...fixture.task,cancellationRevision:"0"});
+  expect((await executionCommands.taskView(fixture.taskViewRequest)).cancellationRevision).toBe("0");
+  expect(invoke.mock.calls.filter(([name])=>name==="continue_execution")).toHaveLength(1);
+});
+
+it("requires a positive generated cancellation revision without confusing it with a zero continuation basis", async () => {
+  for(const reply of ["0",0,"01","9223372036854775808",{taskId:fixture.cancel.taskId,revision:"1",count:1}]){
+    invoke.mockResolvedValueOnce(reply);const error=await executionCommands.cancel(fixture.cancel).catch(value=>value);
+    expect(error).toBeInstanceOf(Error);expect(hasUnknownOutcome(error)).toBe(true);
+  }
+  invoke.mockResolvedValueOnce("1");expect(await executionCommands.cancel(fixture.cancel)).toBe("1");
+  expect(invoke).toHaveBeenLastCalledWith("cancel_execution_task",{request:fixture.cancel});
+});

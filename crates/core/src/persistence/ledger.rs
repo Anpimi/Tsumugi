@@ -213,16 +213,9 @@ fn enqueue_input(
     policy: RecoveryPolicy,
     parent: Option<ExecutionId>,
     prepared_input: &input_storage::PreparedInput<'_>,
-    verified_build: Option<&super::release::VerifiedBuildInput>,
-    authority: &plugin_authority::PluginAuthority,
-) -> Result<(), ExecutionError> {
+    fresh_delegation: bool,
+) -> Result<bool, ExecutionError> {
     let envelope = input.envelope();
-    if input.envelope().plugin.is_some() && parent.is_some() {
-        return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
-    }
-    super::plugin_execution::check_input_in(tx, input, authority)?;
-    check_translation_projection(tx, input, Some(authority))?;
-    super::application::check_enqueue(tx, input, parent)?;
     let existing: Option<String> = tx
         .query_row(
             "SELECT digest FROM execution_attempts WHERE attempt_id=?1",
@@ -232,12 +225,15 @@ fn enqueue_input(
         .optional()
         .map_err(sql_error)?;
     if let Some(digest) = existing {
+        if fresh_delegation {
+            return Err(error(ErrorCode::ResultMismatch, "work-plan-tool-attempt"));
+        }
         return if digest == input.digest()
             && provider::recovery_policy(tx, envelope.attempt_id)? == policy
             && provider::matches_parent(tx, envelope.task_id, parent)?
         {
             check_stored_input(tx, input)?;
-            Ok(())
+            Ok(false)
         } else {
             Err(error(ErrorCode::ResultMismatch, "attempt-identity"))
         };
@@ -340,9 +336,7 @@ fn enqueue_input(
     provider::record_input(tx, input, policy, parent)?;
     super::content::record_input(tx, input)?;
     super::translation::record_input(tx, input)?;
-    super::release::record_input(tx, input, verified_build)?;
-    super::application::record_input(tx, input)?;
-    Ok(())
+    Ok(true)
 }
 
 fn read_continuation(
@@ -738,6 +732,7 @@ pub(super) fn load_result(
     {
         return Err(error(ErrorCode::CorruptLedger, "result-association"));
     }
+    super::plugin_execution::validate_result_in(connection, &result_input, &result_value)?;
     Ok(result_value)
 }
 
@@ -1818,6 +1813,8 @@ impl ProjectStore {
         Ok(DispatchRequest {
             provider: None,
             plugin_permit,
+            service_origin: None,
+            original_deadline: None,
             input,
             item_id: item,
             dispatch_token: parse_id(
@@ -1897,6 +1894,54 @@ impl ProjectStore {
         policy: RecoveryPolicy,
         parent: Option<ExecutionId>,
     ) -> Result<(), ExecutionError> {
+        self.enqueue_execution_with_authority(input, policy, parent, None, None)
+    }
+
+    pub(crate) fn enqueue_work_plan_tool(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanTool,
+        consent: &crate::application::WorkPlanToolConsent,
+        grant_id: ExecutionId,
+        generation: ExecutionId,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.check_work_plan_tool_proposal(prepared, consent, generation)?;
+        self.enqueue_execution_with_authority(
+            &prepared.input,
+            policy,
+            None,
+            Some((prepared, consent, grant_id, generation)),
+            None,
+        )
+    }
+
+    pub(crate) fn enqueue_work_plan_service_generation(
+        &mut self,
+        prepared: &crate::application::PreparedWorkPlanServiceGeneration,
+        policy: RecoveryPolicy,
+    ) -> Result<(), ExecutionError> {
+        self.enqueue_execution_with_authority(
+            prepared.input(),
+            policy,
+            Some(prepared.parent_task()),
+            None,
+            Some(prepared),
+        )
+    }
+
+    fn enqueue_execution_with_authority(
+        &mut self,
+        input: &FixedInput,
+        policy: RecoveryPolicy,
+        parent: Option<ExecutionId>,
+        tool: Option<(
+            &crate::application::PreparedWorkPlanTool,
+            &crate::application::WorkPlanToolConsent,
+            ExecutionId,
+            ExecutionId,
+        )>,
+        service: Option<&crate::application::PreparedWorkPlanServiceGeneration>,
+    ) -> Result<(), ExecutionError> {
         let project = self
             .metadata()
             .map_err(|_| error(ErrorCode::CorruptLedger, "project"))?;
@@ -1910,20 +1955,83 @@ impl ProjectStore {
         let tx = self.execution_write()?;
         let verified_build =
             super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
-        enqueue_input(
+        if let Some(prepared) = service {
+            if tool.is_some()
+                || prepared.input().bytes() != input.bytes()
+                || parent != Some(prepared.parent_task())
+            {
+                return Err(error(ErrorCode::Unauthorized, "service-child-enqueue"));
+            }
+            super::application::check_prepared_service(&tx, prepared, &authority)?;
+        }
+        if input.envelope().plugin.is_some() && parent.is_some() {
+            return Err(error(ErrorCode::Unauthorized, "plugin-delegation"));
+        }
+        let delegated = if let Some((prepared, consent, grant, generation)) = tool {
+            let delegation = super::application::check_prepared_tool(&tx, prepared, consent)?;
+            let fresh = super::plugin_execution::record_delegated_grant_in(
+                &tx,
+                &authority,
+                generation,
+                grant,
+                input,
+                consent.expires_at_ms,
+                &delegation,
+            )?;
+            Some((delegation, fresh))
+        } else {
+            super::plugin_execution::check_input_in(&tx, input, &authority)?;
+            super::application::check_enqueue(&tx, input, parent)?;
+            None
+        };
+        super::application::check_service_input(&tx, input, &authority)?;
+        check_translation_projection(&tx, input, Some(&authority))?;
+        if !enqueue_input(
             &tx,
             input,
             policy,
             parent,
             &prepared_input,
-            verified_build.as_ref(),
-            &authority,
-        )?;
+            delegated.as_ref().is_some_and(|(_, fresh)| *fresh),
+        )? {
+            return Ok(());
+        }
+        super::release::record_input(&tx, input, verified_build.as_ref())?;
+        if let Some((delegation, _)) = &delegated {
+            super::application::record_tool_input(&tx, input, delegation)?;
+            super::application::validate_tool_input(&tx, input, delegation)?;
+        } else {
+            super::application::record_input(&tx, input)?;
+        }
+        if let Some(prepared) = service {
+            super::application::record_service_call(&tx, prepared)?;
+        }
         #[cfg(test)]
         crash_hook("before-enqueue-commit");
         commit(tx)?;
+        if let Some(prepared) = service {
+            super::application::activate_service_origin(&authority, prepared)
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "service-origin-activation"))?;
+        }
         #[cfg(test)]
         crash_hook("after-enqueue");
+        #[cfg(any(test, feature = "execution-test-host"))]
+        if delegated.is_some() {
+            crash_hook("after-tool-enqueue-commit");
+        }
+        if let (Some((_, consent, grant, generation)), Some((delegation, true))) = (tool, delegated)
+        {
+            authority
+                .activate_with_delegation(
+                    generation,
+                    grant,
+                    input,
+                    consent.expires_at_ms,
+                    consent.deadline,
+                    Some(delegation),
+                )
+                .map_err(|_| error(ErrorCode::OutcomeUnknown, "work-plan-tool-activation"))?;
+        }
         Ok(())
     }
     pub fn execution_continuation(
@@ -1981,8 +2089,6 @@ impl ProjectStore {
                 Err(error(ErrorCode::ResultMismatch, "continuation-identity"))
             };
         }
-        let verified_build =
-            super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
         if tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM execution_actions WHERE action_id=?1)",
@@ -2066,15 +2172,20 @@ impl ProjectStore {
         }
         // Existing enqueue checks scope, current results, cancellation, effect policy,
         // ancestor budget and domain records inside this same writer transaction.
-        enqueue_input(
-            &tx,
-            input,
-            policy,
-            None,
-            &prepared_input,
-            verified_build.as_ref(),
-            &authority,
-        )?;
+        let verified_build =
+            super::release::verify_prepared_input(&tx, input, prepared_build.as_ref())?;
+        super::plugin_execution::check_input_in(&tx, input, &authority)?;
+        super::application::check_enqueue(&tx, input, None)?;
+        super::application::check_service_input(&tx, input, &authority)?;
+        check_translation_projection(&tx, input, Some(&authority))?;
+        if !enqueue_input(&tx, input, policy, None, &prepared_input, false)? {
+            return Err(error(
+                ErrorCode::ResultMismatch,
+                "continuation-attempt-identity",
+            ));
+        }
+        super::release::record_input(&tx, input, verified_build.as_ref())?;
+        super::application::record_input(&tx, input)?;
         let sequence: i64 = tx
             .query_row(
                 "SELECT sequence FROM execution_attempts WHERE attempt_id=?1",
@@ -2237,6 +2348,8 @@ impl ProjectStore {
         attempt: ExecutionId,
         item: ExecutionId,
     ) -> Result<DispatchRequest, ExecutionError> {
+        let started = std::time::Instant::now();
+        let started_at_ms = crate::execution::plugin_authority::plugin_now_ms()?;
         let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         let input = load_input_cached(&tx, attempt)?;
@@ -2245,14 +2358,29 @@ impl ProjectStore {
             Err(failure)
                 if matches!(failure.code, ErrorCode::Unauthorized | ErrorCode::Cancelled) =>
             {
-                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='plugin-authority' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
+                if input.envelope().automation.is_some() {
+                    authority.revoke_task(input.envelope().task_id)?;
+                    tx.execute(
+                        "UPDATE plugin_execution_grants SET revoked=1 WHERE attempt_id=?1",
+                        [attempt.to_string()],
+                    )
+                    .map_err(sql_error)?;
+                }
+                let diagnostic = if failure.stage == "work-plan-tool-source" {
+                    "work-plan-tool-source"
+                } else {
+                    "plugin-authority"
+                };
+                tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic=?2 WHERE attempt_id=?1 AND execution='queued'", params![attempt.to_string(), diagnostic]).map_err(sql_error)?;
                 commit(tx)?;
                 return Err(failure);
             }
             Err(failure) => return Err(failure),
         };
-        if let Err(error) = super::application::check_input(&tx, &input) {
-            if error.code == ErrorCode::Cancelled {
+        if let Err(error) = super::application::check_input(&tx, &input)
+            .and_then(|_| super::application::check_service_input(&tx, &input, &authority))
+        {
+            if matches!(error.code, ErrorCode::Cancelled | ErrorCode::Unauthorized) {
                 tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch',diagnostic='work-plan-control' WHERE attempt_id=?1 AND execution='queued'", [attempt.to_string()]).map_err(sql_error)?;
                 commit(tx)?;
             }
@@ -2296,9 +2424,20 @@ impl ProjectStore {
         commit(tx)?;
         #[cfg(test)]
         crash_hook("after-dispatch-intent");
+        let timeout = std::time::Duration::from_millis(input.envelope().limits.timeout_ms.into());
+        let original_deadline = crate::execution::DispatchDeadline {
+            instant: started
+                .checked_add(timeout)
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
+            expires_at_ms: started_at_ms
+                .checked_add(input.envelope().limits.timeout_ms.into())
+                .ok_or_else(|| error(ErrorCode::InvalidInput, "dispatch-deadline"))?,
+        };
         Ok(DispatchRequest {
             provider: None,
             plugin_permit,
+            service_origin: authority.service_origin(attempt)?,
+            original_deadline: Some(original_deadline),
             input,
             item_id: item,
             dispatch_token: token,
@@ -2645,7 +2784,7 @@ impl ProjectStore {
         .map_err(sql_error)?;
         tx.execute("UPDATE execution_items SET execution='cancelled-before-dispatch' WHERE execution='queued' AND attempt_id IN (SELECT attempt_id FROM execution_attempts WHERE task_id=?1)",[task.to_string()]).map_err(sql_error)?;
         let descendants = {
-            let mut stmt = tx.prepare("SELECT task_id FROM execution_budget_ancestry WHERE ancestor_id=?1 AND task_id<>?1").map_err(sql_error)?;
+            let mut stmt = tx.prepare("SELECT task_id FROM execution_budget_ancestry WHERE ancestor_id=?1 AND task_id<>?1 UNION SELECT a.task_id FROM application_executions x JOIN execution_attempts a USING(attempt_id) WHERE x.kind='tool' AND x.root_task=?1 AND a.task_id<>?1").map_err(sql_error)?;
             stmt.query_map([task.to_string()], |r| r.get::<_, String>(0))
                 .map_err(sql_error)?
                 .collect::<rusqlite::Result<Vec<_>>>()
@@ -2653,6 +2792,11 @@ impl ProjectStore {
         };
         for child in descendants {
             authority.revoke_task(parse_id(child.clone())?)?;
+            tx.execute(
+                "UPDATE plugin_execution_grants SET revoked=1 WHERE task_id=?1",
+                [&child],
+            )
+            .map_err(sql_error)?;
             let child_revision = cancel_revision(&tx, parse_id(child.clone())?)?.next()?;
             tx.execute(
                 "INSERT INTO execution_cancellations VALUES (?1,?2,?3)",
@@ -2994,6 +3138,7 @@ fn capture_adoption_in(
         complete_translation_projection(connection, &input)?;
     }
     super::application::check_input(connection, &input)?;
+    super::application::check_service_input(connection, &input, authority)?;
     check_translation_projection(connection, &input, Some(authority))?;
     if input.envelope().plugin.is_some()
         && input.envelope().operation == crate::content::BUILD_OPERATION
@@ -3139,7 +3284,7 @@ pub(super) fn commit(transaction: ExecutionTransaction<'_>) -> Result<(), Execut
         error(ErrorCode::OutcomeUnknown, "execution-commit")
     })
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "execution-test-host"))]
 pub(in crate::persistence) fn crash_hook(point: &str) {
     if std::env::var("TSUMUGI_EXECUTION_CRASH").as_deref() == Ok(point) {
         if let Ok(path) = std::env::var("TSUMUGI_EXECUTION_HOOK") {

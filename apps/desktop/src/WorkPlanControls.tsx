@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { ReviewCheckerDetails, checkerIdentity } from "./ReviewCheckers";
 import { commandFailure, CommandFailureDetails } from "./CommandFailure";
 import { useTranslation } from "react-i18next";
+import { enUS } from "./i18n/en-US";
+import { PluginPermissions } from "./PluginManager";
 import { aiCommands } from "./aiCommands";
 import { executionCommands, type SessionRequest } from "./executionCommands";
 import { hasUnknownOutcome } from "./projectCommands";
@@ -33,6 +35,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   const [minutes, setMinutes] = useState(60);
   const [renewConsent, setRenewConsent] = useState(false);
   const [checkerConsent, setCheckerConsent] = useState<string[]>([]);
+  const [toolConsent, setToolConsent] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const [ready, setReady] = useState<WorkPlanReceiptView | null>(null);
   const [missing, setMissing] = useState(false);
@@ -46,6 +49,9 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
   const checkerConfirmed = !checkerRequired || Boolean(plan && plan.checkers.length > 0
     && plan.checkers.every(checker => checker.kind === "ready" && checkerConsent.includes(checkerConsentKey(checker))));
   const confirmedCheckers = () => checkerRequired && checkerConfirmed ? plan?.checkers.map(checker => checker.checker) ?? [] : [];
+  const toolsRequired = Boolean(plan?.tools?.entries.length);
+  const toolKey = toolsRequired && plan ? JSON.stringify([context.sessionToken, context.projectId, plan.planId, plan.digest, status?.lease.generation ?? "prepared", plan.tools]) : null;
+  const toolsConfirmed = !toolsRequired || (toolKey !== null && toolConsent === toolKey);
   const blocked = busy || disabled || Boolean(pending);
 
   function expiry() {
@@ -103,6 +109,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     await mutate({ kind: "control", request: { ...context, planId: status.lease.planId, actionId,
       expectedGeneration: status.lease.generation, command, confirmed: command === "continue" && renewConsent,
       checkerExecutions: command === "continue" ? confirmedCheckers() : [],
+      toolExecution: command === "continue" && toolsRequired && toolsConfirmed,
       expiresAt } }, current, command === "continue");
   }
 
@@ -138,6 +145,20 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
             sourceRevisionId: unit.sourceRevisionId, key: unit.nativeKey, sourceText: plan.preview?.items.find(item => item.unitId === unit.unitId)?.sourceText ?? "" }, plan.locale)}>{t("ai.plan.edit")}</button></li>)}</ul>
       </details>
       {!plan.preview ? <p>{t("ai.plan.manualHelp")}</p> : null}
+      {plan.tools ? <section aria-label={t("ai.tools.reviewTitle")}>
+        <h4>{t("ai.tools.reviewTitle")}</h4><p>{t("ai.tools.limitHelp")}</p><p>{t("ai.tools.fixedLimit", { limit: plan.tools.maxInvocations, defaultValue: enUS.ai.tools.fixedLimit })}</p>
+        {plan.tools.entries.map(tool => <article key={tool.handle}>
+          <h4>{tool.binding.declaration.title} · {tool.binding.capability.provider.plugin.id} {tool.binding.capability.provider.plugin.version}</h4>
+          <p>{tool.binding.declaration.description}</p><PluginPermissions permissions={tool.binding.capability.declaration.permissions} />
+          <details><summary>{t("sourcePlugin.fixedDetails")}</summary><pre className="ai-text">{JSON.stringify({ binding: tool.binding, environment: tool.environment,
+            packageOrigin: tool.packageOrigin, runtimeOrigin: tool.runtimeOrigin, target: tool.target, selections: tool.selections }, null, 2)}</pre></details>
+        </article>)}
+        <p>{t("sourcePlugin.unsandboxed")}</p>
+        {!status || status.state === "paused" || status.state === "taken-over" ? <label className="source-check">
+          <input type="checkbox" checked={toolKey !== null && toolConsent === toolKey} disabled={blocked || Boolean(ready)}
+            onChange={event => setToolConsent(event.target.checked ? toolKey : null)} />{t("ai.tools.consent")}
+        </label> : null}
+      </section> : null}
       {checkerRequired ? <>
         {plan.checkers.length === 0 ? <p role="alert">{t("ai.plan.checkerUnavailable")}</p> : null}
         {onOpenExtensions && (plan.checkers.length === 0 || plan.checkers.some(checker => checker.kind === "unavailable")) ? <button type="button"
@@ -156,12 +177,12 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
     </> : null}
     {prepared?.preview && !status && !ready && !pending ? <>
       {duration}
-      <button className="primary-button" disabled={blocked || !consent || !checkerConfirmed || !validMinutes} onClick={() => void run(async current => {
+      <button className="primary-button" disabled={blocked || !consent || !checkerConfirmed || !toolsConfirmed || !validMinutes} onClick={() => void run(async current => {
         const expiresAt = expiry();
         const actionId = await executionCommands.identity(context);
         if (!current()) return;
         await mutate({ kind: "authorize", request: { ...context, planId: prepared.planId, digest: prepared.digest,
-          actionId, confirmed: consent, checkerExecutions: confirmedCheckers(), effects: (prepared.options.selectionPolicy === "candidates-only" ? ["save-candidate"] : ["save-candidate", "run-checks", prepared.options.selectionPolicy === "missing-only" ? "select-missing" : "replace-captured-selection"]) satisfies AutomationEffect[], expiresAt } }, current, true);
+          actionId, confirmed: consent, checkerExecutions: confirmedCheckers(), toolExecution: toolsRequired && toolsConfirmed, effects: [...(prepared.options.selectionPolicy === "candidates-only" ? ["save-candidate"] as const : ["save-candidate", "run-checks", prepared.options.selectionPolicy === "missing-only" ? "select-missing" : "replace-captured-selection"] as const), ...(toolsRequired ? ["query-tools"] as const : [])] satisfies AutomationEffect[], expiresAt } }, current, true);
       })}>{t("ai.generate")}</button>
     </> : null}
     {status ? <>
@@ -179,7 +200,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         <p>{t("ai.plan.continueHelp")}</p>{duration}
         <label className="source-check"><input type="checkbox" checked={renewConsent} disabled={blocked || Boolean(ready)}
           onChange={event => setRenewConsent(event.target.checked)} />{t("ai.plan.renewConsent")}</label>
-        <button className="primary-button" disabled={blocked || Boolean(ready) || !renewConsent || !checkerConfirmed || !validMinutes}
+        <button className="primary-button" disabled={blocked || Boolean(ready) || !renewConsent || !checkerConfirmed || !toolsConfirmed || !validMinutes}
           onClick={() => void run(current => control("continue", current))}>{t("ai.plan.continue")}</button>
       </> : null}
       <button className="secondary-button" disabled={blocked} onClick={() => void run(async current => {

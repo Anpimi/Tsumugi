@@ -352,8 +352,10 @@ impl ProjectStore {
         id: ExecutionId,
         limit: u32,
     ) -> Result<(), ExecutionError> {
+        let authority = self.plugin_authority.clone();
         let tx = self.execution_write()?;
         super::super::application::check_input(&tx, &request.input)?;
+        super::super::application::check_service_input(&tx, &request.input, &authority)?;
         let e = request.input.envelope();
         let ancestors = {
             let mut statement = tx.prepare("SELECT DISTINCT x.ancestor_id FROM execution_budget_ancestry x JOIN execution_cancellations c ON c.task_id=x.ancestor_id WHERE x.task_id=?1").map_err(sql_error)?;

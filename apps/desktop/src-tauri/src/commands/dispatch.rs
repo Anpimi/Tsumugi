@@ -6,8 +6,8 @@
 use super::{CommandError, CommandErrorCode, CommandStage, SessionManager};
 use std::{
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
     time::{Duration, Instant},
@@ -59,20 +59,115 @@ struct Job {
     _permit: Arc<Permit>,
 }
 
-pub(super) struct SessionExecutor {
+struct SessionAdmission {
     sender: mpsc::Sender<Job>,
     normal: Capacity,
     control: Capacity,
+    accepting: AtomicBool,
+}
+
+impl SessionAdmission {
+    fn lease(&self, stage: CommandStage) -> Result<SessionLease, CommandError> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(CommandError::simple(
+                CommandErrorCode::SessionInvalid,
+                stage,
+            ));
+        }
+        let capacity = if matches!(
+            stage,
+            CommandStage::Close | CommandStage::ExecutionCancel | CommandStage::ExecutionQuiesce
+        ) {
+            &self.control
+        } else {
+            &self.normal
+        };
+        Ok(SessionLease {
+            sender: self.sender.clone(),
+            permit: Arc::new(capacity.acquire(stage)?),
+        })
+    }
+}
+
+pub(super) struct SessionExecutor {
+    admission: Arc<SessionAdmission>,
     changes: Arc<Mutex<Option<super::changes::ChangeSink>>>,
+}
+
+impl Drop for SessionExecutor {
+    fn drop(&mut self) {
+        // Another short callback may still hold a temporary upgrade. Closing
+        // admission prevents that upgrade from keeping new work admissible;
+        // existing leases and accepted jobs retain their original completion.
+        self.admission.accepting.store(false, Ordering::Release);
+    }
+}
+
+/// Cached consumers may submit short owner operations without keeping the
+/// project connection alive. Each operation must recheck its original session
+/// and authority inside the queued work; upgrading is only admission.
+#[derive(Clone)]
+pub(super) struct SessionCallback {
+    admission: Weak<SessionAdmission>,
+}
+
+impl SessionCallback {
+    pub(super) fn submit<T, F>(
+        &self,
+        operation: &'static str,
+        stage: CommandStage,
+        work: F,
+    ) -> Result<
+        impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static + use<T, F>,
+        CommandError,
+    >
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
+    {
+        let admission = self.admission.upgrade().ok_or_else(|| {
+            CommandError::simple(CommandErrorCode::SessionInvalid, stage)
+                .report(operation, tsumugi_core::execution::ExecutionId::new())
+        })?;
+        let lease = admission.lease(stage);
+        drop(admission);
+        let lease = lease.map_err(|error| {
+            error.report(operation, tsumugi_core::execution::ExecutionId::new())
+        })?;
+        // The reply future owns no sender, lease or admission handle. Only the
+        // already accepted job retains its permit after these locals drop.
+        lease.submit(operation, stage, work)
+    }
 }
 
 impl Default for SessionExecutor {
     fn default() -> Self {
+        Self::new(Arc::new(super::plugins::ApplicationPlugins::default()))
+    }
+}
+
+impl SessionExecutor {
+    pub(super) fn new(plugins: Arc<super::plugins::ApplicationPlugins>) -> Self {
         let (sender, receiver) = mpsc::channel::<Job>();
+        let admission = Arc::new(SessionAdmission {
+            sender,
+            normal: Capacity::new(PROJECT_CAPACITY),
+            control: Capacity::new(CONTROL_CAPACITY),
+            accepting: AtomicBool::new(true),
+        });
+        let services = super::ProjectServiceContext {
+            callback: SessionCallback {
+                admission: Arc::downgrade(&admission),
+            },
+            plugins,
+        };
         let changes: Arc<Mutex<Option<super::changes::ChangeSink>>> = Arc::default();
         let sink = changes.clone();
         std::thread::Builder::new().name("project-commands".into()).spawn(move || {
-            let mut sessions = SessionManager::default();
+            let mut sessions = SessionManager {
+                services: Some(services),
+                ..SessionManager::default()
+            };
             let mut last_tick = Instant::now();
             let mut notifications = super::changes::Notifications::default();
             let mut sequence = 0_u64;
@@ -120,12 +215,7 @@ impl Default for SessionExecutor {
                 }
             }
         }).expect("failed to start project command thread");
-        Self {
-            sender,
-            normal: Capacity::new(PROJECT_CAPACITY),
-            control: Capacity::new(CONTROL_CAPACITY),
-            changes,
-        }
+        Self { admission, changes }
     }
 }
 
@@ -135,18 +225,13 @@ impl SessionExecutor {
     }
 
     pub(super) fn lease(&self, stage: CommandStage) -> Result<SessionLease, CommandError> {
-        let capacity = if matches!(
-            stage,
-            CommandStage::Close | CommandStage::ExecutionCancel | CommandStage::ExecutionQuiesce
-        ) {
-            &self.control
-        } else {
-            &self.normal
-        };
-        Ok(SessionLease {
-            sender: self.sender.clone(),
-            permit: Arc::new(capacity.acquire(stage)?),
-        })
+        self.admission.lease(stage)
+    }
+
+    pub(super) fn callback(&self) -> SessionCallback {
+        SessionCallback {
+            admission: Arc::downgrade(&self.admission),
+        }
     }
 
     pub(super) async fn run<T: Send + 'static>(
@@ -250,15 +335,19 @@ impl SessionLease {
 
     /// Enqueue before handing ownership to an asynchronous continuation. This
     /// preserves command order while the continuation survives a lost IPC waiter.
-    pub(super) fn submit<T: Send + 'static>(
+    pub(super) fn submit<T, F>(
         &self,
         operation: &'static str,
         stage: CommandStage,
-        work: impl FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
+        work: F,
     ) -> Result<
-        impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static,
+        impl std::future::Future<Output = Result<T, CommandError>> + Send + 'static + use<T, F>,
         CommandError,
-    > {
+    >
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut SessionManager) -> Result<T, CommandError> + Send + 'static,
+    {
         let (sender, mut receiver) = tauri::async_runtime::channel(1);
         let diagnostic_id = tsumugi_core::execution::ExecutionId::new();
         self.enqueue(
@@ -371,6 +460,7 @@ mod tests {
     #[test]
     fn saturated_work_keeps_control_admission_and_capture_completion_bounded() {
         let executor = SessionExecutor::default();
+        let callback = executor.callback();
         let capture = executor.lease(CommandStage::ExecutionRead).unwrap();
         let held = executor.pause();
         let reservations: Vec<_> = (0..PROJECT_CAPACITY - 2)
@@ -384,11 +474,33 @@ mod tests {
                 .code,
             CommandErrorCode::Busy
         );
+        let error = callback
+            .submit(
+                "callback.saturated",
+                CommandStage::ExecutionRead,
+                |_| Ok(()),
+            )
+            .err()
+            .unwrap();
+        assert_eq!(error.code, CommandErrorCode::Busy);
+        assert!(error.diagnostic_id.is_some());
         let controls: Vec<_> = (0..CONTROL_CAPACITY)
-            .map(|_| executor.lease(CommandStage::ExecutionCancel).unwrap())
+            .map(|_| {
+                callback
+                    .submit("callback.cancel", CommandStage::ExecutionCancel, |_| Ok(()))
+                    .unwrap()
+            })
             .collect();
         assert_eq!(
             executor.lease(CommandStage::Close).err().unwrap().code,
+            CommandErrorCode::Busy
+        );
+        assert_eq!(
+            callback
+                .submit("callback.close", CommandStage::Close, |_| Ok(()))
+                .err()
+                .unwrap()
+                .code,
             CommandErrorCode::Busy
         );
         let mut finish =
@@ -399,6 +511,121 @@ mod tests {
         drop(reservations);
         drop(controls);
         assert!(executor.lease(CommandStage::ExecutionRead).is_ok());
+    }
+
+    #[test]
+    fn weak_submission_enters_fifo_before_polling_and_survives_a_lost_reply() {
+        let executor = SessionExecutor::default();
+        let callback = executor.callback();
+        let held = executor.pause();
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let first = writes.clone();
+        let lost = callback
+            .submit("callback.first", CommandStage::Rename, move |_| {
+                first.lock().unwrap().push(1);
+                Ok(())
+            })
+            .unwrap();
+        let second = writes.clone();
+        let reply = callback
+            .submit("callback.second", CommandStage::Rename, move |_| {
+                second.lock().unwrap().push(2);
+                Ok(())
+            })
+            .unwrap();
+        drop(lost);
+        assert!(writes.lock().unwrap().is_empty());
+        drop(held);
+        tauri::async_runtime::block_on(reply).unwrap();
+        executor.with(|_| ());
+        assert_eq!(*writes.lock().unwrap(), vec![1, 2]);
+    }
+
+    #[test]
+    fn cached_weak_callback_rejects_new_work_after_owner_drop_and_releases_the_project() {
+        struct OwnerDropProbe(mpsc::Sender<()>);
+        impl Drop for OwnerDropProbe {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        let executor = SessionExecutor::default();
+        let callback = executor.callback();
+        let cached = callback.clone();
+        let (stopped, owner_stopped) = mpsc::channel();
+        let probe = OwnerDropProbe(stopped);
+        executor.set_change_sink(Some(Arc::new(move |_| {
+            // The owner retains the same kind of weak handle as a cached broker.
+            let _ = (cached.clone(), &probe);
+        })));
+        let destination = root.path().join("project").to_string_lossy().into_owned();
+        let view = tauri::async_runtime::block_on(executor.run(
+            "create",
+            CommandStage::Create,
+            move |sessions| {
+                sessions.create(CreateProjectRequest {
+                    destination,
+                    display_name: "Original".into(),
+                    source_locale: "en".into(),
+                    target_locales: vec!["zh-CN".into()],
+                })
+            },
+        ))
+        .unwrap();
+        let writes = Arc::new(AtomicUsize::new(0));
+        let completion = executor.lease(CommandStage::ExecutionRead).unwrap();
+        let written = writes.clone();
+        let (entered, started) = mpsc::sync_channel(1);
+        let (release, wait) = mpsc::sync_channel(1);
+        let reply = callback
+            .submit("callback.rename", CommandStage::Rename, move |sessions| {
+                entered.send(()).unwrap();
+                wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                let result = sessions.rename(RenameProjectRequest {
+                    session_token: view.session_token,
+                    expected_revision: "1".into(),
+                    display_name: "Accepted once".into(),
+                    directory_name: None,
+                })?;
+                written.fetch_add(1, Ordering::AcqRel);
+                Ok(result)
+            })
+            .unwrap();
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Simulate a concurrent submission paused after its temporary upgrade.
+        let upgraded = callback.admission.upgrade().unwrap();
+        drop(executor);
+        let rejected = callback
+            .submit("callback.after-drop", CommandStage::Close, |_| Ok(()))
+            .err();
+        // Previously admitted split work may still finish and release its slot.
+        let finished = completion.submit(
+            "capture.finish-after-drop",
+            CommandStage::ExecutionRead,
+            |_| Ok(42),
+        );
+        drop(completion);
+        // Always release accepted work before assertions so a failing lifecycle
+        // check cannot strand the owner's bounded test barrier.
+        drop(reply);
+        release.send(()).unwrap();
+        drop(upgraded);
+        let error = rejected.expect("a cached callback kept admission alive");
+        assert_eq!(error.code, CommandErrorCode::SessionInvalid);
+        assert!(error.diagnostic_id.is_some());
+        assert_eq!(
+            tauri::async_runtime::block_on(finished.unwrap()).unwrap(),
+            42
+        );
+        owner_stopped
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the cached weak callback kept the project owner alive");
+        assert_eq!(writes.load(Ordering::Acquire), 1);
+        let store = tsumugi_core::ProjectStore::open(root.path().join("project")).unwrap();
+        assert_eq!(store.metadata().unwrap().display_name(), "Accepted once");
+        store.close().unwrap();
     }
 
     #[test]

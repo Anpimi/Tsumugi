@@ -8,6 +8,7 @@ export interface Requests {
   build: PluginBuildRequest;
   defaultsInstall: PluginDefaultsInstallRequest;
   enable: PluginEnableRequest;
+  generationComponent: PluginGenerationComponentRequest;
   install: PluginInstallRequest;
   inventory: PluginInventoryRequest;
   lookup: PluginLookupRequest;
@@ -60,14 +61,19 @@ export interface PluginEnableRequest {
   expectedRevision: UnsignedDecimal;
   package: PluginPackageRequest;
 }
-export interface PluginInstallRequest {
-  actionId: ExecutionId;
-  expectedRevision: UnsignedDecimal;
-  ticket: ExecutionId;
-}
-export interface PluginInventoryRequest {}
-export interface PluginLookupRequest {
+export interface PluginGenerationComponentRequest {
+  environmentDigest: string;
+  profile: ContractRef | null;
   provider: ProviderSelectionBinding;
+}
+/**
+ * Schema and behavior are separate exact-match compatibility identities.
+ * Matching JSON field types or a package SemVer is not behavioral compatibility.
+ */
+export interface ContractRef {
+  behaviorVersion: number;
+  id: string;
+  schemaVersion: number;
 }
 /**
  * A fixed package/contribution choice, independent of any active instance.
@@ -79,6 +85,15 @@ export interface ProviderSelectionBinding {
   contributionId: string;
   packageDigest: string;
   plugin: PluginIdentity;
+}
+export interface PluginInstallRequest {
+  actionId: ExecutionId;
+  expectedRevision: UnsignedDecimal;
+  ticket: ExecutionId;
+}
+export interface PluginInventoryRequest {}
+export interface PluginLookupRequest {
+  provider: ProviderSelectionBinding;
 }
 export interface PluginNativeHostApprovalRequest {
   actionId: ExecutionId;

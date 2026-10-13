@@ -37,6 +37,61 @@
         ],
         "type": "object"
       },
+      "AgentGenerationRequest": {
+        "additionalProperties": false,
+        "description": "A bounded proposal within an already-authorized plan. It contains no model,\ndestination, payload, effect, human confirmation or authority override.",
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "unitIds"
+        ],
+        "type": "object"
+      },
+      "AgentToolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandle": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "unitIds": {
+            "items": {
+              "$ref": "#/definitions/ExecutionId"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "toolHandle",
+          "unitIds"
+        ],
+        "type": "object"
+      },
       "AiConfig": {
         "additionalProperties": false,
         "properties": {
@@ -222,9 +277,27 @@
           "select-missing",
           "replace-captured-selection",
           "adopt-resources",
-          "deliver"
+          "deliver",
+          "query-tools"
         ],
         "type": "string"
+      },
+      "AutomationLease": {
+        "additionalProperties": false,
+        "description": "A reference to durable authority. Possessing or editing this reference does\nnot grant permission; Core checks the stored generation at every boundary.",
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/Revision"
+          },
+          "planId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "planId",
+          "generation"
+        ],
+        "type": "object"
       },
       "CapabilityBinding": {
         "additionalProperties": false,
@@ -369,6 +442,36 @@
       },
       "ExecutionId": {
         "type": "string"
+      },
+      "GenerationServiceInput": {
+        "additionalProperties": false,
+        "description": "No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.",
+        "properties": {
+          "attemptId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "taskId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "unitIds"
+        ],
+        "type": "object"
       },
       "NativeHostEnvironmentDescriptor": {
         "additionalProperties": false,
@@ -574,6 +677,33 @@
         ],
         "type": "object"
       },
+      "PluginGenerationComponentRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/definitions/ProviderSelectionBinding"
+          }
+        },
+        "required": [
+          "provider",
+          "profile",
+          "environmentDigest"
+        ],
+        "type": "object"
+      },
       "PluginIdentity": {
         "additionalProperties": false,
         "description": "Claimed package identity; a host must authenticate the actual package source.",
@@ -636,6 +766,26 @@
           "resourceId",
           "environmentDigest",
           "rules"
+        ],
+        "type": "object"
+      },
+      "PluginToolRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentDigest": {
+            "type": "string"
+          },
+          "package": {
+            "$ref": "#/definitions/PluginPackageRequest"
+          },
+          "resourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "package",
+          "resourceId",
+          "environmentDigest"
         ],
         "type": "object"
       },
@@ -968,6 +1118,132 @@
         ],
         "type": "object"
       },
+      "WorkPlanAgentOpenRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "lease"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/AgentGenerationRequest"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "generation"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "$ref": "#/definitions/AgentGenerationRequest"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "generation",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentToolPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/AgentToolRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "tool"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentToolStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/AgentToolRequest"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "tool",
+          "inputDigest"
+        ],
+        "type": "object"
+      },
       "WorkPlanAuthorizeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1003,6 +1279,9 @@
           },
           "sessionToken": {
             "type": "string"
+          },
+          "toolExecution": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -1013,6 +1292,7 @@
           "actionId",
           "confirmed",
           "checkerExecutions",
+          "toolExecution",
           "effects",
           "expiresAt"
         ],
@@ -1066,6 +1346,9 @@
           },
           "sessionToken": {
             "type": "string"
+          },
+          "toolExecution": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -1076,7 +1359,100 @@
           "expectedGeneration",
           "command",
           "confirmed",
-          "checkerExecutions"
+          "checkerExecutions",
+          "toolExecution"
+        ],
+        "type": "object"
+      },
+      "WorkPlanGenerationDiscardRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "attemptId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanGenerationPrepareRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "component": {
+            "$ref": "#/definitions/PluginGenerationComponentRequest"
+          },
+          "generation": {
+            "$ref": "#/definitions/GenerationServiceInput"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "attemptId",
+          "component",
+          "generation"
+        ],
+        "type": "object"
+      },
+      "WorkPlanGenerationStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "expiresAtMs": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "grantId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "projectId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "sessionToken": {
+            "type": "string"
+          },
+          "unsandboxedExecution": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sessionToken",
+          "projectId",
+          "scopeId",
+          "attemptId",
+          "inputDigest",
+          "grantId",
+          "expiresAtMs",
+          "unsandboxedExecution"
         ],
         "type": "object"
       },
@@ -1110,6 +1486,16 @@
           },
           "sessionToken": {
             "type": "string"
+          },
+          "toolSelection": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanToolSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "unitIds": {
             "items": {
@@ -1173,6 +1559,57 @@
           "sessionToken",
           "projectId",
           "planId"
+        ],
+        "type": "object"
+      },
+      "WorkPlanToolSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/WorkPlanToolSelectionEntry"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          },
+          "maxInvocations": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInvocations",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "WorkPlanToolSelectionEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "handle": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "selections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "target": {
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/definitions/PluginToolRequest"
+          }
+        },
+        "required": [
+          "handle",
+          "tool",
+          "target",
+          "selections"
         ],
         "type": "object"
       },
@@ -1281,11 +1718,35 @@
       "workPlanAction": {
         "$ref": "#/definitions/WorkPlanActionRequest"
       },
+      "workPlanAgentOpen": {
+        "$ref": "#/definitions/WorkPlanAgentOpenRequest"
+      },
+      "workPlanAgentPrepare": {
+        "$ref": "#/definitions/WorkPlanAgentPrepareRequest"
+      },
+      "workPlanAgentStart": {
+        "$ref": "#/definitions/WorkPlanAgentStartRequest"
+      },
+      "workPlanAgentToolPrepare": {
+        "$ref": "#/definitions/WorkPlanAgentToolPrepareRequest"
+      },
+      "workPlanAgentToolStart": {
+        "$ref": "#/definitions/WorkPlanAgentToolStartRequest"
+      },
       "workPlanAuthorize": {
         "$ref": "#/definitions/WorkPlanAuthorizeRequest"
       },
       "workPlanControl": {
         "$ref": "#/definitions/WorkPlanControlRequest"
+      },
+      "workPlanGenerationDiscard": {
+        "$ref": "#/definitions/WorkPlanGenerationDiscardRequest"
+      },
+      "workPlanGenerationPrepare": {
+        "$ref": "#/definitions/WorkPlanGenerationPrepareRequest"
+      },
+      "workPlanGenerationStart": {
+        "$ref": "#/definitions/WorkPlanGenerationStartRequest"
       },
       "workPlanPrepare": {
         "$ref": "#/definitions/WorkPlanPrepareRequest"
@@ -1311,6 +1772,14 @@
       "workPlanPrepare",
       "workPlanAuthorize",
       "workPlanStart",
+      "workPlanGenerationPrepare",
+      "workPlanGenerationStart",
+      "workPlanGenerationDiscard",
+      "workPlanAgentOpen",
+      "workPlanAgentPrepare",
+      "workPlanAgentStart",
+      "workPlanAgentToolPrepare",
+      "workPlanAgentToolStart",
       "workPlanControl",
       "workPlanStatus",
       "workPlanAction",
@@ -1918,7 +2387,8 @@
           "select-missing",
           "replace-captured-selection",
           "adopt-resources",
-          "deliver"
+          "deliver",
+          "query-tools"
         ],
         "type": "string"
       },
@@ -2032,6 +2502,91 @@
           "maxOutputBytes",
           "concurrency",
           "timeoutMs"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolBinding": {
+        "additionalProperties": false,
+        "description": "A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.",
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "declaration": {
+            "$ref": "#/definitions/CapabilityToolDeclaration"
+          },
+          "resources": {
+            "items": {
+              "$ref": "#/definitions/ToolResourceBinding"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "declaration",
+          "capability",
+          "resources"
+        ],
+        "type": "object"
+      },
+      "CapabilityToolDeclaration": {
+        "additionalProperties": false,
+        "description": "A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.",
+        "properties": {
+          "capabilityId": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "query": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ToolQueryDeclaration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."
+          },
+          "skill": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supportingResources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "title",
+          "description",
+          "capabilityId",
+          "profile",
+          "supportingResources",
+          "skill"
         ],
         "type": "object"
       },
@@ -2926,6 +3481,7 @@
         "enum": [
           "waiting",
           "saving-candidate",
+          "saved",
           "checking",
           "selected",
           "blocked",
@@ -3015,6 +3571,36 @@
           "error"
         ],
         "type": "string"
+      },
+      "GenerationServiceInput": {
+        "additionalProperties": false,
+        "description": "No model, text payload, destination, consent, lease or budget can be supplied.\nThe real Host derives input from the original plan and checks current scope.",
+        "properties": {
+          "attemptId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "taskId": {
+            "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+            "type": "string"
+          },
+          "unitIds": {
+            "items": {
+              "pattern": "^[A-Za-z0-9.\\-_:/]{1,128}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "taskId",
+          "attemptId",
+          "unitIds"
+        ],
+        "type": "object"
       },
       "ItemStatus": {
         "additionalProperties": false,
@@ -3367,6 +3953,49 @@
           "capability",
           "profile",
           "environment"
+        ],
+        "type": "object"
+      },
+      "PluginGenerationComponentView": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "environmentDigest": {
+            "type": "string"
+          },
+          "packageOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runtimeOrigin": {
+            "$ref": "#/definitions/PluginOriginView"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          }
+        },
+        "required": [
+          "settingsRevision",
+          "binding",
+          "profile",
+          "packageOrigin",
+          "environment",
+          "environmentDigest",
+          "runtimeOrigin"
         ],
         "type": "object"
       },
@@ -4453,6 +5082,200 @@
         ],
         "type": "object"
       },
+      "ToolQueryColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "path"
+        ],
+        "type": "object"
+      },
+      "ToolQueryDeclaration": {
+        "additionalProperties": false,
+        "properties": {
+          "inputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "inputTemplate": true,
+          "maxTextBytes": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "output": {
+            "$ref": "#/definitions/ToolQueryOutput"
+          },
+          "outputSchema": {
+            "$ref": "#/definitions/ContractRef"
+          },
+          "selections": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "Explicit senses or categories. Matching text alone does not select them."
+          },
+          "target": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ToolQuerySelection"
+              }
+            ],
+            "description": "One explicit target option; no host-side locale or value normalization."
+          },
+          "textPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "inputSchema",
+          "outputSchema",
+          "inputTemplate",
+          "textPath",
+          "maxTextBytes",
+          "target",
+          "selections",
+          "output"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOption": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "description"
+        ],
+        "type": "object"
+      },
+      "ToolQueryOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryColumn"
+            },
+            "type": "array"
+          },
+          "emptyDescription": {
+            "type": "string"
+          },
+          "entriesPath": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          },
+          "maxEntries": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entriesPath",
+          "columns",
+          "maxEntries",
+          "emptyDescription"
+        ],
+        "type": "object"
+      },
+      "ToolQueryPathPart": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "maximum": 1999,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ]
+      },
+      "ToolQuerySelection": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "maxSelected": {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "minSelected": {
+            "maximum": 64,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryOption"
+            },
+            "type": "array"
+          },
+          "path": {
+            "items": {
+              "$ref": "#/definitions/ToolQueryPathPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "description",
+          "path",
+          "options",
+          "minSelected",
+          "maxSelected"
+        ],
+        "type": "object"
+      },
+      "ToolResourceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "contributionId": {
+            "type": "string"
+          },
+          "schema": {
+            "$ref": "#/definitions/ContractRef"
+          }
+        },
+        "required": [
+          "contributionId",
+          "schema"
+        ],
+        "type": "object"
+      },
       "TranslationSelection": {
         "additionalProperties": false,
         "properties": {
@@ -4509,6 +5332,117 @@
         ],
         "type": "string"
       },
+      "WorkPlanAgentGenerationView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scopeId",
+          "parentTask",
+          "taskId",
+          "attemptId",
+          "inputDigest",
+          "scope",
+          "budget"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentToolView": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "inputDigest": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "toolHandle": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scopeId",
+          "parentTask",
+          "taskId",
+          "attemptId",
+          "toolHandle",
+          "inputDigest",
+          "scope"
+        ],
+        "type": "object"
+      },
+      "WorkPlanAgentView": {
+        "additionalProperties": false,
+        "properties": {
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "lease": {
+            "$ref": "#/definitions/AutomationLease"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scopeId",
+          "lease",
+          "parentTask",
+          "scope",
+          "budget"
+        ],
+        "type": "object"
+      },
       "WorkPlanCheckerView": {
         "oneOf": [
           {
@@ -4554,6 +5488,53 @@
             "type": "object"
           }
         ]
+      },
+      "WorkPlanGenerationPreflight": {
+        "additionalProperties": false,
+        "properties": {
+          "attemptId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "budget": {
+            "$ref": "#/definitions/ProviderBudget"
+          },
+          "component": {
+            "$ref": "#/definitions/PluginGenerationComponentView"
+          },
+          "generation": {
+            "$ref": "#/definitions/GenerationServiceInput"
+          },
+          "inputDigest": {
+            "type": "string"
+          },
+          "parentTask": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "scope": {
+            "items": {
+              "$ref": "#/definitions/PlanSelectionBasis"
+            },
+            "type": "array"
+          },
+          "scopeId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "taskId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scopeId",
+          "parentTask",
+          "attemptId",
+          "taskId",
+          "inputDigest",
+          "component",
+          "generation",
+          "scope",
+          "budget"
+        ],
+        "type": "object"
       },
       "WorkPlanReceiptView": {
         "additionalProperties": false,
@@ -4626,6 +5607,16 @@
           },
           "state": {
             "$ref": "#/definitions/WorkPlanState"
+          },
+          "toolInvocations": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanToolUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -4633,7 +5624,98 @@
           "lease",
           "state",
           "effects",
-          "expiresAt"
+          "expiresAt",
+          "toolInvocations"
+        ],
+        "type": "object"
+      },
+      "WorkPlanToolSpec": {
+        "additionalProperties": false,
+        "description": "Captured by the trusted host from an installed package, never model text.",
+        "properties": {
+          "binding": {
+            "$ref": "#/definitions/CapabilityToolBinding"
+          },
+          "environment": {
+            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          },
+          "handle": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "packageOrigin": true,
+          "resourceId": {
+            "type": "string"
+          },
+          "runtimeOrigin": true,
+          "selections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "settingsRevision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "handle",
+          "binding",
+          "environment",
+          "resourceId",
+          "settingsRevision",
+          "packageOrigin",
+          "runtimeOrigin",
+          "target",
+          "selections"
+        ],
+        "type": "object"
+      },
+      "WorkPlanToolUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reserved": {
+            "format": "uint32",
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reserved",
+          "limit"
+        ],
+        "type": "object"
+      },
+      "WorkPlanTools": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/definitions/WorkPlanToolSpec"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "type": "array"
+          },
+          "maxInvocations": {
+            "format": "uint32",
+            "maximum": 300,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxInvocations",
+          "entries"
         ],
         "type": "object"
       },
@@ -4683,6 +5765,16 @@
               "$ref": "#/definitions/PlanSelectionBasis"
             },
             "type": "array"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/WorkPlanTools"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -4693,7 +5785,8 @@
           "scope",
           "preview",
           "attemptId",
-          "checkers"
+          "checkers",
+          "tools"
         ],
         "type": "object"
       },
@@ -4758,6 +5851,18 @@
           }
         ]
       },
+      "workPlanAgent": {
+        "$ref": "#/definitions/WorkPlanAgentView"
+      },
+      "workPlanAgentGeneration": {
+        "$ref": "#/definitions/WorkPlanAgentGenerationView"
+      },
+      "workPlanAgentTool": {
+        "$ref": "#/definitions/WorkPlanAgentToolView"
+      },
+      "workPlanGenerationPreflight": {
+        "$ref": "#/definitions/WorkPlanGenerationPreflight"
+      },
       "workPlanReceipt": {
         "$ref": "#/definitions/WorkPlanReceiptView"
       },
@@ -4774,6 +5879,10 @@
       "view",
       "effectRetry",
       "workPlan",
+      "workPlanGenerationPreflight",
+      "workPlanAgent",
+      "workPlanAgentGeneration",
+      "workPlanAgentTool",
       "workPlanReceipt",
       "workPlanStatus",
       "workPlanAction",

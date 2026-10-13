@@ -1,0 +1,210 @@
+{
+  "prepare": {
+    "projectId": "60000000-0000-4000-8000-000000000001",
+    "sessionToken": "isolated-ai-arena-session",
+    "scopeId": "60000000-0000-4000-8000-000000000011",
+    "generation": {
+      "taskId": "60000000-0000-4000-8000-000000000013",
+      "attemptId": "60000000-0000-4000-8000-000000000014",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ]
+    },
+    "attemptId": "60000000-0000-4000-8000-000000000020",
+    "component": {
+      "provider": {
+        "plugin": {
+          "publisher": "example",
+          "id": "generation",
+          "version": "0.1.0"
+        },
+        "componentId": "generator",
+        "contributionId": "generation.call",
+        "packageDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "profile": {
+        "id": "example.generation-profile",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "environmentDigest": "e7de5e56acbd4221bb9e16ec4c526b7a48381626f60b125c83e4ee2f296ef1fb"
+    }
+  },
+  "preflight": {
+    "scopeId": "60000000-0000-4000-8000-000000000011",
+    "parentTask": "60000000-0000-4000-8000-000000000012",
+    "attemptId": "60000000-0000-4000-8000-000000000020",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "component": {
+      "settingsRevision": "1",
+      "binding": {
+        "provider": {
+          "plugin": {
+            "publisher": "example",
+            "id": "generation",
+            "version": "0.1.0"
+          },
+          "componentId": "generator",
+          "contributionId": "generation.call",
+          "packageDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "declaration": {
+          "contract": {
+            "id": "example.generation",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "inputSchema": {
+            "id": "tsumugi.work-plan-generation-input",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "outputSchema": {
+            "id": "tsumugi.work-plan-generation-receipt",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "errorSchema": {
+            "id": "tsumugi.work-plan-generation-error",
+            "schemaVersion": 1,
+            "behaviorVersion": 1
+          },
+          "profiles": [
+            {
+              "id": "example.generation-profile",
+              "schemaVersion": 1,
+              "behaviorVersion": 1
+            }
+          ],
+          "effect": "external",
+          "permissions": [
+            {
+              "kind": "captured-input"
+            },
+            {
+              "kind": "project-service",
+              "contract": {
+                "id": "tsumugi.work-plan-generation",
+                "schemaVersion": 1,
+                "behaviorVersion": 1
+              }
+            }
+          ],
+          "limits": {
+            "maxInputBytes": 16384,
+            "maxOutputBytes": 1024,
+            "concurrency": 1,
+            "timeoutMs": 1000
+          }
+        }
+      },
+      "profile": {
+        "id": "example.generation-profile",
+        "schemaVersion": 1,
+        "behaviorVersion": 1
+      },
+      "packageOrigin": {
+        "sourceId": "manual-local",
+        "publisherId": "user-approved"
+      },
+      "environment": {
+        "protocolVersion": 1,
+        "platform": {
+          "operatingSystem": "macos",
+          "architecture": "aarch64"
+        },
+        "sdkVersion": "0.1.0-alpha.1",
+        "processProtocol": 2,
+        "profile": "node-system-libraries-v1",
+        "toolVersion": "26.10.0",
+        "tool": {
+          "treeDigest": "881b1f2ceda958a4e0dc80a92d6b89b3c5f90f6b573787526f327622f39d323d",
+          "entrypoint": "bin/node"
+        },
+        "host": {
+          "treeDigest": "bb818784612e4f2c4555c1d06bd839e21fdff6f5125153469d16860236915d65",
+          "entrypoint": "dist/main.js"
+        }
+      },
+      "environmentDigest": "e7de5e56acbd4221bb9e16ec4c526b7a48381626f60b125c83e4ee2f296ef1fb",
+      "runtimeOrigin": {
+        "sourceId": "application-bundle",
+        "publisherId": "application-build"
+      }
+    },
+    "generation": {
+      "taskId": "60000000-0000-4000-8000-000000000013",
+      "attemptId": "60000000-0000-4000-8000-000000000014",
+      "unitIds": [
+        "60000000-0000-4000-8000-000000000003"
+      ]
+    },
+    "scope": [
+      {
+        "unitId": "60000000-0000-4000-8000-000000000003",
+        "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+        "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+        "nativeKey": "barrel",
+        "selectionId": null
+      }
+    ],
+    "budget": {
+      "limit": 2,
+      "dispatched": 1,
+      "legacyHeld": 0,
+      "unresolved": 0,
+      "usageUnknown": 0,
+      "promptTokens": "1",
+      "completionTokens": "1"
+    },
+    "taskId": "60000000-0000-4000-8000-000000000022"
+  },
+  "start": {
+    "projectId": "60000000-0000-4000-8000-000000000001",
+    "sessionToken": "isolated-ai-arena-session",
+    "scopeId": "60000000-0000-4000-8000-000000000011",
+    "attemptId": "60000000-0000-4000-8000-000000000020",
+    "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "grantId": "60000000-0000-4000-8000-000000000021",
+    "expiresAtMs": "1800000000000",
+    "unsandboxedExecution": true
+  },
+  "discard": {
+    "projectId": "60000000-0000-4000-8000-000000000001",
+    "sessionToken": "isolated-ai-arena-session",
+    "attemptId": "60000000-0000-4000-8000-000000000020"
+  },
+  "scope": {
+    "scopeId": "60000000-0000-4000-8000-000000000011",
+    "lease": {
+      "planId": "60000000-0000-4000-8000-000000000007",
+      "generation": "9007199254740993"
+    },
+    "parentTask": "60000000-0000-4000-8000-000000000012",
+    "scope": [
+      {
+        "unitId": "60000000-0000-4000-8000-000000000003",
+        "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+        "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+        "nativeKey": "barrel",
+        "selectionId": null
+      },
+      {
+        "unitId": "60000000-0000-4000-8000-000000000016",
+        "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+        "sourceRevisionId": "60000000-0000-4000-8000-000000000017",
+        "nativeKey": "第二条 👩🏽‍💻 é",
+        "selectionId": null
+      }
+    ],
+    "budget": {
+      "limit": 2,
+      "dispatched": 1,
+      "legacyHeld": 0,
+      "unresolved": 0,
+      "usageUnknown": 0,
+      "promptTokens": "1",
+      "completionTokens": "1"
+    }
+  }
+}

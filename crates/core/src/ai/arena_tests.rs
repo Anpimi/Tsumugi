@@ -544,7 +544,7 @@ fn arena_merge_commit_uncertainty_reconciles_before_same_action_retry() {
 }
 
 #[test]
-fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_current_reopen() {
+fn arena_manual_merge_preserves_current_ancestry_and_refuses_schema_ten() {
     let (temp, mut store, rows) = source_project();
     let project = ExecutionId::parse(&store.metadata().unwrap().project_id().to_string()).unwrap();
     let unit = rows[0].unit_id.unwrap();
@@ -677,6 +677,21 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_current_reop
     assert!(store.save_merged_translation(&stale, &fresh_basis).is_err());
     let path = temp.path().join("project");
     store.close().unwrap();
+    let reopened = ProjectStore::open(&path).unwrap();
+    let persisted = reopened
+        .translation_history(project, unit, "zh-CN", 0, 10)
+        .unwrap();
+    assert_eq!(persisted.current, Some(merged.clone()));
+    assert_eq!(
+        persisted
+            .rows
+            .iter()
+            .find(|row| row.revision_id == merged.revision_id)
+            .unwrap()
+            .contributors,
+        fresh_basis.contributors
+    );
+    reopened.close().unwrap();
     let conn = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
     assert_eq!(
         conn.query_row("SELECT COUNT(*) FROM translation_contributors", [], |r| r
@@ -692,19 +707,15 @@ fn arena_manual_merge_has_atomic_ancestry_conflicts_idempotency_and_current_reop
             .unwrap(),
         4
     );
+    // Remove the new relations from this owned legacy fixture before testing refusal.
+    conn.execute_batch("DROP TABLE execution_continuations; DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
+    crate::persistence::remove_unsupported_fixture_domain(
+        &conn,
+        crate::persistence::UnsupportedFixtureDomain::Provider,
+    )
+    .unwrap();
+    conn.pragma_update(None, "user_version", 10).unwrap();
     drop(conn);
-    let reopened = ProjectStore::open(&path).unwrap();
-    assert_eq!(
-        reopened
-            .translation_history(project, unit, "zh-CN", 0, 10)
-            .unwrap()
-            .current,
-        Some(merged)
-    );
-    reopened.close().unwrap();
-    let connection = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
-    connection.pragma_update(None, "user_version", 10).unwrap();
-    drop(connection);
     assert_unsupported_snapshot_unchanged(&path, 10);
     let unchanged = rusqlite::Connection::open_with_flags(
         path.join("project.sqlite3"),
@@ -996,7 +1007,7 @@ fn arena_merge_process_interrupt_is_atomic_and_lost_response_reconciles_by_actio
 }
 
 #[test]
-fn arena_both_domains_preserve_current_history_and_build_only_explicitly_reviewed_merges() {
+fn arena_both_domains_preserve_current_history_build_reviewed_merges_and_refuse_schema_ten() {
     for vtt in [false, true] {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("project");
@@ -1292,5 +1303,23 @@ fn arena_both_domains_preserve_current_history_and_build_only_explicitly_reviewe
         );
         assert_eq!(wire.calls.load(Ordering::SeqCst), 3);
         assert_eq!(wire.data.join().unwrap().len(), 3);
+        reopened.close().unwrap();
+        let legacy = rusqlite::Connection::open(path.join("project.sqlite3")).unwrap();
+        let complete = facts(&legacy);
+        legacy.execute_batch("DROP TABLE execution_continuations; DROP TABLE translation_contributors; DROP TABLE arena_reveals; DROP TABLE arena_entries; DROP TABLE arena_comparisons;").unwrap();
+        crate::persistence::remove_unsupported_fixture_domain(
+            &legacy,
+            crate::persistence::UnsupportedFixtureDomain::Provider,
+        )
+        .unwrap();
+        legacy.pragma_update(None, "user_version", 10).unwrap();
+        drop(legacy);
+        assert_unsupported_snapshot_unchanged(&path, 10);
+        let unchanged = rusqlite::Connection::open_with_flags(
+            path.join("project.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        assert_eq!(facts(&unchanged), complete);
     }
 }

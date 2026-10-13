@@ -3,6 +3,10 @@ import { validateResponseInventory, validateResponseCandidate, validateResponseP
 import type { PluginApprovalRemovalRequest, PluginUninstallRequest, PluginInstallRequest, PluginEnableRequest, PluginPackageRequest, PluginLookupRequest, PluginNativeHostApprovalRequest, PluginRuntimeInstallRequest, PluginDefaultsInstallRequest, PluginRuntimeLookupRequest, PluginSourceRequest, PluginBuildRequest, PluginTranslationRequest, PluginToolRequest, PluginTextReviewRequest } from "./generated/plugins.requests";
 import type { ReviewCheckRequest } from "./generated/review.requests";
 import type { PluginInventoryView, PluginPackageDetailsView } from "./generated/plugins.responses";
+import { validateResponseGenerationComponent } from "./generated/plugins.validators";
+import type { PluginGenerationComponentRequest } from "./generated/plugins.requests";
+export type { PluginGenerationComponentRequest } from "./generated/plugins.requests";
+export type { PluginGenerationComponentView } from "./generated/plugins.responses";
 export type PluginTextReviewSelection = ReviewCheckRequest["advisoryChecks"][number];
 export type { PluginTextReviewRequest } from "./generated/plugins.requests";
 export type { PluginTextReviewView, PluginTextReviewListView, PluginTextReviewListEntry } from "./generated/plugins.responses";
@@ -41,6 +45,21 @@ export const pluginCommands = {
   translation: (request: PluginTranslationRequest) => checkedInvoke("read_plugin_translation", request, validateResponseTranslation),
   source: (request: PluginSourceRequest) => checkedInvoke("read_plugin_source", request, validateResponseSource),
   tool: (request: PluginToolRequest) => checkedInvoke("read_plugin_tool", request, validateResponseTool),
+  generationComponent: async (request: PluginGenerationComponentRequest) => {
+    const view = await checkedInvoke("read_plugin_generation_component", request, validateResponseGenerationComponent);
+    const expected = request.provider;
+    const provider = view.binding.provider;
+    const profile = request.profile;
+    if (provider.plugin.publisher !== expected.plugin.publisher || provider.plugin.id !== expected.plugin.id
+      || provider.plugin.version !== expected.plugin.version || provider.packageDigest !== expected.packageDigest
+      || provider.componentId !== expected.componentId || provider.contributionId !== expected.contributionId
+      || view.environmentDigest !== request.environmentDigest || (view.profile === null) !== (profile === null)
+      || (view.profile !== null && profile !== null && (view.profile.id !== profile.id
+        || view.profile.schemaVersion !== profile.schemaVersion || view.profile.behaviorVersion !== profile.behaviorVersion))) {
+      throw new Error("Invalid IPC acknowledgement: generation component");
+    }
+    return view;
+  },
   textReview: async (request: PluginTextReviewRequest) => {
     const view = await checkedInvoke("read_plugin_text_review", request, validateResponseTextReview);
     const provider = view.binding.checker.provider;
