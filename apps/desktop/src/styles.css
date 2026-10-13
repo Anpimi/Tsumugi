@@ -1617,8 +1617,9 @@ button:focus-visible {
   .workbench-panel { padding-inline: 18px; }
   .translation-columns { grid-template-columns: 230px minmax(0, 1fr); }
   .translation-detail { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .translation-detail:has(> .editor-references[open]) { grid-template-rows: minmax(0, 3fr) minmax(0, 1fr); }
   .translation-editor-content { padding: 14px; }
   .editor-save-bar { padding-inline: 14px; }
-  .editor-references { border-left: 0; border-top: 1px solid var(--border); max-height: 35vh; }
+  .editor-references { border-left: 0; border-top: 1px solid var(--border); min-height: 0; }
   .create-form .form-fields { gap: 10px 14px; }
 }

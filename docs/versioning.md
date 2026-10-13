@@ -44,6 +44,8 @@ change snapshot and delivers queued semantic invalidation; a snapshot already
 in flight before a checked save cannot confirm that save. Unavailable metadata
 refuses dependent confirmation. Editor actions sit outside the content scroll
 area, keeping save and recovery available in the regular and compact layouts.
+Expanded compact references use a bounded share of the panel's available height;
+entry activation brings the focused draft into view without changing its text.
 These frontend corrections change no schema,
 IPC, SDK/process/Store contract, dependency or version source. The same
 undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no

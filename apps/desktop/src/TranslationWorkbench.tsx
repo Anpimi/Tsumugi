@@ -357,7 +357,10 @@ export function TranslationWorkbench({ project, disabled, onQueryText, onOpenExt
   useEffect(() => { setHasDraftSelection(false); setQueryUnavailable(false); }, [editorTarget?.unitId, targetLocale]);
   useEffect(() => { if (entryList.current) entryList.current.scrollTop = 0; }, [listAfter, appliedQuery, targetLocale]);
   useEffect(() => {
-    if (open && tab === "edit") draftField.current?.focus({ preventScroll: true });
+    if (!open || tab !== "edit") return;
+    const input = draftField.current;
+    input?.focus({ preventScroll: true });
+    input?.scrollIntoView({ block: "nearest" });
   }, [open, tab, editorTarget?.unitId]);
   const commandScope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "translation" as const };
   function saveAvailability() {

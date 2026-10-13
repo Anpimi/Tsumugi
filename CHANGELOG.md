@@ -18,6 +18,8 @@ they do not define alternate current project formats.
   navigation basis, so a delayed save notification cannot disable the next entry.
   Save and recovery actions stay at the editor panel's bottom while content and
   references scroll independently, including the compact layout.
+  Expanded references share the compact panel's available height while keeping
+  the editor as its main region. Opening an entry brings the focused draft into view.
 
 - The experimental standalone SDK defines bounded work-plan generation-service
   input, child-identity receipts and finite errors at schema/behavior 1/1, with
