@@ -552,6 +552,8 @@ ai: {
       "savedBack": "返回构建准备",
       "refresh": "刷新已安装的构建选项",
       "builder": "已安装的构建能力",
+      "capturedBuilder": "已捕获的构建能力",
+      "capturedRuntime": "已捕获的执行环境",
       "chooseBuilder": "选择已安装的构建器",
       "unavailable": "当前没有可用的已批准构建能力与运行环境组合。请在“扩展”中安装或启用，再刷新。已保存的发布仍可导出。",
       "limits": "{{name}} · 每种语言最多 {{count}} 个文件、{{bytes}} 字节",

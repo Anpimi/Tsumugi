@@ -134,7 +134,7 @@ it("orders installed builder discovery, refresh and re-entry around the exclusiv
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
-async function ready(locales = ["zh-CN"], twoFiles = true) {
+async function ready(locales = ["zh-CN"], twoFiles = true, waitForCapture = true) {
   const user = userEvent.setup(), ref = createRef<ReleaseHandle>();
   const view = render(<ReleaseWorkbench ref={ref} project={project} disabled={false} />);
   await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
@@ -148,7 +148,7 @@ async function ready(locales = ["zh-CN"], twoFiles = true) {
   await user.click(screen.getByRole("button", { name: i18n.t("release.check") }));
   await screen.findByText(i18n.t("release.ready", { count: 0 }));
   await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.capture") }));
-  await screen.findByText(i18n.t("releasePlugin.fixedBuild"));
+  if (waitForCapture) await screen.findByText(i18n.t("releasePlugin.fixedBuild"));
   return { user, ref, view };
 }
 async function start(user: ReturnType<typeof userEvent.setup>) {
@@ -165,6 +165,57 @@ async function check(user: ReturnType<typeof userEvent.setup>, locale: string) {
   await user.click(screen.getByRole("button", { name: i18n.t("releasePlugin.startCheck") }));
   await user.click(await screen.findByRole("button", { name: i18n.t("releasePlugin.recordCheck") }));
 }
+
+it.each(["en-US", "zh-CN"])("shows the original captured runtime without unavailable guidance during preparation in %s", async language => {
+  await i18n.changeLanguage(language);
+  const original = invoke.getMockImplementation()!;
+  let releasePreparation!: () => void;
+  const preparation = new Promise<void>(resolve => { releasePreparation = resolve; });
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "prepare_plugin_build") await preparation;
+    return original(command, args);
+  });
+  await ready(["zh-CN"], false, false);
+  await screen.findByText(i18n.t("execution.working"));
+  expect(screen.queryByText(i18n.t("releasePlugin.unavailable"))).not.toBeInTheDocument();
+  await act(async () => { releasePreparation(); });
+  await screen.findByText(i18n.t("releasePlugin.fixedBuild"));
+  const runtime = screen.getAllByRole("combobox")
+    .filter((node): node is HTMLSelectElement => node instanceof HTMLSelectElement)
+    .find(node => node.value === pluginBuildView.environmentDigest);
+  expect(runtime).toBeDisabled();
+  expect(runtime?.selectedOptions[0].textContent).toBe("Node 26.10.0 · macos aarch64");
+  expect(runtime).toHaveAccessibleName(i18n.t("releasePlugin.capturedRuntime"));
+  expect(screen.getByRole("combobox", { name: i18n.t("releasePlugin.capturedBuilder") })).toBeDisabled();
+});
+
+it.each(["en-US", "zh-CN"])("keeps captured runtime labels after editable discovery is invalidated in %s", async language => {
+  await i18n.changeLanguage(language);
+  await ready(["zh-CN"], false);
+  await refreshWorkbenchReads(["execution"]);
+  const runtime = screen.getAllByRole("combobox")
+    .filter((node): node is HTMLSelectElement => node instanceof HTMLSelectElement)
+    .find(node => node.value === pluginBuildView.environmentDigest);
+  expect(runtime).toBeDisabled();
+  expect(runtime?.selectedOptions[0].textContent).toBe("Node 26.10.0 · macos aarch64");
+  expect(screen.queryByText(i18n.t("releasePlugin.unavailable"))).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command]) => command === "start_plugin_build")).toBe(false);
+});
+
+it("keeps failed installed choice reads distinct from missing packages", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command, args) => {
+    if (command === "read_plugin_inventory") throw { code: "busy", stage: "read", outcome: "rejected", recoveryRequired: false, reason: "plugin-store-busy" };
+    return original(command, args);
+  });
+  render(<ReleaseWorkbench project={project} disabled={false} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: i18n.t("release.title") }));
+  await screen.findByRole("alert");
+  expect(screen.queryByText(i18n.t("releasePlugin.unavailable"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: i18n.t("releasePlugin.refresh") })).toBeEnabled();
+  expect(invoke.mock.calls.some(([command]) => command === "prepare_plugin_build" || command === "start_plugin_build")).toBe(false);
+});
 
 it("opens the independent artifact checker for the Core source-snapshot build scope", async () => {
   const original = invoke.getMockImplementation()!;
@@ -531,7 +582,7 @@ it("prepares a Native builder with Host presentation and independent unchecked c
   });
   await ready(["zh-CN"], false);
   expect(captured!.build.environmentDigest).toBe(nativeDigest);
-  expect(screen.getByRole("combobox", { name: i18n.t("sourcePlugin.runtime") })).toHaveValue(nativeDigest);
+  expect(screen.getByRole("combobox", { name: i18n.t("releasePlugin.capturedRuntime") })).toHaveValue(nativeDigest);
   expect(screen.queryByRole("option", { name: /^Node / })).not.toBeInTheDocument();
   expect(screen.getByText(i18n.t("sourcePlugin.nativeRuntimeDetails", { version: nativeEnvironment.hostVersion, system: "macos", architecture: "aarch64" }))).toBeVisible();
   expect(screen.getByRole("checkbox", { name: i18n.t("releasePlugin.builderConsent") })).not.toBeChecked();

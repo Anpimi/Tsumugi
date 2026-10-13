@@ -24,7 +24,9 @@ reads only editable setup; captured execution and original recovery retain their
 existing authority, while returning to setup rereads current package options.
 Independent artifact checks match the existing Core release-build scope to the
 captured source snapshot and selected language; foreign scopes cannot advance
-to checking or release recording. This frontend integration
+to checking or release recording. Captured builder and runtime labels display
+the original input; preparation and read failures do not assert package absence.
+This frontend integration
 changes no storage, generated IPC, SDK/process contract, dependency or version
 source. It stays in the same undistributed alpha batch without another bump;
 both Unreleased changelogs describe the behavior. Native and whole-product

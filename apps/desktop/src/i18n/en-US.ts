@@ -562,6 +562,8 @@ ai: {
       "savedBack": "Return to build setup",
       "refresh": "Refresh installed build choices",
       "builder": "Installed build capability",
+      "capturedBuilder": "Captured build capability",
+      "capturedRuntime": "Captured execution environment",
       "chooseBuilder": "Choose an installed builder",
       "unavailable": "No approved build capability and runtime pair is available. Open Extensions to install or enable them, then refresh. Saved releases can still be exported.",
       "limits": "{{name}} · up to {{count}} files and {{bytes}} bytes per language",

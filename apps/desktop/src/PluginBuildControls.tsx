@@ -103,6 +103,10 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
       return value;
     } });
   const environment = fresh<PluginBuildView>(environmentKey);
+  const capturedBuild = prepared?.review.build;
+  const displayedBuild = capturedBuild ?? environment;
+  const displayedChoiceKey = capturedBuild ? `${capturedBuild.builder.provider.packageDigest}:${capturedBuild.resourceId}` : choiceKey;
+  const displayedRuntimeDigest = capturedBuild?.environmentDigest ?? runtimeDigest;
   const buildKey = ["release-plugin-build",attempt],checkKey = ["release-artifact-check",checkAttempt];
   const buildRead = useSessionQuery({ key:buildKey,scopes:["execution"],enabled:setupOpen && !!attempt && !busy,
     read:()=>attempt ? readCompleteAttempt(context,attempt,"locale-build") : Promise.resolve(null) });
@@ -116,7 +120,8 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
   const locked = disabled || owner.reserved() || tasks.unresolved(), draftLocked = locked || !!prepared || !!attempt;
   const loading = inventoryRead.isFetching, environmentLoading = environmentRead.isFetching;
   const mappingLocked = disabled || !!prepared || !!attempt || !!pending && pending.kind !== "build";
-  const unavailable = discovering && !loading && (!inventory || !choice || !environmentAvailable);
+  const unavailable = discovering && !busy && !loading && !environmentLoading && !inventoryRead.error && !environmentRead.error
+    && (!inventory || !choice || !environmentAvailable);
   const unit = detail?.recovery.units.length === 1 ? detail.recovery.units[0] : null;
   const complete = !!prepared && !!detail && detail.items.length===prepared.review.choices.length
     && prepared.review.choices.every(choice=>detail.items.filter(item=>item.scope.locale===choice.locale).length===1)
@@ -224,15 +229,15 @@ export function PluginBuildControls({ project, open, disabled, leaving = false, 
       <h3>{t("release.prepare")}</h3><p>{t("release.scope")}</p>
       {failure?<div ref={errorRegion} role="alert" tabIndex={-1}><p>{t("releasePlugin.failed")}</p><CommandFailureDetails failure={failure}/></div>:null}
       {busy||loading||environmentLoading?<p role="status">{t("execution.working")}</p>:null}
-      <label className="source-field">{t("releasePlugin.builder")}<select value={choiceKey} disabled={draftLocked||loading||environmentLoading} onChange={event=>{const selected=choices.find(item=>item.key===event.target.value);if(!selected)return;const matching=matchingPluginEnvironments(inventoryRead.data?.environments??[],selected.runtimeKinds),runtime=matching.find(item=>item.environmentDigest===runtimeDigest)??matching[0];owner.setBuildSelection(runtime?{package:selected.package,resourceId:selected.resourceId,environmentDigest:runtime.environmentDigest}:null,selected.key,runtime?.environmentDigest??"");}}>
-        {!choice?<option value={choiceKey}>{t("releasePlugin.chooseBuilder")}</option>:null}{choices.map(item=><option key={item.key} value={item.key}>{item.label}</option>)}
+      <label className="source-field">{t(capturedBuild?"releasePlugin.capturedBuilder":"releasePlugin.builder")}<select value={displayedChoiceKey} disabled={draftLocked||loading||environmentLoading} onChange={event=>{const selected=choices.find(item=>item.key===event.target.value);if(!selected)return;const matching=matchingPluginEnvironments(inventoryRead.data?.environments??[],selected.runtimeKinds),runtime=matching.find(item=>item.environmentDigest===runtimeDigest)??matching[0];owner.setBuildSelection(runtime?{package:selected.package,resourceId:selected.resourceId,environmentDigest:runtime.environmentDigest}:null,selected.key,runtime?.environmentDigest??"");}}>
+        {capturedBuild?<option value={displayedChoiceKey}>{capturedBuild.declaration.displayName} · {capturedBuild.builder.provider.plugin.id} {capturedBuild.builder.provider.plugin.version}</option>:<>{!choice?<option value={choiceKey}>{t("releasePlugin.chooseBuilder")}</option>:null}{choices.map(item=><option key={item.key} value={item.key}>{item.label}</option>)}</>}
       </select></label>
-      <label className="source-field">{t("sourcePlugin.runtime")}<select value={runtimeDigest} disabled={draftLocked||loading||environmentLoading} onChange={event=>owner.setBuildSelection(choice?{package:choice.package,resourceId:choice.resourceId,environmentDigest:event.target.value}:null,choiceKey,event.target.value)}>
-        {!environmentAvailable?<option value={runtimeDigest}>{t("sourcePlugin.chooseRuntime")}</option>:null}{runtimes.map(item=><option key={item.environmentDigest} value={item.environmentDigest}>{t(item.environment.profile==="node-system-libraries-v1"?"sourcePlugin.runtimeOption":"sourcePlugin.nativeRuntimeOption",{version:pluginEnvironmentVersion(item.environment),system:item.environment.platform.operatingSystem,architecture:item.environment.platform.architecture})}</option>)}
+      <label className="source-field">{t(capturedBuild?"releasePlugin.capturedRuntime":"sourcePlugin.runtime")}<select value={displayedRuntimeDigest} disabled={draftLocked||loading||environmentLoading} onChange={event=>owner.setBuildSelection(choice?{package:choice.package,resourceId:choice.resourceId,environmentDigest:event.target.value}:null,choiceKey,event.target.value)}>
+        {capturedBuild?<option value={displayedRuntimeDigest}>{t(capturedBuild.environment.profile==="node-system-libraries-v1"?"sourcePlugin.runtimeOption":"sourcePlugin.nativeRuntimeOption",{version:pluginEnvironmentVersion(capturedBuild.environment),system:capturedBuild.environment.platform.operatingSystem,architecture:capturedBuild.environment.platform.architecture})}</option>:<>{!environmentAvailable?<option value={runtimeDigest}>{t("sourcePlugin.chooseRuntime")}</option>:null}{runtimes.map(item=><option key={item.environmentDigest} value={item.environmentDigest}>{t(item.environment.profile==="node-system-libraries-v1"?"sourcePlugin.runtimeOption":"sourcePlugin.nativeRuntimeOption",{version:pluginEnvironmentVersion(item.environment),system:item.environment.platform.operatingSystem,architecture:item.environment.platform.architecture})}</option>)}</>}
       </select></label>
       <button className="secondary-button" disabled={draftLocked||loading||environmentLoading} onClick={()=>{owner.reportFailure(null);setRefresh(value=>value+1);}}>{t("releasePlugin.refresh")}</button>
       {unavailable?<><p role="status">{t("releasePlugin.unavailable")}</p>{onOpenExtensions?<button className="text-button" disabled={locked||leaving||reads.retired} onClick={onOpenExtensions}>{t("plugins.open")}</button>:null}</>:null}
-      {environment?<p>{t("releasePlugin.limits",{name:environment.declaration.displayName,count:environment.declaration.outputLimits.maxArtifacts,bytes:String(environment.declaration.outputLimits.maxTotalBytes)})}</p>:null}
+      {displayedBuild?<p>{t("releasePlugin.limits",{name:displayedBuild.declaration.displayName,count:displayedBuild.declaration.outputLimits.maxArtifacts,bytes:String(displayedBuild.declaration.outputLimits.maxTotalBytes)})}</p>:null}
       <fieldset><legend>{t("release.languages")}</legend>{project.metadata.targetLocales.map(locale=><label key={locale} className="release-locale"><input type="checkbox" checked={languages.includes(locale)} disabled={mappingLocked} onChange={event=>owner.setLanguage(locale,event.target.checked)}/>{locale}</label>)}</fieldset>
       {languages.map(locale=><label className="source-field" key={locale}>{t("releasePlugin.paths",{locale})}<textarea value={paths[locale]??""} disabled={mappingLocked} onChange={event=>owner.setName(locale,event.target.value)}/></label>)}
       {languages.filter(locale=>!project.metadata.targetLocales.includes(locale)).map(locale=><p role="status" key={locale}>{t("release.removedLocale",{locale})}<button disabled={locked} onClick={()=>owner.setLanguage(locale,false)}>{t("release.removeLocale",{locale})}</button></p>)}
