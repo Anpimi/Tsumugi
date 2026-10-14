@@ -116,6 +116,23 @@ it("transfers exact fixed content members without execution, preserving configur
   expect(Object.isFrozen(selection.capture.units)).toBe(true);
 });
 
+it.each(["storeId", "profileId", "revision", "digest"] as const)("refuses a prepared profile with mismatched %s even when defaults match", async field => {
+  render(<Harness />, project);
+  const reference = { storeId: fixtureIdentity(700), profileId: fixtureIdentity(701), revision: "1", digest: "a".repeat(64) };
+  act(() => { owner.setConfig({ ...prepared.preview.config, connectionProfile: reference }); owner.setSelected(items.map(item => item.unitId)); });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, payload: unknown) => {
+    const result = await original(command, payload);
+    if (command !== "preview_ai_translation") return result;
+    const wrong = structuredClone(result);
+    wrong.preview.config.connectionProfile[field] = field === "revision" ? "2" : field === "digest" ? "b".repeat(64) : fixtureIdentity(702);
+    return wrong;
+  });
+  await act(async () => { await owner.preview(); });
+  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false); expect(owner.canStart()).toBe(false);
+  expect(owner.current().config.connectionProfile).toEqual(reference); expect(owner.failure).not.toBeNull(); expect(calls("start_ai_translation")).toHaveLength(0);
+});
+
 it("refuses foreign sessions, obsolete AI edits, duplicate or excluded foreign members and over-limit transfers", () => {
   render(<Harness />, project); const selection = contentRange(), before = owner.current();
   const invalidCases: [ContentSelection, number][] = [

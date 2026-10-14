@@ -148,6 +148,22 @@ function acknowledgement(kind:Operation):unknown{
   return selectionFor(request);
 }
 
+it.each(["storeId", "profileId", "revision", "digest"] as const)("refuses an Arena profile with mismatched %s despite matching defaults", async field => {
+  render(<Harness/>, project);
+  const reference = { storeId: fixtureIdentity(700), profileId: fixtureIdentity(701), revision: "1", digest: "a".repeat(64) };
+  act(() => { owner.setConfig({ ...prepared.preview.config, variants: prepared.preview.config.variants.map((config, index) => index === 1 ? { ...config, connectionProfile: reference } : config) }); owner.setSelected([prepared.preview.items[0].item.unitId]); });
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (command: string, payload: unknown) => {
+    const result = await original(command, payload); if (command !== "preview_arena_translation") return result;
+    const wrong = structuredClone(result);
+    wrong.preview.config.variants[1].connectionProfile[field] = field === "revision" ? "2" : field === "digest" ? "b".repeat(64) : fixtureIdentity(702);
+    return wrong;
+  });
+  await act(async () => { await owner.preview(); });
+  expect(owner.prepared).toBeNull(); expect(owner.consent).toBe(false); expect(owner.canStart()).toBe(false);
+  expect(owner.current().config.variants[1].connectionProfile).toEqual(reference); expect(owner.failure).not.toBeNull(); expect(calls("start_arena_translation")).toHaveLength(0);
+});
+
 it.each(operations)("keeps the checked %s acknowledgement across a real consumer unmount",async kind=>{
   const rendered=render(<Harness/>,project);await setupOperation(kind);
   const response=deferred<unknown>(),original=invoke.getMockImplementation()!;

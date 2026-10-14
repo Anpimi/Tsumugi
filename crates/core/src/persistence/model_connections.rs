@@ -68,6 +68,14 @@ pub struct ModelConnectionReference {
     pub revision: UnsignedDecimal,
     pub digest: String,
 }
+impl ModelConnectionReference {
+    pub fn validate(&self) -> Result<()> {
+        if self.revision.get() == 0 || !valid_digest(&self.digest) {
+            return Err(fail(ErrorCode::InvalidInput, "ai-connection-profile"));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -123,6 +131,27 @@ impl ModelConnectionSnapshot {
             revision: profile.revision,
             digest: digest(profile)?,
         })
+    }
+    pub fn resolve(&self, reference: &ModelConnectionReference) -> Result<AiConnection> {
+        reference.validate()?;
+        if self.store_id != Some(reference.store_id)
+            || self.reference(reference.profile_id)? != *reference
+        {
+            return Err(fail(ErrorCode::DependencyConflict, "model-connection-changed"));
+        }
+        Ok(self.profiles.iter().find(|profile| profile.id == reference.profile_id)
+            .ok_or_else(|| fail(ErrorCode::CorruptLedger, "model-connections-profile"))?
+            .connection.clone())
+    }
+    /// Verify only saved-profile provenance against this single read snapshot.
+    /// Invocation validation, scope and consent keep their existing owners.
+    pub fn verify_config(&self, config: &crate::ai::AiConfig) -> Result<()> {
+        if let Some(reference) = &config.connection_profile {
+            if self.resolve(reference)? != AiConnection::from_config(config) {
+                return Err(fail(ErrorCode::InvalidInput, "ai-connection-profile"));
+            }
+        }
+        Ok(())
     }
     fn validate(&self) -> Result<()> {
         if self.store_id.is_none()
@@ -379,21 +408,20 @@ impl ModelConnectionStore {
         read_action(&tx, action_id, &current)
     }
     pub fn resolve(&self, reference: &ModelConnectionReference) -> Result<AiConnection> {
-        let current = self.snapshot()?;
-        if current.store_id != Some(reference.store_id)
-            || current.reference(reference.profile_id)? != *reference
-        {
-            return Err(fail(
-                ErrorCode::DependencyConflict,
-                "model-connection-changed",
-            ));
+        self.snapshot()?.resolve(reference)
+    }
+    /// Fresh preparation/authorization checks all variants from one snapshot.
+    /// Accepted work uses its captured AiConfig and does not call this method.
+    /// Manual one-time connections do not touch the application store.
+    pub fn verify_configs(&self, configs: &[crate::ai::AiConfig]) -> Result<()> {
+        if configs.iter().all(|config| config.connection_profile.is_none()) {
+            return Ok(());
         }
-        Ok(current
-            .profiles
-            .into_iter()
-            .find(|p| p.id == reference.profile_id)
-            .ok_or_else(|| fail(ErrorCode::CorruptLedger, "model-connections-profile"))?
-            .connection)
+        let snapshot = self.snapshot()?;
+        for config in configs {
+            snapshot.verify_config(config)?;
+        }
+        Ok(())
     }
     pub fn change(&self, change: &ModelConnectionChange) -> Result<ModelConnectionReceipt> {
         validate_request(change)?;

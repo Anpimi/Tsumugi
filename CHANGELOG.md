@@ -6,6 +6,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Captured AI configuration can retain a non-secret saved-connection identity.
+  Fresh previews and first authorization check the current profile and exact
+  defaults; edits or archival invalidate that preparation. Accepted requests,
+  original receipts and deadlines keep their captured configuration. Profile
+  identities do not enter provider payloads. AI/Arena profile selection controls
+  remain in development.
+- The current project format advances to schema 34 for captured connection
+  provenance. Earlier development directories are refused without conversion
+  or reset; retain them and reimport sources into a new project.
+
 - Connection settings save, archive and restore named non-secret defaults.
   Closing the panel or changing projects keeps the draft and original save;
   a late acknowledgement preserves newer edits. Unknown saves can be checked
@@ -32,7 +42,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 33 only. Earlier Unreleased
+The combined development build opens project schema 34 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

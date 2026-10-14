@@ -5,6 +5,7 @@ pub(crate) mod generation;
 use super::review::checkers::{CheckerEnvironment, ReviewCheckerView, capture_advisory};
 use super::{ai_wire::AiPreviewView, *};
 use crate::commands::{
+    connections,
     dispatch::BlockingExecutor,
     plugins::{ApplicationPlugins, reviews::PluginTextReviewSelection},
 };
@@ -471,11 +472,25 @@ impl WorkPlanStatusView {
     }
 }
 
+fn verify_plan_connections(
+    connections_store: Option<&tsumugi_core::model_connections::ModelConnectionStore>,
+    plan: &WorkPlan,
+) -> Result<(), CommandError> {
+    if plan.input.is_some() {
+        let input = plan.fixed_input().map_err(map_read)?;
+        let config = ai::settings(&input).map_err(map_read)?.config;
+        connections::verify_configs(connections_store, std::slice::from_ref(&config))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn prepare_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanPrepareRequest,
 ) -> Result<WorkPlanView, CommandError> {
+    let connection_store = connections::captured_store(&state);
+    let initial_connections = connection_store.clone();
     if !request.options.advisory_checks.is_empty() {
         return Err(super::review::checkers::stale());
     }
@@ -529,6 +544,9 @@ pub async fn prepare_work_plan(
             let (host, store) = active.execution_parts()?;
             host.allow_mutation()?;
             selected_work.check()?;
+            if let Some(config) = &initial.config {
+                connections::verify_configs(initial_connections.as_ref(), std::slice::from_ref(config))?;
+            }
             let plan = store
                 .prepare_work_plan(
                     initial.config,
@@ -606,6 +624,7 @@ pub async fn prepare_work_plan(
                         plan
                     };
                     with_plan_environment_revision(&plugins, &plan, checker_revision, || {
+                        verify_plan_connections(connection_store.as_ref(), &plan)?;
                         let mut view = WorkPlanView::try_from(&plan).map_err(map_read)?;
                         view.checkers = views;
                         if !environments.is_empty() {
@@ -634,6 +653,8 @@ pub async fn authorize_work_plan(
     state: State<'_, AppState>,
     request: WorkPlanAuthorizeRequest,
 ) -> Result<WorkPlanReceiptView, CommandError> {
+    let connection_store = connections::captured_store(&state);
+    let initial_connections = connection_store.clone();
     let lease = state.sessions.lease(CommandStage::ExecutionRecover)?;
     let captured_plugins = state.plugins.clone();
     let initial = request.clone();
@@ -684,6 +705,7 @@ pub async fn authorize_work_plan(
                 .filter(|plan| plan.plan_id == initial.plan_id && plan.digest == initial.digest)
                 .cloned();
             if let Some(plan) = prepared {
+                verify_plan_connections(initial_connections.as_ref(), &plan)?;
                 broker::require_consent(&plan, initial.tool_execution, Some(&initial.effects))?;
                 broker::capture_human_intent(
                     host,
@@ -763,6 +785,9 @@ pub async fn authorize_work_plan(
                     }
                     let finish = || {
                         store.verify_work_plan(&plan).map_err(map_recover)?;
+                        if store.work_plan_receipt(request.action_id).map_err(map_recover)?.is_none() {
+                            verify_plan_connections(connection_store.as_ref(), &plan)?;
+                        }
                         let mut bindings = Vec::new();
                         for (runner, checker) in runners {
                             host.register_plugin(runner, checker.binding.clone())
@@ -1285,6 +1310,7 @@ pub async fn set_work_protection(
 mod tests {
     mod broker_tests;
     mod generation_tests;
+    mod model_connection_admission;
     mod settings;
     use super::*;
     use serde_json::{Value, json};

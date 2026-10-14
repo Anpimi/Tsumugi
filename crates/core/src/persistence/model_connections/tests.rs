@@ -1,5 +1,7 @@
 use super::*;
 use crate::ai::AiConfig;
+#[path = "config_tests.rs"]
+mod config_tests;
 
 fn connection(model: &str) -> AiConnection {
     AiConnection {

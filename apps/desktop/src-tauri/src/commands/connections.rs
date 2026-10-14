@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri::State;
 use tsumugi_core::{
-    ai::AiConnection,
+    ai::{AiConfig, AiConnection},
     execution::{ErrorCode, ExecutionError, ExecutionId},
     model_connections::{
         ModelConnectionBasis, ModelConnectionChange, ModelConnectionReceipt,
@@ -77,11 +77,21 @@ fn unavailable() -> CommandError {
     )
 }
 fn store(state: &AppState) -> Result<ModelConnectionStore, CommandError> {
-    state
-        .model_connections
-        .get()
-        .cloned()
-        .ok_or_else(unavailable)
+    captured_store(state).ok_or_else(unavailable)
+}
+pub(super) fn captured_store(state: &AppState) -> Option<ModelConnectionStore> {
+    state.model_connections.get().cloned()
+}
+/// Fresh admission checks execute inside the existing accepted project-storage
+/// command. Recovery of a persisted action never re-resolves mutable defaults.
+pub(super) fn verify_configs(
+    store: Option<&ModelConnectionStore>,
+    configs: &[AiConfig],
+) -> Result<(), CommandError> {
+    if configs.iter().all(|config| config.connection_profile.is_none()) {
+        return Ok(());
+    }
+    store.ok_or_else(unavailable)?.verify_configs(configs).map_err(map_error)
 }
 fn map_error(error: ExecutionError) -> CommandError {
     let code = error.code;

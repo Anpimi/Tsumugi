@@ -1,7 +1,7 @@
 import { checkedInvoke } from "./ipc";
 import * as validators from "./generated/connections.validators";
 import type { ModelConnectionChange, ConnectionActionRequest, ConnectionResolveRequest } from "./generated/connections.requests";
-import type { ConnectionReadView, ModelConnectionSnapshot, ModelConnectionReceipt, AiConnection } from "./generated/connections.responses";
+import type { ConnectionReadView, ModelConnectionSnapshot, ModelConnectionReceipt, ModelConnectionReference, AiConnection } from "./generated/connections.responses";
 export type { ModelConnectionChange, ConnectionActionRequest, ConnectionResolveRequest } from "./generated/connections.requests";
 export type { ConnectionReadView, ModelConnectionProfile, ModelConnectionReference, ModelConnectionReceipt, AiConnection } from "./generated/connections.responses";
 
@@ -30,6 +30,10 @@ function confirmView(view: ConnectionReadView): ConnectionReadView {
 }
 export function sameConnection(a: AiConnection, b: AiConnection): boolean {
   return a.endpoint === b.endpoint && a.model === b.model && a.credentialEnv === b.credentialEnv && a.tokenField === b.tokenField;
+}
+export function sameConnectionReference(a: ModelConnectionReference | null | undefined, b: ModelConnectionReference | null | undefined): boolean {
+  if (a == null || b == null) return a == null && b == null;
+  return a.storeId === b.storeId && a.profileId === b.profileId && a.revision === b.revision && a.digest === b.digest;
 }
 /** Check the original request's result, including a historical exact replay.
  * A receipt does not claim to be the current settings snapshot or grant consent. */

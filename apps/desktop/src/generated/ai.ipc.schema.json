@@ -101,6 +101,17 @@
             "minimum": 0,
             "type": "integer"
           },
+          "connectionProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ModelConnectionReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."
+          },
           "credentialEnv": {
             "type": "string"
           },
@@ -470,6 +481,31 @@
           "taskId",
           "attemptId",
           "unitIds"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionReference": {
+        "additionalProperties": false,
+        "description": "A persistent data identity, never a credential, execution grant or consent.",
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "storeId",
+          "profileId",
+          "revision",
+          "digest"
         ],
         "type": "object"
       },
@@ -1846,6 +1882,17 @@
             "maximum": 4294967295,
             "minimum": 0,
             "type": "integer"
+          },
+          "connectionProfile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ModelConnectionReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Captured non-secret profile identity. Accepted execution keeps this\nprovenance and the original defaults; it never resolves mutable settings."
           },
           "credentialEnv": {
             "type": "string"
@@ -3666,6 +3713,31 @@
           "status",
           "scope",
           "resultId"
+        ],
+        "type": "object"
+      },
+      "ModelConnectionReference": {
+        "additionalProperties": false,
+        "description": "A persistent data identity, never a credential, execution grant or consent.",
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "revision": {
+            "$ref": "#/definitions/UnsignedDecimal"
+          },
+          "storeId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "storeId",
+          "profileId",
+          "revision",
+          "digest"
         ],
         "type": "object"
       },

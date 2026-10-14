@@ -276,6 +276,11 @@ export interface AiPreviewView {
 }
 export interface AiConfig {
   concurrency: number;
+  /**
+   * Captured non-secret profile identity. Accepted execution keeps this
+   * provenance and the original defaults; it never resolves mutable settings.
+   */
+  connectionProfile?: ModelConnectionReference | null;
   credentialEnv: string;
   endpoint: string;
   maxItems: number;
@@ -287,6 +292,15 @@ export interface AiConfig {
   shareTerms: boolean;
   timeoutSeconds: number;
   tokenField: string;
+}
+/**
+ * A persistent data identity, never a credential, execution grant or consent.
+ */
+export interface ModelConnectionReference {
+  digest: string;
+  profileId: ExecutionId;
+  revision: UnsignedDecimal;
+  storeId: ExecutionId;
 }
 export interface AiItemView {
   context: ContextRevision | null;

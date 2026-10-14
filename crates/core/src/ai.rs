@@ -58,6 +58,10 @@ pub(crate) fn error(code: ErrorCode, stage: &str) -> ExecutionError {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[cfg_attr(feature = "wire-schema", derive(schemars::JsonSchema))]
 pub struct AiConfig {
+    /// Captured non-secret profile identity. Accepted execution keeps this
+    /// provenance and the original defaults; it never resolves mutable settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_profile: Option<crate::model_connections::ModelConnectionReference>,
     pub endpoint: String,
     pub model: String,
     pub credential_env: String,
@@ -74,6 +78,7 @@ pub struct AiConfig {
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
+            connection_profile: None,
             endpoint: String::new(),
             model: String::new(),
             credential_env: "OPENAI_API_KEY".into(),
@@ -91,6 +96,9 @@ impl Default for AiConfig {
 }
 impl AiConfig {
     pub fn validate(&self) -> Result<(), ExecutionError> {
+        if let Some(reference) = &self.connection_profile {
+            reference.validate()?;
+        }
         let url = reqwest::Url::parse(&self.endpoint)
             .map_err(|_| error(ErrorCode::InvalidInput, "ai-endpoint"))?;
         let local = url.host_str().is_some_and(|host| {

@@ -10,7 +10,7 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import type { AiConfig, AiItem } from "./aiCommands";
+import { sameAiConfig, type AiConfig, type AiItem } from "./aiCommands";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import type { TranslationHistory } from "./translationCommands";
 
@@ -37,9 +37,7 @@ interface State {
   pending: Pending | null; saved: Record<string, Receipt>; busy: boolean; failure: CommandFailure | null;
   notice: "saved" | "merged" | "selected" | "reconciled" | "repeatCost" | null;
 }
-const aiKeys = ["endpoint", "model", "credentialEnv", "tokenField", "maxItems", "concurrency", "maxRequests", "maxOutputTokens", "maxRetries", "timeoutSeconds", "shareTerms", "shareContext"] as const;
 const aiLimits = [["maxItems",1,100],["concurrency",1,2],["maxRequests",1,300],["maxOutputTokens",1,16384],["maxRetries",0,2],["timeoutSeconds",1,120]] as const;
-const sameAiConfig = (left: AiConfig, right: AiConfig) => aiKeys.every(key => left[key] === right[key]);
 function sameConfig(left: ArenaConfig, right: ArenaConfig) {
   return left.maxItems === right.maxItems && left.maxRequests === right.maxRequests && left.concurrency === right.concurrency && left.blind === right.blind
     && (left.parentAttemptId ?? null) === (right.parentAttemptId ?? null) && left.variants.length === right.variants.length

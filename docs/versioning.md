@@ -1,5 +1,21 @@
 # Application versioning and changelog maintenance
 
+AI configuration adds optional non-secret captured connection provenance. Fresh
+Desktop previews and first authorization verify all referenced defaults from one
+application-store snapshot. Exact accepted requests and original authorization
+receipts retain the original configuration, budgets and deadlines; recovery does
+not resolve mutable defaults. Provider request bodies exclude connection IDs.
+This stored input contract advances the current-only project format to schema 34;
+other development formats are preserved and refused, with no conversion/reset.
+Manual one-time configuration omits the reference and needs no connection store.
+AI/Arena profile selection and consent UI remain in development. IPC types and
+validators are regenerated from Rust; connection store format 1, plugin settings
+format 2, SDK/process, dependencies and version sources remain unchanged. The
+whole undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch retains
+its existing target without another SemVer bump or distribution. Both Unreleased
+changelogs and current README format statements are synchronized. Earlier
+paragraphs retain their intermediate development boundaries.
+
 Desktop connection settings use the application read cache and a separate
 application-lived draft/mutation owner. Panel closure and project changes retain
 the draft and exact save identity; window exit waits for current draft decisions
@@ -34,7 +50,7 @@ additional SemVer bump. AI/Arena preparation and consent integration are still
 pending; the storage API alone does not provide a product workflow.
 
 
-The combined development format is current-only project schema 33. Its layout
+The preceding combined development boundary was project schema 33. Its layout
 retains the original application execution associations, work-plan service calls,
 captured chunks, ancestor budgets and exact continuation links. Saved plugin build
 views are read-only projections of the original plans and artifacts. Project
