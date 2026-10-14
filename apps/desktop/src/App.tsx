@@ -1765,7 +1765,7 @@ function AppWorkbench() {
             <ProjectSessionWorkbench key={`${sessionPresentation.metadata.projectId}:${sessionPresentation.sessionToken}`} ref={projectSession}
               project={sessionPresentation} retired={retiredSession !== null} disabled={busy || stopping}
               onActivate={retiredSession ? () => {} : activateArea} onCoordinatingChange={coordinationChanged}
-              onSourceState={sourceStateChanged} onOpenExtensions={() => pluginManager.current?.open()} />
+              onSourceState={sourceStateChanged} onOpenExtensions={() => pluginManager.current?.open()} onOpenConnections={() => connectionManager.current?.open()} />
             {retiredSession?.metadata ? <section className="editor-card">
               <label className="field" htmlFor="retired-metadata-value">
                 <span>{t(retiredSession.metadata.form.kind === "rename" ? "editor.renameLabel" : "editor.targetLabel")}</span>

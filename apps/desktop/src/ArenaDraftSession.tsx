@@ -10,7 +10,9 @@ import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
 import { useTranslationDraftSession } from "./TranslationDraftSession";
 import { useExecutionTaskSession } from "./ExecutionTaskSession";
-import { sameAiConfig, type AiConfig, type AiItem } from "./aiCommands";
+import { editedAiConfig, sameAiConfig, type AiConfig, type AiItem } from "./aiCommands";
+import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
+import type { ConnectionReadView } from "./connectionCommands";
 import type { InfiniteData, QueryKey } from "@tanstack/react-query";
 import type { TranslationHistory } from "./translationCommands";
 
@@ -31,7 +33,7 @@ type Pending = PendingState & (
 );
 interface State {
   config: ArenaConfig; locale: string; selected: string[]; prepared: ArenaPrepared | null; consent: boolean;
-  dirty: boolean; editSeq: number; sourceGeneration: number; staleReason: "source" | "preview" | null;
+  dirty: boolean; editSeq: number; sourceGeneration: number; staleReason: "source" | "preview" | "connection" | null;
   unit: string; references: string[]; comparisonBlind: boolean; comparisonId: string | null; draft: MergeDraft | null;
   attempt: string | null; started: { prepared: ArenaPrepared; taskId: string | null } | null;
   pending: Pending | null; saved: Record<string, Receipt>; busy: boolean; failure: CommandFailure | null;
@@ -127,6 +129,7 @@ function confirmComparisonRead(view: ComparisonView, comparisonId: string) {
 
 function useArenaOwner(project: ProjectView) {
   const reads = useSessionReads(), translations = useTranslationDraftSession(), tasks = useExecutionTaskSession();
+  const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<State>(() => freeze({config:defaultArenaConfig(),locale:project.metadata.targetLocales[0] ?? "",selected:[],prepared:null,consent:false,
     dirty:false,editSeq:0,sourceGeneration:0,staleReason:null,unit:"",references:[],comparisonBlind:false,comparisonId:null,draft:null,
@@ -146,6 +149,20 @@ function useArenaOwner(project: ProjectView) {
   function update(change: (before: State) => State) { if (live()) { stateRef.current = freeze(change(current())); setState(stateRef.current); } }
   function available(locale = current().locale) { return !!locale && projectRef.current.metadata.targetLocales.includes(locale); }
   function reserved() { return !!flight.current || !!current().pending; }
+  function connectionCurrent() { return current().config.variants.every(config => connectionConfigCurrent(connections.current(), config)); }
+  function selectConnection(slot: number, view: ConnectionReadView | null, id: string, expectedEditSeq: number) {
+    const before = current(), config = before.config.variants[slot];
+    if (!live() || reserved() || !config || before.editSeq !== expectedEditSeq) return false;
+    let next: AiConfig;
+    if (!id) next = { ...config, connectionProfile: null };
+    else {
+      if (!view || connections.current() !== view) return false;
+      const reference = view.references.find(value => value.profileId === id), profile = view.snapshot.profiles.find(value => value.id === id && !value.archived);
+      if (!reference || !profile) return false;
+      next = { ...config, ...profile.connection, connectionProfile: reference };
+    }
+    edit("config", { ...before.config, variants: before.config.variants.map((value, index) => index === slot ? next : value) }); return true;
+  }
   function reserveTranslation() { if (mutation.current) return false; mutation.current = draftsRef.current.reserveMutation(); return mutation.current !== null; }
   function releaseTranslation() { const token = mutation.current; mutation.current = null; if (token) draftsRef.current.releaseMutation(token); }
   async function run(work: () => Promise<void>, recovery = false) {
@@ -170,6 +187,12 @@ function useArenaOwner(project: ProjectView) {
     version.current++;
     update(before => ({ ...before,prepared:null,consent:false,staleReason:reason,draft:before.draft ? {...before.draft,stale:true} : null }));
   }
+  useLayoutEffect(() => {
+    const view = connections.current(), before = current();
+    if (view && !reserved() && (before.prepared || before.consent) && !before.config.variants.every(config => connectionConfigCurrent(view, config))) {
+      version.current++; update(value => ({ ...value, prepared: null, consent: false, staleReason: "connection" }));
+    }
+  }, [connections.state, state.busy, state.pending, state.config, state.prepared, state.consent]);
   useEffect(() => reads.subscribeChanges(scopes => {
     if (scopes.some(scope => scope === "project" || scope === "source" || scope === "resources")) {
       revoke(scopes.includes("source") ? "source" : "preview");
@@ -190,7 +213,7 @@ function useArenaOwner(project: ProjectView) {
   function canPreview() {
     const before = current();
     return live() && !reserved() && project.metadata.targetLocales.includes(before.locale) && !!before.locale
-      && validateResponseIdentity(session.projectId) && before.selected.length > 0;
+      && validateResponseIdentity(session.projectId) && before.selected.length > 0 && connectionCurrent();
   }
   async function preview() {
     const before = current(), ticket = version.current;
@@ -284,7 +307,7 @@ function useArenaOwner(project: ProjectView) {
   }
   function canStart() {
     const before = current(), prepared = before.prepared;
-    return live() && !reserved() && project.metadata.targetLocales.includes(before.locale) && !!before.locale && before.consent && !!prepared
+    return live() && !reserved() && project.metadata.targetLocales.includes(before.locale) && !!before.locale && before.consent && !!prepared && connectionCurrent()
       && sameConfig(before.config,prepared.preview.config) && validConfig(before.config,before.selected.length)
       && prepared.preview.items.every(row => row.item.unitId === before.selected[row.sourceOrder] && row.item.targetLocale === before.locale);
   }
@@ -512,14 +535,17 @@ function useArenaOwner(project: ProjectView) {
     update(before => ({...before,config:defaultArenaConfig(),locale:projectRef.current.metadata.targetLocales[0] ?? "",selected:[],prepared:null,consent:false,dirty:false,editSeq:before.editSeq+1,
       unit:"",references:[],comparisonBlind:false,comparisonId:null,draft:null,attempt:null,started:null,staleReason:null,failure:null,notice:null})); return true;
   }
-  return {...state,current,reserved,targetAvailable,canPreview,preview,canStart,start,readView,readComparison,canCompare,compare,canSelect,select,reveal,canBeginMerge,beginMerge,editMerge,canSaveMerge,mergeBasisCurrent,saveMerge,refreshMerge,
+  return {...state,current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,readView,readComparison,canCompare,compare,canSelect,select,reveal,canBeginMerge,beginMerge,editMerge,canSaveMerge,mergeBasisCurrent,saveMerge,refreshMerge,
     canAdopt,adopt,checkPending,retryPending,showAttempt,newRound,reset,
-    setConfig:(value: SetStateAction<ArenaConfig>) => edit("config",value),setLocale:(value: SetStateAction<string>) => edit("locale",value),
+    setConfig:(value: SetStateAction<ArenaConfig>) => edit("config",before => {
+      const next = typeof value === "function" ? value(before) : value;
+      return { ...next, variants: next.variants.map((config, index) => before.variants[index] ? editedAiConfig(before.variants[index], config) : config) };
+    }),setLocale:(value: SetStateAction<string>) => edit("locale",value),
     setSelected:(value: SetStateAction<string[]>) => edit("selected",value),setReferences:(value: SetStateAction<string[]>) => edit("references",value),
     setComparisonBlind:(value: SetStateAction<boolean>) => edit("comparisonBlind",value),
     setUnit:(unit: string) => { if (!reserved() && !current().draft) { version.current++; update(before => ({...before,unit,references:[],comparisonId:null})); } },
     openComparison:(comparisonId: string) => { if (!reserved() && !current().draft && validateResponseIdentity(comparisonId)) update(before => ({...before,comparisonId})); },
-    setConsent:(consent: boolean) => { if (!reserved() && current().prepared && available()) update(before => ({...before,consent})); },
+    setConsent:(consent: boolean) => { if (!reserved() && current().prepared && available() && (!consent || connectionCurrent())) update(before => ({...before,consent})); },
     discardMerge:() => { if (!reserved()) update(before => ({...before,draft:null})); },
     clearSelectedRange:() => { if (!reserved()) edit("selected",[]); },
     reportFailure:(failure: CommandFailure) => update(before => ({...before,failure}))};

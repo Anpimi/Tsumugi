@@ -1,5 +1,21 @@
 # Application versioning and changelog maintenance
 
+AI and Arena preparation now select named application connection defaults through
+current application reads and their existing project-session draft owners. Only
+four defaults and the exact profile reference are copied; scope, sharing and
+budgets remain independent. Manual edits detach the reference. Semantic changes
+revoke fresh preview/consent while original accepted authorization and deadlines
+remain captured. Model-free plans ignore unused connection defaults. Serialized
+work-plan acknowledgements compare the entire captured configuration. Budget and
+sharing summaries stay visible while advanced fields fold. Arena separates its
+shared round budget from per-request limits; settings dismissal returns focus to
+the preparation opener. This frontend addition
+changes no IPC, project schema 34, connection store 1, plugin settings 2,
+SDK/process, dependency or version source. The same undistributed application
+`0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch requires no additional SemVer bump,
+migration or distribution; both Unreleased changelogs are synchronized. Native
+workflow and complete product acceptance remain separate from this source unit.
+
 AI configuration adds optional non-secret captured connection provenance. Fresh
 Desktop previews and first authorization verify all referenced defaults from one
 application-store snapshot. Exact accepted requests and original authorization

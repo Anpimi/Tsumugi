@@ -6,12 +6,23 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- AI and Arena preparations can choose named saved connections and open their
+  application settings without losing the preparation. Choosing defaults keeps
+  scope, sharing and budgets; editing a copied default makes it a one-time
+  connection. Budget and sharing summaries stay visible while advanced fields
+  are folded. Arena shows one shared round budget with separate per-request
+  limits. Closing settings returns keyboard focus to its preparation opener. An unchanged current read keeps consent; changed selected defaults
+  require a new preview and confirmation. Accepted authorization retains its
+  captured request and deadline, and manual plans ignore unused model defaults.
+- Work-plan acknowledgement checks compare complete serialized configuration,
+  including all four captured profile-reference fields, so a correct saved
+  connection is accepted and a transplanted reference is refused.
+
 - Captured AI configuration can retain a non-secret saved-connection identity.
   Fresh previews and first authorization check the current profile and exact
   defaults; edits or archival invalidate that preparation. Accepted requests,
   original receipts and deadlines keep their captured configuration. Profile
-  identities do not enter provider payloads. AI/Arena profile selection controls
-  remain in development.
+  identities do not enter provider payloads.
 - The current project format advances to schema 34 for captured connection
   provenance. Earlier development directories are refused without conversion
   or reset; retain them and reimport sources into a new project.
@@ -21,19 +32,16 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   a late acknowledgement preserves newer edits. Unknown saves can be checked
   from the same panel, while stale records require an explicit review.
   Window exit checks pending saves and current draft decisions before closing.
-  AI/Arena profile selection and preparation consent integration remain pending.
 
 - Desktop exposes typed connection-profile reads and exact save/archive/restore
   operations, with original-action lookup and current-reference resolution.
   Core supplies the read basis and profile references from one snapshot; clients
   validate acknowledgements without rebuilding hashes or reading credentials.
-  AI/Arena preparation controls are still pending.
 
 - Core provides a separate application store for named, non-secret model
   connection defaults. Atomic changes retain their original receipts, detect
   stale writes and preserve archived profiles. Saved defaults carry no model
   permission and do not change captured request budgets or sharing settings.
-  AI/Arena preparation integration is still pending.
 
 - The content editor shows saved project translation-memory suggestions beside
   terms, context and revision history. Read-only comparisons retain the editable

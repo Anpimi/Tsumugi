@@ -20,6 +20,8 @@ import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { aiAttempt, aiTask, aiViewFixture, aiWorkPlanFixture } from "./testSupport/aiFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
+import { connectionReadKey, currentConnections, useApplicationQueryClient } from "./ApplicationReadProvider";
+import { connectionFixture } from "./testSupport/connectionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -32,8 +34,10 @@ const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureId
 let owner: ReturnType<typeof useAiPreparation>, reads: ReturnType<typeof useSessionReads>, registry: ReturnType<typeof useWorkbenchCommands>;
 let tasks: ReturnType<typeof useExecutionTaskSession>, prepared: AiPrepared, view: AiView, action: AdoptionAction;
 let plan: WorkPlanView, status: WorkPlanStatusView | null, planReceipts: Map<string,WorkPlanReceiptView>;
+let application: ReturnType<typeof useApplicationQueryClient>;
 const navigate = vi.fn(async () => true);
 function Probe() {
+  application = useApplicationQueryClient();
   const preparation = useAiPreparation(), sessionReads = useSessionReads(), commands = useWorkbenchCommands(), taskOwner = useExecutionTaskSession();
   useLayoutEffect(() => { owner = preparation; reads = sessionReads; registry = commands; tasks = taskOwner; });
   return null;
@@ -52,11 +56,12 @@ function deferred<T>() {
 }
 function observeQuerySubscriptions() {
   const cache = reads.client.getQueryCache(), subscribe = cache.subscribe;
-  const counts = { subscribed: 0, disposed: 0, events: 0 };
+  const counts = { subscribed: 0, disposed: 0, events: 0, eventsAfterDispose: 0 };
   vi.spyOn(cache, "subscribe").mockImplementation(listener => {
     counts.subscribed++;
-    const unsubscribe = subscribe(event => { counts.events++; listener(event); });
-    return () => { counts.disposed++; unsubscribe(); };
+    let disposed = false;
+    const unsubscribe = subscribe(event => { counts.events++; if (disposed) counts.eventsAfterDispose++; listener(event); });
+    return () => { disposed = true; counts.disposed++; unsubscribe(); };
   });
   return counts;
 }
@@ -102,6 +107,7 @@ beforeEach(async () => {
   view = aiViewFixture(item, prepared.preview.config);view.planId=plan.planId;view.planGeneration="1";
   let nextIdentity = 910;
   invoke.mockReset(); invoke.mockImplementation(async (command: string, payload: { request: Record<string, unknown> }) => {
+    if (command === "read_model_connections") return connectionFixture([]);
     if (command === "read_content_scope") return { revision: "2", currentSnapshot: item.sourceSnapshotId };
     if (command === "read_source_content") return sourcePageFixture({ snapshotId: item.sourceSnapshotId, scope: { revision: "2", currentSnapshot: item.sourceSnapshotId },
       rows: [sourceRowFixture({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId }, { key: item.nativeKey, text: item.sourceText })] });
@@ -547,9 +553,11 @@ it.each(["eviction","replacement-error","replacement-basis","retired"] as const)
   expect(calls("authorize_work_plan")).toHaveLength(phase==="eviction"?1:0);
   expect(calls("start_work_plan")).toHaveLength(phase==="eviction"?1:0);
   expect(counts.disposed).toBe(phase==="eviction"?3:2);
-  const delivered=counts.events;
+  // The new attempt availability reader legitimately remains subscribed.
+  // None of the three disposed action witnesses may receive another event.
+  expect(counts.eventsAfterDispose).toBe(0);
   act(()=>originalReads.client.setQueryData(queryKey,{revision:"2",currentSnapshot:item.sourceSnapshotId}));
-  expect(counts.events).toBe(delivered);
+  expect(counts.eventsAfterDispose).toBe(0);
 });
 
 it("retains an unknown authorization across valid rejected replay and permits only explicit original receipt recovery",async()=>{
@@ -733,4 +741,42 @@ it("keeps one immutable capture snapshot while repeated current reads and retire
   expect(registry.dispatch("ai.start",scope,startPayload())).toBe(false);
   expect(owner.current()).toBe(snapshot);expect(owner.current().preparedPlan).toBe(snapshot.capture.value);
   expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("start_work_plan")).toHaveLength(0);
+});
+
+it("keeps a checked original authorization and deadline through profile archival and newer scope input",async()=>{
+  await open();
+  const config={...owner.config,connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}},connections=connectionFixture([config]);
+  act(()=>{application.setQueryData(connectionReadKey,connections);expect(owner.selectConnection(currentConnections(application)!,config.connectionProfile.profileId,owner.editSeq)).toBe(true);});
+  await prepareThroughRegistry();
+  const original=invoke.getMockImplementation()!,ack=deferred<WorkPlanReceiptView>(),captured=owner.preparedPlan!,capturedSeq=owner.editSeq;
+  invoke.mockImplementation(async(command:string,args:unknown)=>{const response=await original(command,args);return command==="authorize_work_plan"?ack.promise:response;});
+  await act(async()=>{expect(registry.dispatch("ai.start",scope,startPayload())).toBe(true);});
+  await waitFor(()=>expect(calls("authorize_work_plan")).toHaveLength(1));
+  const request=structuredClone(payloads("authorize_work_plan")[0]),receipt=planReceipts.get(request.actionId)!;
+  const archived=structuredClone(connections);archived.snapshot.revision="2";archived.basis.revision="2";archived.snapshot.profiles[0].revision="2";archived.snapshot.profiles[0].archived=true;archived.references=[];
+  act(()=>{owner.setSelected([fixtureIdentity(982)]);application.setQueryData(connectionReadKey,archived);});
+  expect(owner.connectionCurrent()).toBe(false);expect(owner.planControl.current().pending?.request).toEqual(request);
+  await act(async()=>ack.resolve(receipt));
+  await waitFor(()=>expect(owner.planControl.current().ready?.editSeq).toBe(capturedSeq));
+  expect(owner.planControl.current().ready?.prepared).toEqual(captured);expect(calls("start_work_plan")).toHaveLength(0);
+  const start={kind:"ai-plan-start" as const,attemptId:receipt.attemptId!,request:{...reads.context,planId:receipt.lease.planId,actionId:receipt.actionId,expectedGeneration:receipt.lease.generation}};
+  await waitFor(()=>expect(registry.describe("ai.plan.start-authorized",scope,start)?.availability.enabled).toBe(true));
+  await act(async()=>{expect(registry.dispatch("ai.plan.start-authorized",scope,start)).toBe(true);});
+  await waitFor(()=>expect(owner.attempt).toBe(receipt.attemptId));
+  expect(owner.startedPlan?.prepared).toEqual(captured);expect(owner.config.connectionProfile).toEqual(config.connectionProfile);expect(owner.selected).toEqual([fixtureIdentity(982)]);
+  expect(owner.dirty).toBe(true);expect(status?.expiresAt).toBe(request.expiresAt);expect(payloads("authorize_work_plan")).toEqual([request]);expect(payloads("start_work_plan")).toEqual([start.request]);expect(calls("prepare_work_plan")).toHaveLength(1);
+});
+it("prepares a manual plan without resolving its unused saved model reference",async()=>{
+  await open();
+  act(()=>{owner.setConfig({...owner.config,connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}});owner.setOptions({...owner.options,stages:owner.options.stages.map(stage=>stage.stage==="generation"?{...stage,mode:"manual" as const}:stage)});});
+  expect(owner.connectionCurrent()).toBe(false);
+  const original=invoke.getMockImplementation()!;
+  invoke.mockImplementation(async(command:string,args:{request:Record<string,unknown>})=>{
+    if(command!=="prepare_work_plan")return original(command,args);
+    if(!validateRequestWorkPlanPrepare(args.request)||args.request.config!==null)throw new Error("Expected a model-free plan");
+    return {...plan,options:args.request.options,attemptId:null,preview:null,scope:[{unitId:item.unitId,sourceRevisionId:item.sourceRevisionId,sourceSnapshotId:item.sourceSnapshotId,nativeKey:item.nativeKey,selectionId:null}]};
+  });
+  await act(async()=>{expect(registry.dispatch("ai.preview",scope,previewPayload())).toBe(true);});
+  await waitFor(()=>expect(owner.busy).toBe(false));expect(owner.failure).toBeNull();
+  expect(owner.preparedPlan).not.toBeNull();expect(owner.preparedPlan?.preview).toBeNull();expect(calls("authorize_work_plan")).toHaveLength(0);expect(calls("create_execution_identity")).toHaveLength(0);
 });

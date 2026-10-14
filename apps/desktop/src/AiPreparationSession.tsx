@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type SetStateAction } from "react";
 import { matchQuery, QueryObserver } from "@tanstack/react-query";
-import { aiCommands, defaultAiConfig, sameAiConfig as sameConfig, type AiConfig, type AiItem, type AiPrepared, type AiStart, type AiView } from "./aiCommands";
+import { aiCommands, defaultAiConfig, editedAiConfig, sameAiConfig as sameConfig, type AiConfig, type AiItem, type AiPrepared, type AiStart, type AiView } from "./aiCommands";
+import { connectionConfigCurrent, useConnectionFacts } from "./ApplicationReadProvider";
+import type { ConnectionReadView } from "./connectionCommands";
 import { executionCommands, type AdoptionAction, type PrepareRequest, type Receipt, type AttemptDetail } from "./executionCommands";
 import { validateResponseIdentity } from "./generated/execution.validators";
 import { validateResponseWorkPlanStatus, validateResponseView } from "./generated/ai.validators";
@@ -32,7 +34,7 @@ interface State {
   presetName: string; config: AiConfig; locale: string; selected: string[]; capture: PreparationCapture | null; consent: boolean;
   options: PlanOptions; toolDraft: PlanToolDraft | null; advisoryChecks: PluginTextReviewSelection[]; planId: string | null;
   startedPlan: { prepared: WorkPlanView; attemptId: string; taskId: string | null; generation: string; unitIds: string[] } | null;
-  staleReason: "source" | "preview" | null; dirty: boolean; editSeq: number; sourceGeneration: number; busy: boolean;
+  staleReason: "source" | "preview" | "connection" | null; dirty: boolean; editSeq: number; sourceGeneration: number; busy: boolean;
   checkedTask: { attemptId: string; taskId: string } | null;
   attempt: string | null; started: { prepared: AiPrepared; taskId: string | null } | null;
   pendingStart: StartCapture | null; pendingAdopt: AdoptCapture | null; saved: Record<string, Receipt>;
@@ -95,6 +97,7 @@ export function confirmPlanStartView(view: AiView, plan: WorkPlanView, attemptId
 
 function usePreparation(initialLocale: string, targetLocales: readonly string[]) {
   const reads = useSessionReads(), tasks = useExecutionTaskSession();
+  const connections = useConnectionFacts();
   const [session] = useState(() => Object.freeze({ ...reads.context }));
   const [state,setState] = useState<PreparationState>(() => preparationState({ presetName:"custom",config:fixed(defaultAiConfig),locale:initialLocale,selected:[],capture:null,consent:false,
     options:fixed(defaultPlanOptions),toolDraft:null,advisoryChecks:[],planId:null,startedPlan:null,
@@ -123,6 +126,16 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
       || !!planControl.current().pending || !!planControl.current().ready || !!agent.current().pending || toolWorking || !!component.current().operation;
   }
   function available(locale = current().locale) { return locale !== "" && locales.current.includes(locale); }
+  function connectionCurrent() { return connectionConfigCurrent(connections.current(), current().config); }
+  function selectConnection(view: ConnectionReadView | null, id: string, expectedEditSeq: number) {
+    const before = current();
+    if (!live() || reserved() || before.editSeq !== expectedEditSeq) return false;
+    if (!id) { edit("config", { ...before.config, connectionProfile: null }); update(value => ({ ...value, presetName: "custom" })); return true; }
+    if (!view || connections.current() !== view) return false;
+    const reference = view.references.find(value => value.profileId === id), profile = view.snapshot.profiles.find(value => value.id === id && !value.archived);
+    if (!reference || !profile) return false;
+    edit("config", { ...before.config, ...profile.connection, connectionProfile: reference }); update(value => ({ ...value, presetName: "custom" })); return true;
+  }
   function invalidatePreview(reason: State["staleReason"] = null) {
     basis.current++; update(before => ({ ...before,capture:null,consent:false,staleReason:reason }));
   }
@@ -131,6 +144,12 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     update(before => ({ ...before,[key]:fixed(value),capture:null,consent:false,staleReason:null,
       dirty:true,editSeq:before.editSeq+1,failure:null,notice:null }));
   }
+  useLayoutEffect(() => {
+    const view = connections.current(), before = current();
+    // Pending actions/checked grants keep their original continuation proof.
+    // A focus reread which confirms the same reference keeps preview/consent.
+    if (view && !reserved() && (before.prepared || before.preparedPlan?.preview || before.consent) && !connectionConfigCurrent(view, before.config)) invalidatePreview("connection");
+  }, [connections.state, state.busy, state.config, state.capture, state.consent, planControl.state.pending, planControl.state.ready]);
   function receiveContentSelection(selection: ContentSelection, expectedEditSeq: number) {
     if (!canReceiveContentSelection() || current().editSeq !== expectedEditSeq
       || selection.projectId !== session.projectId || selection.sessionToken !== session.sessionToken
@@ -172,12 +191,12 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }), [reads]);
   const targetAvailable = state.locale !== "" && targetLocales.includes(state.locale);
   useLayoutEffect(() => { if (!targetAvailable) invalidatePreview(); }, [targetAvailable]);
-  function canPreview() {
+  function canPreview(model = true) {
     const before = current();
     // Presentation follows this render's props. Mutation entry points below
     // separately require the committed locale ref before any dispatch.
     return live() && !reserved() && before.locale !== "" && targetLocales.includes(before.locale)
-      && validateResponseIdentity(session.projectId) && !!session.sessionToken && before.selected.length > 0;
+      && validateResponseIdentity(session.projectId) && !!session.sessionToken && before.selected.length > 0 && (!model || connectionCurrent());
   }
   async function preview() {
     if (!canPreview() || !available()) return;
@@ -196,9 +215,9 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     });
   }
   async function preparePlan(captureTools: () => ReturnType<PlanToolChoiceHandle["capture"]>, sourceContentKey: readonly unknown[]) {
-    if (!canPreview() || !available()) return;
     const before = current(), version = basis.current;
     const assisted = before.options.stages.some(choice => choice.stage === "generation" && choice.mode === "assisted");
+    if (!canPreview(assisted) || !available()) return;
     const capture = fixed({ ...session, config: assisted ? before.config : null, locale: before.locale,
       unitIds: before.selected, options: before.options, advisoryChecks: before.options.stages.some(choice => choice.stage === "checks" && choice.mode === "assisted") ? before.advisoryChecks : [] });
     await run(async () => {
@@ -361,7 +380,7 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
   }
   function canStart() {
     const before = current(), prepared = before.prepared;
-    return live() && !reserved() && before.locale !== "" && targetLocales.includes(before.locale) && !!prepared && before.consent && sameConfig(before.config,prepared.preview.config)
+    return live() && !reserved() && before.locale !== "" && targetLocales.includes(before.locale) && !!prepared && before.consent && connectionCurrent() && sameConfig(before.config,prepared.preview.config)
       && prepared.preview.items.length === before.selected.length && prepared.preview.items.every((item,index) => item.unitId === before.selected[index] && item.targetLocale === before.locale);
   }
   async function start() {
@@ -575,13 +594,13 @@ function usePreparation(initialLocale: string, targetLocales: readonly string[])
     setOptions:(value:SetStateAction<PlanOptions>) => edit("options",typeof value === "function" ? value(current().options) : value),
     setToolDraft:(value:PlanToolDraft|null) => edit("toolDraft",value),
     setAdvisoryChecks:(value:PluginTextReviewSelection[]) => edit("advisoryChecks",value),
-    current,reserved,targetAvailable,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,receiveContentSelection,canReceiveContentSelection,
+    current,reserved,targetAvailable,connectionCurrent,selectConnection,canPreview,preview,canStart,start,checkStart,retryStart,readView,canAdopt,adopt,checkAdoption,retryAdoption,showAttempt,reset,invalidatePreview,receiveContentSelection,canReceiveContentSelection,
     setPresetName:(value:SetStateAction<string>) => edit("presetName",typeof value === "function" ? value(current().presetName) : value),
-    setConfig:(value:SetStateAction<AiConfig>) => edit("config",typeof value === "function" ? value(current().config) : value),
+    setConfig:(value:SetStateAction<AiConfig>) => edit("config",editedAiConfig(current().config, typeof value === "function" ? value(current().config) : value)),
     setLocale:(value:SetStateAction<string>) => edit("locale",typeof value === "function" ? value(current().locale) : value),
     setSelected:(value:SetStateAction<string[]>) => edit("selected",typeof value === "function" ? value(current().selected) : value),
     clearSelectedRange:() => { if (!reserved()) edit("selected",[]); },
-    setConsent:(consent:boolean) => { if (!reserved() && (current().prepared || current().preparedPlan?.preview) && available()) update(before => ({ ...before,consent })); }
+    setConsent:(consent:boolean) => { if (!reserved() && (current().prepared || current().preparedPlan?.preview) && available() && (!consent || connectionCurrent())) update(before => ({ ...before,consent })); }
   };
 }
 type Preparation = ReturnType<typeof usePreparation>;

@@ -92,3 +92,12 @@ describe("connection settings consumer",()=>{
     await screen.findByRole("heading",{name:i18n.t("connections.switchTitle")});await user.click(screen.getByRole("button",{name:i18n.t("connections.keepDraft")}));expect(screen.getByLabelText(i18n.t("connections.name"))).toHaveValue("Synthetic A");
   });
 });
+
+it.each(["button","escape"] as const)("returns keyboard focus to an imperative preparation opener after %s dismissal",async dismissal=>{
+  const user=userEvent.setup(),ref=createRef<ConnectionManagerHandle>();
+  render(<ApplicationReadProvider><ConnectionDraftProvider><button type="button" onClick={()=>ref.current?.open()}>Manage preparation connection</button><ConnectionManager disabled={false} ref={ref}/></ConnectionDraftProvider></ApplicationReadProvider>);
+  const opener=screen.getByRole("button",{name:"Manage preparation connection"});await user.click(opener);
+  await screen.findByRole("dialog",{name:i18n.t("connections.title")});
+  if(dismissal==="button")await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));else await user.keyboard("{Escape}");
+  await waitFor(()=>expect(opener).toHaveFocus());expect(invoke.mock.calls.filter(([command])=>command==="change_model_connections")).toHaveLength(0);
+});

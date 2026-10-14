@@ -55,7 +55,7 @@ export interface OverviewSourcePresentation {
 }
 interface Props { project: ProjectView; disabled: boolean; onActivate: (area: WorkspaceArea) => void;
   onCoordinatingChange: (busy: boolean) => void; onSourceState?: (value: OverviewSourcePresentation) => void;
-  onOpenExtensions?: () => void; retired?: boolean; ref?: Ref<ProjectSessionHandle> }
+  onOpenExtensions?: () => void; onOpenConnections?: () => void; retired?: boolean; ref?: Ref<ProjectSessionHandle> }
 export function ProjectSessionWorkbench(props: Props) {
   return <ProjectSessionOwners project={props.project}><SessionWorkbench {...props} /></ProjectSessionOwners>;
 }
@@ -86,7 +86,7 @@ function OverviewSourceObserver({ project, onSourceState }: Pick<Props, "project
   return null;
 }
 
-function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange, onSourceState, onOpenExtensions, retired = false, ref }: Props) {
+function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange, onSourceState, onOpenExtensions, onOpenConnections, retired = false, ref }: Props) {
   const { t } = useTranslation(), view = useWorkspaceView(), reads = useSessionReads();
   useWorkspaceViewChanges();
   const translation = useTranslationDraftSession(), imports = useTranslationImportSession(), tasks = useExecutionTaskSession();
@@ -275,8 +275,8 @@ function SessionWorkbench({ project, disabled, onActivate, onCoordinatingChange,
     {view.area === "resources" ? <ResourceWorkbench ref={handle => register("resources", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} /> : null}
     {view.area === "review" ? <ReviewWorkbench ref={handle => register("review", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
     {view.area === "release" ? <ReleaseWorkbench ref={handle => register("release", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
-    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} /> : null}
-    {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} /> : null}
+    {view.area === "ai" ? <AiWorkbench ref={handle => register("ai", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenExtensions={onOpenExtensions} onOpenConnections={onOpenConnections} /> : null}
+    {view.area === "arena" ? <ArenaWorkbench ref={handle => register("arena", handle)} project={project} disabled={locked} onOpenTranslation={openTranslation} onOpenConnections={onOpenConnections} /> : null}
     {view.area === "tasks" ? <ExecutionTasks ref={handle => register("tasks", handle)} project={project} disabled={locked}
       onSavedBuild={attemptId => navigation.navigate({ kind: "saved-build", attemptId })}
       onSourcePreview={id => attempt("source", id)} onTranslationPreview={id => attempt("translation", id)} onAiPreview={id => attempt("ai", id)} onArenaPreview={id => attempt("arena", id)} /> : null}

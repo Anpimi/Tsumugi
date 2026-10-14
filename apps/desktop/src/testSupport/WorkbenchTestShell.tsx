@@ -1,4 +1,5 @@
 import { SessionReadProvider, useSessionReads } from "../SessionReadProvider";
+import { ApplicationReadProvider } from "../ApplicationReadProvider";
 import { ExecutionTaskSession } from "../ExecutionTaskSession";
 import { executionContext } from "../executionCommands";
 import type { ProjectView } from "../projectCommands";
@@ -32,10 +33,10 @@ function WorkbenchTestShell({ children, project: retainedProject }: { children: 
   const [commands] = useState(() => new WorkbenchCommands());
   const project = (isValidElement<{project?: ProjectView}>(children) ? children.props.project : undefined) ?? retainedProject;
   const memory = useMemo(() => new WorkspaceViewMemory(), [project?.sessionToken, project?.metadata.projectId]);
-  return <WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, memory, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
+  return <ApplicationReadProvider><WorkbenchCommandsProvider commands={commands}><WorkspaceViewProvider value={{ area, memory, activate: setArea, deactivate: closing => setArea(current => current === closing ? "overview" : current) }}>
     <WorkbenchNavigation area={area} hasProject disabled={false} onNavigate={setArea} />
     {project ? <SessionReadProvider key={`${project.metadata.projectId}:${project.sessionToken}`} context={executionContext(project)} bridge={false}><ReadControl/><TranslationDraftSession project={project}><ExecutionTaskSession project={project}><TranslationImportSession project={project}><ReviewDraftSession project={project}><ResourceDraftSession project={project}><SourceDraftSession project={project}><ArenaDraftSession project={project}><ReleaseDraftSession project={project}>{children}</ReleaseDraftSession></ArenaDraftSession></SourceDraftSession></ResourceDraftSession></ReviewDraftSession></TranslationImportSession></ExecutionTaskSession></TranslationDraftSession></SessionReadProvider> : children}
-  </WorkspaceViewProvider></WorkbenchCommandsProvider>;
+  </WorkspaceViewProvider></WorkbenchCommandsProvider></ApplicationReadProvider>;
 }
 
 export function renderWorkbench(ui: ReactNode, project?: ProjectView) {

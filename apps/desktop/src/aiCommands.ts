@@ -1,5 +1,5 @@
 import { checkedInvoke } from "./ipc";
-import { sameConnectionReference } from "./connectionCommands";
+import { sameConnection, sameConnectionReference } from "./connectionCommands";
 import type { AiConfig, AiPreviewRequest, AiStartRequest, AiReadRequest, AiEffectRetryRequest } from "./generated/ai.requests";
 import * as validators from "./generated/ai.validators";
 import type { EditorTarget } from "./TranslationWorkbench";
@@ -14,6 +14,12 @@ const configurationFields = ["endpoint", "model", "credentialEnv", "tokenField",
 /** A profile reference is part of the captured proof, even for equal defaults. */
 export function sameAiConfig(left: AiConfig, right: AiConfig): boolean {
   return configurationFields.every(key => left[key] === right[key]) && sameConnectionReference(left.connectionProfile, right.connectionProfile);
+}
+/** Manual default edits become a one-time connection. Budgets and sharing keep
+ * a saved reference when its four defaults are unchanged. */
+export function editedAiConfig(before: AiConfig, next: AiConfig): AiConfig {
+  return next.connectionProfile != null && sameConnectionReference(before.connectionProfile, next.connectionProfile) && !sameConnection(before, next)
+    ? { ...next, connectionProfile: null } : next;
 }
 
 function capturedChecksMatch(receipt: AutomaticSelectionReceipt): boolean {

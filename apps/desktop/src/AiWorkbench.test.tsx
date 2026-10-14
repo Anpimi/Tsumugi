@@ -122,6 +122,8 @@ it("reveals invalid connection fields when preview fails after settings were col
  await user.click(screen.getByRole("button",{name:"AI translation"}));
  await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
  const connection=screen.getByText("Connection",{selector:"summary"});
+ expect(connection.closest("details")).not.toHaveAttribute("open");
+ await user.click(connection);expect(connection.closest("details")).toHaveAttribute("open");
  await user.click(connection);expect(connection.closest("details")).not.toHaveAttribute("open");
  const original=invoke.getMockImplementation()!;
  invoke.mockImplementation((command:string,args:unknown)=>command==="prepare_work_plan"?Promise.reject({code:"invalid-input", outcome: "rejected",reason:"ai-model"}):original(command,args));

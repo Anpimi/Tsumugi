@@ -1,4 +1,5 @@
 import { checkedInvoke } from "./ipc";
+import { sameAiConfig } from "./aiCommands";
 import type {
   WorkPlanPrepareRequest, WorkPlanAuthorizeRequest, WorkPlanStartRequest,
   WorkPlanControlRequest, WorkPlanStatusRequest, WorkPlanActionRequest,
@@ -44,8 +45,7 @@ export const workPlanCommands = {
           unit.unitId === item.unitId && unit.sourceRevisionId === item.sourceRevisionId
           && unit.sourceSnapshotId === item.sourceSnapshotId && unit.nativeKey === item.nativeKey
           && item.targetLocale === value.locale))))
-      || (value.preview && Object.entries(request.config ?? {}).some(([key, expected]) =>
-        value.preview!.config[key as keyof typeof value.preview.config] !== expected))) invalidAcknowledgement();
+      || (value.preview && (!request.config || !sameAiConfig(value.preview.config, request.config)))) invalidAcknowledgement();
     const selection = request.toolSelection;
     if (Boolean(value.tools) !== Boolean(selection)) invalidAcknowledgement();
     if (selection) {

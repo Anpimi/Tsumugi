@@ -15,16 +15,19 @@ import { arenaViewFixture, aiAttempt } from "./testSupport/aiFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { i18n } from "./i18n";
+import { connectionReadKey, useApplicationQueryClient } from "./ApplicationReadProvider";
+import { connectionFixture } from "./testSupport/connectionFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const project: ProjectView = { sessionToken: "arena-owner", locator: "isolated", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(500), displayName: "Arena owner", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 let owner: ReturnType<typeof useArenaDraftSession>, translations: ReturnType<typeof useTranslationDraftSession>, reads: ReturnType<typeof useSessionReads>;
+let application: ReturnType<typeof useApplicationQueryClient>;
 let prepared: ArenaPrepared, comparison: ComparisonView, action: AdoptionAction;
 function Probe() {
-  const value = useArenaDraftSession(), drafts = useTranslationDraftSession(), sessionReads = useSessionReads();
-  useLayoutEffect(() => { owner = value; translations = drafts; reads = sessionReads; });
+  const value = useArenaDraftSession(), drafts = useTranslationDraftSession(), sessionReads = useSessionReads(), appReads = useApplicationQueryClient();
+  useLayoutEffect(() => { owner = value; translations = drafts; reads = sessionReads; application = appReads; });
   return null;
 }
 function Harness({mounted = true, read = false}:{mounted?:boolean;read?:boolean}) {
@@ -151,7 +154,7 @@ function acknowledgement(kind:Operation):unknown{
 it.each(["storeId", "profileId", "revision", "digest"] as const)("refuses an Arena profile with mismatched %s despite matching defaults", async field => {
   render(<Harness/>, project);
   const reference = { storeId: fixtureIdentity(700), profileId: fixtureIdentity(701), revision: "1", digest: "a".repeat(64) };
-  act(() => { owner.setConfig({ ...prepared.preview.config, variants: prepared.preview.config.variants.map((config, index) => index === 1 ? { ...config, connectionProfile: reference } : config) }); owner.setSelected([prepared.preview.items[0].item.unitId]); });
+  act(() => { const variants = prepared.preview.config.variants.map((config, index) => index === 1 ? { ...config, connectionProfile: reference } : config); application.setQueryData(connectionReadKey, connectionFixture(variants)); owner.setConfig({ ...prepared.preview.config, variants }); owner.setSelected([prepared.preview.items[0].item.unitId]); });
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, payload: unknown) => {
     const result = await original(command, payload); if (command !== "preview_arena_translation") return result;
@@ -415,4 +418,24 @@ it.each(["partial","nextOffset","duplicateItem","duplicateResult","matrix","name
   if(field==="sourceProof")view.rows[0].item={...view.rows[0].item,sourceText:"Different captured source"};
   if(field==="privacy")view.variants=prepared.preview.config.variants;
   expect(()=>confirmArenaView(view,aiAttempt,prepared)).toThrow();
+});
+
+function savedArenaConnection() {
+  return {...prepared.preview.config.variants[0],endpoint:"https://saved.example.test/v1",model:"Saved Arena model",credentialEnv:"SYNTHETIC_REFERENCE",tokenField:"max_completion_tokens",
+    connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)}};
+}
+it("selects one scheme's saved defaults without changing other schemes or the shared budget",()=>{
+  render(<Harness/>,project);act(()=>owner.setConfig(prepared.preview.config));const before=owner.config,config=savedArenaConnection(),view=connectionFixture([config]);
+  act(()=>{application.setQueryData(connectionReadKey,view);expect(owner.selectConnection(1,view,config.connectionProfile.profileId,owner.editSeq)).toBe(true);});
+  expect(owner.config.variants[0]).toEqual(before.variants[0]);expect(owner.config.variants[1]).toMatchObject({...view.snapshot.profiles[0].connection,connectionProfile:view.references[0]});
+  expect([owner.config.maxItems,owner.config.maxRequests,owner.config.concurrency,owner.config.blind]).toEqual([before.maxItems,before.maxRequests,before.concurrency,before.blind]);
+  expect(owner.config.variants[1].maxOutputTokens).toBe(before.variants[1].maxOutputTokens);expect(calls("preview_arena_translation")).toHaveLength(0);
+  act(()=>owner.setConfig({...owner.config,variants:owner.config.variants.map((value,index)=>index===1?{...value,model:"Manual B"}:value)}));expect(owner.config.variants[1].connectionProfile).toBeNull();expect(application.getQueryData(connectionReadKey)).toEqual(view);
+});
+it("invalidates a new round's consent for a changed selected profile without making an offline merge stale",async()=>{
+  render(<Harness/>,project);await merge();const draft=owner.draft,config=savedArenaConnection(),view=connectionFixture([config]);
+  act(()=>{application.setQueryData(connectionReadKey,view);expect(owner.selectConnection(1,view,config.connectionProfile.profileId,owner.editSeq)).toBe(true);owner.setSelected([prepared.preview.items[0].item.unitId]);});
+  await act(async()=>owner.preview());act(()=>owner.setConsent(true));expect(owner.canStart()).toBe(true);
+  const changed=structuredClone(view);changed.snapshot.revision="2";changed.basis.revision="2";changed.snapshot.profiles[0].revision="2";changed.references[0].revision="2";changed.references[0].digest="b".repeat(64);
+  act(()=>application.setQueryData(connectionReadKey,changed));expect(owner.prepared).toBeNull();expect(owner.consent).toBe(false);expect(owner.draft).toEqual(draft);expect(owner.draft?.stale).toBe(false);
 });

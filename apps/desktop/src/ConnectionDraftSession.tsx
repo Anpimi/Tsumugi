@@ -1,6 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { type QueryClient } from "@tanstack/react-query";
-import { connectionReadKey, connectionReadOptions, useApplicationQueryClient } from "./ApplicationReadProvider";
+import { connectionReadKey, connectionReadOptions, currentConnections, useApplicationQueryClient } from "./ApplicationReadProvider";
 import { connectionCommands, confirmConnectionReceipt, sameConnection, type AiConnection, type ConnectionReadView,
   type ModelConnectionChange, type ModelConnectionProfile, type ModelConnectionReceipt } from "./connectionCommands";
 import { defaultAiConfig } from "./aiCommands";
@@ -56,9 +56,7 @@ function useConnectionOwner(client: QueryClient) {
   }
   function readCurrent() { return client.fetchQuery(connectionReadOptions()); }
   function currentView(): ConnectionReadView | undefined {
-    const value = client.getQueryState(connectionReadKey);
-    return value?.status === "success" && value.fetchStatus === "idle" && !value.isInvalidated && value.error === null
-      ? client.getQueryData<ConnectionReadView>(connectionReadKey) : undefined;
+    return currentConnections(client);
   }
   function refresh() { return readCurrent(); }
   function changed(view: ConnectionReadView) {

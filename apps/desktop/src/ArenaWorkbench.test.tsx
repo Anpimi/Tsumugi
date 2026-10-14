@@ -284,3 +284,12 @@ it("continues selection after actual consumer removal during identity without re
  expect(invoke.mock.calls.find(([command])=>command==="select_translation_revision")?.[1].request).toMatchObject({actionId:fixtureIdentity(980),unitId:item.unitId,
   locale:item.targetLocale,sourceRevisionId:item.sourceRevisionId,expectedSelectionId:fixtureIdentity(320),revisionId:fixtureIdentity(321)});
 });
+
+it("shows one shared round request budget and only per-request limits in each destination preview",async()=>{
+  const user=await open();await user.click(screen.getByRole("checkbox",{name:/first: Hello/}));await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+  const heading=await screen.findByRole("heading",{name:"Data sharing preview"}),preview=within(heading.closest("section")!);
+  expect(preview.getByText("2 initial requests · 40 maximum requests including retries · concurrency 1")).toBeInTheDocument();
+  expect(preview.getAllByText("Each request: up to 2000 output tokens, 0 retries and 60 seconds. Requests and concurrency share the comparison budget.")).toHaveLength(2);
+  expect(preview.queryByText("40 requests · concurrency 1 · 2000 output tokens · 0 retries")).not.toBeInTheDocument();
+  expect(invoke.mock.calls.some(([command])=>command==="start_arena_translation")).toBe(false);
+});

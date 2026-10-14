@@ -27,6 +27,7 @@ import type { ContentScope } from "./sourceCommands";
 import { sourceKeys } from "./sourceQueries";
 import type { Eligibility } from "./reviewCommands";
 import { StrictMode } from "react";
+import { connectionFixture } from "./testSupport/connectionFixture";
 import type { ProjectMetadataReconcileCommandPayload, WorkbenchCommands } from "./workbenchCommands";
 
 const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
@@ -320,6 +321,43 @@ async function prepareArenaInApp(user:ReturnType<typeof userEvent.setup>) {
 }
 
 describe("project lifecycle workbench", () => {
+  it.each(["AI","Arena"] as const)("opens application connection settings from %s preparation and keeps its captured input through a changed current read",async area=>{
+    const user=userEvent.setup();await renderApp();await createProject(user);
+    if(area==="AI")installAiPreparation();else installArenaPreparation();
+    const configs=[1,2].map(number=>({...defaultAiConfig,endpoint:"http://127.0.0.1:4000/v1/chat/completions",model:`Saved ${number}`,credentialEnv:"",
+      connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(700+number),revision:"1",digest:String(number).repeat(64)}}));
+    let connections=connectionFixture(configs);
+    const original=mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command:string,args:unknown)=>command==="read_model_connections"?Promise.resolve(structuredClone(connections)):original(command,args));
+    await user.click(screen.getByRole("button",{name:area==="AI"?"AI translation":"Arena comparison"}));
+    const label=area==="AI"?"Saved connection":"Saved connection for scheme 1";
+    await waitFor(()=>expect(within(screen.getByRole("combobox",{name:label})).getByRole("option",{name:"Synthetic Saved 1 · Saved 1"})).toBeEnabled());
+    await user.selectOptions(screen.getByRole("combobox",{name:label}),configs[0].connectionProfile.profileId);
+    if(area==="Arena")await user.selectOptions(screen.getByRole("combobox",{name:"Saved connection for scheme 2"}),configs[1].connectionProfile.profileId);
+    await user.click(await screen.findByRole("checkbox",{name:"first: Hello"}));
+    await user.click(screen.getByRole("button",{name:"Preview what will be sent"}));
+    await screen.findByRole("heading",{name:"Data sharing preview"});
+    await user.click(screen.getByRole("checkbox",{name:/I confirm sending/}));
+    const manage=screen.getAllByRole("button",{name:"Manage saved connections"})[0];await user.click(manage);
+    const panel=await screen.findByRole("dialog",{name:"Model connections"});
+    expect(within(panel).getByRole("button",{name:"Synthetic Saved 1"})).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button",{name:"Close and keep draft"}));
+    await waitFor(()=>expect(manage).toHaveFocus());
+    expect(screen.getByRole("checkbox",{name:/I confirm sending/})).toBeChecked();
+    expect(screen.getByRole("combobox",{name:label})).toHaveValue(configs[0].connectionProfile.profileId);
+    const captured=structuredClone(mocks.invoke.mock.calls.find(([command])=>command===(area==="AI"?"prepare_work_plan":"preview_arena_translation"))![1].request);
+    const selected=area==="AI"?captured.config:captured.config.variants[0];
+    expect(selected.connectionProfile).toEqual(configs[0].connectionProfile);expect(selected.model).toBe("Saved 1");
+    connections=structuredClone(connections);connections.snapshot.revision="2";connections.basis.revision="2";
+    connections.snapshot.profiles[0].revision="2";connections.snapshot.profiles[0].connection.model="Saved newer";connections.references[0].revision="2";connections.references[0].digest="a".repeat(64);
+    await user.click(screen.getAllByRole("button",{name:"Read current connections"})[0]);
+    await screen.findByText(/The saved connection changed or is unavailable/);
+    expect(screen.queryByRole("heading",{name:"Data sharing preview"})).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox",{name:label})).toHaveValue("captured");
+    expect(screen.getByRole("option",{name:"Captured connection · Saved 1"})).toBeInTheDocument();
+    expect(mocks.invoke.mock.calls.filter(([command])=>["authorize_work_plan","start_work_plan","start_arena_translation","change_model_connections"].includes(command))).toHaveLength(0);
+  });
+
   it.each(["empty", "failed"] as const)("refreshes Overview to %s after a semantic source change and recovers without a mutation", async next => {
     const user = userEvent.setup(), ready: ContentScope = { revision: "1", currentSnapshot: fixtureIdentity(500) };
     let readScope: () => Promise<ContentScope> = async () => ready;

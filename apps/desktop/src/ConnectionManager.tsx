@@ -31,6 +31,7 @@ const notices: Record<ConnectionNotice, TranslationKey> = {
 export function ConnectionManager({ disabled, ref }: { disabled: boolean; ref?: Ref<ConnectionManagerHandle> }) {
   const { t } = useTranslation(), owner = useConnectionDraft(), client = useApplicationQueryClient();
   const [open, setOpen] = useState(false), [showArchived, setShowArchived] = useState(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
   const [switchTarget, setSwitchTarget] = useState<{ profile: ModelConnectionProfile | null; seq: number } | null>(null);
   const query = useQuery({ ...connectionReadOptions(), enabled: open }, client);
   const { state } = owner, { editor } = state;
@@ -41,7 +42,10 @@ export function ConnectionManager({ disabled, ref }: { disabled: boolean; ref?: 
   const fieldReason = failureReason(state.failure), issue = fieldReason ? reasons[fieldReason] : undefined, field = issue?.field;
   function fieldError(name: string) { return field === name && issue ? <p id={"connection-" + name + "-error"} role="alert">{t(issue.message)}</p> : null; }
   const close = () => { if (owner.current().exitHeld) return; if (owner.current().exitPrompt) owner.answerExit(false); setSwitchTarget(null); setOpen(false); };
-  useImperativeHandle(ref, () => ({ open: () => setOpen(true), prepareExit: async current => {
+  useImperativeHandle(ref, () => ({ open: () => {
+    if (!open) returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setOpen(true);
+  }, prepareExit: async current => {
     if (connectionDirty(owner.current().editor) || owner.reserved()) setOpen(true);
     return owner.prepareExit(current);
   } }));
@@ -64,7 +68,10 @@ export function ConnectionManager({ disabled, ref }: { disabled: boolean; ref?: 
   return <Dialog open={open} onOpenChange={value => { if (value) setOpen(true); else close(); }}>
     <DialogTrigger asChild><button type="button" className="secondary-button" disabled={disabled || state.exitHeld}>{t("connections.open")}</button></DialogTrigger>
     <DialogPortal><DialogOverlay className="dialog-backdrop"/><DialogContent className="execution-dialog connection-manager" aria-busy={state.busy}
-      onEscapeKeyDown={event => { if (state.exitHeld) event.preventDefault(); }} onInteractOutside={event => { if (state.exitHeld) event.preventDefault(); }}>
+      onCloseAutoFocus={event => {
+        const target = returnFocus.current; returnFocus.current = null;
+        if (target?.isConnected && !target.matches(":disabled")) { event.preventDefault(); target.focus(); }
+      }} onEscapeKeyDown={event => { if (state.exitHeld) event.preventDefault(); }} onInteractOutside={event => { if (state.exitHeld) event.preventDefault(); }}>
       <div className="execution-heading"><div><DialogTitle>{t("connections.title")}</DialogTitle><DialogDescription>{t("connections.description")}</DialogDescription></div>
         <button type="button" className="secondary-button" disabled={state.exitHeld} onClick={close}>{t("connections.close")}</button></div>
       {state.exitPrompt ? <section className="connection-notice" aria-label={t("connections.exitTitle")}>

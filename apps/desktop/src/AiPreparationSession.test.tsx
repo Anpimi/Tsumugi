@@ -13,6 +13,8 @@ import { aiAttempt, aiViewFixture } from "./testSupport/aiFixture";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { renderWorkbench as render } from "./testSupport/WorkbenchTestShell";
 import { i18n } from "./i18n";
+import { connectionReadKey, useApplicationQueryClient } from "./ApplicationReadProvider";
+import { connectionFixture } from "./testSupport/connectionFixture";
 import { fixedContentSelection, type ContentSelection } from "./contentSelection";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -27,12 +29,13 @@ function contentRange(): ContentSelection {
 }
 let owner: ReturnType<typeof useAiPreparation>;
 let reads: ReturnType<typeof useSessionReads>;
+let application: ReturnType<typeof useApplicationQueryClient>;
 let prepared: AiPrepared;
 let action: AdoptionAction;
 let items: AiItem[];
 function Probe() {
-  const value = useAiPreparation(), sessionReads = useSessionReads();
-  useLayoutEffect(() => { owner = value; reads = sessionReads; });
+  const value = useAiPreparation(), sessionReads = useSessionReads(), appReads = useApplicationQueryClient();
+  useLayoutEffect(() => { owner = value; reads = sessionReads; application = appReads; });
   return null;
 }
 function Harness({ project: current = project, mounted = true }: { project?: ProjectView; mounted?: boolean }) {
@@ -119,7 +122,7 @@ it("transfers exact fixed content members without execution, preserving configur
 it.each(["storeId", "profileId", "revision", "digest"] as const)("refuses a prepared profile with mismatched %s even when defaults match", async field => {
   render(<Harness />, project);
   const reference = { storeId: fixtureIdentity(700), profileId: fixtureIdentity(701), revision: "1", digest: "a".repeat(64) };
-  act(() => { owner.setConfig({ ...prepared.preview.config, connectionProfile: reference }); owner.setSelected(items.map(item => item.unitId)); });
+  act(() => { const config = { ...prepared.preview.config, connectionProfile: reference }; application.setQueryData(connectionReadKey, connectionFixture([config])); owner.setConfig(config); owner.setSelected(items.map(item => item.unitId)); });
   const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (command: string, payload: unknown) => {
     const result = await original(command, payload);
@@ -629,4 +632,40 @@ it.each(["duplicate-unit", "missing-unit", "extra-unit", "substituted-unit", "wr
   expect(owner.pendingStart).toBeNull(); expect(owner.attempt).toBe(aiAttempt);
   expect(payloads("start_ai_translation")).toEqual([request]);
   expect(owner.selected).toEqual(selection); expect(owner.started?.prepared).toBe(capture);
+});
+
+function savedConnection() {
+  return { ...prepared.preview.config, endpoint:"https://saved.example.test/v1/chat/completions", model:"Saved model", credentialEnv:"SYNTHETIC_REFERENCE", tokenField:"max_completion_tokens",
+    connectionProfile:{storeId:fixtureIdentity(700),profileId:fixtureIdentity(701),revision:"1",digest:"a".repeat(64)} };
+}
+function selectSaved() {
+  const config=savedConnection(),view=connectionFixture([config]);
+  act(()=>{application.setQueryData(connectionReadKey,view);expect(owner.selectConnection(view,config.connectionProfile.profileId,owner.editSeq)).toBe(true);});return view;
+}
+it("copies only saved defaults and exact identity while retaining scope sharing and invocation limits",()=>{
+  render(<Harness/>,project);act(()=>{owner.setConfig({...prepared.preview.config,maxRequests:4,maxOutputTokens:37,shareContext:true});owner.setPresetName("openai");owner.setSelected([items[0].unitId]);});
+  const before=owner.current(),view=selectSaved();expect(owner.config).toMatchObject({...view.snapshot.profiles[0].connection,connectionProfile:view.references[0],maxRequests:4,maxOutputTokens:37,shareContext:true});
+  expect(owner.presetName).toBe("custom");expect(owner.selected).toEqual(before.selected);expect(owner.locale).toBe(before.locale);expect(owner.consent).toBe(false);expect(calls("preview_ai_translation")).toHaveLength(0);
+  act(()=>owner.setConfig({...owner.config,maxRequests:3}));expect(owner.config.connectionProfile).toEqual(view.references[0]);
+  act(()=>owner.setConfig({...owner.config,endpoint:"https://edited.example.test/v1"}));expect(owner.config.connectionProfile).toBeNull();expect(application.getQueryData(connectionReadKey)).toEqual(view);
+});
+it("refuses an old picker selection after newer input or an unconfirmed current read",()=>{
+  render(<Harness/>,project);const config=savedConnection(),view=connectionFixture([config]);act(()=>application.setQueryData(connectionReadKey,view));const seq=owner.editSeq;
+  act(()=>owner.setConfig({...prepared.preview.config,model:"Newer B"}));act(()=>expect(owner.selectConnection(view,config.connectionProfile.profileId,seq)).toBe(false));expect(owner.config.model).toBe("Newer B");
+  act(()=>{void application.invalidateQueries({queryKey:connectionReadKey,exact:true,refetchType:"none"});});
+  act(()=>expect(owner.selectConnection(view,config.connectionProfile.profileId,owner.editSeq)).toBe(false));expect(owner.config.model).toBe("Newer B");
+});
+it("keeps consent through an unchanged reread but revokes it for a changed selected reference without replacing defaults",async()=>{
+  render(<Harness/>,project);const view=selectSaved();act(()=>owner.setSelected([items[0].unitId]));await act(async()=>owner.preview());act(()=>owner.setConsent(true));expect(owner.canStart()).toBe(true);
+  const captured=owner.prepared,config=owner.config;act(()=>{void application.invalidateQueries({queryKey:connectionReadKey,exact:true,refetchType:"none"});});expect(owner.canStart()).toBe(false);expect(owner.consent).toBe(true);
+  await act(async()=>{await application.fetchQuery({queryKey:connectionReadKey,staleTime:0,retry:false,queryFn:async()=>structuredClone(view)});});expect(owner.canStart()).toBe(true);expect(owner.prepared).toEqual(captured);
+  const newer=structuredClone(view);newer.snapshot.revision="2";newer.basis.revision="2";newer.snapshot.profiles[0].revision="2";newer.references[0].revision="2";newer.references[0].digest="b".repeat(64);
+  act(()=>application.setQueryData(connectionReadKey,newer));expect(owner.prepared).toBeNull();expect(owner.consent).toBe(false);expect(owner.config).toEqual(config);expect(owner.staleReason).toBe("connection");
+});
+it("retains an original unknown start through saved-profile changes without renewing or recapturing it",async()=>{
+  render(<Harness/>,project);const view=selectSaved();act(()=>owner.setSelected([items[0].unitId]));await act(async()=>owner.preview());act(()=>owner.setConsent(true));
+  const response=deferred<unknown>(),original=invoke.getMockImplementation()!;invoke.mockImplementation((command:string,args:unknown)=>command==="start_ai_translation"?response.promise:original(command,args));
+  let start!:Promise<void>;act(()=>{start=owner.start();});const request=structuredClone(owner.pendingStart!.request),capture=owner.pendingStart!.prepared;
+  const changed=structuredClone(view);changed.snapshot.profiles[0].archived=true;changed.references=[];act(()=>application.setQueryData(connectionReadKey,changed));
+  await act(async()=>{response.reject(new Error("Lost original ACK"));await start;});expect(owner.pendingStart?.request).toEqual(request);expect(owner.pendingStart?.prepared).toEqual(capture);expect(owner.pendingStart?.uncertain).toBe(true);expect(calls("start_ai_translation")).toHaveLength(1);
 });
