@@ -101,6 +101,7 @@ beforeEach(async () => {
         revision: (BigInt(String(args.request.expectedRevision)) + 1n).toString(), protected: args.request.protected === true };
       protection.set(scope, next); protectionActions.set(action, next); return next;
     }
+    if (command === "tm_suggestions") return [];
     if (command === "resolve_terms") return { unitId: fixtureIdentity(204), locale: "zh-CN", sourceRevisionId: fixtureIdentity(205), entries: [{ source: "Original", selected: { revisionId: fixtureIdentity(224), termId: "term", locale: "zh-CN", source: "Original", aliases: [], target: "原文", protected: false, scopeUnitId: null, reason: "Project terminology", originKind: "manual", captureId: null, externalEntryId: null, previousRevisionId: null, removed: false }, conflicting: [] }] };
     if (command === "read_context_revision") return { revisionId: fixtureIdentity(225), unitId: fixtureIdentity(204), locale: "zh-CN", text: "Used in the opening screen", reason: "Translator note", previousRevisionId: null };
     if (command === "read_plugin_inventory") return translationInventory;
@@ -2386,4 +2387,32 @@ it("awaits a failed query destination and preserves newer editor B without leavi
   expect(query).toHaveBeenCalledExactlyOnceWith("Original"); expect(input).toHaveValue("AB");
   expect(screen.getByText(i18n.t("toolQuery.editorUnavailable"))).toBeVisible(); expect(screen.getByRole("button", { name: "Save revision" })).toBeEnabled();
   expect(invoke.mock.calls.some(([name]) => name === "save_translation_revision" || name === "start_plugin_tool")).toBe(false);
+});
+
+it("shows current-item memory comparisons inside references without changing the real draft owner", async () => {
+  const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation((command: string, args: { request: Record<string, unknown> }) => command === "tm_suggestions" ? [{
+    unitId: fixtureIdentity(270), sourceRevisionId: fixtureIdentity(271), translationRevisionId: fixtureIdentity(272),
+    targetLocale: "zh-CN", sourceText: "Original", translationText: "Remembered {{player}} 👩🏽‍💻 é", originKind: "ai",
+    matchKind: "exact", scorePercent: 100, isCurrentSelection: true, hasHumanApproval: false,
+  }] : original(command, args));
+  const user = userEvent.setup();
+  render(<TranslationWorkbench project={project} disabled={false} />);
+  await user.click(screen.getByRole("button", { name: "Translations" }));
+  await user.click(await screen.findByRole("button", { name: "first" }));
+  const draft = await screen.findByRole("textbox", { name: "Your draft" });
+  fireEvent.change(draft, { target: { value: "Kept manual B 日本語 مرحبا" } });
+  expect(invoke.mock.calls.filter(([name]) => name === "tm_suggestions")).toHaveLength(0);
+  const references = screen.getByText(i18n.t("workbench.references")).closest("details")!;
+  references.open = true;
+  fireEvent(references, new Event("toggle"));
+  const memory = await screen.findByRole("region", { name: "Suggestions from this project" });
+  await within(memory).findAllByText("Remembered {{player}} 👩🏽‍💻 é");
+  fireEvent.click(within(memory).getByText("Compare with current draft"));
+  expect(within(memory).getByText("Kept manual B 日本語 مرحبا", { selector: "pre" })).toBeInTheDocument();
+  expect(draft).toHaveValue("Kept manual B 日本語 مرحبا");
+  expect(invoke.mock.calls.find(([name]) => name === "tm_suggestions")![1].request).toEqual({
+    projectId: project.metadata.projectId, sessionToken: project.sessionToken, unitId: fixtureIdentity(204), locale: "zh-CN", offset: 0, limit: 20,
+  });
+  expect(invoke.mock.calls.filter(([name]) => ["save_translation_revision", "select_translation_revision", "record_review_decision", "enqueue_ai_translation"].includes(name))).toHaveLength(0);
 });

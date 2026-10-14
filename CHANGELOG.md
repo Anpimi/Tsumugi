@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The content editor shows saved project translation-memory suggestions beside
+  terms, context and revision history. Read-only comparisons retain the editable
+  draft, distinguish AI/import/manual origins and check the current source basis.
+  A reference does not grant approval or run a model; failed reads can be retried
+  inside the sidebar.
+
+
 The combined development build opens project schema 33 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.

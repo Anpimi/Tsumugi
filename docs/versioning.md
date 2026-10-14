@@ -1059,3 +1059,9 @@ SDK/process/Store/IPC profiles and application/SDK version sources are unchanged
 This stays in the same undistributed application 0.2.0-alpha.1 / SDK
 0.1.0-alpha.1 batch and needs no extra bump or historical migration. Both
 Unreleased changelogs describe the platform improvement.
+
+The content editor adds read-only project-local translation-memory comparisons.
+It uses existing resource and review reads, with no mutation, execution permission,
+SDK/IPC/data-format or dependency change. Both Unreleased changelogs are synchronized.
+The same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch
+requires no additional bump or historical migration.
