@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+Core exposes a separate application connection store at format 1 for named,
+non-secret model defaults and exact mutation receipts. It reuses the bounded
+execution codec and SQLite transactions, and promotes the existing pinned
+`tempfile` dependency from test-only to runtime use for first publication.
+Project schema 33, plugin settings format 2, SDK/process contracts and the
+application/SDK version sources remain unchanged. Missing-store reads create
+nothing; unsupported connection formats are refused without repair or migration.
+This additive Core API stays in the same undistributed alpha.1 batch, with no
+additional SemVer bump. Desktop settings, preparation and consent integration
+are still pending; the storage API alone does not provide a product workflow.
+
+
 The combined development format is current-only project schema 33. Its layout
 retains the original application execution associations, work-plan service calls,
 captured chunks, ancestor budgets and exact continuation links. Saved plugin build

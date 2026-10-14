@@ -22,6 +22,7 @@ pub use changes::{ChangeScope, ChangeSnapshot};
 mod arena;
 pub(crate) mod content;
 pub(crate) mod ledger;
+pub mod model_connections;
 mod plugin_execution;
 mod release;
 mod resources;

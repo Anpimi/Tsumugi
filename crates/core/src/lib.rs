@@ -5,6 +5,7 @@
 
 pub mod ai;
 pub mod application;
+pub use persistence::model_connections;
 pub mod content;
 pub mod execution;
 mod persistence;

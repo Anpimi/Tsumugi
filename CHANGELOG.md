@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Core provides a separate application store for named, non-secret model
+  connection defaults. Atomic changes retain their original receipts, detect
+  stale writes and preserve archived profiles. Saved defaults carry no model
+  permission and do not change captured request budgets or sharing settings.
+  Desktop settings and preparation integration are still pending.
+
 - The content editor shows saved project translation-memory suggestions beside
   terms, context and revision history. Read-only comparisons retain the editable
   draft, distinguish AI/import/manual origins and check the current source basis.
