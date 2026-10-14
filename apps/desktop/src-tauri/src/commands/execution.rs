@@ -16,6 +16,10 @@ macro_rules! handlers {
     ($($extra:path),*) => { tauri::generate_handler![
         super::changes::read_project_changes, super::create_project,super::open_project,super::read_project,super::rename_project,
         super::add_target_locale,super::set_target_locales,super::close_project,
+        super::connections::read_model_connections,
+        super::connections::change_model_connections,
+        super::connections::read_model_connection_action,
+        super::connections::resolve_model_connection,
         super::plugins::read_plugin_inventory,
         super::plugins::defaults::install_plugin_defaults,
         super::plugins::packages::select_plugin_package, super::plugins::packages::install_plugin_package,
@@ -623,7 +627,7 @@ pub(super) fn tick_sessions(sessions: &mut SessionManager) {
     }
 }
 
-fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
+pub(super) fn map_execution(error: ExecutionError, stage: CommandStage) -> CommandError {
     let code = match error.code {
         ErrorCode::InvalidInput => CommandErrorCode::InvalidInput,
         ErrorCode::LimitExceeded => CommandErrorCode::LimitExceeded,

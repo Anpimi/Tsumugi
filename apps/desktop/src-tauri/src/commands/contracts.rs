@@ -29,6 +29,25 @@ struct Responses {
 #[derive(JsonSchema)]
 #[schemars(rename_all = "camelCase")]
 #[allow(dead_code)]
+struct ConnectionRequests {
+    snapshot: connections::ConnectionSnapshotRequest,
+    change: tsumugi_core::model_connections::ModelConnectionChange,
+    action: connections::ConnectionActionRequest,
+    resolve: connections::ConnectionResolveRequest,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ConnectionResponses {
+    snapshot: connections::ConnectionReadView,
+    receipt: tsumugi_core::model_connections::ModelConnectionReceipt,
+    action: Option<tsumugi_core::model_connections::ModelConnectionReceipt>,
+    connection: tsumugi_core::ai::AiConnection,
+    error: CommandError,
+}
+#[derive(JsonSchema)]
+#[schemars(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct PluginRequests {
     inventory: plugins::PluginInventoryRequest,
     install: plugins::PluginInstallRequest,
@@ -449,6 +468,7 @@ pub(crate) fn export(path: &std::path::Path) -> Result<(), Box<dyn std::error::E
         path,
         serde_json::to_string_pretty(&serde_json::json!({
             "project": schemas::<Requests, Responses>(),
+            "connections": schemas::<ConnectionRequests, ConnectionResponses>(),
             "plugins": schemas::<PluginRequests, PluginResponses>(),
             "execution": schemas::<ExecutionRequests, ExecutionResponses>(),
             "source": schemas::<SourceRequests, SourceResponses>(),

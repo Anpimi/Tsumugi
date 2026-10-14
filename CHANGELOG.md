@@ -6,6 +6,12 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Desktop exposes typed connection-profile reads and exact save/archive/restore
+  operations, with original-action lookup and current-reference resolution.
+  Core supplies the read basis and profile references from one snapshot; clients
+  validate acknowledgements without rebuilding hashes or reading credentials.
+  Settings and AI/Arena preparation controls are still pending.
+
 - Core provides a separate application store for named, non-secret model
   connection defaults. Atomic changes retain their original receipts, detect
   stale writes and preserve archived profiles. Saved defaults carry no model

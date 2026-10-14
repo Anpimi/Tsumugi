@@ -2,7 +2,7 @@
 export const AdoptionStateValues = ["unapplied","committed","conflict","rejected"] as const;
 export const CommandErrorCodeValues = ["invalid-input","destination-conflict","missing-project","permission-denied","unsupported-schema","corrupt-project","stale-revision","session-invalid","project-in-use","busy","storage-failed","outcome-unknown","limit-exceeded","result-mismatch","output-invalid","dependency-conflict","cancelled"] as const;
 export const CommandOutcomeValues = ["rejected","unknown"] as const;
-export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","plugin-install","plugin-settings","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
+export const CommandStageValues = ["create","open","read","rename","add-target-locale","set-target-locales","close","plugin-install","plugin-settings","model-connections","execution-read","execution-cancel","execution-recover","execution-adopt","execution-quiesce"] as const;
 export const ContinuationKindValues = ["resume-undispatched","retry-safe-failure"] as const;
 export const EffectKindValues = ["read-only","proposal","external"] as const;
 export const ExecutionStateValues = ["queued","dispatched","succeeded","failed","cancelled-before-dispatch","unknown"] as const;

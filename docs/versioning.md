@@ -1,5 +1,17 @@
 # Application versioning and changelog maintenance
 
+Desktop registers application-scoped connection reads, exact changes, receipt
+reads and current-reference resolution. The trusted application location supplies
+the separate store root; IPC cannot choose it or supply a raw credential. One
+Core snapshot supplies its comparison basis and active-profile references, so
+clients do not implement a second digest codec. Rust/Serde generates the new
+connection IPC domain and the additive `model-connections` error stage; shared
+error contracts are regenerated together. Settings and AI/Arena preparation UI
+are still pending. Project schema 33, plugin settings format 2, SDK/process and
+version sources remain unchanged; no new dependency or additional bump in the
+same undistributed alpha.1 batch. Both Unreleased changelogs record this API scope.
+
+
 Core exposes a separate application connection store at format 1 for named,
 non-secret model defaults and exact mutation receipts. It reuses the bounded
 execution codec and SQLite transactions, and promotes the existing pinned

@@ -3,9 +3,10 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 mod changes;
+mod connections;
 #[cfg(feature = "wire-schema")]
 pub(crate) mod contracts;
 mod dispatch;
@@ -55,6 +56,7 @@ pub enum CommandStage {
     Close,
     PluginInstall,
     PluginSettings,
+    ModelConnections,
     ExecutionRead,
     ExecutionCancel,
     ExecutionRecover,
@@ -374,6 +376,7 @@ pub struct AppState {
     dialogs: dispatch::BlockingExecutor,
     review_check_cancellations: ReviewCheckRegistry,
     plugins: Arc<plugins::ApplicationPlugins>,
+    model_connections: OnceLock<tsumugi_core::model_connections::ModelConnectionStore>,
     #[cfg(test)]
     review_compute_probe: Mutex<Option<execution::ComputeProbe>>,
 }
@@ -400,6 +403,7 @@ impl Default for AppState {
             dialogs: dispatch::BlockingExecutor::new(1),
             review_check_cancellations: Arc::default(),
             plugins,
+            model_connections: OnceLock::new(),
             #[cfg(test)]
             review_compute_probe: Mutex::default(),
         }
@@ -1151,10 +1155,17 @@ pub fn register_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri
         // Resolving the application location does no IO. The existing blocking
         // executor provisions and owns its private store on the first read.
         if let Ok(directory) = app.path().app_data_dir() {
+            // Connection configuration performs no IO. Its missing-store reads
+            // remain empty without creating a database or plugin permission.
+            connections::configure(&app.state::<AppState>(), &directory)?;
             app.state::<AppState>().plugins.configure(directory)?;
         }
-        app.state::<AppState>().plugins.configure_bundle(app.path().resource_dir().ok())?;
-        app.state::<AppState>().plugins.configure_default_bundle(app.path().resource_dir().ok())?;
+        app.state::<AppState>()
+            .plugins
+            .configure_bundle(app.path().resource_dir().ok())?;
+        app.state::<AppState>()
+            .plugins
+            .configure_default_bundle(app.path().resource_dir().ok())?;
         #[cfg(feature = "execution-test-host")]
         execution::initialize_test_host(&app.state::<AppState>())?;
         Ok(())
