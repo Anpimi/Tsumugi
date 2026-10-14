@@ -12,6 +12,11 @@ before its CLI starts. `pnpm --dir apps/desktop build:storybook` creates
 `apps/desktop/storybook-static`; this directory is ignored and is not part of the
 desktop bundle.
 
+For an immutable local comparison, build the references and run
+`pnpm --dir apps/desktop exec vite preview --outDir storybook-static --host 127.0.0.1 --port 16061 --strictPort`.
+Stop the reference development server before using the same port. This previews
+the built references without file watchers; rebuild before comparing changes.
+
 The Stories panel contains the three workspaces, empty/search/loading/error,
 permission, dirty/saving/conflict/unknown and partial examples. Controls select
 light/dark, Chinese/English interface labels and 100%/200% text scale. Compare

@@ -55,9 +55,9 @@ statePreview: {
   "localSaved": "Reference text unchanged",
   "save": "Preview save",
   "saveNext": "Preview save and next",
-  "saveHelp": "This isolated example simulates saving. It does not write a project or approve a translation.",
-  "newer": "Submitted text saved in this example. Your newer input is kept and still unsaved.",
-  "savedPreview": "The submitted example text is saved locally; no project was changed.",
+  "saveHelp": "Preview only. No project write or approval.",
+  "newer": "Submitted text saved; newer edits remain unsaved.",
+  "savedPreview": "Preview saved; the project is unchanged.",
   "steps": {
     "readiness": "Readiness",
     "build": "Build",
