@@ -15,3 +15,6 @@ apps/desktop/src-tauri/gen/
 
 # Local Git worktrees
 /.worktrees/
+
+# Isolated component reference output
+apps/desktop/storybook-static/
