@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PluginManager } from "./PluginManager";
+import { ApplicationReadProvider } from "./ApplicationReadProvider";
 import { i18n } from "./i18n";
 import type { PluginInventoryView, PluginUninstallRequest } from "./pluginCommands";
 import { validateResponseInventory } from "./generated/plugins.validators";
@@ -37,7 +38,7 @@ it.each(["en-US", "zh-CN"])("requires separate reviewed revocation and exact ins
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: i18n.t("plugins.open") }));
   const remove = await screen.findByRole("button", { name: i18n.t("plugins.uninstall") });
   expect(remove).toBeDisabled();
@@ -86,7 +87,7 @@ it.each([
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Uninstall this installation" }));
   await user.click(screen.getByRole("checkbox", { name: /I approve removing this exact installation/ }));
@@ -121,7 +122,7 @@ it("keeps a reviewed request fixed across refresh and permits review after a pre
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Uninstall this installation" }));
   await user.click(screen.getByRole("checkbox", { name: /I approve removing this exact/ }));
@@ -142,7 +143,7 @@ it("offers approval revocation when installed bytes are missing or need recovery
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   expect(await screen.findByRole("button", { name: "Revoke approval" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Enable" })).toBeDisabled();
@@ -169,7 +170,7 @@ it("reconstructs the original removal fields from a retained observation without
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   const summary = await screen.findByText("Previous installation removals", { selector: "summary" });
   await user.click(summary);
@@ -198,7 +199,7 @@ it("retains an ordinary partially approved installation when the backend require
     throw new Error(command);
   });
   const user = userEvent.setup();
-  render(<PluginManager disabled={false} onBusyChange={onBusy}/>);
+  render(<PluginManager disabled={false} onBusyChange={onBusy}/>, { wrapper: ApplicationReadProvider });
   await user.click(screen.getByRole("button", { name: "Extensions" }));
   await user.click(await screen.findByRole("button", { name: "Choose plugin folder" }));
   await user.click(await screen.findByRole("checkbox", { name: /I trust this exact/ }));

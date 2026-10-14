@@ -1,0 +1,12 @@
+.execution-dialog.connection-manager { width: min(900px, calc(100vw - 32px)); left: 50%; right: auto; transform: translateX(-50%); }
+.connection-manager .connection-layout { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(260px, 2fr); gap: 24px; }
+.connection-manager .connection-editor label { display: block; margin-top: 12px; }
+.connection-manager input:not([type="checkbox"]), .connection-manager select { width: 100%; }
+.connection-manager .connection-list { list-style: none; padding: 0; }
+.connection-manager .connection-list li { border-bottom: 1px solid var(--border); padding-block: 12px; overflow-wrap: anywhere; }
+.connection-manager .connection-list p { margin-block: 6px; }
+.connection-manager .connection-toggle { display: flex; gap: 8px; align-items: center; }
+.connection-manager .connection-notice { border: 1px solid var(--border); padding: 12px; margin-block: 12px; overflow-wrap: anywhere; }
+.connection-manager .connection-notice dd { margin-inline-start: 0; white-space: pre-wrap; }
+.connection-manager .connection-editor .execution-actions { position: sticky; bottom: 0; background: var(--surface); padding-block: 12px; }
+@media (max-width: 680px) { .connection-manager .connection-layout { grid-template-columns: 1fr; } }

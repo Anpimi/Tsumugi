@@ -1,13 +1,23 @@
 # Application versioning and changelog maintenance
 
+Desktop connection settings use the application read cache and a separate
+application-lived draft/mutation owner. Panel closure and project changes retain
+the draft and exact save identity; window exit waits for current draft decisions
+and refuses unresolved saves. Acknowledgements keep newer input, and current
+reads remain separate from historical receipts. AI/Arena profile selection and
+consent integration remain pending. This frontend addition changes no IPC,
+storage format, SDK/process contract, dependency or version source. It stays in
+the same undistributed application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch,
+without another bump or migration; both Unreleased changelogs describe it.
+
 Desktop registers application-scoped connection reads, exact changes, receipt
 reads and current-reference resolution. The trusted application location supplies
 the separate store root; IPC cannot choose it or supply a raw credential. One
 Core snapshot supplies its comparison basis and active-profile references, so
 clients do not implement a second digest codec. Rust/Serde generates the new
 connection IPC domain and the additive `model-connections` error stage; shared
-error contracts are regenerated together. Settings and AI/Arena preparation UI
-are still pending. Project schema 33, plugin settings format 2, SDK/process and
+error contracts are regenerated together. AI/Arena preparation UI is still
+pending. Project schema 33, plugin settings format 2, SDK/process and
 version sources remain unchanged; no new dependency or additional bump in the
 same undistributed alpha.1 batch. Both Unreleased changelogs record this API scope.
 
@@ -20,8 +30,8 @@ Project schema 33, plugin settings format 2, SDK/process contracts and the
 application/SDK version sources remain unchanged. Missing-store reads create
 nothing; unsupported connection formats are refused without repair or migration.
 This additive Core API stays in the same undistributed alpha.1 batch, with no
-additional SemVer bump. Desktop settings, preparation and consent integration
-are still pending; the storage API alone does not provide a product workflow.
+additional SemVer bump. AI/Arena preparation and consent integration are still
+pending; the storage API alone does not provide a product workflow.
 
 
 The combined development format is current-only project schema 33. Its layout

@@ -2398,4 +2398,44 @@ describe("project lifecycle workbench", () => {
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(mocks.destroy).not.toHaveBeenCalled();
   });
+  it("connection draft survives project creation and closing in the actual App assembly", async () => {
+    const user=userEvent.setup();await renderApp();const original=mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command,args)=>command === "read_model_connections" ? Promise.resolve({snapshot:{storeId:null,revision:"0",lastActionId:null,profiles:[]},basis:{storeId:null,revision:"0",digest:"a".repeat(64)},references:[]}) : original(command,args));
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.open")}));await screen.findByText(i18n.t("connections.empty"));
+    await user.type(screen.getByLabelText(i18n.t("connections.name")),"Application draft B 日本語 مرحبا 👩🏽‍💻 é");
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));await createProject(user);
+    await user.click(screen.getByRole("button",{name:"Close project"}));await screen.findByRole("button",{name:"Create project"});
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.open")}));
+    expect(screen.getByLabelText(i18n.t("connections.name"))).toHaveValue("Application draft B 日本語 مرحبا 👩🏽‍💻 é");
+    expect(mocks.invoke.mock.calls.filter(([command])=>command === "change_model_connections")).toHaveLength(0);
+  });
+  it("connection window exit waits for a checked application-draft decision without a project", async () => {
+    const user=userEvent.setup();await renderApp();mocks.invoke.mockImplementation(async command=>{if(command === "read_model_connections")return {snapshot:{storeId:null,revision:"0",lastActionId:null,profiles:[]},basis:{storeId:null,revision:"0",digest:"a".repeat(64)},references:[]};throw new Error(command);});
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.open")}));await screen.findByText(i18n.t("connections.empty"));
+    await user.type(screen.getByLabelText(i18n.t("connections.name")),"Unsaved A");await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));
+    let close!:Promise<unknown>;act(()=>{close=mocks.onCloseRequested.mock.calls.at(-1)![0]({preventDefault:vi.fn()});});
+    await screen.findByRole("heading",{name:i18n.t("connections.exitTitle")});expect(mocks.destroy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.continueEditing")}));await close;expect(screen.getByLabelText(i18n.t("connections.name"))).toHaveValue("Unsaved A");
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));act(()=>{close=mocks.onCloseRequested.mock.calls.at(-1)![0]({preventDefault:vi.fn()});});
+    await screen.findByRole("heading",{name:i18n.t("connections.exitTitle")});await user.click(screen.getByRole("button",{name:i18n.t("connections.discardAndExit")}));await close;
+    await waitFor(()=>expect(mocks.destroy).toHaveBeenCalledOnce());
+  });
+  it("connection discard permission also protects the actual project close before native destroy", async () => {
+    const user=userEvent.setup();await renderApp();await createProject(user);const original=mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command,args)=>command === "read_model_connections" ? Promise.resolve({snapshot:{storeId:null,revision:"0",lastActionId:null,profiles:[]},basis:{storeId:null,revision:"0",digest:"a".repeat(64)},references:[]}) : original(command,args));
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.open")}));await screen.findByText(i18n.t("connections.empty"));await user.type(screen.getByLabelText(i18n.t("connections.name")),"Application A");await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));
+    let close!:Promise<unknown>;act(()=>{close=mocks.onCloseRequested.mock.calls.at(-1)![0]({preventDefault:vi.fn()});});await screen.findByRole("heading",{name:i18n.t("connections.exitTitle")});
+    expect(mocks.invoke.mock.calls.filter(([command])=>command === "close_project")).toHaveLength(0);
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.discardAndExit")}));await close;await waitFor(()=>expect(mocks.destroy).toHaveBeenCalledOnce());
+    expect(mocks.invoke).toHaveBeenCalledWith("close_project",{request:{sessionToken:"session-1"}});
+  });
+  it("connection unknown result remains recoverable inside the actual window-close blocker", async () => {
+    const user=userEvent.setup();await renderApp();mocks.invoke.mockImplementation(async command=>{if(command === "read_model_connections")return {snapshot:{storeId:null,revision:"0",lastActionId:null,profiles:[]},basis:{storeId:null,revision:"0",digest:"a".repeat(64)},references:[]};throw {code:"outcome-unknown",stage:"model-connections",outcome:"unknown",recoveryRequired:true};});
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.open")}));await screen.findByText(i18n.t("connections.empty"));
+    await user.type(screen.getByLabelText(i18n.t("connections.name")),"Unknown A");await user.click(screen.getByRole("button",{name:i18n.t("connections.save")}));await screen.findByRole("button",{name:i18n.t("connections.reconcile")});
+    await user.click(screen.getByRole("button",{name:i18n.t("connections.close")}));await act(async()=>{await mocks.onCloseRequested.mock.calls.at(-1)![0]({preventDefault:vi.fn()});});
+    expect(mocks.destroy).not.toHaveBeenCalled();expect(screen.getByRole("button",{name:i18n.t("connections.reconcile")})).toBeEnabled();expect(screen.getByLabelText(i18n.t("connections.name"))).toHaveValue("Unknown A");
+    await screen.findByText(i18n.t("connections.notices.exit-blocked"));
+  });
+
 });

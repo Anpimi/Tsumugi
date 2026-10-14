@@ -6,17 +6,24 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Connection settings save, archive and restore named non-secret defaults.
+  Closing the panel or changing projects keeps the draft and original save;
+  a late acknowledgement preserves newer edits. Unknown saves can be checked
+  from the same panel, while stale records require an explicit review.
+  Window exit checks pending saves and current draft decisions before closing.
+  AI/Arena profile selection and preparation consent integration remain pending.
+
 - Desktop exposes typed connection-profile reads and exact save/archive/restore
   operations, with original-action lookup and current-reference resolution.
   Core supplies the read basis and profile references from one snapshot; clients
   validate acknowledgements without rebuilding hashes or reading credentials.
-  Settings and AI/Arena preparation controls are still pending.
+  AI/Arena preparation controls are still pending.
 
 - Core provides a separate application store for named, non-secret model
   connection defaults. Atomic changes retain their original receipts, detect
   stale writes and preserve archived profiles. Saved defaults carry no model
   permission and do not change captured request budgets or sharing settings.
-  Desktop settings and preparation integration are still pending.
+  AI/Arena preparation integration is still pending.
 
 - The content editor shows saved project translation-memory suggestions beside
   terms, context and revision history. Read-only comparisons retain the editable

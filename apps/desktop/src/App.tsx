@@ -4,6 +4,9 @@ import { CommandFailureDetails } from "./CommandFailure";
 import { WorkbenchNavigation, WorkspaceViewProvider, WorkspaceViewMemory, type WorkspaceArea } from "./WorkbenchFrame";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PluginManager, type PluginManagerHandle } from "./PluginManager";
+import { ApplicationReadProvider } from "./ApplicationReadProvider";
+import { ConnectionDraftProvider } from "./ConnectionDraftSession";
+import { ConnectionManager, type ConnectionManagerHandle } from "./ConnectionManager";
 import type { FormEvent } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -326,7 +329,7 @@ function renderFeedbackMessage(t: TFunction, feedback: Feedback) {
   });
 }
 
-function App() {
+function AppWorkbench() {
   const [commandRegistry] = useState(() => new WorkbenchCommands());
   const { t, i18n: translation } = useTranslation();
   const resolvedLanguage = translation.resolvedLanguage ?? translation.language ?? "en-US";
@@ -370,6 +373,8 @@ function App() {
   const [stoppedSession, setStoppedSession] = useState<string | null>(null);
   const pendingSave = useRef<PendingSave | null>(null);
   const pluginManager = useRef<PluginManagerHandle>(null);
+  const connectionManager = useRef<ConnectionManagerHandle>(null);
+  const windowCloseIntent = useRef<object | null>(null);
   const metadataOwnerAlive = useRef(true);
   useLayoutEffect(() => {
     metadataOwnerAlive.current = true;
@@ -683,7 +688,7 @@ function App() {
       if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); }
     }
   }
-  async function executeClose(preserveRestoreCandidate = false, coordinated = false, destroyWindow = false) {
+  async function executeClose(preserveRestoreCandidate = false, coordinated = false, destroyWindow = false, settingsPermit?: SessionExitPermit) {
     if (!project || (busy && !coordinated)) return false;
     const ticket = beginLifecycle(); if (!ticket) return false;
     let permit: SessionExitPermit | null = null;
@@ -693,10 +698,11 @@ function App() {
       if (!permit?.current()) return false;
       setOperation("closing"); setFeedback({ tone: "info", messageKey: "status.closing" });
       if (!permit.current()) return false;
+      if (destroyWindow && !settingsPermit?.current()) return false;
       const result: CloseProjectView = await projectCommands.close({ sessionToken: ticket.sessionToken });
       if (!lifecycleCurrent(ticket)) return false;
       if (!result.closed) throw new Error("close-not-confirmed");
-      const canContinue = permit.current();
+      const canContinue = permit.current() && (!destroyWindow || settingsPermit?.current() === true);
       if (!canContinue) retireSession(ticket);
       ticket.closed = true;
       currentProject.current = null; currentSession.current = null;
@@ -706,7 +712,7 @@ function App() {
       setFeedback({ tone: "success", messageKey: "feedback.closed" });
       if (destroyWindow) {
         // Closing the Core session cannot be undone; a replacement project must never be destroyed.
-        if (!canContinue || currentRetiredSession.current || !lifecycleCurrent(ticket) || !metadataReady()) return false;
+        if (!canContinue || currentRetiredSession.current || !lifecycleCurrent(ticket) || !metadataReady() || !settingsPermit?.current()) return false;
         try { await getCurrentWindow().destroy(); }
         catch { if (lifecycleCurrent(ticket)) setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" }); return false; }
         if (!lifecycleCurrent(ticket)) return false;
@@ -724,17 +730,32 @@ function App() {
     }
   }
   async function executeWindowClose(coordinated = false) {
-    if (project) return executeClose(true, coordinated, true);
-    const ticket = beginLifecycle(); if (!ticket) return false;
-    setOperation("closing");
+    if (windowCloseIntent.current) return false;
+    const intent = {}; windowCloseIntent.current = intent;
+    const session = currentSession.current, projectId = currentProject.current?.metadata.projectId ?? null;
+    const current = () => {
+      const value = currentProject.current, lifecycle = lifecycleFlight.current;
+      const original = currentSession.current === session && (value?.metadata.projectId ?? null) === projectId;
+      const ownClose = lifecycle?.closed === true && lifecycle.sessionToken === session && lifecycle.projectId === projectId
+        && currentSession.current === null && value === null;
+      return metadataOwnerAlive.current && windowCloseIntent.current === intent && (original || ownClose);
+    };
+    const windowMetadataReady = () => metadataReady() && Object.keys(CREATE_DEFAULT_VALUES)
+      .every(key => !createForm.getFieldState(key as keyof CreateFormValues).isDirty);
+    let settingsPermit: SessionExitPermit | null = null;
     try {
-      if (!lifecycleCurrent(ticket)) return false;
-      await getCurrentWindow().destroy();
-      return lifecycleCurrent(ticket);
-    } catch {
-      if (lifecycleCurrent(ticket)) setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" });
-      return false;
-    } finally { if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); } }
+      settingsPermit = await connectionManager.current?.prepareExit(current) ?? null;
+      if (!settingsPermit?.current() || !windowMetadataReady()) return false;
+      if (project) return await executeClose(true, coordinated, true, settingsPermit);
+      const ticket = beginLifecycle(); if (!ticket) return false;
+      setOperation("closing");
+      try {
+        if (!lifecycleCurrent(ticket) || !settingsPermit.current() || !windowMetadataReady()) return false;
+        await getCurrentWindow().destroy(); return lifecycleCurrent(ticket);
+      } catch {
+        if (lifecycleCurrent(ticket)) setFeedback({ tone: "error", messageKey: "errors.windowCloseFailed" }); return false;
+      } finally { if (lifecycleFlight.current === ticket) { lifecycleFlight.current = null; setOperation("idle"); } }
+    } finally { settingsPermit?.release(); if (windowCloseIntent.current === intent) windowCloseIntent.current = null; }
   }
 
   async function stopAndContinue() {
@@ -1347,6 +1368,7 @@ function App() {
           </div>
            <div className="topbar-actions">
             <PluginManager ref={pluginManager} disabled={operation !== "idle" || stopping || stopIntent !== null} onBusyChange={setPluginsBusy}/>
+            <ConnectionManager ref={connectionManager} disabled={operation !== "idle" || stopping || stopIntent !== null || pluginsBusy}/>
             <label className="language-control">
               <span>{t("language")}</span>
               <select
@@ -1854,4 +1876,6 @@ function App() {
   );
 }
 
-export default App;
+export default function App() {
+  return <ApplicationReadProvider><ConnectionDraftProvider><AppWorkbench/></ConnectionDraftProvider></ApplicationReadProvider>;
+}

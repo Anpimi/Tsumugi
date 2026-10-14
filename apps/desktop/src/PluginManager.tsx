@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { QueryClient, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useApplicationQueryClient } from "./ApplicationReadProvider";
 import { Dialog, DialogTrigger, DialogPortal, DialogOverlay, DialogContent, DialogTitle, DialogDescription } from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { CommandFailureDetails, commandFailure, type CommandFailure } from "./CommandFailure";
@@ -50,10 +51,7 @@ export function PluginPermissions({ permissions }: { permissions: PermissionRequ
 export interface PluginManagerHandle { open: () => void }
 export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boolean; onBusyChange: (busy: boolean) => void; ref?: Ref<PluginManagerHandle> }) {
   const { t } = useTranslation();
-  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: {
-    networkMode: "always", retry: false, staleTime: 0, gcTime: 60_000,
-    refetchOnWindowFocus: false, refetchOnReconnect: false,
-  } } }));
+  const client = useApplicationQueryClient();
   const [open, setOpen] = useState(false);
   useImperativeHandle(ref, () => ({ open: () => setOpen(true) }));
   const [busy, setBusy] = useState(false);
@@ -94,7 +92,7 @@ export function PluginManager({ disabled, onBusyChange, ref }: { disabled: boole
     }
   }, [cleanupIntent]);
   useEffect(() => { setVerifiedRuntime(null); }, [query.dataUpdatedAt]);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; client.clear(); }; }, [client]);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, [client]);
 
   async function operation(work: () => Promise<void>) {
     if (running.current) return;

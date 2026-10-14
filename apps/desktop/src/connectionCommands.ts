@@ -28,7 +28,7 @@ function confirmView(view: ConnectionReadView): ConnectionReadView {
       || reference.profileId !== active[index].id || reference.revision !== active[index].revision || !digest(reference.digest))) invalid();
   return view;
 }
-function sameConnection(a: AiConnection, b: AiConnection): boolean {
+export function sameConnection(a: AiConnection, b: AiConnection): boolean {
   return a.endpoint === b.endpoint && a.model === b.model && a.credentialEnv === b.credentialEnv && a.tokenField === b.tokenField;
 }
 /** Check the original request's result, including a historical exact replay.
