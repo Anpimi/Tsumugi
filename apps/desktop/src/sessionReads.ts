@@ -134,7 +134,11 @@ export class SessionReads {
   invalidate(affected: readonly ChangeScope[], semanticChange = true) {
     if (this.closed) return;
     if (semanticChange) this.notifyChanges(affected);
-    const queries = this.client.getQueryCache().findAll({ predicate: query => depends(query, affected) });
+    // An unchanged focus check refreshes current reads, but a file selection
+    // remains explicit. Real changes still invalidate both kinds of Query.
+    const queries = this.client.getQueryCache().findAll({ predicate: query =>
+      depends(query, affected) && (semanticChange || query.meta?.refresh !== "explicit"),
+    });
     for (const query of queries) {
       if (query.state.fetchStatus === "fetching") this.pending.add(query.queryHash);
       query.invalidate();

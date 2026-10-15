@@ -1,5 +1,13 @@
 # Application versioning and changelog maintenance
 
+Explicit TMX and TBX file previews survive unchanged native focus checks while
+ordinary current reads still refresh. Actual source/resource changes and session
+resets continue to invalidate the preview and require a new explicit selection.
+This frontend fix changes no stored field, schema 36, IPC, SDK/process format,
+dependency, lockfile or version source. Application `0.2.0-alpha.1` and SDK
+`0.1.0-alpha.1` stay in the same undistributed batch without an additional bump
+or release; both Unreleased changelogs are synchronized.
+
 Resource updates also include a bounded read-only TBX-Basic DCA subset preview.
 It retains multiple terminology candidates and mapping losses without asserting
 complete standard compliance or adopting a termbase. TMX and TBX share the

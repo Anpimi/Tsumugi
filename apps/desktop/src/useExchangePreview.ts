@@ -12,6 +12,7 @@ interface ExchangeFilePreview {
 interface Attempt { id: number; scope: string; visible: boolean }
 let nextAttemptId = 0;
 const PROFILES = { tmx: "tmx-1.4b-plain-text-preview", tbx: "tbx-basic-dca-subset-preview" } as const;
+const EXPLICIT_PREVIEW_META = { scopes: ["source", "resources"], refresh: "explicit" };
 
 // Native file choosers outlive a cancelled JavaScript wait or an unmounted panel.
 // Keep one transient chooser gate across both exchange panels until it settles.
@@ -83,7 +84,7 @@ export function useExchangePreview<T extends ExchangeFilePreview>({ format, cont
   // Disabled Query is only an observer. The chooser runs solely from choose().
   const query = useQuery<T | null>({ queryKey, enabled: false, retry: false,
     refetchOnMount: false, refetchOnWindowFocus: false, refetchOnReconnect: false,
-    meta: { scopes: ["source", "resources"] },
+    meta: EXPLICIT_PREVIEW_META,
     queryFn: () => { throw new Error(`${format.toUpperCase()} preview requires an explicit file selection`); },
   });
   const visible = enabled && attempt?.visible === true && attempt.scope === scope && !reads.retired;
@@ -98,7 +99,7 @@ export function useExchangePreview<T extends ExchangeFilePreview>({ format, cont
     currentAttempt.current = next;
     setAttempt(next);
     void reads.client.fetchQuery<T | null>({
-      queryKey: attemptKey(next), meta: { scopes: ["source", "resources"] }, retry: false, staleTime: Infinity,
+      queryKey: attemptKey(next), meta: EXPLICIT_PREVIEW_META, retry: false, staleTime: Infinity,
       queryFn: async ({ signal }) => {
         commandStarted = true;
         try {

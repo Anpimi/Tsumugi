@@ -6,6 +6,10 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- TMX and TBX file previews remain visible after returning from the native file
+  chooser or refocusing an unchanged project. Actual source, resource or session
+  changes still clear the report and require an explicit new selection.
+
 - Resource updates can preview explicitly selected UTF-8 plain-text TMX 1.4
   files and a recognized TBX-Basic DCA subset against the project languages.
   Separate local pages show complete mapped text, all selected-language term
