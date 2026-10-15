@@ -1,3 +1,4 @@
+import { ContextFactDecisionFields } from "./ContextFactDecisions";
 import { commandFailure, failureReason, CommandFailureDetails, type CommandFailure } from "./CommandFailure";
 import { WorkbenchPanel, useWorkbenchView, useWorkbenchState } from "./WorkbenchFrame";
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
@@ -146,7 +147,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     void reads.client.invalidateQueries({ queryKey: reads.key(["resource-impact", locale, 0, 50]), exact: true, refetchType: "none" });
     if (impactOffset === 0) void impactRead.refetch(); else setImpactCursor({ locale, snapshotId: scope?.currentSnapshot ?? "", revision: scope?.revision ?? "", offset: 0 });
   }
-  function allowNavigate() { generation.current++; running.current = false; setReadBusy(false); return Promise.resolve(true); }
+  function allowNavigate() { if(owner.factBlocked())return Promise.resolve(false); generation.current++; running.current = false; setReadBusy(false); return Promise.resolve(true); }
   useImperativeHandle(ref, () => ({ allowNavigate, addQueryText(text) {
     if (disabled || owner.inFlight() || owner.current().pending || !owner.tool.addText(text)) return false;
     setOpen(true); setTab("queries"); return true;
@@ -156,8 +157,8 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     const resourceCurrent = () => intentCurrent() && alive.current && !reads.retired
       && committed.current.project.sessionToken === session.sessionToken && committed.current.project.metadata.projectId === session.projectId
       && owner.current().locale === original.locale && owner.current().termSeq === original.termSeq
-      && owner.current().contextSeq === original.contextSeq && !owner.inFlight() && !owner.current().pending;
-    if (owner.inFlight() || owner.current().pending) { setOpen(true); return Promise.resolve(false); }
+      && owner.current().contextSeq === original.contextSeq && owner.current().factDraft === original.factDraft && !owner.factBlocked() && !owner.inFlight() && !owner.current().pending;
+    if (owner.factBlocked() || owner.inFlight() || owner.current().pending) { setOpen(true); return Promise.resolve(false); }
     if (queryRef.current && !await queryRef.current.allowLeave(current, resourceCurrent)) return false;
     // The Tool confirmation may settle its own capture and advance its draft sequence.
     // Keep the original exit intent and untouched resource drafts, then inspect the settled Tool.
@@ -165,7 +166,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     const toolSequence = owner.tool.draftSequence.current;
     leaveProof.current = () => resourceCurrent() && owner.tool.draftSequence.current === toolSequence
       && !owner.tool.blocked() && !owner.tool.hasDraft();
-    if (!owner.termDirty() && !owner.contextDirty()) return Promise.resolve(true);
+    if (!owner.termDirty() && !owner.contextDirty() && !owner.factDirty()) return Promise.resolve(true);
     setOpen(true); setLeavePrompt(true);
     return new Promise(resolve => { leaveResolver.current?.(false); leaveResolver.current = resolve; });
   } }));
@@ -183,9 +184,9 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     if (current() && !owner.current().pending && owner.current().notice === "decisionSaved") await owner.retryPreview(current);
   }
   function retryPending() { return owner.current().pending?.kind === "decision" ? refreshDecision(() => owner.retryPending()) : owner.retryPending(); }
-  function requestClose() { void allowNavigate().then(() => setOpen(false)); }
+  function requestClose() { void allowNavigate().then(allowed => { if(allowed)setOpen(false); }); }
   function finishLeave(discard: boolean) {
-    if (owner.inFlight() || owner.current().pending) return;
+    if (owner.factBlocked() || owner.inFlight() || owner.current().pending) return;
     if (discard && leaveProof.current && !leaveProof.current()) { setLeavePrompt(false); leaveResolver.current?.(false); leaveResolver.current = null; leaveProof.current = null; leaveProof.current = null; return; }
     setLeavePrompt(false);
     if (discard) { owner.discard(); leaveResolver.current?.(true); } else leaveResolver.current?.(false);
@@ -347,6 +348,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
     <WorkbenchPanel open={open} title={t("resource.title")} description={t("resource.description")} className="source-dialog" onBack={requestClose} backDisabled={disabled}>
         <div className="execution-content" aria-busy={busy}>
           {failure ? <div role="alert"><p>{t("resource.error", { reason: t(`resource.errors.${failure}`, { defaultValue: failure }) })}</p><CommandFailureDetails failure={failureValue} /></div> : null}
+          <ContextFactDecisionFields context={session} disabled={disabled}/>
           {notice ? <p role="status">{t(notice === "saved" ? "resource.saved" : notice === "savedNewer" ? "resource.saved" : notice === "decisionSaved" ? "resource.decisionSaved" : notice === "previewReady" ? "resource.previewReady" : notice === "captureSaved" ? "resource.captureSaved" : notice === "pickerUnknown" ? "resource.pickerUnknown" : notice === "unknown" ? "resource.uncertainAction" : "resource.actionFailed")}</p> : null}
           {notice === "savedNewer" ? <p role="status">{t("resource.savedNewer")}</p> : null}
           {readFailure ? <div role="alert"><p>{t("resource.readFailed", { reason: t(`resource.errors.${failureReason(readFailure)}`, { defaultValue: failureReason(readFailure) ?? "" }) })}</p><CommandFailureDetails failure={readFailure} /></div> : null}
@@ -415,7 +417,7 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, contex
           </section> : null}
           {tab === "impact" && locale ? <section><div className="execution-section-heading"><h3>{t("resource.affectedWork")}</h3><button className="secondary-button" disabled={busy || !targetAvailable} onClick={refreshImpact}>{t("resource.refresh")}</button></div>
             {readStatus(impactRead.error, impactRead.isFetching, () => { void impactRead.refetch(); })}
-            {impact ? <><p>{t("resource.affectedCount", { count: impact.totalAffected })}</p><p>{t("resource.coverage")}</p>{impact.items.length ? <ul>{impact.items.map(item => <li key={item.unitId}><h4>{item.nativeKey}</h4><p>{t(`resource.impactStatus.${item.status}`)}</p><ul>{item.reasons.map(reason => <li key={reason.changeId}>{t(`resource.reasonKind.${reason.kind}`)} · {reason.oldValue ?? "—"} → {reason.newRemoved ? t("resource.removedValue") : reason.newValue} · {t(`resource.confidence.${reason.confidence}`)}</li>)}</ul><button className="secondary-button" disabled={!translationAvailability(translationPayload({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, key: item.nativeKey, sourceText: item.sourceText }, "impact", item.translationRevisionId, item.selectionEventId)).enabled} onClick={() => registry.dispatch("resource.open-translation", commandScope, translationPayload({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, key: item.nativeKey, sourceText: item.sourceText }, "impact", item.translationRevisionId, item.selectionEventId))}>{t("resource.openTranslation")}</button></li>)}</ul> : !impactRead.isFetching ? <p>{t("resource.noImpacts")}</p> : null}<div className="execution-actions"><button className="secondary-button" disabled={busy || !targetAvailable || impactOffset === 0} onClick={refreshImpact}>{t("execution.firstPage")}</button><button className="secondary-button" disabled={busy || !targetAvailable || impact.nextOffset === null} onClick={() => setImpactCursor({ locale, snapshotId: scope?.currentSnapshot ?? "", revision: scope?.revision ?? "", offset: impact.nextOffset! })}>{t("execution.nextPage")}</button></div></> : !impactRead.isFetching && !impactRead.error ? <p>{t("resource.loadImpact")}</p> : null}
+            {impact ? <><p>{t("resource.affectedCount", { count: impact.totalAffected })}</p><p>{t("resource.coverage")}</p>{impact.items.length ? <ul>{impact.items.map(item => <li key={item.unitId}><h4>{item.nativeKey}</h4><p>{t(`resource.impactStatus.${item.status}`)}</p><ul>{item.reasons.map(reason => <li key={reason.changeId}>{t(`resource.reasonKind.${reason.kind}`)} · {reason.oldValue ?? "—"} → {reason.newRemoved ? t(reason.kind==="context-fact"?"contextFacts.excluded":"resource.removedValue") : reason.newValue} · {t(`resource.confidence.${reason.confidence}`)}</li>)}</ul><button className="secondary-button" disabled={!translationAvailability(translationPayload({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, key: item.nativeKey, sourceText: item.sourceText }, "impact", item.translationRevisionId, item.selectionEventId)).enabled} onClick={() => registry.dispatch("resource.open-translation", commandScope, translationPayload({ unitId: item.unitId, sourceRevisionId: item.sourceRevisionId, key: item.nativeKey, sourceText: item.sourceText }, "impact", item.translationRevisionId, item.selectionEventId))}>{t("resource.openTranslation")}</button></li>)}</ul> : !impactRead.isFetching ? <p>{t("resource.noImpacts")}</p> : null}<div className="execution-actions"><button className="secondary-button" disabled={busy || !targetAvailable || impactOffset === 0} onClick={refreshImpact}>{t("execution.firstPage")}</button><button className="secondary-button" disabled={busy || !targetAvailable || impact.nextOffset === null} onClick={() => setImpactCursor({ locale, snapshotId: scope?.currentSnapshot ?? "", revision: scope?.revision ?? "", offset: impact.nextOffset! })}>{t("execution.nextPage")}</button></div></> : !impactRead.isFetching && !impactRead.error ? <p>{t("resource.loadImpact")}</p> : null}
           </section> : null}
         </div>
       </WorkbenchPanel>

@@ -240,7 +240,7 @@ function installAiPreparation() {
   const actions = new Map<string, WorkPlanReceiptView>();
   const item = (): AiItem => ({ unitId, sourceRevisionId: fixtureIdentity(502 + sourceVersion),
     sourceSnapshotId: fixtureIdentity(500 + sourceVersion), nativeKey: "first", sourceLocale: "en-US",
-    sourceText: sourceVersion ? "Updated source" : "Hello", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"},
+    sourceText: sourceVersion ? "Updated source" : "Hello", targetLocale: "zh-CN", terms: [], context: null, sourceContext: {kind:"not-selected"}, projectContext: {kind:"not-selected" as const},
     omissions: [], resourceBaseline: String(resourceVersion) });
   const originalInvoke = mocks.invoke.getMockImplementation()!;
   mocks.invoke.mockImplementation(async (command: string, args: { request: Record<string, unknown> }) => {

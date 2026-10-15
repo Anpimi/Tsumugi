@@ -174,6 +174,7 @@ pub struct AiItem {
     pub terms: Vec<SharedTerm>,
     pub context: Option<crate::ContextRevision>,
     pub source_context: crate::SourceContextCapture,
+    pub project_context: crate::ProjectFactCapture,
     pub omissions: Vec<String>,
     pub resource_baseline: u64,
 }
@@ -274,6 +275,10 @@ pub(super) fn validate_item_prompt(
     };
     let mut config = AiConfig::default();
     config.source_context = selection;
+    config.share_context = matches!(
+        &item.project_context,
+        crate::ProjectFactCapture::Selected { manual: true, .. }
+    );
     validate_source_context(&config, item, Some(project))?;
     prompt_content(&config, item)?;
     Ok(())
@@ -284,6 +289,27 @@ pub(super) fn validate_source_context(
     item: &AiItem,
     project: Option<ExecutionId>,
 ) -> Result<(), ExecutionError> {
+    match &item.project_context {
+        crate::ProjectFactCapture::Selected { scope, .. } => item.project_context.validate(
+            config,
+            &crate::SourceContextRequest {
+                project_id: project.unwrap_or(scope.project_id),
+                source_snapshot_id: item.source_snapshot_id,
+                unit_id: item.unit_id,
+                source_revision_id: item.source_revision_id,
+                locale: item.target_locale.clone(),
+            },
+            &item.source_context,
+        )?,
+        crate::ProjectFactCapture::NotSelected
+            if config.share_context
+                || config.source_context.extracted
+                || config.source_context.inferred =>
+        {
+            return Err(error(ErrorCode::InvalidInput, "context-fact-capture"));
+        }
+        _ => {}
+    }
     match &item.source_context {
         crate::SourceContextCapture::NotSelected => {
             config.source_context.validate()?;
@@ -328,6 +354,11 @@ fn prompt_content(config: &AiConfig, item: &AiItem) -> Result<String, ExecutionE
     // Only explicitly shared data enters the user message; local identities and
     // resource bookkeeping are never copied as an unrestricted project dump.
     let mut shared = json!({"unitId":item.unit_id,"sourceLocale":item.source_locale,"targetLocale":item.target_locale,"nativeKey":item.native_key,"sourceText":item.source_text,"terms":item.terms.iter().map(|t|json!({"source":t.source,"target":t.target,"protected":t.protected})).collect::<Vec<_>>(),"context":item.context.as_ref().map(|c|&c.text)});
+    let manual = item.project_context.manual_projection(config.share_context);
+    if !manual.is_empty() {
+        shared["manualContextFacts"] = serde_json::to_value(manual)
+            .map_err(|_| error(ErrorCode::InvalidInput, "context-fact-capture"))?;
+    }
     if let Some(context) = item.source_context.provider_projection() {
         shared["sourceContext"] = serde_json::to_value(context)
             .map_err(|_| error(ErrorCode::InvalidInput, "source-context-capture"))?;

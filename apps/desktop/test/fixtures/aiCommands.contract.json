@@ -87,6 +87,18 @@
             "sourceLocale": "en",
             "sourceContext": {
               "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "selected",
+              "scope": {
+                "projectId": "60000000-0000-4000-8000-000000000001",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                "locale": "zh-CN"
+              },
+              "manual": true,
+              "decisions": []
             }
           }
         ],
@@ -146,6 +158,18 @@
             "sourceLocale": "en",
             "sourceContext": {
               "kind": "not-selected"
+            },
+            "projectContext": {
+              "kind": "selected",
+              "scope": {
+                "projectId": "60000000-0000-4000-8000-000000000001",
+                "unitId": "60000000-0000-4000-8000-000000000003",
+                "sourceSnapshotId": "60000000-0000-4000-8000-000000000005",
+                "sourceRevisionId": "60000000-0000-4000-8000-000000000004",
+                "locale": "zh-CN"
+              },
+              "manual": true,
+              "decisions": []
             }
           },
           "output": {
@@ -792,6 +816,9 @@
             "terms": [],
             "unitId": "1146ac75-bc6f-49a3-81f6-55ff26fe1de3",
             "sourceContext": {
+              "kind": "not-selected"
+            },
+            "projectContext": {
               "kind": "not-selected"
             }
           },

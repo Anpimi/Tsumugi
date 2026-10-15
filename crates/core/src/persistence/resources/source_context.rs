@@ -151,6 +151,36 @@ impl SourceContextReader {
         })
     }
 
+    /// Verify a retained source result without requiring it to remain current.
+    pub(in crate::persistence) fn historical_in(
+        connection: &Connection,
+        scope: &SourceContextRequest,
+    ) -> Result<Self, ExecutionError> {
+        let metadata = super::super::read_metadata_from(connection).map_err(|_| corrupt())?;
+        if metadata.project_id().to_string() != scope.project_id.to_string() {
+            return Err(corrupt());
+        }
+        let (_, (input, result, output, rows)) =
+            super::super::content::snapshot_rows(connection, scope.source_snapshot_id, true)?;
+        if input.envelope().project_id != scope.project_id
+            || output.source_language != metadata.source_locale().as_str()
+        {
+            return Err(corrupt());
+        }
+        Ok(Self {
+            project_id: scope.project_id,
+            locale: scope.locale.clone(),
+            snapshot_id: scope.source_snapshot_id,
+            content_revision: super::super::content::scope(connection)?.revision,
+            source_locale: output.source_language.clone(),
+            source_attempt_id: input.envelope().attempt_id,
+            source_result_id: result.envelope().result_id,
+            source_result_digest: result.digest().to_owned(),
+            output,
+            rows,
+        })
+    }
+
     pub fn source_for_unit(
         &self,
         unit_id: ExecutionId,

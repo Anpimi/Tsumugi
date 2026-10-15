@@ -4,13 +4,18 @@ export type ExecutionId = string;
 export type Revision = string;
 export type MaintenanceAction = "keep" | "recheck" | "repair" | "unresolved";
 export type UnsignedDecimal = string;
-export type SourceContextCapture =
+/**
+ * Pinned local decisions are separate from raw SDK facts and the provider projection.
+ */
+export type ProjectFactCapture =
   | {
       kind: "not-selected";
     }
   | {
+      decisions: ContextFactDecision[];
       kind: "selected";
-      value: SelectedSourceContext;
+      manual: boolean;
+      scope: SourceContextRequest;
     };
 /**
  * Classification for presentation, without interpreting a format's syntax or
@@ -102,6 +107,25 @@ export type ContentTarget =
   | {
       id: string;
       kind: "occurrence";
+    };
+export type ContextFactDisposition =
+  | {
+      kind: "replace";
+      text: string;
+    }
+  | {
+      kind: "reject-inference";
+    }
+  | {
+      kind: "restore";
+    };
+export type SourceContextCapture =
+  | {
+      kind: "not-selected";
+    }
+  | {
+      kind: "selected";
+      value: SelectedSourceContext;
     };
 export type SourceContextDirection = "before" | "after";
 /**
@@ -464,6 +488,7 @@ export interface AiItemView {
   context: ContextRevision | null;
   nativeKey: string;
   omissions: string[];
+  projectContext: ProjectFactCapture;
   resourceBaseline: UnsignedDecimal;
   sourceContext: SourceContextCapture;
   sourceLocale: string;
@@ -482,17 +507,20 @@ export interface ContextRevision {
   text: string;
   unitId: ExecutionId;
 }
-export interface SelectedSourceContext {
-  contentRevision: Revision;
-  facts: SelectedSourceFact[];
-  localUnitId: string;
-  neighbors: SourceContextNeighbor[];
-  observations: SourceContextObservations;
-  omissions: SourceContextOmissions;
+export interface ContextFactDecision {
+  request: ContextFactWrite;
+}
+export interface ContextFactWrite {
+  actionId: ExecutionId;
+  actor: string;
+  basis: SourceFactBasis;
+  disposition: ContextFactDisposition;
+  expectedDecisionId: ExecutionId | null;
+  reason: string;
+}
+export interface SourceFactBasis {
+  fact: SelectedSourceFact;
   scope: SourceContextRequest;
-  selection: SourceContextSelection;
-  sourceAttemptId: ExecutionId;
-  sourceLocale: string;
   sourceResultDigest: string;
   sourceResultId: ExecutionId;
 }
@@ -537,6 +565,27 @@ export interface ContractRef {
   behaviorVersion: number;
   id: string;
   schemaVersion: number;
+}
+export interface SourceContextRequest {
+  locale: string;
+  projectId: ExecutionId;
+  sourceRevisionId: ExecutionId;
+  sourceSnapshotId: ExecutionId;
+  unitId: ExecutionId;
+}
+export interface SelectedSourceContext {
+  contentRevision: Revision;
+  facts: SelectedSourceFact[];
+  localUnitId: string;
+  neighbors: SourceContextNeighbor[];
+  observations: SourceContextObservations;
+  omissions: SourceContextOmissions;
+  scope: SourceContextRequest;
+  selection: SourceContextSelection;
+  sourceAttemptId: ExecutionId;
+  sourceLocale: string;
+  sourceResultDigest: string;
+  sourceResultId: ExecutionId;
 }
 export interface SourceContextNeighbor {
   adjacentTo: SourceContextAdjacency[];
@@ -584,13 +633,6 @@ export interface SourceContextOmissions {
   neighbors: number;
   notSelected: number;
   samples: SourceContextOmissionSample[];
-}
-export interface SourceContextRequest {
-  locale: string;
-  projectId: ExecutionId;
-  sourceRevisionId: ExecutionId;
-  sourceSnapshotId: ExecutionId;
-  unitId: ExecutionId;
 }
 export interface SharedTerm {
   protected: boolean;

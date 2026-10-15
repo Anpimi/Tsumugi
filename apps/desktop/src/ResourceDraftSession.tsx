@@ -1,9 +1,10 @@
+import { jsonIdentity } from "./pluginToolChoices";
 import { usePluginToolQuerySession, type PluginToolQuerySession } from "./PluginToolQuerySession";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { commandFailure, type CommandFailure } from "./CommandFailure";
 import { executionCommands, executionContext, type SessionRequest } from "./executionCommands";
-import { hasUnknownOutcome, type ProjectView } from "./projectCommands";
-import { resourceCommands, type CaptureContext, type ContextCapture, type ContextRevision, type GlossaryCapture,
+import { hasUnknownOutcome, isCommandError, type ProjectView } from "./projectCommands";
+import { confirmContextFact, resourceCommands, type ContextFactWrite, type ContextFactDecision, type SourceFactBasis, type ContextFactDisposition, type CaptureContext, type ContextCapture, type ContextRevision, type GlossaryCapture,
   type ResourceDecision, type ResourceDecisionResult, type ResourcePreview, type SaveContext, type SaveTerm, type TermRevision } from "./resourceCommands";
 import { sourceCommands, type ContentRow, type ContentScope } from "./sourceCommands";
 import { useSessionReads, useSessionAlive } from "./SessionReadProvider";
@@ -24,7 +25,25 @@ export interface ResourceSourceBasis { revision: string; snapshotId: string }
 export interface ResourceContextTarget {
   unitId: string; sourceRevisionId: string; occurrence: { key: string; text: string };
 }
+export interface ResourceFactDraft { basis: SourceFactBasis; key:string; expectedDecisionId:string|null; disposition:ContextFactDisposition; actor:string; reason:string; editSeq:number }
+/** Local field feedback; Core validates the actual write and its source basis. */
+export function validContextFactDraft(draft:ResourceFactDraft) {
+  const bytes=(value:string)=>new TextEncoder().encode(value).length;
+  return !!draft.actor.trim() && bytes(draft.actor.trim())<=512 && !!draft.reason.trim() && bytes(draft.reason.trim())<=4096
+    && (draft.disposition.kind!=="replace" || !!draft.disposition.text.trim() && bytes(draft.disposition.text)<=4096);
+}
+/** Core replays a recorded action before checking this append-only CAS. This
+ * exact rejection proves that the original action has not committed. */
+export function isContextFactCasRejection(value:unknown) {
+  return isCommandError(value) && value.code==="dependency-conflict" && value.stage==="execution-adopt"
+    && value.outcome==="rejected" && value.reason==="context-fact-current";
+}
 export interface ResourceDraftState {
+  factDraft: ResourceFactDraft|null;
+  factPending: {request:ContextFactWrite;submittedSeq:number}|null;
+  factCheckedMissing:boolean;
+  factFailure:CommandFailure|null;
+  factRecorded:{key:string;decision:ContextFactDecision}|null;
   locale: string;
   selectedTerm: TermRevision | null;
   termDraft: ResourceTermDraft;
@@ -51,6 +70,14 @@ export interface ResourceDraftState {
   completionVersion: number;
 }
 interface ResourceSession {
+  factDirty:()=>boolean;
+  factBlocked:()=>boolean;
+  beginFact:(basis:SourceFactBasis,key:string,decision:ContextFactDecision|null,disposition:ContextFactDisposition)=>boolean;
+  editFact:(patch:Partial<Pick<ResourceFactDraft,"actor"|"reason"|"disposition">>)=>void;
+  discardFact:()=>boolean;
+  saveFact:(proof:()=>boolean)=>Promise<void>;
+  checkFact:()=>Promise<void>;
+  retryFact:()=>Promise<void>;
   tool: PluginToolQuerySession;
   state: ResourceDraftState;
   current: () => ResourceDraftState;
@@ -92,7 +119,7 @@ function invalidReceipt() { throw new Error("Invalid resource action acknowledge
 export function ResourceDraftSession({ project, children }: { project: ProjectView; children: ReactNode }) {
   const tool = usePluginToolQuerySession(project);
   const reads = useSessionReads();
-  const [state, setState] = useState<ResourceDraftState>(() => ({ locale: project.metadata.targetLocales[0] ?? "",
+  const [state, setState] = useState<ResourceDraftState>(() => ({ factDraft:null,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:null, locale: project.metadata.targetLocales[0] ?? "",
     selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: 0, newerTerm: false,
     selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: 0, newerContext: false,
     previewCapture: null, preview: null, previewSourceBasis: null, previewNeedsRefresh: false, fixedContext: null, pending: null, pendingUncertain: false, busyMutation: false, notice: null, failure: null, completionVersion: 0 }));
@@ -111,7 +138,9 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   function localeAvailable(locale: string) { return live() && !!locale && projectRef.current.metadata.targetLocales.includes(locale); }
   function termDirty() { const value = current(); return value.newerTerm || value.aliasInput !== (value.selectedTerm?.aliases.join(", ") ?? "") || !sameTerm(value.termDraft, resourceTermDraftFor(value.selectedTerm)); }
   function contextDirty() { const value = current(); return value.newerContext || value.contextDraft !== (value.contextRevision?.text ?? "") || value.contextReason !== (value.contextRevision?.reason ?? ""); }
-  function reserved() { return running.current || !!current().pending; }
+  function factDirty(){return current().factDraft!==null;}
+  function factBlocked(){return running.current || current().factPending!==null;}
+  function reserved() { return running.current || !!current().pending || !!current().factPending; }
   function resetLocale(before: ResourceDraftState, locale: string): ResourceDraftState {
     return { ...before, locale, selectedTerm: null, termDraft: resourceTermDraftFor(null), aliasInput: "", termSeq: before.termSeq + 1, newerTerm: false,
       selectedUnit: null, contextRevision: null, contextDraft: "", contextReason: "", contextSeq: before.contextSeq + 1, newerContext: false,
@@ -169,7 +198,50 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
   }
   function editContextReason(contextReason: string) { update(before => ({ ...before, contextReason, contextSeq: before.contextSeq + 1, newerContext: false })); }
   function discardContext() { if (!reserved()) update(before => ({ ...before, contextDraft: before.contextRevision?.text ?? "", contextReason: before.contextRevision?.reason ?? "", contextSeq: before.contextSeq + 1, newerContext: false })); }
-  function discard() { discardTerm(); discardContext(); }
+  function discard() { discardTerm(); discardContext(); discardFact(); }
+  function beginFact(basis:SourceFactBasis,key:string,decision:ContextFactDecision|null,disposition:ContextFactDisposition) {
+    if (!live() || reserved() || factDirty() || !localeAvailable(basis.scope.locale) || basis.scope.projectId!==session.projectId || decision && jsonIdentity(decision.request.basis)!==jsonIdentity(basis)) return false;
+    update(before=>({...before,factDraft:{basis:structuredClone(basis),key,expectedDecisionId:decision?.request.actionId??null,disposition:structuredClone(disposition),actor:"",reason:"",editSeq:0},factFailure:null,factRecorded:null}));return true;
+  }
+  function editFact(patch:Partial<Pick<ResourceFactDraft,"actor"|"reason"|"disposition">>){update(before=>before.factDraft?{...before,factDraft:{...before.factDraft,...patch,editSeq:before.factDraft.editSeq+1}}:before);}
+  function discardFact(){if(reserved())return false;update(before=>({...before,factDraft:null,factFailure:null,factCheckedMissing:false}));return true;}
+  function settleFact(request:ContextFactWrite,value:ContextFactDecision){
+    confirmContextFact(request,value);const pending=current().factPending;if(!pending || pending.request!==request)return;
+    update(before=>({...before,factPending:null,factCheckedMissing:false,factFailure:null,factRecorded:{key:before.factDraft?.key??"",decision:value},
+      factDraft:before.factDraft?.editSeq===pending.submittedSeq?null:before.factDraft?{...before.factDraft,expectedDecisionId:request.actionId}:null,
+      notice:before.factDraft?.editSeq===pending.submittedSeq?"saved":"savedNewer",completionVersion:before.completionVersion+1}));
+    reads.invalidate(["resources","review"],false);
+  }
+  async function dispatchFact(request:ContextFactWrite,recovering=false){
+    try{const value=await resourceCommands.decideFact({...session,decision:request});if(live())settleFact(request,value);}
+    catch(error){
+      if(!live() || current().factPending?.request!==request)return;
+      const notSubmitted=isContextFactCasRejection(error);
+      update(before=>before.factPending?.request!==request?before:{...before,
+        factPending:hasUnknownOutcome(error)||recovering&&!notSubmitted?before.factPending:null,
+        factCheckedMissing:false,factFailure:commandFailure(error)});
+      // Refresh facts without adopting a new CAS into the retained B draft.
+      if(notSubmitted)reads.invalidate(["resources","review"],false);
+    }
+  }
+  async function saveFact(proof:()=>boolean){
+    const start=current().factDraft;if(!start || !proof() || !localeAvailable(start.basis.scope.locale) || !validContextFactDraft(start) || !reserve())return;
+    try{
+      const actionId=await executionCommands.identity(session);
+      if(!live() || current().factDraft!==start || !proof())return;
+      const request:ContextFactWrite={actionId,basis:structuredClone(start.basis),expectedDecisionId:start.expectedDecisionId,disposition:structuredClone(start.disposition),actor:start.actor.trim(),reason:start.reason.trim()};
+      update(before=>({...before,factPending:{request,submittedSeq:start.editSeq},factCheckedMissing:false,factFailure:null}));await dispatchFact(request);
+    }catch(error){update(before=>({...before,factFailure:commandFailure(error)}));}finally{release();}
+  }
+  async function checkFact(){
+    const pending=current().factPending;if(!pending || !live() || running.current)return;
+    running.current=true;update(before=>({...before,busyMutation:true,factFailure:null,factCheckedMissing:false}));
+    try{const value=await resourceCommands.factAction({...session,actionId:pending.request.actionId});if(!live()||current().factPending!==pending)return;
+      if(value)settleFact(pending.request,value);else update(before=>({...before,factCheckedMissing:true}));
+    }catch(error){update(before=>({...before,factFailure:commandFailure(error)}));}finally{release();}
+  }
+  async function retryFact(){const pending=current().factPending;if(!pending || !current().factCheckedMissing || !live() || running.current)return;
+    running.current=true;update(before=>({...before,busyMutation:true,factFailure:null}));try{await dispatchFact(pending.request,true);}finally{release();}}
   function fail(error: unknown, notice: ResourceNotice = "error") { update(before => ({ ...before, failure: commandFailure(error), notice })); }
   function reserve() {
     if (!live() || reserved()) return false;
@@ -309,7 +381,7 @@ export function ResourceDraftSession({ project, children }: { project: ProjectVi
     } catch (error) { if (!captured || isCurrent()) fail(error, hasUnknownOutcome(error) && !captured ? "pickerUnknown" : "error"); }
     finally { release(); }
   }
-  return <ResourceContext.Provider value={{ tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
+  return <ResourceContext.Provider value={{ factDirty,factBlocked,beginFact,editFact,discardFact,saveFact,checkFact,retryFact, tool, state, current, inFlight: () => running.current, termDirty, contextDirty, localeAvailable,
     setLocale, beginTerm, editTerm, discardTerm, beginContext, canReceiveContext, receiveContext, adoptContext, editContext, editContextReason, discardContext, discard,
     saveTerm: proof => fresh("term", undefined, proof), saveContext: proof => fresh("context", undefined, proof), captureContext: proof => fresh("capture", undefined, proof),
     decide: (entryId, expectedRevisionId, decision, proof) => fresh("decision", { entryId, expectedRevisionId, decision }, proof), retryPending, chooseFile, openPreview, retryPreview }}>{children}</ResourceContext.Provider>;

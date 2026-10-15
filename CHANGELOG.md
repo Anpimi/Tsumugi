@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- Correct individual source facts for an exact entry and target language, reject
+  inferences, and explicitly restore their originals. Decisions preserve original
+  observations and history, use checked actions, and retain newer resource and
+  translation drafts during recovery. AI and Arena exclude replaced/rejected
+  originals; human replacement values require saved-context sharing. No global
+  rule, training permission, or source reinterpretation is created.
+
 - Manual JavaScript reference tools can explicitly consent to one shared
   application instance and stop it from the original query preview. Every
   project query retains separate input, permission, grant, cancellation and
@@ -23,9 +30,9 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   saves only through the existing explicit context revision flow. Extracted
   facts and AI inferences are unchanged.
 
-- Current development projects use current-only schema 41 and internal immutable
+- Current development projects use current-only schema 42 and internal immutable
   WorkPlan format 3. Captured component scope, application instance, original
-  grant consent and maintenance fields have no implicit defaults. Other
+  grant consent, project-context capture and maintenance fields have no implicit defaults. Other
   development project formats are refused before
   application schema changes, with directories preserved without conversion,
   migration, rebuild or reset. Keep them and reimport source files into a new

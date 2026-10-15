@@ -2358,6 +2358,9 @@
             },
             "type": "array"
           },
+          "projectContext": {
+            "$ref": "#/definitions/ProjectFactCapture"
+          },
           "resourceBaseline": {
             "$ref": "#/definitions/UnsignedDecimal"
           },
@@ -2400,6 +2403,7 @@
           "terms",
           "context",
           "sourceContext",
+          "projectContext",
           "omissions",
           "resourceBaseline"
         ],
@@ -4011,6 +4015,104 @@
           }
         ]
       },
+      "ContextFactDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "request": {
+            "$ref": "#/definitions/ContextFactWrite"
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "type": "object"
+      },
+      "ContextFactDisposition": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "replace",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "reject-inference",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "restore",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContextFactWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "actionId": {
+            "$ref": "#/definitions/ExecutionId"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "basis": {
+            "$ref": "#/definitions/SourceFactBasis"
+          },
+          "disposition": {
+            "$ref": "#/definitions/ContextFactDisposition"
+          },
+          "expectedDecisionId": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ExecutionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "actionId",
+          "basis",
+          "expectedDecisionId",
+          "disposition",
+          "actor",
+          "reason"
+        ],
+        "type": "object"
+      },
       "ContextRevision": {
         "additionalProperties": false,
         "properties": {
@@ -5043,6 +5145,52 @@
           "adopted"
         ],
         "type": "object"
+      },
+      "ProjectFactCapture": {
+        "description": "Pinned local decisions are separate from raw SDK facts and the provider projection.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "not-selected",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "decisions": {
+                "items": {
+                  "$ref": "#/definitions/ContextFactDecision"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "const": "selected",
+                "type": "string"
+              },
+              "manual": {
+                "type": "boolean"
+              },
+              "scope": {
+                "$ref": "#/definitions/SourceContextRequest"
+              }
+            },
+            "required": [
+              "kind",
+              "scope",
+              "manual",
+              "decisions"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "ProviderBudget": {
         "additionalProperties": false,
@@ -6198,6 +6346,30 @@
           "neighbors",
           "maxBytes",
           "maxItems"
+        ],
+        "type": "object"
+      },
+      "SourceFactBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "fact": {
+            "$ref": "#/definitions/SelectedSourceFact"
+          },
+          "scope": {
+            "$ref": "#/definitions/SourceContextRequest"
+          },
+          "sourceResultDigest": {
+            "type": "string"
+          },
+          "sourceResultId": {
+            "$ref": "#/definitions/ExecutionId"
+          }
+        },
+        "required": [
+          "scope",
+          "sourceResultId",
+          "sourceResultDigest",
+          "fact"
         ],
         "type": "object"
       },

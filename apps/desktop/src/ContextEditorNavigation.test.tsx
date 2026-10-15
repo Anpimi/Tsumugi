@@ -6,17 +6,18 @@ import { ProjectSessionWorkbench, type OverviewSourcePresentation, type ProjectS
 import { ApplicationReadProvider } from "./ApplicationReadProvider";
 import { WorkspaceViewMemory, WorkspaceViewProvider, type WorkspaceArea } from "./WorkbenchFrame";
 import { WorkbenchCommands, WorkbenchCommandsProvider, type ContextEditorTarget } from "./workbenchCommands";
-import type { ContextRevision, SaveContext } from "./resourceCommands";
+import type { ContextFactDecision, ContextFactWrite, ContextRevision, SaveContext } from "./resourceCommands";
 import type { ReviewEditorSnapshot } from "./reviewCommands";
-import type { ProjectView } from "./projectCommands";
+import type { CommandError, ProjectView } from "./projectCommands";
 import { fixtureIdentity } from "./testSupport/executionFixture";
 import { reviewSummaryFor, reviewSummaryPageFixture, reviewTargetFixture } from "./testSupport/reviewFixture";
 import { sourcePageFixture, sourceRowFixture } from "./testSupport/sourceFixture";
 import { i18n } from "./i18n";
-import { validateResponseChanges } from "./generated/validators";
+import { validateResponseChanges, validateResponseError } from "./generated/validators";
 import { validateResponseScope, validateResponsePage, validateResponseSourceContext } from "./generated/source.validators";
 import { validateResponseSummary, validateResponseEditor } from "./generated/review.validators";
 import { validateResponseActivity } from "./generated/execution.validators";
+import { validateRequestContextFact, validateRequestContextFacts, validateResponseContextFacts, validateResponseContextFact, validateResponseContextFactAction, validateResponseContextFactHistory } from "./generated/resource.validators";
 import { validateRequestWorkProtectionSet, validateResponseWorkProtection } from "./generated/ai.validators";
 import type { WorkProtection } from "./workPlanCommands";
 
@@ -27,6 +28,7 @@ const wireValidators: Record<string, (value: unknown) => boolean> = {
   read_source_content: validateResponsePage, read_review_summary_page: validateResponseSummary,
   read_review_editor_snapshot: validateResponseEditor, read_execution_task_activity: validateResponseActivity,
   read_source_context: validateResponseSourceContext,
+  read_context_fact_decisions:validateResponseContextFacts,decide_context_fact:validateResponseContextFact,read_context_fact_action:validateResponseContextFactAction,read_context_fact_history:validateResponseContextFactHistory,
   read_work_protection: validateResponseWorkProtection, set_work_protection: validateResponseWorkProtection,
 };
 let wireFailures: string[];
@@ -50,8 +52,9 @@ const project:ProjectView={sessionToken:"context-editor-session",locator:"isolat
   metadata:{projectId:fixtureIdentity(500),displayName:"Context editing",sourceLocale:"en",targetLocales:["zh-CN"],metadataRevision:"1"}};
 const session=createRef<ProjectSessionHandle>();
 let saved:ContextRevision|null, version:string, snapshot:ReviewEditorSnapshot;
+let factsEnabled:boolean,factHistory:ContextFactDecision[],factActions:Map<string,ContextFactDecision>,loseFact:boolean,holdFact:((value:ContextFactDecision)=>Promise<ContextFactDecision>)|null,holdIdentity:(()=>Promise<string>)|null;
 let protection: WorkProtection, protectionReceipts: Map<string, WorkProtection>, identities: number;
-let hold:(()=>Promise<ReviewEditorSnapshot>)|null, loseSave:boolean, changedResources:boolean, memory:WorkspaceViewMemory;
+let hold:(()=>Promise<ReviewEditorSnapshot>)|null, loseSave:boolean, changedResources:boolean, changedSource:boolean, memory:WorkspaceViewMemory;
 const target=()=>reviewTargetFixture({unitId:fixtureIdentity(601),nativeKey:"entry",sourceText:"Original",selectionId:null,revisionId:null,translationText:null});
 function editor():ReviewEditorSnapshot {return {...snapshot,target:{...snapshot.target,basisEvidence:{...snapshot.target.basisEvidence,contextRevisionId:saved?.revisionId??null}},context:saved,readVersion:version};}
 function Harness(){
@@ -64,13 +67,13 @@ function Harness(){
   </WorkspaceViewProvider></WorkbenchCommandsProvider></ApplicationReadProvider>;
 }
 beforeEach(async()=>{
-  await i18n.changeLanguage("en-US");wireFailures=[];hold=null;loseSave=false;changedResources=false;version="original-context-view";
+  await i18n.changeLanguage("en-US");wireFailures=[];factsEnabled=false;factHistory=[];factActions=new Map();loseFact=false;holdFact=null;holdIdentity=null;hold=null;loseSave=false;changedResources=false;changedSource=false;version="original-context-view";
   saved={revisionId:fixtureIdentity(610),unitId:target().unitId,locale:"zh-CN",text:"Saved context A",reason:"Original source note",previousRevisionId:null};
   protection={unitId:target().unitId,locale:"zh-CN",revision:"0",protected:false};protectionReceipts=new Map();identities=630;
   snapshot={target:target(),translations:{unitId:target().unitId,locale:"zh-CN",current:null,currentText:null,total:"0",rows:[],nextOrdinal:null},
     terms:{unitId:target().unitId,locale:"zh-CN",sourceRevisionId:target().sourceRevisionId,entries:[]},context:saved,readVersion:version};
   invoke.mockReset().mockImplementation((command:string,{request}:{request:Record<string,unknown>})=>wireReply(command,async()=>{
-    if(command==="read_project_changes")return{projectId:project.metadata.projectId,sessionToken:project.sessionToken,epoch:fixtureIdentity(620),sequence:changedResources?"1":"0",progressSequence:"0",scopes:changedResources?["resources"]:[],runtime:{active:false,quiescing:false,queryCount:0,error:null}};
+    if(command==="read_project_changes")return{projectId:project.metadata.projectId,sessionToken:project.sessionToken,epoch:fixtureIdentity(620),sequence:changedResources||changedSource?"1":"0",progressSequence:"0",scopes:[...(changedResources?["resources"]:[]),...(changedSource?["source"]:[])],runtime:{active:false,quiescing:false,queryCount:0,error:null}};
     if(command==="read_content_scope")return{revision:"1",currentSnapshot:snapshot.target.sourceSnapshotId};
     if(command==="read_execution_task_activity")return{total:"0",active:"0",attention:"0",saved:"0",rows:[]};
     if(command==="read_source_content")return sourcePageFixture({snapshotId:snapshot.target.sourceSnapshotId,scope:{revision:"1",currentSnapshot:snapshot.target.sourceSnapshotId},
@@ -90,13 +93,30 @@ beforeEach(async()=>{
       protection={unitId:request.unitId,locale:request.locale,revision:(BigInt(request.expectedRevision)+1n).toString(),protected:request.protected};
       protectionReceipts.set(request.actionId,protection);return {...protection};
     }
+    if(command==="read_context_fact_decisions"){
+      if(!validateRequestContextFacts(request))throw new Error("Invalid synthetic exact-fact request");
+      return factHistory.length&&request.facts.some(f=>f.blockIndex===factHistory.at(-1)!.request.basis.fact.blockIndex&&f.factIndex===factHistory.at(-1)!.request.basis.fact.factIndex)?[factHistory.at(-1)!]:[];
+    }
+    if(command==="read_context_fact_history")return{rows:[...factHistory].reverse(),nextOffset:null};
+    if(command==="read_context_fact_action")return factActions.get(String(request.actionId))??null;
+    if(command==="decide_context_fact"){
+      if(!validateRequestContextFact(request))throw new Error("Invalid synthetic context fact request");
+      expect(request.decision).toHaveProperty("expectedDecisionId",factHistory.at(-1)?.request.actionId??null);
+      const value:ContextFactDecision={request:{...structuredClone(request.decision),expectedDecisionId:request.decision.expectedDecisionId??null}};
+      expect(value.request.expectedDecisionId).toBe(factHistory.at(-1)?.request.actionId??null);
+      factActions.set(value.request.actionId,value);factHistory.push(value);
+      if(loseFact)throw new Error("Synthetic lost fact acknowledgement");
+      return holdFact?holdFact(value):value;
+    }
     if(command==="read_context_revision")return saved;
     if(command==="read_terms"||command==="tm_suggestions"||command==="list_resource_captures")return[];
     if(command==="resolve_terms")return snapshot.terms;
     if(command==="read_source_context")return{scope:{projectId:project.metadata.projectId,sourceSnapshotId:request.sourceSnapshotId,unitId:request.unitId,sourceRevisionId:request.sourceRevisionId,locale:request.locale},
       contentRevision:"1",sourceAttemptId:fixtureIdentity(621),sourceResultId:fixtureIdentity(622),sourceResultDigest:"a".repeat(64),sourceLocale:"en",localUnitId:"synthetic-entry",occurrenceCount:1,
-      observations:{missingBlocks:true,knownBlocks:0,knownFacts:0,emptyBlocks:0,unknownBlocks:0,unknownRequiredBlocks:0,neighborOccurrences:0,unknownSamples:[]},entries:[],after:0,totalEntries:0,nextAfter:null};
-    if(command==="create_execution_identity")return fixtureIdentity(identities++);
+      observations:{missingBlocks:!factsEnabled,knownBlocks:factsEnabled?1:0,knownFacts:factsEnabled?1:0,emptyBlocks:0,unknownBlocks:0,unknownRequiredBlocks:0,neighborOccurrences:0,unknownSamples:[]},
+      entries:factsEnabled?[{kind:"block",value:{blockIndex:0,target:{kind:"unit",id:"synthetic-entry"},schema:{id:"tsumugi.source-context-facts",schemaVersion:1,behaviorVersion:1},handling:"preserve",inRevisionBasis:true,
+        facts:{facts:[{id:"role",kind:"role",text:"inferred captain",origin:{kind:"inferred",rationale:"synthetic hypothesis",sources:[{artifactId:"synthetic-context",range:{encoding:"utf8-byte",start:0,end:8}}]}}]}}}]:[],after:0,totalEntries:factsEnabled?1:0,nextAfter:null};
+    if(command==="create_execution_identity")return holdIdentity?holdIdentity():fixtureIdentity(identities++);
     if(command==="save_context"){
       if(loseSave)throw new Error("Synthetic lost context acknowledgement");
       const value=request.context as SaveContext;saved={revisionId:fixtureIdentity(631),unitId:value.unitId,locale:value.locale,text:value.text,reason:value.reason,previousRevisionId:value.expectedRevisionId??null};version="saved-context-view";return saved;
@@ -186,4 +206,144 @@ it("keeps an uncertain original context action reachable and blocks return navig
   await screen.findByText(i18n.t("resource.uncertainAction"));expect(screen.getByRole("button",{name:i18n.t("resource.returnToEditor",{key:"entry",locale:"zh-CN"})})).toBeDisabled();
   let accepted=true;await act(async()=>{accepted=await session.current!.navigate({kind:"resource-context-return",capture:memory.read<ContextEditorTarget>("resources","contextEditorReturn")!});});expect(accepted).toBe(false);
   expect(screen.getByRole("textbox",{name:i18n.t("resource.manualContext")})).toHaveValue("Saved context A edited");expect(invoke.mock.calls.filter(([name])=>name==="save_context")).toHaveLength(1);
+});
+
+
+async function editFact(user:ReturnType<typeof userEvent.setup>){
+  const replace=await screen.findByRole("button",{name:i18n.t("contextFacts.replace")});await waitFor(()=>expect(replace).toBeEnabled());await user.click(replace);
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")}),"Human reviewer");await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")}),"Reason A");
+  const value=screen.getByRole("textbox",{name:i18n.t("contextFacts.value")});await user.clear(value);await user.type(value,"navigator");
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.save")})).toBeEnabled());
+}
+
+function loseFactBeforeReceiptThenReject(error:CommandError,beforeRetry?:(request:ContextFactWrite)=>void){
+  if(!validateResponseError(error))throw new Error("Invalid synthetic fact rejection");
+  const native=invoke.getMockImplementation()!,requests:ContextFactWrite[]=[];
+  invoke.mockImplementation((command:string,args:{request:Record<string,unknown>})=>{
+    if(command!=="decide_context_fact")return native(command,args);
+    if(!validateRequestContextFact(args.request))throw new Error("Invalid synthetic fact request");
+    requests.push(structuredClone(args.request.decision));
+    if(requests.length===1)return Promise.reject(new Error("Original fact response lost before a receipt was recorded"));
+    expect(requests.at(-1)).toEqual(requests[0]);
+    beforeRetry?.(requests[0]);
+    return Promise.reject(error);
+  });
+  return requests;
+}
+
+it("settles an unknown fact action only after an exact Core CAS rejection and keeps all newer drafts",async()=>{
+  factsEnabled=true;const user=await open();await enter(user);
+  await user.type(screen.getByRole("textbox",{name:i18n.t("resource.manualContext")})," resource B");
+  await user.click(screen.getByRole("button",{name:i18n.t("resource.returnToEditor",{key:"entry",locale:"zh-CN"})}));
+  await screen.findByRole("textbox",{name:i18n.t("translation.draft")});await editFact(user);
+  const rejection:CommandError={code:"dependency-conflict",stage:"execution-adopt",outcome:"rejected",reason:"context-fact-current",recoveryRequired:false,recoveryGuidance:"review-current"};
+  const requests=loseFactBeforeReceiptThenReject(rejection,request=>{
+    const concurrent:ContextFactDecision={request:{...structuredClone(request),expectedDecisionId:request.expectedDecisionId??null,actionId:fixtureIdentity(790),actor:"Other reviewer",reason:"Concurrent fact decision",disposition:{kind:"reject-inference"}}};
+    factHistory.push(concurrent);factActions.set(concurrent.request.actionId,concurrent);
+  });
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await screen.findByText(i18n.t("contextFacts.unknown"));
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));
+  const retry=await screen.findByRole("button",{name:i18n.t("contextFacts.retry")});await waitFor(()=>expect(retry).toBeEnabled());
+  expect(factActions.has(requests[0].actionId)).toBe(false);
+  // A null action lookup alone cannot release an unresolved original request.
+  expect(screen.getByRole("button",{name:i18n.t("contextFacts.discard")})).toBeDisabled();
+  await user.click(retry);await screen.findByText(i18n.t("contextFacts.notSubmitted"));
+  expect(screen.queryByText(i18n.t("contextFacts.unknown"))).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+  expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);expect(requests[1].reason).toBe("Reason A");
+  expect(factActions.has(requests[0].actionId)).toBe(false);
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action").at(-1)![1].request.actionId).toBe(requests[0].actionId);
+  const discard=screen.getByRole("button",{name:i18n.t("contextFacts.discard")});await waitFor(()=>expect(discard).toBeEnabled());await user.click(discard);
+  let accepted=false;await act(async()=>{accepted=await session.current!.navigate({kind:"area",area:"resources"});});expect(accepted).toBe(true);
+  expect(await screen.findByRole("textbox",{name:i18n.t("resource.manualContext")})).toHaveValue("Saved context A resource B");
+  let exit!:ReturnType<ProjectSessionHandle["prepareExit"]>;act(()=>{exit=session.current!.prepareExit();});
+  await screen.findByRole("dialog",{name:i18n.t("translation.leaveTitle")});await user.click(screen.getByRole("button",{name:i18n.t("translation.stay")}));expect(await exit).toBeNull();
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+});
+
+it("keeps an unknown fact action pending when its retry is rejected before the Core mutation boundary",async()=>{
+  factsEnabled=true;const user=await open();await editFact(user);
+  // Actual Host allow_mutation rejects quiescing sessions as Busy/recover.
+  const requests=loseFactBeforeReceiptThenReject({code:"busy",stage:"execution-recover",outcome:"rejected",recoveryRequired:false});
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await screen.findByText(i18n.t("contextFacts.unknown"));
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));
+  const retry=await screen.findByRole("button",{name:i18n.t("contextFacts.retry")});await waitFor(()=>expect(retry).toBeEnabled());await user.click(retry);
+  await screen.findByText(i18n.t("contextFacts.failed"));expect(screen.getByText(i18n.t("contextFacts.unknown"))).toBeVisible();
+  expect(screen.queryByText(i18n.t("contextFacts.notSubmitted"))).not.toBeInTheDocument();
+  expect(screen.getByRole("button",{name:i18n.t("contextFacts.discard")})).toBeDisabled();
+  expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+  let accepted=true;await act(async()=>{accepted=await session.current!.navigate({kind:"area",area:"resources"});});expect(accepted).toBe(false);
+  expect(requests).toHaveLength(2);expect(requests[1]).toEqual(requests[0]);expect(factActions.has(requests[0].actionId)).toBe(false);
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.retry")})).toBeEnabled());
+  expect(screen.getByRole("button",{name:i18n.t("contextFacts.discard")})).toBeDisabled();
+  expect(invoke.mock.calls.filter(([name])=>name==="read_context_fact_action").every(([,args])=>args.request.actionId===requests[0].actionId)).toBe(true);
+});
+
+it("saves a typed human replacement while preserving independent resource context B and manual translation B",async()=>{
+  factsEnabled=true;const user=await open();await enter(user);await user.type(screen.getByRole("textbox",{name:i18n.t("resource.manualContext")})," resource B");
+  await user.click(screen.getByRole("button",{name:i18n.t("resource.returnToEditor",{key:"entry",locale:"zh-CN"})}));
+  await screen.findByRole("textbox",{name:i18n.t("translation.draft")});await editFact(user);
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await screen.findByText(i18n.t("contextFacts.saved",{key:"entry",locale:"zh-CN"}));
+  expect(factHistory[0].request).toMatchObject({basis:{scope:{projectId:project.metadata.projectId,unitId:target().unitId,sourceRevisionId:target().sourceRevisionId,locale:"zh-CN"},fact:{fact:{kind:"role",text:"inferred captain",origin:{kind:"inferred"}}}},disposition:{kind:"replace",text:"navigator"},actor:"Human reviewer",reason:"Reason A"});
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+  await user.click(screen.getByRole("button",{name:"Open retained resources"}));expect(await screen.findByRole("textbox",{name:i18n.t("resource.manualContext")})).toHaveValue("Saved context A resource B");
+  expect(invoke.mock.calls.some(([name])=>["save_context","save_translation_revision","start_ai_translation"].includes(name))).toBe(false);
+});
+
+it("settles only the original fact action when a successful acknowledgement arrives after newer reason B",async()=>{
+  factsEnabled=true;const user=await open();await editFact(user);let finish!:(v:ContextFactDecision)=>void;holdFact=()=>new Promise(resolve=>{finish=resolve;});
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await waitFor(()=>expect(finish).toBeDefined());
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");await act(async()=>{finish(factHistory[0]);});
+  await screen.findByText(i18n.t("resource.savedNewer"));expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");expect(factHistory).toHaveLength(1);expect(factHistory[0].request.reason).toBe("Reason A");
+});
+
+it("keeps unknown fact actions reachable, blocks navigation, and checks the original receipt without resending B",async()=>{
+  factsEnabled=true;const user=await open();await editFact(user);loseFact=true;
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await screen.findByText(i18n.t("contextFacts.unknown"));
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})," newer B");let accepted=true;
+  await act(async()=>{accepted=await session.current!.navigate({kind:"area",area:"resources"});});expect(accepted).toBe(false);
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.check")}));await screen.findByText(i18n.t("resource.savedNewer"));
+  expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(1);
+  expect(invoke.mock.calls.find(([name])=>name==="read_context_fact_action")![1].request.actionId).toBe(factHistory[0].request.actionId);
+  expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A newer B");expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+});
+
+it("revokes a fact save waiting for identity when the checked source changes, retaining the original draft",async()=>{
+  factsEnabled=true;const user=await open();await editFact(user);let finish!:(id:string)=>void;holdIdentity=()=>new Promise(resolve=>{finish=resolve;});
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));await waitFor(()=>expect(finish).toBeDefined());
+  await act(async()=>{snapshot={...snapshot,target:{...snapshot.target,sourceSnapshotId:fixtureIdentity(680),sourceRevisionId:fixtureIdentity(681),basisEvidence:{...snapshot.target.basisEvidence,sourceSnapshotId:fixtureIdentity(680),sourceRevisionId:fixtureIdentity(681)}}};changedSource=true;window.dispatchEvent(new Event("focus"));});
+  await screen.findByText(i18n.t("contextFacts.changed"));await act(async()=>{finish(fixtureIdentity(682));});
+  expect(invoke.mock.calls.filter(([name])=>name==="decide_context_fact")).toHaveLength(0);
+  expect(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")})).toHaveValue("Reason A");expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+});
+
+
+it("records rejection and an explicit restore with the latest decision as CAS while keeping the manual draft",async()=>{
+  factsEnabled=true;const user=await open();
+  const reject=await screen.findByRole("button",{name:i18n.t("contextFacts.reject")});await waitFor(()=>expect(reject).toBeEnabled());await user.click(reject);
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")}),"Human reviewer");await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")}),"Inference unsupported");
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.save")})).toBeEnabled());await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));
+  await screen.findByText(i18n.t("contextFacts.saved",{key:"entry",locale:"zh-CN"}));
+  const restore=await screen.findByRole("button",{name:i18n.t("contextFacts.restore")});await waitFor(()=>expect(restore).toBeEnabled());await user.click(restore);
+  await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.actor")}),"Human reviewer");await user.type(screen.getByRole("textbox",{name:i18n.t("contextFacts.reason")}),"New evidence supports the original");
+  await waitFor(()=>expect(screen.getByRole("button",{name:i18n.t("contextFacts.save")})).toBeEnabled());await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.save")}));
+  await waitFor(()=>expect(factHistory).toHaveLength(2));expect(factHistory[1].request).toMatchObject({expectedDecisionId:factHistory[0].request.actionId,disposition:{kind:"restore"}});
+  expect(factHistory[0].request.disposition).toEqual({kind:"reject-inference"});expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
+});
+
+it("discards only the unrecorded fact decision and keeps both other drafts protected for their own exit",async()=>{
+  factsEnabled=true;const user=await open();await enter(user);await user.type(screen.getByRole("textbox",{name:i18n.t("resource.manualContext")})," resource B");
+  await user.click(screen.getByRole("button",{name:i18n.t("resource.returnToEditor",{key:"entry",locale:"zh-CN"})}));await screen.findByRole("textbox",{name:i18n.t("translation.draft")});await editFact(user);
+  await user.click(screen.getByRole("button",{name:i18n.t("contextFacts.discard")}));expect(screen.queryByRole("textbox",{name:i18n.t("contextFacts.reason")})).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");expect(factHistory).toHaveLength(0);
+  await user.click(screen.getByRole("button",{name:"Open retained resources"}));expect(await screen.findByRole("textbox",{name:i18n.t("resource.manualContext")})).toHaveValue("Saved context A resource B");
+  let exit!:ReturnType<ProjectSessionHandle["prepareExit"]>;act(()=>{exit=session.current!.prepareExit();});
+  await screen.findByRole("dialog",{name:i18n.t("translation.leaveTitle")});await user.click(screen.getByRole("button",{name:i18n.t("translation.stay")}));expect(await exit).toBeNull();
+  expect(screen.getByRole("textbox",{name:i18n.t("translation.draft")})).toHaveValue("Manual B");
 });

@@ -31,7 +31,7 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) })
 const project: ProjectView = { sessionToken: "candidate-session", locator: "isolated", reconciliationState: "settled",
   metadata: { projectId: fixtureIdentity(500), displayName: "Candidate decisions", sourceLocale: "en", targetLocales: ["zh-CN"], metadataRevision: "1" } };
 const item: AiItem = { unitId: fixtureIdentity(301), sourceRevisionId: fixtureIdentity(302), sourceSnapshotId: fixtureIdentity(300),
-  nativeKey: "first", sourceLocale: "en", sourceText: "Hello", targetLocale: "zh-CN", terms: [], context: null, sourceContext: { kind: "not-selected" },
+  nativeKey: "first", sourceLocale: "en", sourceText: "Hello", targetLocale: "zh-CN", terms: [], context: null, sourceContext: { kind: "not-selected" }, projectContext: {kind:"not-selected" as const},
   omissions: ["terms-not-shared", "context-not-shared"], resourceBaseline: "0" };
 const scope = { projectId: project.metadata.projectId, sessionToken: project.sessionToken, area: "ai" as const };
 let drafts: ReturnType<typeof useTranslationDraftSession>, reads: ReturnType<typeof useSessionReads>, commands: ReturnType<typeof useWorkbenchCommands>;

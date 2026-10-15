@@ -62,7 +62,7 @@ function invalidAck(): never { throw new Error("Invalid Arena business acknowled
 function itemProof(item: AiItem) {
   return JSON.stringify([item.unitId,item.sourceRevisionId,item.sourceSnapshotId,item.nativeKey,item.sourceLocale,item.sourceText,item.targetLocale,item.resourceBaseline,
     item.terms.map(term => [term.revisionId,term.source,term.target,term.protected]),
-    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.sourceContext,item.omissions]);
+    item.context ? [item.context.revisionId,item.context.previousRevisionId,item.context.unitId,item.context.locale,item.context.text,item.context.reason] : null,item.sourceContext,item.projectContext,item.omissions]);
 }
 function sourceProof(item: AiItem) {
   return JSON.stringify([item.unitId,item.sourceRevisionId,item.sourceSnapshotId,item.nativeKey,item.sourceLocale,item.sourceText,item.targetLocale]);

@@ -1,3 +1,4 @@
+import { ContextFactReferences } from "./ContextFactDecisions";
 import { useTranslation } from "react-i18next";
 import { useSessionInfiniteQuery, useSessionReads } from "./SessionReadProvider";
 import { sourceCommands, type SourceContextBlock, type SourceContextNeighbor, type SourceContextPage } from "./sourceCommands";
@@ -55,9 +56,10 @@ function Neighbor({ neighbor }: { neighbor: SourceContextNeighbor }) {
   </article>;
 }
 
-/** An on-demand reference only. It never edits the translation draft or grants AI sharing. */
-export function EditorSourceContext({ context, scope, enabled, sourceChanged = false }: {
-  context: SessionRequest; scope: Scope | null; enabled: boolean; sourceChanged?: boolean;
+/** On-demand raw observations. The production editor may opt into a separate
+ * project-decision surface; neither reading nor staging a decision grants AI sharing. */
+export function EditorSourceContext({ context, scope, enabled, sourceChanged = false, entryKey }: {
+  context: SessionRequest; scope: Scope | null; enabled: boolean; sourceChanged?: boolean; entryKey?: string;
 }) {
   const { t } = useTranslation(), reads = useSessionReads();
   const key = ["translation-editor-source-context", scope?.projectId ?? "", scope?.sourceSnapshotId ?? "",
@@ -106,6 +108,7 @@ export function EditorSourceContext({ context, scope, enabled, sourceChanged = f
       {pages.flatMap(page => page.entries).map((entry, index) => <div key={index}>
         {entry.kind === "block" ? <Block block={entry.value} /> : <Neighbor neighbor={entry.value} />}
       </div>)}
+      {entryKey!==undefined?<ContextFactReferences context={context} pages={pages} entryKey={entryKey}/>:null}
       {read.hasNextPage ? <button type="button" className="secondary-button" disabled={read.isFetching}
         onClick={() => void read.fetchNextPage()}>{t("sourceContextRead.more")}</button> : <p>{t("sourceContextRead.complete")}</p>}
     </> : null}

@@ -2,14 +2,16 @@
 export const ResourceChangeKindValues = ["added","edited","removed","unchanged","override"] as const;
 export const ResourceDecisionKindValues = ["adopt","keep","ignore","override"] as const;
 export const ResourceImpactConfidenceValues = ["explicit-unit","literal-possible"] as const;
-export const ResourceImpactKindValues = ["term","context"] as const;
+export const ResourceImpactKindValues = ["term","context","context-fact"] as const;
 export const ResourceImpactStatusValues = ["needs-revalidation","unresolved"] as const;
+export const SourceContextFactKindValues = ["speaker","role","scene","time","location","note"] as const;
 export const TbxLicenseStatusValues = ["unknown"] as const;
 export const TbxLossKindValues = ["unmapped-metadata","unknown-attribute","unknown-element","unknown-data-category","extra-language","duplicate-concept-id","duplicate-term-id","duplicate-language","duplicate-term-text","invalid-language","missing-term","empty-term","inline-markup","unknown-structure","unknown-usage-status","duplicate-usage-status","schema-hint"] as const;
 export const TbxRowReasonValues = ["missing-source","missing-target","ambiguous-source","ambiguous-target","invalid-language","unknown-structure","invalid-source-term","invalid-target-term"] as const;
 export const TbxRowStatusValues = ["possible-mapping","excluded"] as const;
 export const TbxTermReasonValues = ["missing-term","ambiguous-term","empty-term","inline-markup","unknown-structure"] as const;
 export const TermOriginValues = ["manual","external"] as const;
+export const TextEncodingValues = ["utf8-byte","utf16","grapheme"] as const;
 export const TmMatchKindValues = ["exact","fuzzy"] as const;
 export const TmxLicenseStatusValues = ["unknown"] as const;
 export const TmxLossKindValues = ["unmapped-metadata","unknown-attribute","unknown-element","extra-language","duplicate-tuid","duplicate-language","direction-mismatch","wildcard-direction","invalid-language","missing-segment","empty-segment","inline-markup","unknown-structure"] as const;
