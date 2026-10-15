@@ -145,25 +145,32 @@ fn proxies(environment: &SourceEnvironment) -> Result<[Arc<RunnerProxy>; 2], Com
         proxy(&environment.binding.declaration.checker)?,
     ])
 }
-fn binding(environment: &SourceEnvironment, checker: bool) -> PluginExecutionBinding {
-    PluginExecutionBinding {
-        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-        capability: if checker {
-            environment.binding.checker.clone()
+fn binding(
+    environment: &SourceEnvironment,
+    checker: bool,
+) -> Result<PluginExecutionBinding, CommandError> {
+    environment.execution_binding(
+        if checker {
+            &environment.binding.checker
         } else {
-            environment.binding.extractor.clone()
+            &environment.binding.extractor
         },
-        profile: Some(environment.binding.declaration.profile.clone()),
-        environment: environment.runtime.environment(),
-    }
+        Some(environment.binding.declaration.profile.clone()),
+    )
 }
+
 fn matches_source(input: &FixedInput, environment: &SourceEnvironment) -> Result<(), CommandError> {
     let settings = SourceSettings::from_input(input).map_err(map_source)?;
     let declaration = &environment.binding.declaration;
-    if input.envelope().plugin.as_ref() != Some(&binding(environment, false))
-        || settings.checker.as_ref() != Some(&binding(environment, true))
+    if input.envelope().plugin.as_ref() != Some(&binding(environment, false)?)
+        || settings.checker.as_ref() != Some(&binding(environment, true)?)
         || settings.revision_policy != declaration.revision_policy
         || settings.semantic_rules != declaration.semantic_rules
+        || settings.review.as_ref().map(|review| &review.checker)
+            != Some(&environment.execution_binding(
+                &environment.binding.review.checker,
+                Some(environment.binding.review.declaration.profile.clone()),
+            )?)
     {
         return Err(stale());
     }
@@ -175,7 +182,7 @@ fn register(
     environment: &SourceEnvironment,
 ) -> Result<(), CommandError> {
     for (index, proxy) in proxies.into_iter().enumerate() {
-        let selected = binding(environment, index == 1);
+        let selected = binding(environment, index == 1)?;
         host.register_plugin(proxy, selected).map_err(map_source)?;
     }
     Ok(())
@@ -368,19 +375,24 @@ pub async fn preflight_plugin_source(
                 let fixed = bundle
                     .fixed_plugin_input(
                         project,
-                        binding(&environment, false),
+                        binding(&environment, false)?,
                         SourceSettings {
                             revision_policy: environment
                                 .binding
                                 .declaration
                                 .revision_policy
                                 .clone(),
-                            checker: Some(binding(&environment, true)),
+                            checker: Some(binding(&environment, true)?),
                             semantic_rules: environment.binding.declaration.semantic_rules.clone(),
                             review: Some(
                                 tsumugi_core::content::SourceReviewBinding::capture(
                                     &environment.binding.review,
-                                    &environment.runtime.environment(),
+                                    &environment.execution_binding(
+                                        &environment.binding.review.checker,
+                                        Some(
+                                            environment.binding.review.declaration.profile.clone(),
+                                        ),
+                                    )?,
                                 )
                                 .map_err(map_source)?,
                             ),
@@ -522,7 +534,7 @@ async fn start(
                 accepted_work.check()?;
                 let environment = plugins.capture_source(&choice)?;
                 if checker {
-                    if fixed.envelope().plugin.as_ref() != Some(&binding(&environment, true)) {
+                    if fixed.envelope().plugin.as_ref() != Some(&binding(&environment, true)?) {
                         return Err(stale());
                     }
                 } else {

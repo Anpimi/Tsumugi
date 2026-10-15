@@ -109,12 +109,10 @@ fn stale() -> CommandError {
     ))
 }
 fn binding(environment: &ToolEnvironment) -> Result<PluginExecutionBinding, CommandError> {
-    Ok(PluginExecutionBinding {
-        component_scope: environment.component_scope()?,
-        capability: environment.binding.capability.clone(),
-        profile: environment.binding.declaration.profile.clone(),
-        environment: environment.runtime.environment(),
-    })
+    environment.execution_binding(
+        &environment.binding.capability,
+        environment.binding.declaration.profile.clone(),
+    )
 }
 fn finish<'a>(
     sessions: &'a mut SessionManager,

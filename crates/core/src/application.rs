@@ -72,7 +72,7 @@ pub enum AutomationEffect {
 pub struct WorkPlanToolSpec {
     pub handle: ExecutionId,
     pub binding: tsumugi_plugin_sdk::CapabilityToolBinding,
-    pub environment: tsumugi_plugin_sdk::ExecutionEnvironmentDescriptor,
+    pub execution: crate::execution::PluginExecutionBinding,
     pub resource_id: String,
     pub settings_revision: UnsignedDecimal,
     pub package_origin: serde_json::Value,
@@ -113,14 +113,15 @@ impl WorkPlanTools {
             tool.binding
                 .validate()
                 .map_err(|_| ExecutionError::new(ErrorCode::InvalidInput, "work-plan-tool"))?;
-            let binding = crate::execution::PluginExecutionBinding {
-                // Agent plans currently accept Host-verified Project tools only.
-                component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-                capability: tool.binding.capability.clone(),
-                profile: tool.binding.declaration.profile.clone(),
-                environment: tool.environment.clone(),
-            };
-            binding.validate()?;
+            tool.execution.validate()?;
+            if tool.execution.capability != tool.binding.capability
+                || tool.execution.profile != tool.binding.declaration.profile
+            {
+                return Err(ExecutionError::new(
+                    ErrorCode::InvalidInput,
+                    "work-plan-tool-binding",
+                ));
+            }
             if tool.resource_id.is_empty()
                 || tool.resource_id.len() > 128
                 || !tool.package_origin.is_object()

@@ -471,8 +471,15 @@ fn generation_component_closed_channel_child_obeys_pause_stop_and_takeover() {
 
 #[test]
 fn generation_component_closed_channel_child_obeys_real_disable_and_cannot_revive() {
+    closed_channel_child_scoped(sdk::ComponentScope::Project)
+}
+#[test]
+fn attempt_generation_closed_channel_child_obeys_real_disable_and_cannot_revive() {
+    closed_channel_child_scoped(sdk::ComponentScope::Attempt)
+}
+fn closed_channel_child_scoped(component_scope: sdk::ComponentScope) {
     let fixture = Fixture::create();
-    let (component, _installed, _approval) = install_generation(&fixture);
+    let (component, _installed, _approval) = install_generation_scoped(&fixture, component_scope);
     let (started, waiting) = mpsc::channel();
     let (release, hold) = mpsc::channel();
     let (mut config, provider) = local_provider_sequence_at_request(

@@ -209,7 +209,14 @@ fn actual_joint_review_ipc_requires_independent_grants_and_preserves_advisory_qa
                         review: Some(
                             SourceReviewBinding::capture(
                                 &source.binding.review,
-                                &producer.environment,
+                                &tsumugi_core::execution::PluginExecutionBinding {
+                                    component_scope: sdk::ComponentScope::Project,
+                                    capability: (&source.binding.review).checker.clone(),
+                                    profile: Some(
+                                        (&source.binding.review).declaration.profile.clone(),
+                                    ),
+                                    environment: (*(&producer.environment)).clone().into(),
+                                },
                             )
                             .unwrap(),
                         ),

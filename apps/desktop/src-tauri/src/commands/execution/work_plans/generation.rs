@@ -198,14 +198,14 @@ fn generation_request(
             .collect::<Result<_, _>>()?,
     })
 }
-fn component_binding(environment: &GenerationComponentEnvironment) -> PluginExecutionBinding {
-    PluginExecutionBinding {
-        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-        capability: environment.captured.binding.clone(),
-        profile: environment.profile.clone(),
-        environment: environment.captured.runtime.environment(),
-    }
+fn component_binding(
+    environment: &GenerationComponentEnvironment,
+) -> Result<PluginExecutionBinding, CommandError> {
+    environment
+        .captured
+        .execution_binding(&environment.captured.binding, environment.profile.clone())
 }
+
 /// Compare all consumers of the one installation owner before locking it once.
 fn consent(
     host: &ExecutionHost,
@@ -244,7 +244,7 @@ fn build_preflight(
     store
         .prepare_work_plan_agent_generation(&scope, &generation)
         .map_err(map_recover)?;
-    let binding = component_binding(environment);
+    let binding = component_binding(environment)?;
     let declaration = binding.capability.declaration.clone();
     let payload = serde_json::to_value(&request.generation).map_err(|_| mismatch())?;
     if serde_json::to_vec(&payload).map_err(|_| mismatch())?.len()
@@ -587,7 +587,7 @@ pub async fn start_work_plan_generation_component(
                     capture_plugins.capture_generation_component(&fixed.request.component)?;
                 if environment.view()? != fixed.view.component
                     || fixed.input.envelope().plugin.as_ref()
-                        != Some(&component_binding(&environment))
+                        != Some(&component_binding(&environment)?)
                 {
                     return Err(mismatch());
                 }
@@ -645,7 +645,7 @@ pub async fn start_work_plan_generation_component(
                     plugins.with_environment_authority(
                         environment.captured.settings_revision,
                         |settings_revocation| {
-                            host.register_plugin(runner, component_binding(&environment))
+                            host.register_plugin(runner, component_binding(&environment)?)
                                 .map_err(map_recover)?;
                             if let Some(original) =
                                 host.work_plans.generation.starts.get(&request.attempt_id)
@@ -839,7 +839,17 @@ impl GenerationFactory {
                     error_schema: sdk::generation_service_error_contract(),
                     effect: sdk::EffectKind::External,
                     project_id: self.project.to_string(),
-                    scope_id: self.project.to_string(),
+                    scope_id: dispatch
+                        .input
+                        .envelope()
+                        .plugin
+                        .as_ref()
+                        .ok_or_else(denied)?
+                        .scope_id(
+                            dispatch.input.envelope().project_id,
+                            dispatch.input.envelope().attempt_id,
+                        )
+                        .map_err(map_recover)?,
                     activation_generation: scope
                         .lease()
                         .generation

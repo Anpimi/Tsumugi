@@ -112,6 +112,7 @@
     "runtimeOrigin": {
       "sourceId": "application-bundle",
       "publisherId": "application-build"
-    }
+    },
+    "componentScope": "project"
   }
 }

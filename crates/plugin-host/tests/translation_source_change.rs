@@ -50,10 +50,17 @@ fn checked_source(
                 review: Some(
                     tsumugi_core::content::SourceReviewBinding::capture(
                         &resource.review,
-                        &producer
-                            .execution_binding(Some(resource.declaration.profile.clone()))
-                            .unwrap()
-                            .environment,
+                        &tsumugi_core::execution::PluginExecutionBinding {
+                            component_scope: sdk::ComponentScope::Project,
+                            capability: (&resource.review).checker.clone(),
+                            profile: Some((&resource.review).declaration.profile.clone()),
+                            environment: (*(&producer
+                                .execution_binding(Some(resource.declaration.profile.clone()))
+                                .unwrap()
+                                .environment))
+                                .clone()
+                                .into(),
+                        },
                     )
                     .unwrap(),
                 ),

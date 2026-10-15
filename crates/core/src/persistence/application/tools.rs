@@ -55,12 +55,7 @@ fn derive(
         .as_ref()
         .ok_or_else(|| fail(ErrorCode::InvalidInput, "work-plan-tool-query"))?;
     let capability = &tool.binding.capability.declaration;
-    let binding = PluginExecutionBinding {
-        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-        capability: tool.binding.capability.clone(),
-        profile: tool.binding.declaration.profile.clone(),
-        environment: tool.environment.clone(),
-    };
+    let binding = tool.execution.clone();
     let mut envelope = original.envelope().clone();
     envelope.task_id = request.task_id;
     envelope.attempt_id = request.attempt_id;
@@ -106,7 +101,7 @@ fn derive(
     envelope.settings = serde_json::json!({"tool": {
         "settingsRevision": tool.settings_revision, "resourceId": tool.resource_id,
         "binding": tool.binding, "packageOrigin": tool.package_origin,
-        "environment": tool.environment, "environmentDigest": tool.environment.digest().map_err(|_| fail(ErrorCode::InvalidInput, "work-plan-tool-environment"))?,
+        "componentScope": tool.execution.component_scope, "environment": tool.execution.environment, "environmentDigest": tool.execution.environment.digest().map_err(|_| fail(ErrorCode::InvalidInput, "work-plan-tool-environment"))?,
         "runtimeOrigin": tool.runtime_origin
     }, "query": {"target": tool.target, "selections": tool.selections}, "toolHandle": tool.handle, "callerId": scope.caller_id});
     let input = FixedInput::capture(envelope)?;

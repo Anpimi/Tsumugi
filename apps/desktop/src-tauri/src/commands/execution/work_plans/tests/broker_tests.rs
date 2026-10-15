@@ -73,6 +73,30 @@ fn registered_agent_tool_ipc_rejects_missing_consent_and_authority_overrides() {
 ))]
 #[test]
 fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_consent() {
+    real_work_plan_tool_broker_scoped(false)
+}
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+#[test]
+fn real_attempt_work_plan_tool_broker_keeps_child_scope_and_original_authority() {
+    real_work_plan_tool_broker_scoped(true)
+}
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+#[path = "../../../../../../../../crates/plugin-host/tests/support/scoped_package.rs"]
+mod scoped_package;
+#[cfg(all(
+    feature = "bundled-runtime",
+    target_os = "macos",
+    target_arch = "aarch64"
+))]
+fn real_work_plan_tool_broker_scoped(attempt_scope: bool) {
     use crate::commands::plugins::{
         InstalledPluginFixture, PluginPackageRequest, PluginToolRequest,
     };
@@ -93,6 +117,15 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
         || true,
     )
     .unwrap();
+    let image = if attempt_scope {
+        scoped_package::capture(
+            &PathBuf::from(std::env::var_os("TSUMUGI_TEST_PLUGIN_PACKAGE").unwrap()),
+            &std::env::var("TSUMUGI_TEST_PLUGIN_DIGEST").unwrap(),
+            |_| tsumugi_plugin_sdk::ComponentScope::Attempt,
+        )
+    } else {
+        image
+    };
     let approval = PackageApproval {
         plugin: image.manifest().manifest().plugin.clone(),
         package_digest: image.package_digest().into(),
@@ -171,7 +204,7 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
     assert_eq!(fixture.attempt_count(), count);
     assert_eq!(plan["tools"]["entries"][0]["binding"], json!(binding));
     assert_eq!(
-        plan["tools"]["entries"][0]["environment"],
+        plan["tools"]["entries"][0]["execution"]["environment"],
         json!(runtime_approval.environment)
     );
     // The root's normal one-hour authorization is independent of the tool's
@@ -309,6 +342,14 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
         attempt
     );
     assert_eq!(output["outcome"], "succeeded");
+    assert_eq!(
+        output["plugin"]["result"]["context"]["scopeId"],
+        if attempt_scope {
+            attempt.clone()
+        } else {
+            output["plugin"]["result"]["context"]["projectId"].clone()
+        }
+    );
     let actual: ExecutionId = serde_json::from_value(attempt.clone()).unwrap();
     let expected_payload = query
         .prepare_payload(
@@ -338,6 +379,15 @@ fn real_work_plan_tool_broker_uses_fixed_units_shared_budget_and_independent_con
                 expected_environment
             );
             assert!(input.envelope().automation.is_some());
+            assert_eq!(
+                input.envelope().plugin.as_ref().unwrap().component_scope,
+                if attempt_scope {
+                    tsumugi_plugin_sdk::ComponentScope::Attempt
+                } else {
+                    tsumugi_plugin_sdk::ComponentScope::Project
+                }
+            );
+            assert_ne!(input.envelope().attempt_id, input.envelope().task_id);
         });
     let status = fixture
         .call("read_work_plan_status", json!({"planId":plan["planId"]}))

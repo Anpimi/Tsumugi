@@ -19,17 +19,23 @@ are introduced by this unit. Application `0.2.0-alpha.1` and SDK
 `0.1.0-alpha.1` remain in the same undistributed batch without another version
 bump. Earlier format statements below describe their original development units.
 
-Plugin execution bindings now require `componentScope`, captured from the actual
-component before consent. Generic Host execution and manual tools support
-Attempt scope; application execution, project services on Attempt channels and
-domain/Agent compositions outside Project scope are explicitly unsupported.
-This changes Core fixed-input identity and nested Desktop contracts, advancing
-the current-only project format to schema 38 in the same unreleased batch.
-Earlier development projects remain preserved and are refused without conversion;
-there is no default scope for old inputs. SDK/process wire formats, dependencies
-and Store layout remain unchanged. Application `0.2.0-alpha.1` and SDK
-`0.1.0-alpha.1` remain the existing version sources; both Unreleased changelogs
-are synchronized and no additional version bump or publication is performed.
+Each composed capability now retains its complete Core execution binding,
+including the scope captured from the immutable component. Source/translation
+producers and checkers, format/advisory review, build/artifact checks, Agent tools
+and generation components support independently selected Project/Attempt scopes.
+Attempt generation services use only the existing per-dispatch adapter and exact
+outer scope, original grant/deadline and durable child association. Other required
+or offered Attempt services, Application execution and unverified Windows
+execution remain unsupported.
+
+Required build, advisory-review and Agent-tool bindings advance the current-only
+project format from schema 38 to 39. Earlier development directories are refused
+before application schema changes and preserved without conversion or reset;
+missing bindings have no implicit Project default. SDK/process protocols,
+dependencies and installation Store format are unchanged. Application
+`0.2.0-alpha.1` and SDK `0.1.0-alpha.1` remain the same undistributed batch without
+another SemVer bump. Both Unreleased changelogs and current format statements are
+synchronized; native product acceptance remains separate.
 
 AI cards now reuse the translation decision owner for in-place rejection and
 restoration of a verified saved revision. Explicit snapshot/history bases do not

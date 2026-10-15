@@ -1,5 +1,11 @@
 # Source import
 
+Each executable source/translation role captures its own complete Project or
+Attempt binding from the installed component. Producer, semantic checker and
+format Review scopes may differ. An Attempt checker uses its own execution
+attempt; the producer result cannot choose or widen that scope. Source, required
+checks, original grants and saved validation evidence remain unchanged owners.
+
 The Source content view uses an enabled installed source package and an independently approved installed runtime. In **Extensions**, review and install the exact package, enable it separately, and independently approve and install its supported runtime. Installation and enablement do not authorize code execution. The first captured JavaScript runtime targets Apple silicon on macOS 13.5 or later; other runtime profiles and the complete official domain-package distribution remain under development. A build without an installed supported environment explains the unavailable operation and keeps existing project content available.
 
 Choose the installed source format and runtime, then **Choose source folder**. The native chooser authorizes the directory; requests cannot supply a directory path. The package's non-executable source Resource fixes material paths, limits, profile, revision policy, and independent extractor/checker contributions. The workbench does not select a parser by plugin name or file extension.

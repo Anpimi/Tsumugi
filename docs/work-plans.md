@@ -1,5 +1,15 @@
 # Fixed application work plans
 
+Each Agent tool retains its complete captured execution binding in the plan.
+Project/Attempt scope is part of the plan/input digest and independent process
+consent; an Attempt uses the actual tool child attempt rather than the root or
+Agent scope handle. Generation components may also use Attempt scope through the
+existing service adapter. The service retains the exact outer input/dispatch,
+original grant, absolute deadline and accepted-child association. Channel closure
+is not child rollback or new authority; replay returns the original receipt and
+never reserves another child or resets the shared budget. Application execution
+and unsupported service dependencies remain refused.
+
 The Core `application` module owns the initial work-plan representation. The
 current API prepares and verifies plans from a project's existing source,
 translation and resource authorities. Both operations are read-only and use one

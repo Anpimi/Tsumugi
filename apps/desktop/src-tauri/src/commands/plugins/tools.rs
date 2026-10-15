@@ -30,15 +30,12 @@ pub(in crate::commands) type ToolEnvironment = DeclaredEnvironment<sdk::Capabili
 
 impl ToolEnvironment {
     pub(in crate::commands) fn component_scope(&self) -> Result<sdk::ComponentScope, CommandError> {
-        self.package
-            .image()
-            .manifest()
-            .manifest()
-            .components
-            .iter()
-            .find(|component| component.id == self.binding.capability.provider.component_id)
-            .map(|component| component.scope)
-            .ok_or_else(invalid)
+        Ok(self
+            .execution_binding(
+                &self.binding.capability,
+                self.binding.declaration.profile.clone(),
+            )?
+            .component_scope)
     }
     pub(in crate::commands) fn view(&self) -> Result<PluginToolView, CommandError> {
         let environment = self.runtime.environment();

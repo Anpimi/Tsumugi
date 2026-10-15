@@ -46,8 +46,12 @@ The captured tool view includes its required `componentScope`. Project and
 Attempt components are supported for manual tools; an Attempt uses the original
 attempt ID as its scope ID. The captured manifest fixes this value in Core's
 input before execution consent, so results cannot choose a different scope.
-Required project-service dependencies on Attempt components are unsupported
-and explicitly refused. Work-plan Agent tool compositions remain Project-only.
+Work-plan Agent tools retain the same complete binding and use their own child
+attempt identity, independently of the root attempt and Agent scope handle.
+Changing scope changes the captured plan/input digest and requires new consent.
+Required or offered services on Attempt query tools remain refused. The existing
+Attempt generation-service adapter is reserved for generation components; no
+manual query or Agent proposal gains a service or execution grant implicitly.
 The application captures one fixed Core input for a single or batch query.
 Core assigns item identities; use the returned item ID and payload together
 rather than depending on the submitted array's order. The returned input digest

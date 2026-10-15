@@ -54,7 +54,7 @@ impl ApplicationPlugins {
             &request.package,
             &request.resource_id,
             &request.environment_digest,
-            &[sdk::ComponentScope::Project],
+            &[sdk::ComponentScope::Project, sdk::ComponentScope::Attempt],
             |image, resource| {
                 let binding = image.build_declaration(resource)?;
                 let providers = [binding.builder.clone(), binding.checker.clone()];

@@ -111,10 +111,19 @@ fn maximum_file_workflow(unicode: bool, key_length: usize) {
                 review: Some(
                     tsumugi_core::content::SourceReviewBinding::capture(
                         &source_resource.review,
-                        &source_producer
-                            .execution_binding(Some(source_resource.declaration.profile.clone()))
-                            .unwrap()
-                            .environment,
+                        &tsumugi_core::execution::PluginExecutionBinding {
+                            component_scope: sdk::ComponentScope::Project,
+                            capability: (&source_resource.review).checker.clone(),
+                            profile: Some((&source_resource.review).declaration.profile.clone()),
+                            environment: (*(&source_producer
+                                .execution_binding(Some(
+                                    source_resource.declaration.profile.clone(),
+                                ))
+                                .unwrap()
+                                .environment))
+                                .clone()
+                                .into(),
+                        },
                     )
                     .unwrap(),
                 ),

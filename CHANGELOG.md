@@ -15,15 +15,18 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   unfinished comparisons are preserved. Rejected candidates stay readable in
   comparisons but must be explicitly restored before direct selection.
 
-- Generic plugin execution and manual reference tools support captured Attempt
-  components with exact project/attempt scope and their original execution grant.
-  Revocation, cancellation, late results and cleanup use the existing owned
-  channel lifecycle. Project-service dependencies and domain/Agent compositions
-  remain explicitly restricted to their supported Project scope.
-- Plugin execution inputs now require the captured component scope. The
-  current-only project format is schema 38; preserve older development projects
-  and reimport into a new project. There is no implicit Project default, migration
-  or additional application/SDK version bump in this undistributed alpha batch.
+- Source and translation import, format and advisory review, build/artifact checks,
+  Agent tools and generation components capture each capability's exact Project
+  or Attempt execution binding. Different roles can use different scopes without
+  changing their original grants, required checks or receipt identities.
+- Attempt generation components use the existing per-dispatch service adapter,
+  bound to the fixed outer input, original grant and deadline. Unsupported service
+  dependencies and Application execution remain refused. Accepted child work
+  retains its original budget and authority after the component channel closes.
+- Complete build, advisory-review and Agent-tool bindings advance the current-only
+  project format to schema 39. Preserve older development directories and reimport
+  into a new project; no default scope, migration or additional application/SDK
+  version bump is introduced in this undistributed alpha batch.
 - Saved AI translation candidates support explicit rejection and restoration with
   an actor, reason and fixed source/selection basis. Decisions and original
   receipts survive reopening. Rejected candidates keep their text and provenance
@@ -175,7 +178,7 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
   inside the sidebar.
 
 
-The combined development build opens project schema 37 only. Earlier Unreleased
+The combined development build opens project schema 39 only. Earlier Unreleased
 entries retain intermediate format boundaries from this undistributed batch;
 they do not define alternate current project formats.
 

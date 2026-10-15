@@ -3708,7 +3708,7 @@ return errors === 0;
 }
 
 export const validateResponseBuild = validate255;
-const schema284 = {"$id":"urn:tsumugi:ipc:plugins:responses:build","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/build"};
+const schema285 = {"$id":"urn:tsumugi:ipc:plugins:responses:build","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/build"};
 const schema118 = {"additionalProperties":false,"properties":{"builder":{"$ref":"#/definitions/CapabilityBinding"},"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/BuildDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","declaration","builder","checker","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
 const schema134 = {"additionalProperties":false,"properties":{"publisherId":{"type":"string"},"sourceId":{"type":"string"}},"required":["sourceId","publisherId"],"type":"object"};
 const schema136 = {"pattern":"^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$","type":"string"};
@@ -5190,8 +5190,8 @@ return errors === 0;
 }
 
 export const validateResponseCandidate = validate262;
-const schema289 = {"$id":"urn:tsumugi:ipc:plugins:responses:candidate","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/candidate"};
-const schema290 = {"anyOf":[{"$ref":"#/definitions/PluginCandidateView"},{"type":"null"}]};
+const schema290 = {"$id":"urn:tsumugi:ipc:plugins:responses:candidate","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/candidate"};
+const schema291 = {"anyOf":[{"$ref":"#/definitions/PluginCandidateView"},{"type":"null"}]};
 const schema137 = {"additionalProperties":false,"properties":{"byteCount":{"$ref":"#/definitions/UnsignedDecimal"},"fileCount":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"manifest":{"$ref":"#/definitions/PluginManifest"},"manifestSha256":{"type":"string"},"packageDigest":{"type":"string"},"ticket":{"$ref":"#/definitions/ExecutionId"}},"required":["ticket","manifest","packageDigest","manifestSha256","fileCount","byteCount"],"type":"object"};
 const schema152 = {"pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$","type":"string"};
 const pattern16 = new RegExp("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", "u");
@@ -6838,7 +6838,7 @@ return errors === 0;
 }
 
 export const validateResponseError = validate266;
-const schema291 = {"$id":"urn:tsumugi:ipc:plugins:responses:error","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/error"};
+const schema292 = {"$id":"urn:tsumugi:ipc:plugins:responses:error","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/error"};
 const schema153 = {"properties":{"code":{"$ref":"#/definitions/CommandErrorCode"},"conflict":{"anyOf":[{"$ref":"#/definitions/ConflictEvidence"},{"type":"null"}]},"currentRevision":{"pattern":"^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$","type":"string"},"diagnosticId":{"anyOf":[{"$ref":"#/definitions/ExecutionId"},{"type":"null"}]},"field":{"type":"string"},"itemIds":{"items":{"$ref":"#/definitions/ExecutionId"},"type":"array"},"outcome":{"$ref":"#/definitions/CommandOutcome"},"reason":{"type":"string"},"recoveryActions":{"items":{"$ref":"#/definitions/RecoveryAction"},"type":"array"},"recoveryGuidance":{"anyOf":[{"$ref":"#/definitions/RecoveryGuidance"},{"type":"null"}]},"recoveryRequired":{"type":"boolean"},"stage":{"$ref":"#/definitions/CommandStage"}},"required":["code","stage","outcome","recoveryRequired"],"type":"object"};
 const schema154 = {"enum":["invalid-input","destination-conflict","missing-project","permission-denied","unsupported-schema","corrupt-project","stale-revision","session-invalid","project-in-use","busy","storage-failed","outcome-unknown","limit-exceeded","result-mismatch","output-invalid","dependency-conflict","cancelled"],"type":"string"};
 const schema178 = {"enum":["rejected","unknown"],"type":"string"};
@@ -9860,8 +9860,8 @@ return errors === 0;
 }
 
 export const validateResponseGenerationComponent = validate270;
-const schema300 = {"$id":"urn:tsumugi:ipc:plugins:responses:generationComponent","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/generationComponent"};
-const schema182 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/CapabilityBinding"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","binding","profile","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema301 = {"$id":"urn:tsumugi:ipc:plugins:responses:generationComponent","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/generationComponent"};
+const schema182 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/CapabilityBinding"},"componentScope":{"$ref":"#/definitions/ComponentScope"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","binding","componentScope","profile","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
 
 function validate271(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -9869,14 +9869,14 @@ let errors = 0;
 if(errors === 0){
 if(data && typeof data == "object" && !Array.isArray(data)){
 let missing0;
-if((((((((data.settingsRevision === undefined) && (missing0 = "settingsRevision")) || ((data.binding === undefined) && (missing0 = "binding"))) || ((data.profile === undefined) && (missing0 = "profile"))) || ((data.packageOrigin === undefined) && (missing0 = "packageOrigin"))) || ((data.environment === undefined) && (missing0 = "environment"))) || ((data.environmentDigest === undefined) && (missing0 = "environmentDigest"))) || ((data.runtimeOrigin === undefined) && (missing0 = "runtimeOrigin"))){
+if(((((((((data.settingsRevision === undefined) && (missing0 = "settingsRevision")) || ((data.binding === undefined) && (missing0 = "binding"))) || ((data.componentScope === undefined) && (missing0 = "componentScope"))) || ((data.profile === undefined) && (missing0 = "profile"))) || ((data.packageOrigin === undefined) && (missing0 = "packageOrigin"))) || ((data.environment === undefined) && (missing0 = "environment"))) || ((data.environmentDigest === undefined) && (missing0 = "environmentDigest"))) || ((data.runtimeOrigin === undefined) && (missing0 = "runtimeOrigin"))){
 validate271.errors = [{instancePath,schemaPath:"#/required",keyword:"required",params:{missingProperty: missing0},message:"must have required property '"+missing0+"'"}];
 return false;
 }
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(((((((key0 === "binding") || (key0 === "environment")) || (key0 === "environmentDigest")) || (key0 === "packageOrigin")) || (key0 === "profile")) || (key0 === "runtimeOrigin")) || (key0 === "settingsRevision"))){
+if(!((((((((key0 === "binding") || (key0 === "componentScope")) || (key0 === "environment")) || (key0 === "environmentDigest")) || (key0 === "packageOrigin")) || (key0 === "profile")) || (key0 === "runtimeOrigin")) || (key0 === "settingsRevision"))){
 validate271.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -9895,11 +9895,16 @@ else {
 var valid0 = true;
 }
 if(valid0){
-if(data.environment !== undefined){
+if(data.componentScope !== undefined){
+let data1 = data.componentScope;
 const _errs3 = errors;
-if(!(validate124(data.environment, {instancePath:instancePath+"/environment",parentData:data,parentDataProperty:"environment",rootData}))){
-vErrors = vErrors === null ? validate124.errors : vErrors.concat(validate124.errors);
-errors = vErrors.length;
+if(typeof data1 !== "string"){
+validate271.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#/definitions/ComponentScope/type",keyword:"type",params:{type: "string"},message:"must be string"}];
+return false;
+}
+if(!(((data1 === "application") || (data1 === "project")) || (data1 === "attempt"))){
+validate271.errors = [{instancePath:instancePath+"/componentScope",schemaPath:"#/definitions/ComponentScope/enum",keyword:"enum",params:{allowedValues: schema146.enum},message:"must be equal to one of the allowed values"}];
+return false;
 }
 var valid0 = _errs3 === errors;
 }
@@ -9907,61 +9912,73 @@ else {
 var valid0 = true;
 }
 if(valid0){
+if(data.environment !== undefined){
+const _errs6 = errors;
+if(!(validate124(data.environment, {instancePath:instancePath+"/environment",parentData:data,parentDataProperty:"environment",rootData}))){
+vErrors = vErrors === null ? validate124.errors : vErrors.concat(validate124.errors);
+errors = vErrors.length;
+}
+var valid0 = _errs6 === errors;
+}
+else {
+var valid0 = true;
+}
+if(valid0){
 if(data.environmentDigest !== undefined){
-const _errs4 = errors;
+const _errs7 = errors;
 if(typeof data.environmentDigest !== "string"){
 validate271.errors = [{instancePath:instancePath+"/environmentDigest",schemaPath:"#/properties/environmentDigest/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid0 = _errs4 === errors;
+var valid0 = _errs7 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.packageOrigin !== undefined){
-let data3 = data.packageOrigin;
-const _errs6 = errors;
-const _errs7 = errors;
-if(errors === _errs7){
-if(data3 && typeof data3 == "object" && !Array.isArray(data3)){
+let data4 = data.packageOrigin;
+const _errs9 = errors;
+const _errs10 = errors;
+if(errors === _errs10){
+if(data4 && typeof data4 == "object" && !Array.isArray(data4)){
 let missing1;
-if(((data3.sourceId === undefined) && (missing1 = "sourceId")) || ((data3.publisherId === undefined) && (missing1 = "publisherId"))){
+if(((data4.sourceId === undefined) && (missing1 = "sourceId")) || ((data4.publisherId === undefined) && (missing1 = "publisherId"))){
 validate271.errors = [{instancePath:instancePath+"/packageOrigin",schemaPath:"#/definitions/PluginOriginView/required",keyword:"required",params:{missingProperty: missing1},message:"must have required property '"+missing1+"'"}];
 return false;
 }
 else {
-const _errs9 = errors;
-for(const key1 in data3){
+const _errs12 = errors;
+for(const key1 in data4){
 if(!((key1 === "publisherId") || (key1 === "sourceId"))){
 validate271.errors = [{instancePath:instancePath+"/packageOrigin",schemaPath:"#/definitions/PluginOriginView/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key1},message:"must NOT have additional properties"}];
 return false;
 break;
 }
 }
-if(_errs9 === errors){
-if(data3.publisherId !== undefined){
-const _errs10 = errors;
-if(typeof data3.publisherId !== "string"){
+if(_errs12 === errors){
+if(data4.publisherId !== undefined){
+const _errs13 = errors;
+if(typeof data4.publisherId !== "string"){
 validate271.errors = [{instancePath:instancePath+"/packageOrigin/publisherId",schemaPath:"#/definitions/PluginOriginView/properties/publisherId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid2 = _errs10 === errors;
+var valid3 = _errs13 === errors;
 }
 else {
-var valid2 = true;
+var valid3 = true;
 }
-if(valid2){
-if(data3.sourceId !== undefined){
-const _errs12 = errors;
-if(typeof data3.sourceId !== "string"){
+if(valid3){
+if(data4.sourceId !== undefined){
+const _errs15 = errors;
+if(typeof data4.sourceId !== "string"){
 validate271.errors = [{instancePath:instancePath+"/packageOrigin/sourceId",schemaPath:"#/definitions/PluginOriginView/properties/sourceId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid2 = _errs12 === errors;
+var valid3 = _errs15 === errors;
 }
 else {
-var valid2 = true;
+var valid3 = true;
 }
 }
 }
@@ -9972,23 +9989,23 @@ validate271.errors = [{instancePath:instancePath+"/packageOrigin",schemaPath:"#/
 return false;
 }
 }
-var valid0 = _errs6 === errors;
+var valid0 = _errs9 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.profile !== undefined){
-let data6 = data.profile;
-const _errs14 = errors;
-const _errs15 = errors;
-let valid3 = false;
-const _errs16 = errors;
+let data7 = data.profile;
 const _errs17 = errors;
-if(errors === _errs17){
-if(data6 && typeof data6 == "object" && !Array.isArray(data6)){
+const _errs18 = errors;
+let valid4 = false;
+const _errs19 = errors;
+const _errs20 = errors;
+if(errors === _errs20){
+if(data7 && typeof data7 == "object" && !Array.isArray(data7)){
 let missing2;
-if((((data6.id === undefined) && (missing2 = "id")) || ((data6.schemaVersion === undefined) && (missing2 = "schemaVersion"))) || ((data6.behaviorVersion === undefined) && (missing2 = "behaviorVersion"))){
+if((((data7.id === undefined) && (missing2 = "id")) || ((data7.schemaVersion === undefined) && (missing2 = "schemaVersion"))) || ((data7.behaviorVersion === undefined) && (missing2 = "behaviorVersion"))){
 const err0 = {instancePath:instancePath+"/profile",schemaPath:"#/definitions/ContractRef/required",keyword:"required",params:{missingProperty: missing2},message:"must have required property '"+missing2+"'"};
 if(vErrors === null){
 vErrors = [err0];
@@ -9999,8 +10016,8 @@ vErrors.push(err0);
 errors++;
 }
 else {
-const _errs19 = errors;
-for(const key2 in data6){
+const _errs22 = errors;
+for(const key2 in data7){
 if(!(((key2 === "behaviorVersion") || (key2 === "id")) || (key2 === "schemaVersion"))){
 const err1 = {instancePath:instancePath+"/profile",schemaPath:"#/definitions/ContractRef/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key2},message:"must NOT have additional properties"};
 if(vErrors === null){
@@ -10013,11 +10030,11 @@ errors++;
 break;
 }
 }
-if(_errs19 === errors){
-if(data6.behaviorVersion !== undefined){
-let data7 = data6.behaviorVersion;
-const _errs20 = errors;
-if(!(((typeof data7 == "number") && (!(data7 % 1) && !isNaN(data7))) && (isFinite(data7)))){
+if(_errs22 === errors){
+if(data7.behaviorVersion !== undefined){
+let data8 = data7.behaviorVersion;
+const _errs23 = errors;
+if(!(((typeof data8 == "number") && (!(data8 % 1) && !isNaN(data8))) && (isFinite(data8)))){
 const err2 = {instancePath:instancePath+"/profile/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err2];
@@ -10027,9 +10044,9 @@ vErrors.push(err2);
 }
 errors++;
 }
-if(errors === _errs20){
-if((typeof data7 == "number") && (isFinite(data7))){
-if(data7 > 4294967295 || isNaN(data7)){
+if(errors === _errs23){
+if((typeof data8 == "number") && (isFinite(data8))){
+if(data8 > 4294967295 || isNaN(data8)){
 const err3 = {instancePath:instancePath+"/profile/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err3];
@@ -10040,7 +10057,7 @@ vErrors.push(err3);
 errors++;
 }
 else {
-if(data7 < 1 || isNaN(data7)){
+if(data8 < 1 || isNaN(data8)){
 const err4 = {instancePath:instancePath+"/profile/behaviorVersion",schemaPath:"#/definitions/ContractRef/properties/behaviorVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err4];
@@ -10053,15 +10070,15 @@ errors++;
 }
 }
 }
-var valid5 = _errs20 === errors;
+var valid6 = _errs23 === errors;
 }
 else {
-var valid5 = true;
+var valid6 = true;
 }
-if(valid5){
-if(data6.id !== undefined){
-const _errs22 = errors;
-if(typeof data6.id !== "string"){
+if(valid6){
+if(data7.id !== undefined){
+const _errs25 = errors;
+if(typeof data7.id !== "string"){
 const err5 = {instancePath:instancePath+"/profile/id",schemaPath:"#/definitions/ContractRef/properties/id/type",keyword:"type",params:{type: "string"},message:"must be string"};
 if(vErrors === null){
 vErrors = [err5];
@@ -10071,16 +10088,16 @@ vErrors.push(err5);
 }
 errors++;
 }
-var valid5 = _errs22 === errors;
+var valid6 = _errs25 === errors;
 }
 else {
-var valid5 = true;
+var valid6 = true;
 }
-if(valid5){
-if(data6.schemaVersion !== undefined){
-let data9 = data6.schemaVersion;
-const _errs24 = errors;
-if(!(((typeof data9 == "number") && (!(data9 % 1) && !isNaN(data9))) && (isFinite(data9)))){
+if(valid6){
+if(data7.schemaVersion !== undefined){
+let data10 = data7.schemaVersion;
+const _errs27 = errors;
+if(!(((typeof data10 == "number") && (!(data10 % 1) && !isNaN(data10))) && (isFinite(data10)))){
 const err6 = {instancePath:instancePath+"/profile/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/type",keyword:"type",params:{type: "integer"},message:"must be integer"};
 if(vErrors === null){
 vErrors = [err6];
@@ -10090,9 +10107,9 @@ vErrors.push(err6);
 }
 errors++;
 }
-if(errors === _errs24){
-if((typeof data9 == "number") && (isFinite(data9))){
-if(data9 > 4294967295 || isNaN(data9)){
+if(errors === _errs27){
+if((typeof data10 == "number") && (isFinite(data10))){
+if(data10 > 4294967295 || isNaN(data10)){
 const err7 = {instancePath:instancePath+"/profile/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/maximum",keyword:"maximum",params:{comparison: "<=", limit: 4294967295},message:"must be <= 4294967295"};
 if(vErrors === null){
 vErrors = [err7];
@@ -10103,7 +10120,7 @@ vErrors.push(err7);
 errors++;
 }
 else {
-if(data9 < 1 || isNaN(data9)){
+if(data10 < 1 || isNaN(data10)){
 const err8 = {instancePath:instancePath+"/profile/schemaVersion",schemaPath:"#/definitions/ContractRef/properties/schemaVersion/minimum",keyword:"minimum",params:{comparison: ">=", limit: 1},message:"must be >= 1"};
 if(vErrors === null){
 vErrors = [err8];
@@ -10116,10 +10133,10 @@ errors++;
 }
 }
 }
-var valid5 = _errs24 === errors;
+var valid6 = _errs27 === errors;
 }
 else {
-var valid5 = true;
+var valid6 = true;
 }
 }
 }
@@ -10137,11 +10154,11 @@ vErrors.push(err9);
 errors++;
 }
 }
-var _valid0 = _errs16 === errors;
-valid3 = valid3 || _valid0;
-if(!valid3){
-const _errs26 = errors;
-if(data6 !== null){
+var _valid0 = _errs19 === errors;
+valid4 = valid4 || _valid0;
+if(!valid4){
+const _errs29 = errors;
+if(data7 !== null){
 const err10 = {instancePath:instancePath+"/profile",schemaPath:"#/properties/profile/anyOf/1/type",keyword:"type",params:{type: "null"},message:"must be null"};
 if(vErrors === null){
 vErrors = [err10];
@@ -10151,10 +10168,10 @@ vErrors.push(err10);
 }
 errors++;
 }
-var _valid0 = _errs26 === errors;
-valid3 = valid3 || _valid0;
+var _valid0 = _errs29 === errors;
+valid4 = valid4 || _valid0;
 }
-if(!valid3){
+if(!valid4){
 const err11 = {instancePath:instancePath+"/profile",schemaPath:"#/properties/profile/anyOf",keyword:"anyOf",params:{},message:"must match a schema in anyOf"};
 if(vErrors === null){
 vErrors = [err11];
@@ -10167,65 +10184,65 @@ validate271.errors = vErrors;
 return false;
 }
 else {
-errors = _errs15;
+errors = _errs18;
 if(vErrors !== null){
-if(_errs15){
-vErrors.length = _errs15;
+if(_errs18){
+vErrors.length = _errs18;
 }
 else {
 vErrors = null;
 }
 }
 }
-var valid0 = _errs14 === errors;
+var valid0 = _errs17 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.runtimeOrigin !== undefined){
-let data10 = data.runtimeOrigin;
-const _errs28 = errors;
-const _errs29 = errors;
-if(errors === _errs29){
-if(data10 && typeof data10 == "object" && !Array.isArray(data10)){
+let data11 = data.runtimeOrigin;
+const _errs31 = errors;
+const _errs32 = errors;
+if(errors === _errs32){
+if(data11 && typeof data11 == "object" && !Array.isArray(data11)){
 let missing3;
-if(((data10.sourceId === undefined) && (missing3 = "sourceId")) || ((data10.publisherId === undefined) && (missing3 = "publisherId"))){
+if(((data11.sourceId === undefined) && (missing3 = "sourceId")) || ((data11.publisherId === undefined) && (missing3 = "publisherId"))){
 validate271.errors = [{instancePath:instancePath+"/runtimeOrigin",schemaPath:"#/definitions/PluginOriginView/required",keyword:"required",params:{missingProperty: missing3},message:"must have required property '"+missing3+"'"}];
 return false;
 }
 else {
-const _errs31 = errors;
-for(const key3 in data10){
+const _errs34 = errors;
+for(const key3 in data11){
 if(!((key3 === "publisherId") || (key3 === "sourceId"))){
 validate271.errors = [{instancePath:instancePath+"/runtimeOrigin",schemaPath:"#/definitions/PluginOriginView/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key3},message:"must NOT have additional properties"}];
 return false;
 break;
 }
 }
-if(_errs31 === errors){
-if(data10.publisherId !== undefined){
-const _errs32 = errors;
-if(typeof data10.publisherId !== "string"){
+if(_errs34 === errors){
+if(data11.publisherId !== undefined){
+const _errs35 = errors;
+if(typeof data11.publisherId !== "string"){
 validate271.errors = [{instancePath:instancePath+"/runtimeOrigin/publisherId",schemaPath:"#/definitions/PluginOriginView/properties/publisherId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid7 = _errs32 === errors;
+var valid8 = _errs35 === errors;
 }
 else {
-var valid7 = true;
+var valid8 = true;
 }
-if(valid7){
-if(data10.sourceId !== undefined){
-const _errs34 = errors;
-if(typeof data10.sourceId !== "string"){
+if(valid8){
+if(data11.sourceId !== undefined){
+const _errs37 = errors;
+if(typeof data11.sourceId !== "string"){
 validate271.errors = [{instancePath:instancePath+"/runtimeOrigin/sourceId",schemaPath:"#/definitions/PluginOriginView/properties/sourceId/type",keyword:"type",params:{type: "string"},message:"must be string"}];
 return false;
 }
-var valid7 = _errs34 === errors;
+var valid8 = _errs37 === errors;
 }
 else {
-var valid7 = true;
+var valid8 = true;
 }
 }
 }
@@ -10236,19 +10253,19 @@ validate271.errors = [{instancePath:instancePath+"/runtimeOrigin",schemaPath:"#/
 return false;
 }
 }
-var valid0 = _errs28 === errors;
+var valid0 = _errs31 === errors;
 }
 else {
 var valid0 = true;
 }
 if(valid0){
 if(data.settingsRevision !== undefined){
-let data13 = data.settingsRevision;
-const _errs36 = errors;
-const _errs37 = errors;
-if(errors === _errs37){
-if(typeof data13 === "string"){
-if(!pattern0.test(data13)){
+let data14 = data.settingsRevision;
+const _errs39 = errors;
+const _errs40 = errors;
+if(errors === _errs40){
+if(typeof data14 === "string"){
+if(!pattern0.test(data14)){
 validate271.errors = [{instancePath:instancePath+"/settingsRevision",schemaPath:"#/definitions/UnsignedDecimal/pattern",keyword:"pattern",params:{pattern: "^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$"},message:"must match pattern \""+"^(0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|1844674407370955[0-0][0-9]{3}|18446744073709551[0-5][0-9]{2}|184467440737095516[0-0][0-9]{1}|1844674407370955161[0-4][0-9]{0}|18446744073709551615)$"+"\""}];
 return false;
 }
@@ -10258,10 +10275,11 @@ validate271.errors = [{instancePath:instancePath+"/settingsRevision",schemaPath:
 return false;
 }
 }
-var valid0 = _errs36 === errors;
+var valid0 = _errs39 === errors;
 }
 else {
 var valid0 = true;
+}
 }
 }
 }
@@ -10295,11 +10313,11 @@ return errors === 0;
 }
 
 export const validateResponseInventory = validate275;
-const schema306 = {"$id":"urn:tsumugi:ipc:plugins:responses:inventory","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/inventory"};
-const schema187 = {"additionalProperties":false,"description":"Installation and approval remain separate even when only one exists. These\nare metadata observations; Sealed and enabled are not runnable assertions.","properties":{"defaultsOffer":{"anyOf":[{"$ref":"#/definitions/PluginDefaultsOfferView"},{"type":"null"}]},"lastSettingsAction":{"type":["string","null"]},"nativeHostOffer":{"$ref":"#/definitions/PluginNativeHostOfferView"},"packageDecisions":{"items":{"$ref":"#/definitions/PluginPackageDecisionView"},"maxItems":128,"type":"array"},"packages":{"items":{"$ref":"#/definitions/PluginPackageView"},"maxItems":128,"type":"array"},"runtimeDecisions":{"items":{"$ref":"#/definitions/PluginRuntimeDecisionView"},"maxItems":128,"type":"array"},"runtimeOffers":{"items":{"$ref":"#/definitions/PluginRuntimeOfferView"},"maxItems":1,"type":"array"},"runtimes":{"items":{"$ref":"#/definitions/PluginRuntimeView"},"maxItems":128,"type":"array"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"},"uninstallations":{"items":{"$ref":"#/definitions/PluginUninstallView"},"maxItems":128,"type":"array"}},"required":["settingsRevision","lastSettingsAction","packages","runtimes","uninstallations","packageDecisions","runtimeDecisions","runtimeOffers","nativeHostOffer","defaultsOffer"],"type":"object"};
-const schema188 = {"additionalProperties":false,"properties":{"availability":{"$ref":"#/definitions/DefaultsAvailability"},"id":{"type":"string"},"packages":{"items":{"$ref":"#/definitions/PluginBundledPackageView"},"maxItems":128,"type":"array"},"runtimeEnvironmentDigest":{"type":"string"},"selectionDigest":{"type":"string"}},"required":["id","selectionDigest","packages","runtimeEnvironmentDigest","availability"],"type":"object"};
-const schema189 = {"enum":["available","resources-unavailable","runtime-unavailable"],"type":"string"};
-const schema190 = {"additionalProperties":false,"properties":{"byteCount":{"$ref":"#/definitions/UnsignedDecimal"},"displayName":{"type":"string"},"fileCount":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["displayName","plugin","packageDigest","fileCount","byteCount"],"type":"object"};
+const schema308 = {"$id":"urn:tsumugi:ipc:plugins:responses:inventory","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/inventory"};
+const schema188 = {"additionalProperties":false,"description":"Installation and approval remain separate even when only one exists. These\nare metadata observations; Sealed and enabled are not runnable assertions.","properties":{"defaultsOffer":{"anyOf":[{"$ref":"#/definitions/PluginDefaultsOfferView"},{"type":"null"}]},"lastSettingsAction":{"type":["string","null"]},"nativeHostOffer":{"$ref":"#/definitions/PluginNativeHostOfferView"},"packageDecisions":{"items":{"$ref":"#/definitions/PluginPackageDecisionView"},"maxItems":128,"type":"array"},"packages":{"items":{"$ref":"#/definitions/PluginPackageView"},"maxItems":128,"type":"array"},"runtimeDecisions":{"items":{"$ref":"#/definitions/PluginRuntimeDecisionView"},"maxItems":128,"type":"array"},"runtimeOffers":{"items":{"$ref":"#/definitions/PluginRuntimeOfferView"},"maxItems":1,"type":"array"},"runtimes":{"items":{"$ref":"#/definitions/PluginRuntimeView"},"maxItems":128,"type":"array"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"},"uninstallations":{"items":{"$ref":"#/definitions/PluginUninstallView"},"maxItems":128,"type":"array"}},"required":["settingsRevision","lastSettingsAction","packages","runtimes","uninstallations","packageDecisions","runtimeDecisions","runtimeOffers","nativeHostOffer","defaultsOffer"],"type":"object"};
+const schema189 = {"additionalProperties":false,"properties":{"availability":{"$ref":"#/definitions/DefaultsAvailability"},"id":{"type":"string"},"packages":{"items":{"$ref":"#/definitions/PluginBundledPackageView"},"maxItems":128,"type":"array"},"runtimeEnvironmentDigest":{"type":"string"},"selectionDigest":{"type":"string"}},"required":["id","selectionDigest","packages","runtimeEnvironmentDigest","availability"],"type":"object"};
+const schema190 = {"enum":["available","resources-unavailable","runtime-unavailable"],"type":"string"};
+const schema191 = {"additionalProperties":false,"properties":{"byteCount":{"$ref":"#/definitions/UnsignedDecimal"},"displayName":{"type":"string"},"fileCount":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["displayName","plugin","packageDigest","fileCount","byteCount"],"type":"object"};
 
 function validate158(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -10510,7 +10528,7 @@ validate157.errors = [{instancePath:instancePath+"/availability",schemaPath:"#/d
 return false;
 }
 if(!(((data0 === "available") || (data0 === "resources-unavailable")) || (data0 === "runtime-unavailable"))){
-validate157.errors = [{instancePath:instancePath+"/availability",schemaPath:"#/definitions/DefaultsAvailability/enum",keyword:"enum",params:{allowedValues: schema189.enum},message:"must be equal to one of the allowed values"}];
+validate157.errors = [{instancePath:instancePath+"/availability",schemaPath:"#/definitions/DefaultsAvailability/enum",keyword:"enum",params:{allowedValues: schema190.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -10606,8 +10624,8 @@ validate157.errors = vErrors;
 return errors === 0;
 }
 
-const schema193 = {"description":"Current application observation, independent of an installation or approval.","oneOf":[{"additionalProperties":false,"properties":{"availability":{"const":"available","type":"string"},"environment":{"$ref":"#/definitions/NativeHostEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"}},"required":["availability","environment","environmentDigest","origin"],"type":"object"},{"additionalProperties":false,"properties":{"availability":{"const":"unavailable","type":"string"},"reason":{"$ref":"#/definitions/NativeHostUnavailableReason"}},"required":["availability","reason"],"type":"object"}]};
-const schema195 = {"enum":["unsupported-platform","identity-unavailable"],"type":"string"};
+const schema194 = {"description":"Current application observation, independent of an installation or approval.","oneOf":[{"additionalProperties":false,"properties":{"availability":{"const":"available","type":"string"},"environment":{"$ref":"#/definitions/NativeHostEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"}},"required":["availability","environment","environmentDigest","origin"],"type":"object"},{"additionalProperties":false,"properties":{"availability":{"const":"unavailable","type":"string"},"reason":{"$ref":"#/definitions/NativeHostUnavailableReason"}},"required":["availability","reason"],"type":"object"}]};
+const schema196 = {"enum":["unsupported-platform","identity-unavailable"],"type":"string"};
 
 function validate161(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -10887,7 +10905,7 @@ vErrors.push(err15);
 errors++;
 }
 if(!((data7 === "unsupported-platform") || (data7 === "identity-unavailable"))){
-const err16 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/NativeHostUnavailableReason/enum",keyword:"enum",params:{allowedValues: schema195.enum},message:"must be equal to one of the allowed values"};
+const err16 = {instancePath:instancePath+"/reason",schemaPath:"#/definitions/NativeHostUnavailableReason/enum",keyword:"enum",params:{allowedValues: schema196.enum},message:"must be equal to one of the allowed values"};
 if(vErrors === null){
 vErrors = [err16];
 }
@@ -10954,7 +10972,7 @@ validate161.errors = vErrors;
 return errors === 0;
 }
 
-const schema196 = {"additionalProperties":false,"properties":{"enabled":{"type":"boolean"},"origin":{"$ref":"#/definitions/PluginOriginView"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","packageDigest","origin","enabled"],"type":"object"};
+const schema197 = {"additionalProperties":false,"properties":{"enabled":{"type":"boolean"},"origin":{"$ref":"#/definitions/PluginOriginView"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","packageDigest","origin","enabled"],"type":"object"};
 
 function validate164(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -11145,8 +11163,8 @@ validate164.errors = vErrors;
 return errors === 0;
 }
 
-const schema199 = {"additionalProperties":false,"properties":{"origin":{"$ref":"#/definitions/PluginOriginView"},"originalInstallAction":{"type":"string"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"},"state":{"$ref":"#/definitions/PluginObjectState"}},"required":["originalInstallAction","plugin","packageDigest","origin","state"],"type":"object"};
-const schema202 = {"enum":["sealed","recovery-required"],"type":"string"};
+const schema200 = {"additionalProperties":false,"properties":{"origin":{"$ref":"#/definitions/PluginOriginView"},"originalInstallAction":{"type":"string"},"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"},"state":{"$ref":"#/definitions/PluginObjectState"}},"required":["originalInstallAction","plugin","packageDigest","origin","state"],"type":"object"};
+const schema203 = {"enum":["sealed","recovery-required"],"type":"string"};
 
 function validate166(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -11331,7 +11349,7 @@ validate166.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((data9 === "sealed") || (data9 === "recovery-required"))){
-validate166.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/PluginObjectState/enum",keyword:"enum",params:{allowedValues: schema202.enum},message:"must be equal to one of the allowed values"}];
+validate166.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/PluginObjectState/enum",keyword:"enum",params:{allowedValues: schema203.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs24 === errors;
@@ -11355,7 +11373,7 @@ validate166.errors = vErrors;
 return errors === 0;
 }
 
-const schema203 = {"additionalProperties":false,"properties":{"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"}},"required":["environment","environmentDigest","origin"],"type":"object"};
+const schema204 = {"additionalProperties":false,"properties":{"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"}},"required":["environment","environmentDigest","origin"],"type":"object"};
 
 function validate168(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -11473,8 +11491,8 @@ validate168.errors = vErrors;
 return errors === 0;
 }
 
-const schema205 = {"additionalProperties":false,"properties":{"availability":{"$ref":"#/definitions/RuntimeAvailability"},"byteCount":{"$ref":"#/definitions/UnsignedDecimal"},"environment":{"$ref":"#/definitions/RuntimeEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"fileCount":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"id":{"type":"string"},"minimumSystemVersion":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"}},"required":["id","environment","environmentDigest","origin","minimumSystemVersion","fileCount","byteCount","availability"],"type":"object"};
-const schema206 = {"enum":["available","unsupported-platform","system-too-old","system-version-unknown","resources-unavailable"],"type":"string"};
+const schema206 = {"additionalProperties":false,"properties":{"availability":{"$ref":"#/definitions/RuntimeAvailability"},"byteCount":{"$ref":"#/definitions/UnsignedDecimal"},"environment":{"$ref":"#/definitions/RuntimeEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"fileCount":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"id":{"type":"string"},"minimumSystemVersion":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"}},"required":["id","environment","environmentDigest","origin","minimumSystemVersion","fileCount","byteCount","availability"],"type":"object"};
+const schema207 = {"enum":["available","unsupported-platform","system-too-old","system-version-unknown","resources-unavailable"],"type":"string"};
 
 function validate171(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -11504,7 +11522,7 @@ validate171.errors = [{instancePath:instancePath+"/availability",schemaPath:"#/d
 return false;
 }
 if(!(((((data0 === "available") || (data0 === "unsupported-platform")) || (data0 === "system-too-old")) || (data0 === "system-version-unknown")) || (data0 === "resources-unavailable"))){
-validate171.errors = [{instancePath:instancePath+"/availability",schemaPath:"#/definitions/RuntimeAvailability/enum",keyword:"enum",params:{allowedValues: schema206.enum},message:"must be equal to one of the allowed values"}];
+validate171.errors = [{instancePath:instancePath+"/availability",schemaPath:"#/definitions/RuntimeAvailability/enum",keyword:"enum",params:{allowedValues: schema207.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs2 === errors;
@@ -11687,7 +11705,7 @@ validate171.errors = vErrors;
 return errors === 0;
 }
 
-const schema209 = {"additionalProperties":false,"properties":{"environment":{"$ref":"#/definitions/RuntimeEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"},"state":{"$ref":"#/definitions/PluginObjectState"}},"required":["environment","environmentDigest","origin","state"],"type":"object"};
+const schema210 = {"additionalProperties":false,"properties":{"environment":{"$ref":"#/definitions/RuntimeEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"origin":{"$ref":"#/definitions/PluginOriginView"},"state":{"$ref":"#/definitions/PluginObjectState"}},"required":["environment","environmentDigest","origin","state"],"type":"object"};
 
 function validate174(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -11800,7 +11818,7 @@ validate174.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((data5 === "sealed") || (data5 === "recovery-required"))){
-validate174.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/PluginObjectState/enum",keyword:"enum",params:{allowedValues: schema202.enum},message:"must be equal to one of the allowed values"}];
+validate174.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/PluginObjectState/enum",keyword:"enum",params:{allowedValues: schema203.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs13 === errors;
@@ -11823,7 +11841,7 @@ validate174.errors = vErrors;
 return errors === 0;
 }
 
-const schema213 = {"additionalProperties":false,"description":"An observation of the original retained removal journal. Sealed metadata is\nnot confirmation of an uncertain command's filesystem durability.","properties":{"actionId":{"type":"string"},"installation":{"$ref":"#/definitions/PluginPackageView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"},"state":{"$ref":"#/definitions/PluginObjectState"}},"required":["actionId","settingsRevision","installation","state"],"type":"object"};
+const schema214 = {"additionalProperties":false,"description":"An observation of the original retained removal journal. Sealed metadata is\nnot confirmation of an uncertain command's filesystem durability.","properties":{"actionId":{"type":"string"},"installation":{"$ref":"#/definitions/PluginPackageView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"},"state":{"$ref":"#/definitions/PluginObjectState"}},"required":["actionId","settingsRevision","installation","state"],"type":"object"};
 
 function validate177(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -11899,7 +11917,7 @@ validate177.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definiti
 return false;
 }
 if(!((data3 === "sealed") || (data3 === "recovery-required"))){
-validate177.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/PluginObjectState/enum",keyword:"enum",params:{allowedValues: schema202.enum},message:"must be equal to one of the allowed values"}];
+validate177.errors = [{instancePath:instancePath+"/state",schemaPath:"#/definitions/PluginObjectState/enum",keyword:"enum",params:{allowedValues: schema203.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs8 === errors;
@@ -11936,7 +11954,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema187.properties, key0))){
+if(!(func2.call(schema188.properties, key0))){
 validate276.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -12003,7 +12021,7 @@ if(data.lastSettingsAction !== undefined){
 let data1 = data.lastSettingsAction;
 const _errs7 = errors;
 if((typeof data1 !== "string") && (data1 !== null)){
-validate276.errors = [{instancePath:instancePath+"/lastSettingsAction",schemaPath:"#/properties/lastSettingsAction/type",keyword:"type",params:{type: schema187.properties.lastSettingsAction.type},message:"must be string,null"}];
+validate276.errors = [{instancePath:instancePath+"/lastSettingsAction",schemaPath:"#/properties/lastSettingsAction/type",keyword:"type",params:{type: schema188.properties.lastSettingsAction.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs7 === errors;
@@ -12296,8 +12314,8 @@ return errors === 0;
 }
 
 export const validateResponsePackage = validate286;
-const schema309 = {"$id":"urn:tsumugi:ipc:plugins:responses:package","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/package"};
-const schema216 = {"additionalProperties":false,"properties":{"enabled":{"type":"boolean"},"manifest":{"$ref":"#/definitions/PluginManifest"},"packageDigest":{"type":"string"}},"required":["manifest","packageDigest","enabled"],"type":"object"};
+const schema311 = {"$id":"urn:tsumugi:ipc:plugins:responses:package","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/package"};
+const schema217 = {"additionalProperties":false,"properties":{"enabled":{"type":"boolean"},"manifest":{"$ref":"#/definitions/PluginManifest"},"packageDigest":{"type":"string"}},"required":["manifest","packageDigest","enabled"],"type":"object"};
 
 function validate287(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -12382,7 +12400,7 @@ return errors === 0;
 }
 
 export const validateResponseRuntime = validate290;
-const schema311 = {"$id":"urn:tsumugi:ipc:plugins:responses:runtime","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/runtime"};
+const schema313 = {"$id":"urn:tsumugi:ipc:plugins:responses:runtime","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/runtime"};
 
 function validate291(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -12661,11 +12679,11 @@ return errors === 0;
 }
 
 export const validateResponseSource = validate294;
-const schema316 = {"$id":"urn:tsumugi:ipc:plugins:responses:source","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/source"};
-const schema217 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/SourceImportDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"extractor":{"$ref":"#/definitions/CapabilityBinding"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"review":{"$ref":"#/definitions/ReviewBinding"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","declaration","extractor","checker","review","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
-const schema218 = {"additionalProperties":false,"description":"All listed materials are required, relative to one user-selected directory.\nThis first contract supports fixed files, not globs or discovery programs.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
-const schema219 = {"additionalProperties":false,"properties":{"logicalPath":{"type":"string"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"role":{"type":"string"}},"required":["logicalPath","role","maxBytes"],"type":"object"};
-const schema221 = {"additionalProperties":false,"description":"Captured by the trusted policy owner before a proposal is received. Only\nthese exact block schemas contribute opaque bytes to source revisions.","properties":{"profile":{"$ref":"#/definitions/ContractRef"},"revisionBasis":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["profile","revisionBasis"],"type":"object"};
+const schema318 = {"$id":"urn:tsumugi:ipc:plugins:responses:source","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/source"};
+const schema218 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/SourceImportDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"extractor":{"$ref":"#/definitions/CapabilityBinding"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"review":{"$ref":"#/definitions/ReviewBinding"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","declaration","extractor","checker","review","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema219 = {"additionalProperties":false,"description":"All listed materials are required, relative to one user-selected directory.\nThis first contract supports fixed files, not globs or discovery programs.","properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"materials":{"items":{"$ref":"#/definitions/SourceMaterialDeclaration"},"type":"array"},"profile":{"$ref":"#/definitions/ContractRef"},"reviewResource":{"description":"Exact immutable Resource whose domain rules are adopted with this source.","type":"string"},"revisionPolicy":{"$ref":"#/definitions/SourceRevisionPolicy"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","materials","extractor","checker","reviewResource","revisionPolicy","semanticRules"],"type":"object"};
+const schema220 = {"additionalProperties":false,"properties":{"logicalPath":{"type":"string"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"role":{"type":"string"}},"required":["logicalPath","role","maxBytes"],"type":"object"};
+const schema222 = {"additionalProperties":false,"description":"Captured by the trusted policy owner before a proposal is received. Only\nthese exact block schemas contribute opaque bytes to source revisions.","properties":{"profile":{"$ref":"#/definitions/ContractRef"},"revisionBasis":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["profile","revisionBasis"],"type":"object"};
 
 function validate188(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13347,9 +13365,9 @@ validate187.errors = vErrors;
 return errors === 0;
 }
 
-const schema226 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/ReviewDeclaration"}},"required":["declaration","checker"],"type":"object"};
-const schema227 = {"additionalProperties":false,"properties":{"checker":{"type":"string"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/ReviewRuleDeclaration"},"type":"array"}},"required":["profile","checker","rules"],"type":"object"};
-const schema229 = {"additionalProperties":false,"description":"A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.","properties":{"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"}},"required":["rule","requiresTranslation"],"type":"object"};
+const schema227 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/ReviewDeclaration"}},"required":["declaration","checker"],"type":"object"};
+const schema228 = {"additionalProperties":false,"properties":{"checker":{"type":"string"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/ReviewRuleDeclaration"},"type":"array"}},"required":["profile","checker","rules"],"type":"object"};
+const schema230 = {"additionalProperties":false,"description":"A rule may permit N/A only for a captured scope with no selected translation.\nSource-only rules must still run for a source fallback. Domain findings in\nthis contract are mandatory and cannot acquire ordinary issue waivers.","properties":{"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"}},"required":["rule","requiresTranslation"],"type":"object"};
 
 function validate196(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -13746,7 +13764,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema217.properties, key0))){
+if(!(func2.call(schema218.properties, key0))){
 validate295.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -14011,12 +14029,12 @@ return errors === 0;
 }
 
 export const validateResponseTextReview = validate302;
-const schema321 = {"$id":"urn:tsumugi:ipc:plugins:responses:textReview","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/textReview"};
-const schema233 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","binding","resourcePins","rules","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
-const schema234 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TextReviewDeclaration"},"resources":{"items":{"$ref":"#/definitions/TextReviewResourceBinding"},"type":"array"}},"required":["declaration","checker","resources"],"type":"object"};
-const schema235 = {"additionalProperties":false,"description":"One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.","properties":{"checker":{"type":"string"},"disposition":{"$ref":"#/definitions/TextReviewDisposition"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/TextReviewRuleDeclaration"},"type":"array"},"supportingResources":{"items":{"type":"string"},"type":"array"}},"required":["profile","checker","disposition","supportingResources","rules"],"type":"object"};
-const schema236 = {"description":"Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.","enum":["advisory"],"type":"string"};
-const schema238 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"},"title":{"type":"string"}},"required":["rule","requiresTranslation","title","description"],"type":"object"};
+const schema323 = {"$id":"urn:tsumugi:ipc:plugins:responses:textReview","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/textReview"};
+const schema234 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/TextReviewBinding"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"resourcePins":{"items":{"$ref":"#/definitions/TextReviewResourcePin"},"type":"array"},"rules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","binding","resourcePins","rules","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema235 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TextReviewDeclaration"},"resources":{"items":{"$ref":"#/definitions/TextReviewResourceBinding"},"type":"array"}},"required":["declaration","checker","resources"],"type":"object"};
+const schema236 = {"additionalProperties":false,"description":"One provider's available rules. An invocation must use an explicitly chosen\nnonempty subset; installation and a matching spelling do not select rules.","properties":{"checker":{"type":"string"},"disposition":{"$ref":"#/definitions/TextReviewDisposition"},"profile":{"$ref":"#/definitions/ContractRef"},"rules":{"items":{"$ref":"#/definitions/TextReviewRuleDeclaration"},"type":"array"},"supportingResources":{"items":{"type":"string"},"type":"array"}},"required":["profile","checker","disposition","supportingResources","rules"],"type":"object"};
+const schema237 = {"description":"Selecting a check is not adopting its resource or requiring its findings.\nBlocking checks continue to use the original mandatory Review contract.","enum":["advisory"],"type":"string"};
+const schema239 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"requiresTranslation":{"type":"boolean"},"rule":{"$ref":"#/definitions/ContractRef"},"title":{"type":"string"}},"required":["rule","requiresTranslation","title","description"],"type":"object"};
 
 function validate205(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -14231,7 +14249,7 @@ validate204.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/de
 return false;
 }
 if(!(data1 === "advisory")){
-validate204.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/definitions/TextReviewDisposition/enum",keyword:"enum",params:{allowedValues: schema236.enum},message:"must be equal to one of the allowed values"}];
+validate204.errors = [{instancePath:instancePath+"/disposition",schemaPath:"#/definitions/TextReviewDisposition/enum",keyword:"enum",params:{allowedValues: schema237.enum},message:"must be equal to one of the allowed values"}];
 return false;
 }
 var valid0 = _errs4 === errors;
@@ -14417,7 +14435,7 @@ validate204.errors = vErrors;
 return errors === 0;
 }
 
-const schema240 = {"additionalProperties":false,"description":"A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
+const schema241 = {"additionalProperties":false,"description":"A declared Resource contribution in the exact same package as the checker.\nThis mirrors Resource metadata, without coupling review to tool declarations.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
 
 function validate208(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -14653,7 +14671,7 @@ validate202.errors = vErrors;
 return errors === 0;
 }
 
-const schema243 = {"additionalProperties":false,"description":"Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"},"sha256":{"type":"string"}},"required":["contributionId","schema","sha256"],"type":"object"};
+const schema244 = {"additionalProperties":false,"description":"Exact package Resource bytes captured by the Host, never a plugin's mutable\nlookup or a claim that the referenced resource has been adopted by a project.","properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"},"sha256":{"type":"string"}},"required":["contributionId","schema","sha256"],"type":"object"};
 
 function validate212(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -14828,7 +14846,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema233.properties, key0))){
+if(!(func2.call(schema234.properties, key0))){
 validate303.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -15206,10 +15224,10 @@ return errors === 0;
 }
 
 export const validateResponseTextReviews = validate308;
-const schema327 = {"$id":"urn:tsumugi:ipc:plugins:responses:textReviews","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/textReviews"};
-const schema248 = {"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/PluginTextReviewListEntry"},"type":"array"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","entries"],"type":"object"};
-const schema249 = {"additionalProperties":false,"description":"A missing environment is an observed unavailable Resource, never a synthetic\ndigest or a selectable request. An existing selection keeps its exact digest.","properties":{"availability":{"$ref":"#/definitions/PluginTextReviewAvailability"},"environmentDigest":{"type":["string","null"]},"package":{"$ref":"#/definitions/PluginPackageRequest"},"resourceId":{"type":"string"}},"required":["package","resourceId","environmentDigest","availability"],"type":"object"};
-const schema250 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"ready","type":"string"},"view":{"$ref":"#/definitions/PluginTextReviewView"}},"required":["kind","view"],"type":"object"},{"additionalProperties":false,"properties":{"error":{"$ref":"#/definitions/CommandError"},"kind":{"const":"unavailable","type":"string"}},"required":["kind","error"],"type":"object"}]};
+const schema329 = {"$id":"urn:tsumugi:ipc:plugins:responses:textReviews","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/textReviews"};
+const schema249 = {"additionalProperties":false,"properties":{"entries":{"items":{"$ref":"#/definitions/PluginTextReviewListEntry"},"type":"array"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","entries"],"type":"object"};
+const schema250 = {"additionalProperties":false,"description":"A missing environment is an observed unavailable Resource, never a synthetic\ndigest or a selectable request. An existing selection keeps its exact digest.","properties":{"availability":{"$ref":"#/definitions/PluginTextReviewAvailability"},"environmentDigest":{"type":["string","null"]},"package":{"$ref":"#/definitions/PluginPackageRequest"},"resourceId":{"type":"string"}},"required":["package","resourceId","environmentDigest","availability"],"type":"object"};
+const schema251 = {"oneOf":[{"additionalProperties":false,"properties":{"kind":{"const":"ready","type":"string"},"view":{"$ref":"#/definitions/PluginTextReviewView"}},"required":["kind","view"],"type":"object"},{"additionalProperties":false,"properties":{"error":{"$ref":"#/definitions/CommandError"},"kind":{"const":"unavailable","type":"string"}},"required":["kind","error"],"type":"object"}]};
 
 function validate201(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -15224,7 +15242,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema233.properties, key0))){
+if(!(func2.call(schema234.properties, key0))){
 validate201.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;
@@ -16229,7 +16247,7 @@ validate217.errors = vErrors;
 return errors === 0;
 }
 
-const schema251 = {"additionalProperties":false,"properties":{"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","packageDigest"],"type":"object"};
+const schema252 = {"additionalProperties":false,"properties":{"packageDigest":{"type":"string"},"plugin":{"$ref":"#/definitions/PluginIdentity"}},"required":["plugin","packageDigest"],"type":"object"};
 
 function validate221(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -16384,7 +16402,7 @@ if(data.environmentDigest !== undefined){
 let data1 = data.environmentDigest;
 const _errs3 = errors;
 if((typeof data1 !== "string") && (data1 !== null)){
-validate216.errors = [{instancePath:instancePath+"/environmentDigest",schemaPath:"#/properties/environmentDigest/type",keyword:"type",params:{type: schema249.properties.environmentDigest.type},message:"must be string,null"}];
+validate216.errors = [{instancePath:instancePath+"/environmentDigest",schemaPath:"#/properties/environmentDigest/type",keyword:"type",params:{type: schema250.properties.environmentDigest.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs3 === errors;
@@ -16530,14 +16548,14 @@ return errors === 0;
 }
 
 export const validateResponseTool = validate312;
-const schema330 = {"$id":"urn:tsumugi:ipc:plugins:responses:tool","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/tool"};
-const schema254 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/CapabilityToolBinding"},"componentScope":{"$ref":"#/definitions/ComponentScope"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","binding","componentScope","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
-const schema255 = {"additionalProperties":false,"description":"A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.","properties":{"capability":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/CapabilityToolDeclaration"},"resources":{"items":{"$ref":"#/definitions/ToolResourceBinding"},"type":"array"}},"required":["declaration","capability","resources"],"type":"object"};
-const schema256 = {"additionalProperties":false,"description":"A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.","properties":{"capabilityId":{"type":"string"},"description":{"type":"string"},"name":{"type":"string"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"query":{"anyOf":[{"$ref":"#/definitions/ToolQueryDeclaration"},{"type":"null"}],"description":"Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."},"skill":{"type":["string","null"]},"supportingResources":{"items":{"type":"string"},"type":"array"},"title":{"type":"string"}},"required":["name","title","description","capabilityId","profile","supportingResources","skill"],"type":"object"};
-const schema258 = {"additionalProperties":false,"properties":{"inputSchema":{"$ref":"#/definitions/ContractRef"},"inputTemplate":true,"maxTextBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"output":{"$ref":"#/definitions/ToolQueryOutput"},"outputSchema":{"$ref":"#/definitions/ContractRef"},"selections":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"Explicit senses or categories. Matching text alone does not select them."},"target":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"One explicit target option; no host-side locale or value normalization."},"textPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["inputSchema","outputSchema","inputTemplate","textPath","maxTextBytes","target","selections","output"],"type":"object"};
-const schema262 = {"anyOf":[{"type":"string"},{"maximum":1999,"minimum":0,"type":"integer"}]};
-const schema260 = {"additionalProperties":false,"properties":{"columns":{"items":{"$ref":"#/definitions/ToolQueryColumn"},"type":"array"},"emptyDescription":{"type":"string"},"entriesPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"},"maxEntries":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["entriesPath","columns","maxEntries","emptyDescription"],"type":"object"};
-const schema261 = {"additionalProperties":false,"properties":{"label":{"type":"string"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","path"],"type":"object"};
+const schema332 = {"$id":"urn:tsumugi:ipc:plugins:responses:tool","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/tool"};
+const schema255 = {"additionalProperties":false,"properties":{"binding":{"$ref":"#/definitions/CapabilityToolBinding"},"componentScope":{"$ref":"#/definitions/ComponentScope"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","binding","componentScope","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema256 = {"additionalProperties":false,"description":"A fixed selection, not an execution grant or a trusted model instruction.\nDeserialized claims must be rebound against the actual captured package.","properties":{"capability":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/CapabilityToolDeclaration"},"resources":{"items":{"$ref":"#/definitions/ToolResourceBinding"},"type":"array"}},"required":["declaration","capability","resources"],"type":"object"};
+const schema257 = {"additionalProperties":false,"description":"A package-local adapter to one declared, read-only capability. Input/output\ncontracts, limits and permissions are taken from that capability, rather\nthan repeated in a model-specific descriptor. A profile is an exact choice.","properties":{"capabilityId":{"type":"string"},"description":{"type":"string"},"name":{"type":"string"},"profile":{"anyOf":[{"$ref":"#/definitions/ContractRef"},{"type":"null"}]},"query":{"anyOf":[{"$ref":"#/definitions/ToolQueryDeclaration"},{"type":"null"}],"description":"Optional bounded semantic text-query presentation. It grants no access\nbeyond the original capability and remains untrusted package data."},"skill":{"type":["string","null"]},"supportingResources":{"items":{"type":"string"},"type":"array"},"title":{"type":"string"}},"required":["name","title","description","capabilityId","profile","supportingResources","skill"],"type":"object"};
+const schema259 = {"additionalProperties":false,"properties":{"inputSchema":{"$ref":"#/definitions/ContractRef"},"inputTemplate":true,"maxTextBytes":{"maximum":4294967295,"minimum":1,"type":"integer"},"output":{"$ref":"#/definitions/ToolQueryOutput"},"outputSchema":{"$ref":"#/definitions/ContractRef"},"selections":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"Explicit senses or categories. Matching text alone does not select them."},"target":{"allOf":[{"$ref":"#/definitions/ToolQuerySelection"}],"description":"One explicit target option; no host-side locale or value normalization."},"textPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["inputSchema","outputSchema","inputTemplate","textPath","maxTextBytes","target","selections","output"],"type":"object"};
+const schema263 = {"anyOf":[{"type":"string"},{"maximum":1999,"minimum":0,"type":"integer"}]};
+const schema261 = {"additionalProperties":false,"properties":{"columns":{"items":{"$ref":"#/definitions/ToolQueryColumn"},"type":"array"},"emptyDescription":{"type":"string"},"entriesPath":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"},"maxEntries":{"maximum":4294967295,"minimum":1,"type":"integer"}},"required":["entriesPath","columns","maxEntries","emptyDescription"],"type":"object"};
+const schema262 = {"additionalProperties":false,"properties":{"label":{"type":"string"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","path"],"type":"object"};
 
 function validate231(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -16899,8 +16917,8 @@ validate230.errors = vErrors;
 return errors === 0;
 }
 
-const schema265 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"maxSelected":{"maximum":4294967295,"minimum":1,"type":"integer"},"minSelected":{"maximum":64,"minimum":0,"type":"integer"},"options":{"items":{"$ref":"#/definitions/ToolQueryOption"},"type":"array"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","description","path","options","minSelected","maxSelected"],"type":"object"};
-const schema266 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"value":{"type":"string"}},"required":["value","label","description"],"type":"object"};
+const schema266 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"maxSelected":{"maximum":4294967295,"minimum":1,"type":"integer"},"minSelected":{"maximum":64,"minimum":0,"type":"integer"},"options":{"items":{"$ref":"#/definitions/ToolQueryOption"},"type":"array"},"path":{"items":{"$ref":"#/definitions/ToolQueryPathPart"},"type":"array"}},"required":["label","description","path","options","minSelected","maxSelected"],"type":"object"};
+const schema267 = {"additionalProperties":false,"properties":{"description":{"type":"string"},"label":{"type":"string"},"value":{"type":"string"}},"required":["value","label","description"],"type":"object"};
 
 function validate234(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -17945,7 +17963,7 @@ if(data.skill !== undefined){
 let data8 = data.skill;
 const _errs27 = errors;
 if((typeof data8 !== "string") && (data8 !== null)){
-validate228.errors = [{instancePath:instancePath+"/skill",schemaPath:"#/properties/skill/type",keyword:"type",params:{type: schema256.properties.skill.type},message:"must be string,null"}];
+validate228.errors = [{instancePath:instancePath+"/skill",schemaPath:"#/properties/skill/type",keyword:"type",params:{type: schema257.properties.skill.type},message:"must be string,null"}];
 return false;
 }
 var valid0 = _errs27 === errors;
@@ -18014,7 +18032,7 @@ validate228.errors = vErrors;
 return errors === 0;
 }
 
-const schema269 = {"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
+const schema270 = {"additionalProperties":false,"properties":{"contributionId":{"type":"string"},"schema":{"$ref":"#/definitions/ContractRef"}},"required":["contributionId","schema"],"type":"object"};
 
 function validate239(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -18508,10 +18526,10 @@ return errors === 0;
 }
 
 export const validateResponseTranslation = validate317;
-const schema336 = {"$id":"urn:tsumugi:ipc:plugins:responses:translation","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/translation"};
-const schema275 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TranslationImportDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"extractor":{"$ref":"#/definitions/CapabilityBinding"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","declaration","extractor","checker","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
-const schema276 = {"additionalProperties":false,"properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"material":{"$ref":"#/definitions/TranslationMaterialDeclaration"},"profile":{"$ref":"#/definitions/ContractRef"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","material","extractor","checker","semanticRules"],"type":"object"};
-const schema277 = {"additionalProperties":false,"description":"Metadata describing one selected file relative to an explicitly granted\ndirectory. No glob, executable discovery or filesystem authority is implied.","properties":{"extension":{"type":"string"},"logicalDirectory":{"type":"string"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"role":{"type":"string"}},"required":["logicalDirectory","extension","role","maxBytes"],"type":"object"};
+const schema338 = {"$id":"urn:tsumugi:ipc:plugins:responses:translation","$ref":"urn:tsumugi:ipc:plugins:responses#/properties/translation"};
+const schema276 = {"additionalProperties":false,"properties":{"checker":{"$ref":"#/definitions/CapabilityBinding"},"declaration":{"$ref":"#/definitions/TranslationImportDeclaration"},"environment":{"$ref":"#/definitions/ExecutionEnvironmentDescriptor"},"environmentDigest":{"type":"string"},"extractor":{"$ref":"#/definitions/CapabilityBinding"},"packageOrigin":{"$ref":"#/definitions/PluginOriginView"},"resourceId":{"type":"string"},"runtimeOrigin":{"$ref":"#/definitions/PluginOriginView"},"settingsRevision":{"$ref":"#/definitions/UnsignedDecimal"}},"required":["settingsRevision","resourceId","declaration","extractor","checker","packageOrigin","environment","environmentDigest","runtimeOrigin"],"type":"object"};
+const schema277 = {"additionalProperties":false,"properties":{"checker":{"type":"string"},"displayName":{"type":"string"},"extractor":{"type":"string"},"material":{"$ref":"#/definitions/TranslationMaterialDeclaration"},"profile":{"$ref":"#/definitions/ContractRef"},"semanticRules":{"items":{"$ref":"#/definitions/ContractRef"},"type":"array"}},"required":["displayName","profile","material","extractor","checker","semanticRules"],"type":"object"};
+const schema278 = {"additionalProperties":false,"description":"Metadata describing one selected file relative to an explicitly granted\ndirectory. No glob, executable discovery or filesystem authority is implied.","properties":{"extension":{"type":"string"},"logicalDirectory":{"type":"string"},"maxBytes":{"format":"uint32","maximum":4294967295,"minimum":0,"type":"integer"},"role":{"type":"string"}},"required":["logicalDirectory","extension","role","maxBytes"],"type":"object"};
 
 function validate246(data, {instancePath="", parentData, parentDataProperty, rootData=data}={}){
 let vErrors = null;
@@ -18921,7 +18939,7 @@ return false;
 else {
 const _errs1 = errors;
 for(const key0 in data){
-if(!(func2.call(schema275.properties, key0))){
+if(!(func2.call(schema276.properties, key0))){
 validate318.errors = [{instancePath,schemaPath:"#/additionalProperties",keyword:"additionalProperties",params:{additionalProperty: key0},message:"must NOT have additional properties"}];
 return false;
 break;

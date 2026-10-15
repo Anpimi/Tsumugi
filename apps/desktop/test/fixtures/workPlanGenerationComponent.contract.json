@@ -130,7 +130,8 @@
       "runtimeOrigin": {
         "sourceId": "application-bundle",
         "publisherId": "application-build"
-      }
+      },
+      "componentScope": "project"
     },
     "generation": {
       "taskId": "60000000-0000-4000-8000-000000000013",

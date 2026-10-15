@@ -22,6 +22,20 @@ async function opened() {
   return openWorkPlanAgent(agentFixture.requests.open, agentFixture.responses.scope.scope, captured.tools.entries);
 }
 
+it("retains the complete captured tool execution binding and rejects legacy split fields", () => {
+  expect(fixture.spec.execution).toEqual({ capability: fixture.toolView.binding.capability,
+    componentScope: fixture.toolView.componentScope, profile: fixture.toolView.binding.declaration.profile,
+    environment: fixture.toolView.environment });
+  const plan = { ...planFixture.responses.plan, tools: { maxInvocations: 2, entries: [fixture.spec] } };
+  expect(validators.validateResponseWorkPlan(plan)).toBe(true);
+  const { execution, ...missingExecution } = fixture.spec;
+  for (const entry of [missingExecution,
+    { ...fixture.spec, componentScope: execution.componentScope },
+    { ...fixture.spec, environment: execution.environment }]) {
+    expect(validators.validateResponseWorkPlan({ ...plan, tools: { ...plan.tools, entries: [entry] } })).toBe(false);
+  }
+});
+
 it("shares strict tool contracts and starts only an exact preparation from its original consumer", async () => {
   expect(validators.validateRequestWorkPlanAgentToolPrepare(fixture.requests.prepare)).toBe(true);
   expect(validators.validateRequestWorkPlanAgentToolStart(fixture.requests.start)).toBe(true);
@@ -90,7 +104,8 @@ it("pins complete captured tool metadata and options in work-plan preparation ac
     { handle: fixture.responses.prepared.taskId }, { target: "other-target" }, { selections: [] },
     { settingsRevision: "2" }, { packageOrigin: { different: true } }, { runtimeOrigin: { different: true } },
     { binding: { ...fixture.spec.binding, capability: { ...fixture.spec.binding.capability, provider: { ...fixture.spec.binding.capability.provider, packageDigest: "f".repeat(64) } } } },
-    { environment: { ...fixture.spec.environment, toolVersion: "changed" } },
+    { execution: { ...fixture.spec.execution, environment: { ...fixture.spec.execution.environment, toolVersion: "changed" } } },
+    { execution: { ...fixture.spec.execution, componentScope: "attempt" } },
   ]) {
     const changed = structuredClone(workPlanToolStatus.plan);
     if (!changed.tools) throw new Error("Missing tool fixture");

@@ -16,6 +16,23 @@ pub struct PluginExecutionBinding {
     pub environment: sdk::ExecutionEnvironmentDescriptor,
 }
 impl PluginExecutionBinding {
+    /// Derive transport scope from this captured declaration and Core identities.
+    /// A result, service frame or caller-supplied scope cannot select its meaning.
+    pub fn scope_id(
+        &self,
+        project: ExecutionId,
+        attempt: ExecutionId,
+    ) -> Result<String, ExecutionError> {
+        match self.component_scope {
+            sdk::ComponentScope::Project => Ok(project.to_string()),
+            sdk::ComponentScope::Attempt => Ok(attempt.to_string()),
+            sdk::ComponentScope::Application => Err(ExecutionError::new(
+                ErrorCode::InvalidInput,
+                "plugin-component-scope",
+            )),
+        }
+    }
+
     pub fn capability_version(&self) -> String {
         let contract = &self.capability.declaration.contract;
         format!("{}:{}", contract.schema_version, contract.behavior_version)
@@ -168,16 +185,7 @@ impl FixedInput {
         let request = sdk::InvocationRequest {
             context: sdk::InvocationContext {
                 project_id: envelope.project_id.to_string(),
-                scope_id: match binding.component_scope {
-                    sdk::ComponentScope::Project => envelope.project_id.to_string(),
-                    sdk::ComponentScope::Attempt => envelope.attempt_id.to_string(),
-                    sdk::ComponentScope::Application => {
-                        return Err(ExecutionError::new(
-                            ErrorCode::InvalidInput,
-                            "plugin-component-scope",
-                        ));
-                    }
-                },
+                scope_id: binding.scope_id(envelope.project_id, envelope.attempt_id)?,
                 operation_id: envelope.task_id.to_string(),
                 attempt_id: envelope.attempt_id.to_string(),
                 item_id: item_id.to_string(),

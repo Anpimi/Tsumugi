@@ -12,8 +12,8 @@
           "declarationResourceId": {
             "type": "string"
           },
-          "environment": {
-            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          "execution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
           },
           "resourcePins": {
             "items": {
@@ -30,7 +30,7 @@
         },
         "required": [
           "binding",
-          "environment",
+          "execution",
           "declarationResourceId",
           "resourcePins",
           "rules"
@@ -410,6 +410,14 @@
         ],
         "type": "object"
       },
+      "ComponentScope": {
+        "enum": [
+          "application",
+          "project",
+          "attempt"
+        ],
+        "type": "string"
+      },
       "ContractRef": {
         "additionalProperties": false,
         "description": "Schema and behavior are separate exact-match compatibility identities.\nMatching JSON field types or a package SemVer is not behavioral compatibility.",
@@ -714,6 +722,46 @@
           "advisoryChecks",
           "adoptResources",
           "deliver"
+        ],
+        "type": "object"
+      },
+      "PluginExecutionBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "$ref": "#/definitions/CapabilityBinding"
+          },
+          "componentScope": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ComponentScope"
+              }
+            ],
+            "description": "Captured from the selected component, never inferred from a result."
+          },
+          "environment": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+              }
+            ],
+            "description": "Exact captured Node artifacts or actual native application Host identity.\nThis data value does not authenticate its source or grant execution."
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ContractRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "capability",
+          "componentScope",
+          "environment"
         ],
         "type": "object"
       },
@@ -1887,8 +1935,8 @@
           "declarationResourceId": {
             "type": "string"
           },
-          "environment": {
-            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          "execution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
           },
           "resourcePins": {
             "items": {
@@ -1905,7 +1953,7 @@
         },
         "required": [
           "binding",
-          "environment",
+          "execution",
           "declarationResourceId",
           "resourcePins",
           "rules"
@@ -4267,6 +4315,9 @@
           "binding": {
             "$ref": "#/definitions/CapabilityBinding"
           },
+          "componentScope": {
+            "$ref": "#/definitions/ComponentScope"
+          },
           "environment": {
             "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
           },
@@ -4296,6 +4347,7 @@
         "required": [
           "settingsRevision",
           "binding",
+          "componentScope",
           "profile",
           "packageOrigin",
           "environment",
@@ -6541,8 +6593,8 @@
           "binding": {
             "$ref": "#/definitions/CapabilityToolBinding"
           },
-          "environment": {
-            "$ref": "#/definitions/ExecutionEnvironmentDescriptor"
+          "execution": {
+            "$ref": "#/definitions/PluginExecutionBinding"
           },
           "handle": {
             "$ref": "#/definitions/ExecutionId"
@@ -6568,7 +6620,7 @@
         "required": [
           "handle",
           "binding",
-          "environment",
+          "execution",
           "resourceId",
           "settingsRevision",
           "packageOrigin",

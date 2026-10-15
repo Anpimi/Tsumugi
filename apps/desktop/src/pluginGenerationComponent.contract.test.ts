@@ -9,6 +9,8 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 it("uses an explicit data-only installed generation selection without execution authority", async () => {
   expect(validateRequestGenerationComponent(fixture.request)).toBe(true);
   expect(validateResponseGenerationComponent(fixture.view)).toBe(true);
+  const { componentScope: _componentScope, ...missingScope } = fixture.view;
+  expect(validateResponseGenerationComponent(missingScope)).toBe(false);
   expect(validateRequestGenerationComponent({ ...fixture.request, profile: null })).toBe(true);
   const { profile: _profile, ...implicit } = fixture.request;
   expect(validateRequestGenerationComponent(implicit)).toBe(false);

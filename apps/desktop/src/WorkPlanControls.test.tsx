@@ -36,7 +36,9 @@ function planFixture(): WorkPlanView {
   const text = [textReviewViewFixture("first-support"), textReviewViewFixture("second-support", "f".repeat(64))];
   return { ...base, options: { ...base.options, selectionPolicy: "missing-only", stages: [
     { stage: "generation", mode: "assisted" }, { stage: "checks", mode: "assisted" },
-  ], advisoryChecks: text.map(view => ({ binding: view.binding, environment: view.environment,
+  ], advisoryChecks: text.map(view => ({ binding: view.binding,
+    execution: { capability: view.binding.checker, componentScope: "project" as const,
+      profile: view.binding.declaration.profile, environment: view.environment },
     declarationResourceId: view.resourceId, resourcePins: view.resourcePins, rules: view.rules })) },
   checkers: [{ kind: "ready", checker: format.checker, plugin: format.plugin }, ...text.map(view => {
     const slot = textReviewSlotFixture(view);

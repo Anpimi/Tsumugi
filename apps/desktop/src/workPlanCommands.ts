@@ -61,7 +61,9 @@ export const workPlanCommands = {
             || expected.binding.capability.provider.packageDigest !== entry.tool.package.packageDigest
             || jsonIdentity(expected.binding.capability.provider.plugin) !== jsonIdentity(entry.tool.package.plugin)
             || jsonIdentity(tool.binding) !== jsonIdentity(expected.binding)
-            || jsonIdentity(tool.environment) !== jsonIdentity(expected.environment)
+            || jsonIdentity(tool.execution) !== jsonIdentity({ capability: expected.binding.capability,
+              componentScope: expected.componentScope, profile: expected.binding.declaration.profile,
+              environment: expected.environment })
             || tool.settingsRevision !== expected.settingsRevision
             || jsonIdentity(tool.packageOrigin) !== jsonIdentity(expected.packageOrigin)
             || jsonIdentity(tool.runtimeOrigin) !== jsonIdentity(expected.runtimeOrigin);

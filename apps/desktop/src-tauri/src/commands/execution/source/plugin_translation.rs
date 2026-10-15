@@ -150,18 +150,17 @@ fn environment_matches(
 fn execution_binding(
     environment: &TranslationEnvironment,
     checker: bool,
-) -> PluginExecutionBinding {
-    PluginExecutionBinding {
-        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-        capability: if checker {
-            environment.binding.checker.clone()
+) -> Result<PluginExecutionBinding, CommandError> {
+    environment.execution_binding(
+        if checker {
+            &environment.binding.checker
         } else {
-            environment.binding.extractor.clone()
+            &environment.binding.extractor
         },
-        profile: Some(environment.binding.declaration.profile.clone()),
-        environment: environment.runtime.environment(),
-    }
+        Some(environment.binding.declaration.profile.clone()),
+    )
 }
+
 fn choice_and_selection(
     active: &mut ActiveSession,
     selection_id: ExecutionId,
@@ -445,13 +444,13 @@ pub async fn preflight_plugin_translation(
                 environment_matches(&environment, &selected.source)?;
                 let settings = PluginTranslationSettings {
                     declaration: environment.binding.declaration.clone(),
-                    checker: execution_binding(&environment, true),
+                    checker: execution_binding(&environment, true)?,
                 };
                 if let Some(review) = existing {
                     let (_, original) =
                         content::plugin_translation_input(&review.input).map_err(map_source)?;
                     if review.input.envelope().plugin.as_ref()
-                        != Some(&execution_binding(&environment, false))
+                        != Some(&execution_binding(&environment, false)?)
                         || original != settings
                     {
                         return Err(stale());
@@ -482,7 +481,7 @@ pub async fn preflight_plugin_translation(
                     artifacts: vec![artifact],
                 };
                 let fixed = settings
-                    .fixed_input(project, material, execution_binding(&environment, false))
+                    .fixed_input(project, material, execution_binding(&environment, false)?)
                     .map_err(map_source)?;
                 let mut envelope = fixed.envelope().clone();
                 envelope.attempt_id = capturing.attempt_id;

@@ -116,7 +116,7 @@ impl ApplicationPlugins {
                 .checker
                 .environment_digest()
                 .map_err(|_| invalid())?,
-            &[sdk::ComponentScope::Project],
+            &[sdk::ComponentScope::Project, sdk::ComponentScope::Attempt],
             |image| {
                 // The immutable source receipt owns this declaration; bind it
                 // against the installed manifest rather than guessing a Resource.
@@ -130,8 +130,11 @@ impl ApplicationPlugins {
                 Ok((binding.clone(), [binding.checker]))
             },
         )?;
-        if captured.checker.profile.as_ref() != Some(&environment.binding.declaration.profile)
-            || environment.runtime.environment() != captured.checker.environment
+        if captured.checker
+            != environment.execution_binding(
+                &environment.binding.checker,
+                Some(environment.binding.declaration.profile.clone()),
+            )?
         {
             return Err(invalid());
         }

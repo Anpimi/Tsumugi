@@ -68,6 +68,31 @@ pub trait ProjectServiceBroker: Send + Sync {
     fn release_channel(&self, channel: &ChannelReceipt);
 }
 
+/// Attempt services currently support only the existing generation adapter.
+/// Unknown required dependencies stay unavailable; optional absent ones do not
+/// invent a provider. Actual descriptors and authority are selected per dispatch.
+pub(crate) fn supports_attempt_services(
+    component: &ComponentDeclaration,
+    capability: &CapabilityDeclaration,
+) -> bool {
+    let contract = generation_service_contract();
+    component.runtime == RuntimeKind::JavaScript
+        && component
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.required)
+            .all(|dependency| {
+                dependency.contract == contract && dependency.selection == ProviderSelection::Single
+            })
+        && capability.effect == EffectKind::External
+        && capability.input_schema == generation_service_input_contract()
+        && capability.output_schema == generation_service_receipt_contract()
+        && capability.error_schema == generation_service_error_contract()
+        && capability
+            .permissions
+            .contains(&PermissionRequest::ProjectService { contract })
+}
+
 pub(crate) fn select_service_bindings(
     component: &ComponentDeclaration,
     capability: &CapabilityDeclaration,
@@ -75,15 +100,19 @@ pub(crate) fn select_service_bindings(
     broker: Option<&dyn ProjectServiceBroker>,
 ) -> HostResult<Vec<ServiceBinding>> {
     let bindings = broker.map_or(&[][..], |broker| broker.bindings());
-    // Project brokers are not implicitly rescaled to attempt authority. Empty
-    // optional dependencies need no broker; required or offered services must
-    // wait for an explicitly scoped service contract/adapter.
+    // An Attempt caller may use only the supported generation adapter, captured
+    // for its own dispatch. A matching Project descriptor is still rejected by
+    // the exact scope check below, including an optional offered dependency.
     if component.scope == ComponentScope::Attempt
         && (!bindings.is_empty()
             || component
                 .dependencies
                 .iter()
                 .any(|dependency| dependency.required))
+        && (!supports_attempt_services(component, capability)
+            || bindings
+                .iter()
+                .any(|binding| validate_generation_service_binding(binding).is_err()))
     {
         return Err(HostError::DependencyUnavailable);
     }

@@ -35,7 +35,12 @@ fn fixed(
     assert_eq!(checker.capability, resource.checker);
     let review = tsumugi_core::content::SourceReviewBinding::capture(
         &resource.review,
-        &producer.environment,
+        &tsumugi_core::execution::PluginExecutionBinding {
+            component_scope: sdk::ComponentScope::Project,
+            capability: (&resource.review).checker.clone(),
+            profile: Some((&resource.review).declaration.profile.clone()),
+            environment: (*(&producer.environment)).clone().into(),
+        },
     )
     .unwrap();
     bundle

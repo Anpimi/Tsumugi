@@ -1,5 +1,11 @@
 # Local build output inspection and export
 
+Build selections retain separate complete execution bindings for the builder
+and artifact checker. Their captured Project/Attempt scopes may differ, while
+package/profile/environment and the complete required artifact-check set remain
+strict. An Attempt artifact checker runs in its own check attempt. Reopening
+retains these original bindings and results without recreating execution consent.
+
 Open a project with an adopted source snapshot, selected translations, current QA checks, and human approvals. In **Review and QA**, resolve the work queue and check build readiness. Source-text fallback and supported QA waivers require their own recorded decisions.
 
 Choose **Build and export**, select an approved installed build capability and matching runtime, then select the target languages for this release and enter every output path explicitly. Paths are relative to the export folder, with one path per line; the selected package checks its own required formats and names. Review the current policy, source snapshot, coverage, blockers, exceptions and exact execution environment before capturing the build. A change to relevant project state after the readiness check requires another check. Capture alone does not authorize execution: review the fixed input and separately approve the builder. The independent artifact checker then needs its own captured input and unchecked consent before its proof can be recorded.

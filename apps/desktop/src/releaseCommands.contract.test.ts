@@ -3,7 +3,7 @@ import fixture from "../test/fixtures/releaseCommands.contract.json";
 import { confirmReleaseDelivery, confirmReleasePreview, releaseCommands, type DeliveryPreview, type DeliveryView, type ReleaseExceptionKind, type ReleaseView } from "./releaseCommands";
 import * as validators from "./generated/release.validators";
 import { hasUnknownOutcome } from "./projectCommands";
-import { pluginBuildWorkflow, savedPluginBuild } from "./testSupport/pluginBuildFixture";
+import { pluginBuildPackage, pluginBuildWorkflow, savedPluginBuild } from "./testSupport/pluginBuildFixture";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -17,6 +17,22 @@ it("reads the typed saved build with its exact original identity and without exe
   expect(invoke).toHaveBeenCalledTimes(1);
   expect(invoke).toHaveBeenLastCalledWith("read_saved_plugin_build", { request: pluginBuildWorkflow.savedRead });
   expect(savedPluginBuild.locales[0].result?.artifacts.map(file => file.logicalPath)).toEqual(pluginBuildWorkflow.review.choices[0].outputPaths);
+});
+
+it("retains separate complete build execution bindings and refuses the legacy environment shape", () => {
+  const build = savedPluginBuild.build;
+  for (const [role, execution] of [["builder", build.builderExecution], ["checker", build.checkerExecution]] as const) {
+    const capability = build.binding[role];
+    const component = pluginBuildPackage.manifest.components.find(component => component.id === capability.provider.componentId);
+    if (!component) throw new Error("Missing canonical build component");
+    expect(execution).toEqual({ capability, componentScope: component.scope,
+      profile: build.binding.declaration.profile, environment: pluginBuildWorkflow.review.build.environment });
+  }
+  const { builderExecution, checkerExecution, ...withoutExecutions } = build;
+  for (const incomplete of [
+    { ...withoutExecutions, checkerExecution }, { ...withoutExecutions, builderExecution },
+    { ...withoutExecutions, environment: builderExecution.environment },
+  ]) expect(validators.validateResponseSavedPluginBuild({ ...savedPluginBuild, build: incomplete })).toBe(false);
 });
 
 it("bounds saved build counts and refuses artifact bytes in the read-only projection", () => {

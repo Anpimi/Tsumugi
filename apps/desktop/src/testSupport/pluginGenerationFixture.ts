@@ -10,7 +10,7 @@ if (environment.profile !== "node-system-libraries-v1") throw new Error("Expecte
 const provider = component.binding.provider;
 export const generationPackage: PluginPackageDetailsView = { enabled: true, packageDigest: provider.packageDigest,
   manifest: { protocolVersion: 1, plugin: provider.plugin, permissions: component.binding.declaration.permissions,
-    components: [{ id: provider.componentId, scope: "project", runtime: "javascript", entrypoint: "component.mjs",
+    components: [{ id: provider.componentId, scope: component.componentScope, runtime: "javascript", entrypoint: "component.mjs",
       dependencies: [{ contract: { id: "tsumugi.work-plan-generation", schemaVersion: 1, behaviorVersion: 1 }, required: true, selection: "single" }],
       exit: { stopTimeoutMs: 300, cleanupTimeoutMs: 500 } }],
     contributions: [{ id: provider.contributionId, componentId: provider.componentId, contribution: { kind: "capability", declaration: component.binding.declaration } }] } };

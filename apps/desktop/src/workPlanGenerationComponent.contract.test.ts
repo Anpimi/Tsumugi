@@ -47,6 +47,7 @@ it("rejects stale but plausible scope, source, installation and child identities
     { attemptId: fixture.prepare.generation.attemptId },
     { generation: { ...fixture.preflight.generation, attemptId: fixture.start.attemptId } },
     { component: { ...fixture.preflight.component, settingsRevision: "2" } },
+    { component: { ...fixture.preflight.component, componentScope: "attempt" } },
     { scope: fixture.preflight.scope.map(unit => ({ ...unit, sourceRevisionId: fixture.start.attemptId })) },
   ];
   for (const replacement of replacements) {

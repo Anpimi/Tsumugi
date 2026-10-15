@@ -318,7 +318,7 @@ export function WorkPlanControls({ context, prepared, status, busy, disabled, co
         {plan.tools.entries.map(tool => <article key={tool.handle}>
           <h4>{tool.binding.declaration.title} · {tool.binding.capability.provider.plugin.id} {tool.binding.capability.provider.plugin.version}</h4>
           <p>{tool.binding.declaration.description}</p><PluginPermissions permissions={tool.binding.capability.declaration.permissions} />
-          <details><summary>{t("sourcePlugin.fixedDetails")}</summary><pre className="ai-text">{JSON.stringify({ binding: tool.binding, environment: tool.environment,
+          <details><summary>{t("sourcePlugin.fixedDetails")}</summary><pre className="ai-text">{JSON.stringify({ binding: tool.binding, execution: tool.execution,
             packageOrigin: tool.packageOrigin, runtimeOrigin: tool.runtimeOrigin, target: tool.target, selections: tool.selections }, null, 2)}</pre></details>
         </article>)}
         <p>{t("sourcePlugin.unsandboxed")}</p>

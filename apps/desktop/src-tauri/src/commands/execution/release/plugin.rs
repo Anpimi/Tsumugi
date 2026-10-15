@@ -192,22 +192,25 @@ fn finish<'a>(
 fn selected(environment: &BuildEnvironment) -> Result<ReleaseBuildEnvironment, CommandError> {
     ReleaseBuildEnvironment::new(
         environment.binding.clone(),
-        environment.runtime.environment(),
+        binding(environment, false)?,
+        binding(environment, true)?,
     )
     .map_err(map_read)
 }
-fn binding(environment: &BuildEnvironment, checker: bool) -> PluginExecutionBinding {
-    PluginExecutionBinding {
-        component_scope: tsumugi_plugin_sdk::ComponentScope::Project,
-        capability: if checker {
-            environment.binding.checker.clone()
+fn binding(
+    environment: &BuildEnvironment,
+    checker: bool,
+) -> Result<PluginExecutionBinding, CommandError> {
+    environment.execution_binding(
+        if checker {
+            &environment.binding.checker
         } else {
-            environment.binding.builder.clone()
+            &environment.binding.builder
         },
-        profile: Some(environment.binding.declaration.profile.clone()),
-        environment: environment.runtime.environment(),
-    }
+        Some(environment.binding.declaration.profile.clone()),
+    )
 }
+
 fn matches_build(input: &FixedInput, environment: &BuildEnvironment) -> Result<(), CommandError> {
     if ReleasePlan::from_input(input)
         .map_err(map_read)?
@@ -404,7 +407,7 @@ async fn start(
                 accepted_work.check()?;
                 let environment = plugins.capture_build(&choice)?;
                 if checker {
-                    if fixed.envelope().plugin.as_ref() != Some(&binding(&environment, true)) {
+                    if fixed.envelope().plugin.as_ref() != Some(&binding(&environment, true)?) {
                         return Err(stale());
                     }
                 } else {
@@ -423,7 +426,7 @@ async fn start(
                         HostLimits::default(),
                     )
                     .map_err(map_recover)?;
-                    runners.push((Arc::new(proxy), binding(&environment, is_checker)));
+                    runners.push((Arc::new(proxy), binding(&environment, is_checker)?));
                 }
                 Ok(runners)
             })

@@ -20,9 +20,34 @@ use core_execution::{authorize, execute, execute_all};
 #[path = "../../core/tests/support/automatic.rs"]
 mod automatic;
 
+#[path = "support/scoped_package.rs"]
+mod scoped_package;
 fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
+    paired_core_review_scoped(plugin, caption, multiple, None)
+}
+fn paired_core_review_scoped(
+    plugin: &str,
+    caption: bool,
+    multiple: bool,
+    checks_attempt: Option<bool>,
+) {
     let directory = tempfile::tempdir().unwrap();
     let image = package_fixture::installed(directory.path(), plugin);
+    let image = if let Some(checks_attempt) = checks_attempt {
+        scoped_package::capture(
+            std::path::Path::new(&std::env::var_os("TSUMUGI_TEST_PLUGIN_PACKAGE").unwrap()),
+            &std::env::var("TSUMUGI_TEST_PLUGIN_DIGEST").unwrap(),
+            |id| {
+                if (id.contains("check") || id == "validate-artifact") == checks_attempt {
+                    sdk::ComponentScope::Attempt
+                } else {
+                    sdk::ComponentScope::Project
+                }
+            },
+        )
+    } else {
+        image
+    };
     let binding = image.source_import("source-profile").unwrap();
     let staging = directory.path().join("workers");
     std::fs::create_dir(&staging).unwrap();
@@ -41,6 +66,18 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
     let extractor = proxy(&binding.declaration.extractor);
     let source_checker = proxy(&binding.declaration.checker);
     let review_checker = proxy(&binding.review.declaration.checker);
+    if checks_attempt.is_some() {
+        assert_ne!(
+            extractor
+                .execution_binding(Some(binding.declaration.profile.clone()))
+                .unwrap()
+                .component_scope,
+            source_checker
+                .execution_binding(Some(binding.declaration.profile.clone()))
+                .unwrap()
+                .component_scope
+        );
+    }
     let path = directory.path().join("project");
     let languages = if multiple {
         vec!["zh-CN", "de", "fr"]
@@ -74,7 +111,13 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
     let producer = extractor
         .execution_binding(Some(binding.declaration.profile.clone()))
         .unwrap();
-    let review = SourceReviewBinding::capture(&binding.review, &producer.environment).unwrap();
+    let review = SourceReviewBinding::capture(
+        &binding.review,
+        &review_checker
+            .execution_binding(Some(binding.declaration.profile.clone()))
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         review.checker,
         review_checker
@@ -425,11 +468,20 @@ fn paired_core_review(plugin: &str, caption: bool, multiple: bool) {
     let build = image.build_declaration("build-profile").unwrap();
     runtime.register(proxy(&build.declaration.builder)).unwrap();
     runtime.register(proxy(&build.declaration.checker)).unwrap();
-    let environment = ReleaseBuildEnvironment::new(
-        build,
-        runtime_fixture::approved_runtime().descriptor().clone(),
-    )
-    .unwrap();
+    let builder_execution = proxy(&build.declaration.builder)
+        .execution_binding(Some(build.declaration.profile.clone()))
+        .unwrap();
+    let checker_execution = proxy(&build.declaration.checker)
+        .execution_binding(Some(build.declaration.profile.clone()))
+        .unwrap();
+    if checks_attempt.is_some() {
+        assert_ne!(
+            builder_execution.component_scope,
+            checker_execution.component_scope
+        );
+    }
+    let environment =
+        ReleaseBuildEnvironment::new(build.clone(), builder_execution, checker_execution).unwrap();
     let output = if caption {
         "translated.vtt"
     } else {
@@ -741,4 +793,11 @@ fn stardew_smapi_multi_locale_release_keeps_independent_qa_and_complete_artifact
 #[test]
 fn webvtt_multi_locale_release_keeps_independent_qa_and_complete_artifact_proof() {
     paired_core_review("webvtt", true, true);
+}
+
+#[test]
+fn webvtt_mixed_capability_scopes_keep_independent_source_review_and_build_attempts() {
+    for checks_attempt in [false, true] {
+        paired_core_review_scoped("webvtt", true, false, Some(checks_attempt));
+    }
 }

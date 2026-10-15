@@ -1,5 +1,12 @@
 # Review and QA
 
+Format and advisory checker selections retain the exact component scope with
+their complete Core execution binding. Each checker can independently use Project
+or Attempt scope; an Attempt belongs to that check execution. Resource pins,
+rule subsets, required coverage and nonwaivable format rules are unchanged.
+Rebinding installed packages must match the saved complete identity; a result or
+new installation cannot substitute a scope or restore an old grant.
+
 Open a project with an imported source snapshot and a target language, then choose **Review and QA**. The Review tab shows source entries for one target language. Select an entry to compare its current source and selected translation, inspect earlier decisions and checks, or open the translation editor. Saving or selecting a translation does not approve it.
 
 The sidebar keeps Review and QA in the main workspace. Opening an entry in Translations and returning keeps the review page and selected entry, and refreshes their current evidence. This also works for an entry that does not yet have a selected translation. The work queue and build blockers provide actions to locate the affected content; diagnosis identifiers remain available in details.

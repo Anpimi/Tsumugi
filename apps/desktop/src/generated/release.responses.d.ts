@@ -72,6 +72,7 @@ export type DeliveryFileState = "pending" | "succeeded" | "failed" | "unknown";
 export type DeliveryState = "pending" | "succeeded" | "partial" | "failed" | "unknown";
 export type DeliveryPreviewState = "absent" | "same" | "conflict";
 export type ReleaseExceptionKind = "source-fallback" | "qa-waiver";
+export type ComponentScope = "application" | "project" | "attempt";
 export type ExecutionState = "queued" | "dispatched" | "succeeded" | "failed" | "cancelled-before-dispatch" | "unknown";
 export type AdoptionState = "unapplied" | "committed" | "conflict" | "rejected";
 export type ValidationState = "absent" | "pending" | "valid" | "invalid";
@@ -353,12 +354,26 @@ export interface SavedPluginBuildView {
  */
 export interface ReleaseBuildEnvironment {
   binding: BuildBinding;
-  environment: ExecutionEnvironmentDescriptor;
+  builderExecution: PluginExecutionBinding;
+  checkerExecution: PluginExecutionBinding;
 }
 export interface BuildBinding {
   builder: CapabilityBinding;
   checker: CapabilityBinding;
   declaration: BuildDeclaration;
+}
+export interface PluginExecutionBinding {
+  capability: CapabilityBinding;
+  /**
+   * Captured from the selected component, never inferred from a result.
+   */
+  componentScope: ComponentScope;
+  /**
+   * Exact captured Node artifacts or actual native application Host identity.
+   * This data value does not authenticate its source or grant execution.
+   */
+  environment: ExecutionEnvironmentDescriptor;
+  profile: ContractRef | null;
 }
 export interface SavedBuildLocale {
   choice: PluginBuildLocaleChoice;

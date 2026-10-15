@@ -177,15 +177,15 @@ fn spec(
     view: PluginToolView,
     selected: &WorkPlanToolSelectionEntry,
 ) -> Result<WorkPlanToolSpec, CommandError> {
-    // Agent tool plans currently capture project service scope only. Manual
-    // tools use their independently captured component scope instead.
-    if view.component_scope != sdk::ComponentScope::Project {
-        return Err(stale());
-    }
     Ok(WorkPlanToolSpec {
         handle: selected.handle,
-        binding: view.binding,
-        environment: view.environment,
+        binding: view.binding.clone(),
+        execution: PluginExecutionBinding {
+            capability: view.binding.capability.clone(),
+            component_scope: view.component_scope,
+            profile: view.binding.declaration.profile.clone(),
+            environment: view.environment,
+        },
         resource_id: view.resource_id,
         settings_revision: view.settings_revision,
         package_origin: serde_json::to_value(view.package_origin).map_err(|_| stale())?,
@@ -400,6 +400,7 @@ fn selector(tool: &WorkPlanToolSpec) -> PluginToolRequest {
         },
         resource_id: tool.resource_id.clone(),
         environment_digest: tool
+            .execution
             .environment
             .digest()
             .expect("validated captured environment"),
