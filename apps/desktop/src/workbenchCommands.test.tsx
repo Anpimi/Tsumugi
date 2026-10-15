@@ -179,6 +179,7 @@ describe("resource command payloads", () => {
     ["resource.save-term", { kind: "resource-term", locale: "zh-CN", termId: null, expectedRevisionId: null, editSeq: 0 }, [{ editSeq: -1 }, { editSeq: 1.5 }, { termId: undefined }, { expectedRevisionId: "" }]],
     ["resource.save-context", { kind: "resource-context", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, editSeq: 1 }, [{ sourceRevisionId: 7 }, { unitId: "" }, { expectedRevisionId: undefined }]],
     ["resource.capture-context", { kind: "resource-context", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, editSeq: 1 }, [{ editSeq: NaN }, { locale: "" }]],
+    ["resource.adopt-context-basis", { kind: "resource-context-basis", locale: "zh-CN", unitId: "unit", sourceRevisionId: "source", expectedRevisionId: null, currentRevisionId: "current", editSeq: 1 }, [{ currentRevisionId: undefined }, { editSeq: -1 }, { expectedRevisionId: "" }]],
     ["resource.choose-file", { kind: "resource-locale", locale: "zh-CN" }, [{ locale: [] }]],
     ["resource.open-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ captureId: "" }, { digest: null }]],
     ["resource.refresh-preview", { kind: "resource-capture", captureId: "capture", digest: "digest", locale: "zh-CN" }, [{ locale: false }]],

@@ -9,7 +9,9 @@ import { sourceCommands, type ContentPage, type ContentRow, type ContentScope } 
 import { resourceCommands as commands, type GlossaryCapture, type ImpactPage, type ResourcePreview, type TermResolution, type TermRevision, type TmSuggestion } from "./resourceCommands";
 import { useResourceDraftSession } from "./ResourceDraftSession";
 import { useSessionInfiniteQuery, useSessionQuery, useSessionReads } from "./SessionReadProvider";
+import { resourceReads } from "./resourceQueries";
 import { useWorkbenchCommands, type ResourceTermCommandPayload, type ResourceContextCommandPayload,
+  type ResourceContextBasisCommandPayload,
   type ResourceCaptureCommandPayload, type ResourceDecisionCommandPayload, type ResourcePendingCommandPayload,
   type ResourceTranslationCommandPayload, type CommandAvailability } from "./workbenchCommands";
 import type { QueryKey } from "@tanstack/react-query";
@@ -84,6 +86,10 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
   const capturesRead = useSessionQuery<GlossaryCapture[]>({ key: ["resource-captures", 100], scopes: ["resources"], enabled: active && tab === "updates", read: () => commands.captures({ ...session, limit: 100 }) });
   const captures = capturesRead.data ?? [];
   const unitActive = active && tab === "context" && !!selectedUnit?.unitId && !!selectedUnit.sourceRevisionId;
+  const contextOptions = resourceReads.context(session, selectedUnit?.unitId ?? "", locale, selectedUnit?.sourceRevisionId ?? "");
+  const contextRead = useSessionQuery({ ...contextOptions, enabled: unitActive });
+  const currentContext = unitActive && contextRead.isSuccess && !contextRead.isFetching && !contextRead.isStale && !contextRead.error ? contextRead.data : undefined;
+  const contextChanged = currentContext !== undefined && (currentContext?.revisionId ?? null) !== (owner.state.contextRevision?.revisionId ?? null);
   const resolutionKey = ["resource-resolution", selectedUnit?.unitId ?? "", locale, selectedUnit?.sourceRevisionId ?? ""];
   const resolutionRead = useSessionQuery<TermResolution>({ key: resolutionKey, scopes: ["source", "resources"], enabled: unitActive,
     read: async () => {
@@ -168,11 +174,17 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
   async function selectUnit(row: ContentRow, current: () => boolean) {
     if (owner.contextDirty() || owner.inFlight() || owner.current().pending) { if (!owner.inFlight() && !owner.current().pending) setLeavePrompt(true); return; }
     if (!row.unitId || !row.sourceRevisionId) return;
-    const key = reads.key(["resource-context", row.unitId, locale]);
+    const sourceCurrent = proof([sourceScopeKey, sourceKey]);
+    const options = resourceReads.context(session, row.unitId, locale, row.sourceRevisionId), key = reads.key(options.key);
+    await reads.client.cancelQueries({ queryKey: key, exact: true });
+    if (!current() || !sourceCurrent()) return;
     await reads.client.invalidateQueries({ queryKey: key, exact: true, refetchType: "none" });
-    const manual = await reads.client.fetchQuery({ queryKey: key, meta: { scopes: ["resources"] }, queryFn: () => commands.context({ ...session, unitId: row.unitId!, locale }) });
-    if (current()) {
-      if (manual && (manual.unitId !== row.unitId || manual.locale !== locale)) throw new Error("Invalid context reference");
+    const manual = await reads.client.fetchQuery({ queryKey: key, meta: { scopes: options.scopes }, queryFn: async ({ signal }) => {
+      const value = await options.read();
+      if (signal.aborted) throw new Error("Read cancelled");
+      return value;
+    } });
+    if (current() && sourceCurrent() && ready(options.key) && reads.client.getQueryData(key) === manual) {
       owner.beginContext(row, manual);
     }
   }
@@ -206,7 +218,19 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
   function contextAvailability(input: ResourceContextCommandPayload | undefined, capture = false) {
     const allowed = common("context"); if (!allowed.enabled) return allowed;
     return input && same(input, contextPayload()) && owner.localeAvailable(input.locale) && sourceReady() && ready(resolutionKey)
+      && ready(contextOptions.key) && currentContext !== undefined && reads.client.getQueryData(reads.key(contextOptions.key)) === currentContext && !contextChanged
       && (capture || !!owner.current().contextReason.trim()) ? allowed : unavailable;
+  }
+  function contextBasisPayload(): ResourceContextBasisCommandPayload | undefined {
+    const input = contextPayload();
+    return input && currentContext !== undefined ? { ...input, kind: "resource-context-basis", currentRevisionId: currentContext?.revisionId ?? null } : undefined;
+  }
+  function contextBasisAvailability(input?: ResourceContextBasisCommandPayload) {
+    const allowed = common("context");
+    if (!allowed.enabled) return allowed;
+    return input && !readBusy && !running.current && same(input, contextBasisPayload()) && contextChanged
+      && owner.localeAvailable(input.locale) && sourceReady() && ready(resolutionKey) && ready(contextOptions.key)
+      && reads.client.getQueryData(reads.key(contextOptions.key)) === currentContext ? allowed : unavailable;
   }
   function captureAvailability(input: ResourceCaptureCommandPayload | undefined, refreshing = false) {
     const allowed = common("updates"); if (!allowed.enabled) return allowed;
@@ -261,9 +285,11 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
       registry.register({ ...metadata, id: "resource.save-term", nameKey: "resource.save", risk: "writes-resources", payloadKind: "resource-term", availability: termAvailability,
         handler: () => { void owner.saveTerm(proof([sourceScopeKey, sourceKey, termsKey])); } }),
       registry.register({ ...metadata, id: "resource.save-context", nameKey: "resource.saveContext", risk: "writes-resources", payloadKind: "resource-context", availability: input => contextAvailability(input),
-        handler: () => { void owner.saveContext(proof([sourceScopeKey, sourceKey, resolutionKey])); } }),
+        handler: () => { void owner.saveContext(proof([sourceScopeKey, sourceKey, resolutionKey, contextOptions.key])); } }),
       registry.register({ ...metadata, id: "resource.capture-context", nameKey: "resource.fixInput", risk: "captures-resources", payloadKind: "resource-context", availability: input => contextAvailability(input, true),
-        handler: () => { void owner.captureContext(proof([sourceScopeKey, sourceKey, resolutionKey])); } }),
+        handler: () => { void owner.captureContext(proof([sourceScopeKey, sourceKey, resolutionKey, contextOptions.key])); } }),
+      registry.register({ ...metadata, id: "resource.adopt-context-basis", nameKey: "resource.adoptCurrentContext", risk: "reads-resources", payloadKind: "resource-context-basis", availability: contextBasisAvailability,
+        handler: input => { if (currentContext !== undefined) owner.adoptContext(currentContext, input.expectedRevisionId, input.editSeq); } }),
       registry.register({ ...metadata, id: "resource.choose-file", nameKey: "resource.chooseFile", risk: "captures-resources", payloadKind: "resource-locale",
         availability: input => input?.locale === owner.current().locale ? chooseFileAvailability() : unavailable,
         handler: () => { void owner.chooseFile(currentView()); } }),
@@ -343,6 +369,11 @@ export function ResourceWorkbench({ project, disabled, onOpenTranslation, ref }:
           </section> : null}
           {tab === "context" && locale ? <section><h3>{t("resource.contextAndMemory")}</h3><p>{t("resource.chooseUnit")}</p>{sourcePage ? <><div className="source-table-scroll"><ul>{sourceRows.map(row => <li key={row.occurrence.ordinal}><button className="text-button" disabled={busy || !!pending || !targetAvailable || !row.unitId || !sourceReady()} onClick={() => void run(current => selectUnit(row, current))}>{row.occurrence.key}</button></li>)}</ul></div><button className="secondary-button" disabled={busy || !targetAvailable || sourcePage.nextOrdinal === null} onClick={() => sourcePageAt(sourcePage.nextOrdinal!)}>{t("execution.nextPage")}</button></> : null}
             {selectedUnit?.unitId && selectedUnit.sourceRevisionId ? <div className="translation-editor"><h4>{selectedUnit.occurrence.key}</h4><p>{selectedUnit.occurrence.text}</p>
+              {readStatus(contextRead.error, contextRead.isFetching, () => { void contextRead.refetch(); })}
+              {contextChanged ? <section aria-label={t("resource.currentContext")}><p role="status">{t("resource.contextChanged")}</p><h5>{t("resource.currentContext")}</h5>
+                {currentContext ? <><pre className="ai-text">{currentContext.text}</pre><p>{currentContext.reason}</p></> : <p>{t("resource.noCurrentContext")}</p>}
+                <button className="secondary-button" disabled={!contextBasisAvailability(contextBasisPayload()).enabled} onClick={() => { const input = contextBasisPayload(); if (input) registry.dispatch("resource.adopt-context-basis", commandScope, input); }}>{t("resource.adoptCurrentContext")}</button>
+              </section> : null}
               <label>{t("resource.manualContext")}<textarea value={contextDraft} onChange={event => owner.editContext(event.target.value)} /></label>
               <label>{t("resource.reason")}<input value={contextReason} onChange={event => owner.editContextReason(event.target.value)} /></label>
               <div className="execution-actions"><button className="primary-button" disabled={pendingContext ? !retryAvailable() : !contextAvailability(contextPayload() ?? undefined).enabled} onClick={() => { const input = contextPayload(); if (pendingContext) dispatchRetry(); else if (input) registry.dispatch("resource.save-context", commandScope, input); }}>{pendingContext ? t("resource.retry") : t("resource.saveContext")}</button><button className="secondary-button" disabled={busyMutation || !contextDirty || !!pending} onClick={() => owner.discardContext()}>{t("resource.discardDraft")}</button><button className="secondary-button" disabled={!contextAvailability(contextPayload() ?? undefined, true).enabled} onClick={() => { const input = contextPayload(); if (input) registry.dispatch("resource.capture-context", commandScope, input); }}>{t("resource.fixInput")}</button></div>
