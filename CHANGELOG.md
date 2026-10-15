@@ -6,6 +6,15 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- The optional Apple silicon extension bundle selects fixed Process-2 WebVTT
+  and SMAPI archives, including source-context facts, exact SDK artifact and
+  runtime-profile pins.
+  An offline build preparer verifies local archives and the captured Host
+  inspector, refuses damaged or changed inputs, and promotes the complete
+  package set without replacing existing resources. Application installation
+  approval and per-execution consent remain separate; final clean-system
+  release acceptance is still required.
+
 - Reopening a project checks saved plugin grants and QA evidence alongside
   each original execution input, avoiding repeated input reconstruction.
   Missing or damaged evidence is still rejected within one read snapshot;

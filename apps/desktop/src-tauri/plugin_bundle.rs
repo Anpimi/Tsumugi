@@ -19,17 +19,32 @@ pub struct PackagePin {
     pub source_repository: String,
     pub source_commit: String,
     pub sdk_version: String,
+    pub sdk_artifact_sha256: String,
+    pub archive_name: String,
+    pub archive_sha256: String,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BundleSelection {
     pub format_version: u32,
     pub platform: sdk::RuntimePlatform,
+    pub runtime_profile: sdk::RuntimeEnvironmentProfile,
+    pub process_protocol: u32,
     pub packages: Vec<PackagePin>,
 }
 impl BundleSelection {
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.format_version != 1 || self.packages.is_empty() || self.packages.len() > 128 {
+        if self.format_version != 1
+            || self.packages.is_empty()
+            || self.packages.len() > 128
+            || self.process_protocol != sdk::PROCESS_PROTOCOL
+            || self.runtime_profile != sdk::RuntimeEnvironmentProfile::NodeSystemLibrariesV1
+            || self.platform
+                != (sdk::RuntimePlatform {
+                    operating_system: sdk::RuntimeOperatingSystem::Macos,
+                    architecture: sdk::RuntimeArchitecture::Aarch64,
+                })
+        {
             return Err("invalid bundled package selection");
         }
         let mut ids = BTreeSet::new();
@@ -39,6 +54,9 @@ impl BundleSelection {
                 .validate()
                 .map_err(|_| "invalid bundled identity")?;
             sdk::validate_package_digest(&pin.package_digest).map_err(|_| "invalid package pin")?;
+            sdk::validate_package_digest(&pin.archive_sha256).map_err(|_| "invalid archive pin")?;
+            sdk::validate_package_digest(&pin.sdk_artifact_sha256)
+                .map_err(|_| "invalid SDK artifact pin")?;
             // One portable resource directory, never a caller-selected path.
             if pin.id.is_empty()
                 || pin.id.len() > 64
@@ -58,6 +76,7 @@ impl BundleSelection {
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                 || pin.sdk_version != sdk::SDK_VERSION
+                || pin.archive_name != format!("{}.tar", pin.id)
             {
                 return Err("invalid bundled provenance or compatibility");
             }
@@ -78,6 +97,8 @@ pub struct PackageMetadata {
 pub struct BundleMetadata {
     pub format_version: u32,
     pub platform: sdk::RuntimePlatform,
+    pub runtime_profile: sdk::RuntimeEnvironmentProfile,
+    pub process_protocol: u32,
     pub packages: Vec<PackageMetadata>,
 }
 impl BundleMetadata {
@@ -85,6 +106,8 @@ impl BundleMetadata {
         BundleSelection {
             format_version: self.format_version,
             platform: self.platform.clone(),
+            runtime_profile: self.runtime_profile,
+            process_protocol: self.process_protocol,
             packages: self
                 .packages
                 .iter()
