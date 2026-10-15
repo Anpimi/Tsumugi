@@ -1,5 +1,15 @@
 # Application versioning and changelog maintenance
 
+AI and Arena preparations share one checked source/resource read snapshot across
+all selected units and variants. Original source result, semantic proof and
+project mappings are validated once, and each variant retains its independent
+terminology/manual-context sharing policy. This changes no stored field,
+provider payload, sharing category, IPC, SDK/process, dependency or version
+source; current-only project schema 35 remains unchanged. The same undistributed
+application `0.2.0-alpha.1` / SDK `0.1.0-alpha.1` batch needs no additional SemVer
+bump or distribution; both Unreleased changelogs are synchronized. Source-fact
+selection, immutable capture and desktop sharing remain separate pending work.
+
 Source executions now retain their original SDK content only once, using the
 existing schema/digest projection mechanism for the ledger output. Typed source
 qualification, semantic proof, source mapping and all historical reads still use

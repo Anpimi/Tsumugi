@@ -202,12 +202,10 @@ impl ProjectStore {
                 return Err(error(ErrorCode::Busy, "arena-parent"));
             }
         }
-        let previews = config
-            .variants
-            .iter()
-            .enumerate()
-            .map(|(slot, _)| self.preview_ai(config.request_config(slot)?, locale, units))
+        let configs = (0..config.variants.len())
+            .map(|slot| config.request_config(slot))
             .collect::<Result<Vec<_>, _>>()?;
+        let previews = self.preview_ai_configs(configs, locale, units)?;
         let mut items = Vec::new();
         for (order, _) in units.iter().enumerate() {
             for (slot, p) in previews.iter().enumerate() {

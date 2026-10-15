@@ -347,3 +347,69 @@ fn a_warm_read_still_refuses_changed_mapping_result_and_semantic_proof() {
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 }
+
+#[test]
+fn ai_and_arena_preparation_recheck_the_whole_source_before_returning_any_items() {
+    use tsumugi_core::ai::{AiConfig, arena::ArenaConfig};
+
+    for scenario in 0..3 {
+        let (directory, store, rows) = support::source_fixture_with_transform(2, with_facts);
+        let config = AiConfig {
+            endpoint: "http://127.0.0.1:65534/v1/chat/completions".into(),
+            model: "synthetic".into(),
+            credential_env: String::new(),
+            ..Default::default()
+        };
+        let units = rows
+            .iter()
+            .map(|row| row.unit_id.unwrap())
+            .collect::<Vec<_>>();
+        let arena_config = ArenaConfig {
+            variants: vec![config.clone(), config.clone()],
+            max_items: 20,
+            max_requests: 40,
+            concurrency: 1,
+            blind: true,
+            parent_attempt_id: None,
+        };
+        let view = store.source_context(&request(&store, &rows[0])).unwrap();
+        assert_eq!(
+            store
+                .preview_ai(config.clone(), "zh-CN", &units)
+                .unwrap()
+                .items
+                .len(),
+            2
+        );
+        assert_eq!(
+            store
+                .preview_arena(arena_config.clone(), "zh-CN", &units)
+                .unwrap()
+                .items
+                .len(),
+            4
+        );
+        let path = directory.path().join("project/project.sqlite3");
+        let database = rusqlite::Connection::open(&path).unwrap();
+        match scenario {
+            0 => database.execute("UPDATE source_occurrences SET local_unit_id='substituted' WHERE occurrence_id=?1", [rows[1].occurrence_id.unwrap().to_string()]).unwrap(),
+            1 => database.execute("UPDATE plugin_validation_links SET valid=0 WHERE producer_result_id=?1", [view.source_result_id.to_string()]).unwrap(),
+            _ => {
+                let mut bytes: Vec<u8> = database.query_row("SELECT bytes FROM execution_results WHERE result_id=?1", [view.source_result_id.to_string()], |row| row.get(0)).unwrap();
+                bytes.push(b' ');
+                database.execute("UPDATE execution_results SET bytes=?1 WHERE result_id=?2", rusqlite::params![bytes, view.source_result_id.to_string()]).unwrap()
+            },
+        };
+        drop(database);
+        let before = std::fs::read(&path).unwrap();
+        assert!(
+            store.preview_ai(config, "zh-CN", &units).is_err(),
+            "AI scenario {scenario}"
+        );
+        assert!(
+            store.preview_arena(arena_config, "zh-CN", &units).is_err(),
+            "Arena scenario {scenario}"
+        );
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+}

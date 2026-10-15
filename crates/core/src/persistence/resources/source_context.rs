@@ -105,131 +105,193 @@ fn occurrence(row: &crate::content::ContentRow) -> Result<SourceContextOccurrenc
     })
 }
 
-pub(super) fn read_in(
-    connection: &Connection,
-    request: &SourceContextRequest,
-) -> Result<SourceContextView, ExecutionError> {
-    let source_locale = check_project(connection, request.project_id, &request.locale)?;
-    let scope = super::super::content::scope(connection)?;
-    if scope.current_snapshot != Some(request.source_snapshot_id) {
-        return Err(failure(
-            ErrorCode::DependencyConflict,
-            "source-context-snapshot",
-        ));
-    }
-    let (_, (input, result, output, rows)) =
-        super::super::content::snapshot_rows(connection, request.source_snapshot_id, true)?;
-    if input.envelope().project_id != request.project_id || output.source_language != source_locale
-    {
-        return Err(corrupt());
-    }
-    let selected: Vec<_> = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, row)| row.unit_id == Some(request.unit_id))
-        .collect();
-    let first = selected
-        .first()
-        .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-context-unit"))?
-        .1;
-    if selected
-        .iter()
-        .any(|(_, row)| row.source_revision_id != Some(request.source_revision_id))
-    {
-        return Err(failure(
-            ErrorCode::DependencyConflict,
-            "source-context-revision",
-        ));
-    }
-    let local_unit_id = first.occurrence.operation_unit_id.clone();
-    let local_occurrences: BTreeSet<_> = selected
-        .iter()
-        .map(|(_, row)| row.occurrence.operation_occurrence_id.as_str())
-        .collect();
-    let blocks = output
-        .exchange
-        .domain_blocks
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| {
-            block.schema.id == sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
-                && match &block.target {
-                    sdk::ContentTarget::Snapshot => true,
-                    sdk::ContentTarget::Unit { id } => id == &local_unit_id,
-                    sdk::ContentTarget::Occurrence { id } => {
-                        local_occurrences.contains(id.as_str())
-                    }
-                }
-        })
-        .map(|(index, block)| {
-            Ok(SourceContextBlock {
-                block_index: u32::try_from(index).map_err(|_| corrupt())?,
-                target: block.target.clone(),
-                schema: block.schema.clone(),
-                handling: block.handling,
-                in_revision_basis: output
-                    .revision_policy
-                    .revision_basis
-                    .contains(&block.schema),
-                facts: if block.schema == sdk::source_context_facts_contract() {
-                    Some(
-                        sdk::parse_source_context_block(block, &output.exchange.artifacts)
-                            .map_err(|_| corrupt())?,
-                    )
-                } else {
-                    None
-                },
-            })
-        })
-        .collect::<Result<Vec<_>, ExecutionError>>()?;
-    let mut neighbors = BTreeMap::<usize, SourceContextNeighbor>::new();
-    for (index, row) in &selected {
-        for (position, direction) in [
-            (index.checked_sub(1), SourceContextDirection::Before),
-            (
-                index.checked_add(1).filter(|next| *next < rows.len()),
-                SourceContextDirection::After,
-            ),
-        ] {
-            let Some(position) = position else { continue };
-            let neighbor = &rows[position];
-            if neighbor.unit_id == Some(request.unit_id) {
-                continue;
-            }
-            if let std::collections::btree_map::Entry::Vacant(entry) = neighbors.entry(position) {
-                entry.insert(SourceContextNeighbor {
-                    unit_id: neighbor.unit_id.ok_or_else(corrupt)?,
-                    source_revision_id: neighbor.source_revision_id.ok_or_else(corrupt)?,
-                    occurrence: occurrence(neighbor)?,
-                    text: neighbor.occurrence.text.clone(),
-                    adjacent_to: vec![],
-                });
-            }
-            neighbors
-                .get_mut(&position)
-                .ok_or_else(corrupt)?
-                .adjacent_to
-                .push(SourceContextAdjacency {
-                    occurrence_id: row.occurrence_id.ok_or_else(corrupt)?,
-                    direction,
-                });
+/// A checked, immutable observation owned by one preparation read transaction.
+/// Reuse it across units and variants instead of revalidating the source ledger
+/// for each projection. It is never a cache or an authorization receipt.
+pub(in crate::persistence) struct SourceContextReader {
+    project_id: ExecutionId,
+    locale: String,
+    pub snapshot_id: ExecutionId,
+    content_revision: Revision,
+    pub source_locale: String,
+    source_attempt_id: ExecutionId,
+    source_result_id: ExecutionId,
+    source_result_digest: String,
+    output: crate::content::SourceOutput,
+    rows: Vec<crate::content::ContentRow>,
+}
+
+impl SourceContextReader {
+    pub fn read_in(
+        connection: &Connection,
+        project_id: ExecutionId,
+        locale: &str,
+    ) -> Result<Self, ExecutionError> {
+        let source_locale = check_project(connection, project_id, locale)?;
+        let scope = super::super::content::scope(connection)?;
+        let snapshot_id = scope
+            .current_snapshot
+            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-context-snapshot"))?;
+        let (_, (input, result, output, rows)) =
+            super::super::content::snapshot_rows(connection, snapshot_id, true)?;
+        if input.envelope().project_id != project_id || output.source_language != source_locale {
+            return Err(corrupt());
         }
+        Ok(Self {
+            project_id,
+            locale: locale.into(),
+            snapshot_id,
+            content_revision: scope.revision,
+            source_locale,
+            source_attempt_id: input.envelope().attempt_id,
+            source_result_id: result.envelope().result_id,
+            source_result_digest: result.digest().to_owned(),
+            output,
+            rows,
+        })
     }
-    Ok(SourceContextView {
-        scope: request.clone(),
-        content_revision: scope.revision,
-        source_attempt_id: input.envelope().attempt_id,
-        source_result_id: result.envelope().result_id,
-        source_result_digest: result.digest().to_owned(),
-        source_locale,
-        local_unit_id,
-        occurrences: selected
-            .into_iter()
-            .map(|(_, row)| occurrence(row))
-            .collect::<Result<_, _>>()?,
-        blocks,
-        neighbors: neighbors.into_values().collect(),
-    })
+
+    pub fn source_for_unit(
+        &self,
+        unit_id: ExecutionId,
+    ) -> Result<&crate::content::ContentRow, ExecutionError> {
+        let mut selected = self.rows.iter().filter(|row| row.unit_id == Some(unit_id));
+        let first = selected
+            .next()
+            .ok_or_else(|| failure(ErrorCode::DependencyConflict, "source-context-unit"))?;
+        if selected.any(|row| {
+            row.source_revision_id != first.source_revision_id
+                || row.occurrence.operation_unit_id != first.occurrence.operation_unit_id
+        }) {
+            return Err(corrupt());
+        }
+        Ok(first)
+    }
+
+    pub fn project(
+        &self,
+        request: &SourceContextRequest,
+    ) -> Result<SourceContextView, ExecutionError> {
+        if request.project_id != self.project_id || request.locale != self.locale {
+            return Err(failure(
+                ErrorCode::DependencyConflict,
+                "source-context-scope",
+            ));
+        }
+        if request.source_snapshot_id != self.snapshot_id {
+            return Err(failure(
+                ErrorCode::DependencyConflict,
+                "source-context-snapshot",
+            ));
+        }
+        let first = self.source_for_unit(request.unit_id)?;
+        let rows = &self.rows;
+        let output = &self.output;
+        let selected: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.unit_id == Some(request.unit_id))
+            .collect();
+        if selected
+            .iter()
+            .any(|(_, row)| row.source_revision_id != Some(request.source_revision_id))
+        {
+            return Err(failure(
+                ErrorCode::DependencyConflict,
+                "source-context-revision",
+            ));
+        }
+        let local_unit_id = first.occurrence.operation_unit_id.clone();
+        let local_occurrences: BTreeSet<_> = selected
+            .iter()
+            .map(|(_, row)| row.occurrence.operation_occurrence_id.as_str())
+            .collect();
+        let blocks = output
+            .exchange
+            .domain_blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| {
+                block.schema.id == sdk::SOURCE_CONTEXT_FACTS_SCHEMA_ID
+                    && match &block.target {
+                        sdk::ContentTarget::Snapshot => true,
+                        sdk::ContentTarget::Unit { id } => id == &local_unit_id,
+                        sdk::ContentTarget::Occurrence { id } => {
+                            local_occurrences.contains(id.as_str())
+                        }
+                    }
+            })
+            .map(|(index, block)| {
+                Ok(SourceContextBlock {
+                    block_index: u32::try_from(index).map_err(|_| corrupt())?,
+                    target: block.target.clone(),
+                    schema: block.schema.clone(),
+                    handling: block.handling,
+                    in_revision_basis: output
+                        .revision_policy
+                        .revision_basis
+                        .contains(&block.schema),
+                    facts: if block.schema == sdk::source_context_facts_contract() {
+                        Some(
+                            sdk::parse_source_context_block(block, &output.exchange.artifacts)
+                                .map_err(|_| corrupt())?,
+                        )
+                    } else {
+                        None
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, ExecutionError>>()?;
+        let mut neighbors = BTreeMap::<usize, SourceContextNeighbor>::new();
+        for (index, row) in &selected {
+            for (position, direction) in [
+                (index.checked_sub(1), SourceContextDirection::Before),
+                (
+                    index.checked_add(1).filter(|next| *next < rows.len()),
+                    SourceContextDirection::After,
+                ),
+            ] {
+                let Some(position) = position else { continue };
+                let neighbor = &rows[position];
+                if neighbor.unit_id == Some(request.unit_id) {
+                    continue;
+                }
+                if let std::collections::btree_map::Entry::Vacant(entry) = neighbors.entry(position)
+                {
+                    entry.insert(SourceContextNeighbor {
+                        unit_id: neighbor.unit_id.ok_or_else(corrupt)?,
+                        source_revision_id: neighbor.source_revision_id.ok_or_else(corrupt)?,
+                        occurrence: occurrence(neighbor)?,
+                        text: neighbor.occurrence.text.clone(),
+                        adjacent_to: vec![],
+                    });
+                }
+                neighbors
+                    .get_mut(&position)
+                    .ok_or_else(corrupt)?
+                    .adjacent_to
+                    .push(SourceContextAdjacency {
+                        occurrence_id: row.occurrence_id.ok_or_else(corrupt)?,
+                        direction,
+                    });
+            }
+        }
+        Ok(SourceContextView {
+            scope: request.clone(),
+            content_revision: self.content_revision,
+            source_attempt_id: self.source_attempt_id,
+            source_result_id: self.source_result_id,
+            source_result_digest: self.source_result_digest.clone(),
+            source_locale: self.source_locale.clone(),
+            local_unit_id,
+            occurrences: selected
+                .into_iter()
+                .map(|(_, row)| occurrence(row))
+                .collect::<Result<_, _>>()?,
+            blocks,
+            neighbors: neighbors.into_values().collect(),
+        })
+    }
 }
 
 impl ProjectStore {
@@ -246,6 +308,9 @@ impl ProjectStore {
         let connection = self
             .connection()
             .map_err(|_| failure(ErrorCode::StorageFailed, "source-context-read"))?;
-        super::super::review::read_snapshot(connection, |connection| read_in(connection, request))
+        super::super::review::read_snapshot(connection, |connection| {
+            SourceContextReader::read_in(connection, request.project_id, &request.locale)?
+                .project(request)
+        })
     }
 }

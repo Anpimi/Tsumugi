@@ -13,6 +13,7 @@ const MAX_ENTRIES: usize = 512;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 
 mod source_context;
+pub(super) use source_context::SourceContextReader;
 pub use source_context::{
     SourceContextAdjacency, SourceContextBlock, SourceContextDirection, SourceContextNeighbor,
     SourceContextOccurrence, SourceContextRequest, SourceContextView,

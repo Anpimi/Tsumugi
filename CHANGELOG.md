@@ -6,6 +6,13 @@ Entries follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Applica
 
 ## [Unreleased]
 
+- AI and Arena previews read source evidence and opted-in resources from one
+  SQLite snapshot. Each preparation verifies the original source result,
+  semantic proof and project mappings once for all units and variants; changed
+  evidence is refused before any preview is returned. Variants keep independent
+  terminology and manual-context sharing choices. Source-fact sharing remains
+  a separate, unimplemented selection workflow.
+
 - Source execution retains the original SDK content once, with a checked
   schema/digest projection instead of duplicating the parsed proposal. Bounded
   quoted content above 2 MiB can complete checking, adoption and reopening within
