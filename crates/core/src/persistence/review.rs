@@ -456,7 +456,60 @@ pub(super) fn initialize(connection: &Connection) -> rusqlite::Result<()> {
     }
     Ok(())
 }
-pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
+// The open path needs only identities between the metadata pass and the ledger
+// visit. Full input and result frames are restored and dropped one at a time.
+struct OpenReviewOrigin {
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+    index: usize,
+}
+
+pub(super) struct OpenReviewValidation {
+    pending: BTreeMap<ExecutionId, Vec<OpenReviewOrigin>>,
+}
+
+impl OpenReviewValidation {
+    pub(super) fn validate_input(
+        &mut self,
+        connection: &Connection,
+        input: &crate::execution::FixedInput,
+    ) -> Result<(), ExecutionError> {
+        let Some(origins) = self.pending.remove(&input.envelope().attempt_id) else {
+            return Ok(());
+        };
+        for origin in origins {
+            let (run, request_digest) =
+                decode_check_by_action(connection, origin.project_id, origin.action_id)?
+                    .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-evidence"))?;
+            let saved = run
+                .evidence
+                .as_ref()
+                .and_then(|evidence| evidence.origins.get(origin.index))
+                .filter(|saved| saved.attempt_id == input.envelope().attempt_id)
+                .ok_or_else(|| failure(ErrorCode::CorruptLedger, "review-check-evidence"))?;
+            let result = super::ledger::load_result(connection, input, saved.result_id)?;
+            checks::validate_saved_frames(
+                origin.project_id,
+                &run,
+                &request_digest,
+                saved,
+                input,
+                &result,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn finish(self) -> rusqlite::Result<()> {
+        if self.pending.is_empty() {
+            Ok(())
+        } else {
+            Err(rusqlite::Error::InvalidQuery)
+        }
+    }
+}
+
+pub(super) fn prepare_open(connection: &Connection) -> rusqlite::Result<OpenReviewValidation> {
     for (name, expected) in TABLES {
         let actual: String = connection.query_row(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
@@ -499,14 +552,28 @@ pub(super) fn validate(connection: &Connection) -> rusqlite::Result<()> {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    let mut pending: BTreeMap<ExecutionId, Vec<OpenReviewOrigin>> = BTreeMap::new();
     for (project, action) in identities {
         let project = parse_id(project).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let action = parse_id(action).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        check_by_action(connection, project, action)
+        let (run, _) = decode_check_by_action(connection, project, action)
             .map_err(|_| rusqlite::Error::InvalidQuery)?
             .ok_or(rusqlite::Error::InvalidQuery)?;
+        checks::validate_projection(&run).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        if let Some(evidence) = &run.evidence {
+            for (index, origin) in evidence.origins.iter().enumerate() {
+                pending
+                    .entry(origin.attempt_id)
+                    .or_default()
+                    .push(OpenReviewOrigin {
+                        project_id: project,
+                        action_id: action,
+                        index,
+                    });
+            }
+        }
     }
-    Ok(())
+    Ok(OpenReviewValidation { pending })
 }
 
 fn check_project(
@@ -602,6 +669,18 @@ pub(super) fn check_by_action(
     project_id: ExecutionId,
     action_id: ExecutionId,
 ) -> Result<Option<(CheckRun, String)>, ExecutionError> {
+    let decoded = decode_check_by_action(connection, project_id, action_id)?;
+    if let Some((run, request_digest)) = &decoded {
+        checks::validate_saved(connection, project_id, run, request_digest)?;
+    }
+    Ok(decoded)
+}
+
+fn decode_check_by_action(
+    connection: &Connection,
+    project_id: ExecutionId,
+    action_id: ExecutionId,
+) -> Result<Option<(CheckRun, String)>, ExecutionError> {
     let row: Option<(String,String,String,String,String,String,String,String,String,String,Option<String>,Option<String>)> = connection.query_row(
         "SELECT run_id,action_id,unit_id,locale,basis,basis_json,validator_version,rules_json,created_at,request_digest,evidence_json,qa_basis
          FROM review_checks WHERE project_id=?1 AND action_id=?2",
@@ -653,7 +732,6 @@ pub(super) fn check_by_action(
                 evidence,
                 created_at,
             };
-            checks::validate_saved(connection, project_id, &run, &request_digest)?;
             Ok((run, request_digest))
         },
     )

@@ -18,6 +18,88 @@ thread_local! {
     static STATEMENTS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
     static FRAME_ROWS: RefCell<usize> = const { RefCell::new(0) };
     static MEASURED_CONNECTION: Cell<*mut ffi::sqlite3> = const { Cell::new(std::ptr::null_mut()) };
+    static REOPEN_PROFILE: RefCell<Option<ReopenProfile>> = const { RefCell::new(None) };
+}
+
+// These windows begin at each validation loop's first query and end at the
+// next identifiable query. They include intervening validation work, so their
+// elapsed times are diagnostic windows rather than exclusive CPU timings.
+const REOPEN_WINDOWS: [(&str, &str, &str); 3] = [
+    (
+        "review-index",
+        "SELECT project_id,action_id FROM review_checks",
+        "SELECT attempt_id FROM execution_attempts ORDER BY sequence",
+    ),
+    (
+        "ledger-attempts",
+        "SELECT attempt_id FROM execution_attempts ORDER BY sequence",
+        "SELECT producer_result_id,valid FROM plugin_validation_links",
+    ),
+    (
+        "plugin-grants",
+        "SELECT grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked FROM plugin_execution_grants",
+        "SELECT plan_id FROM application_plans",
+    ),
+];
+
+struct ActiveReopenWindow {
+    started: Instant,
+    statements: usize,
+    frames: usize,
+    frame_bytes: u64,
+}
+
+#[derive(Default)]
+struct ReopenProfile {
+    next: usize,
+    active: Option<ActiveReopenWindow>,
+    completed: Vec<serde_json::Value>,
+}
+
+impl ReopenProfile {
+    fn statement(&mut self, sql: &str) {
+        if let Some(active) = &self.active {
+            if sql.trim() == REOPEN_WINDOWS[self.next].2 {
+                let elapsed = active.started.elapsed();
+                let active = self.active.take().unwrap();
+                self.completed.push(serde_json::json!({
+                    "name": REOPEN_WINDOWS[self.next].0,
+                    "elapsedMs": elapsed.as_secs_f64() * 1000.0,
+                    "statements": active.statements,
+                    "reconstructedFrames": active.frames,
+                    "reconstructedBytes": active.frame_bytes,
+                }));
+                self.next += 1;
+            }
+        }
+        if self.active.is_none()
+            && self.next < REOPEN_WINDOWS.len()
+            && sql.trim() == REOPEN_WINDOWS[self.next].1
+        {
+            self.active = Some(ActiveReopenWindow {
+                started: Instant::now(),
+                statements: 0,
+                frames: 0,
+                frame_bytes: 0,
+            });
+        }
+        if let Some(active) = &mut self.active {
+            active.statements += 1;
+        }
+    }
+
+    fn row(&mut self, sql: &str, statement: *mut ffi::sqlite3_stmt) {
+        let Some(active) = &mut self.active else {
+            return;
+        };
+        if sql.contains("tsumugi_input_chunks(")
+            && sql.contains("FROM execution_attempts a WHERE a.attempt_id=?1")
+            && unsafe { ffi::sqlite3_column_type(statement, 1) } == ffi::SQLITE_BLOB
+        {
+            active.frames += 1;
+            active.frame_bytes += unsafe { ffi::sqlite3_column_bytes(statement, 1) } as u64;
+        }
+    }
 }
 
 // Only this integration-test process registers the static callback. Capture is
@@ -39,15 +121,29 @@ unsafe extern "C" fn trace(
                         });
                         let sql = unsafe { CStr::from_ptr(sql) }.to_string_lossy();
                         if event == ffi::SQLITE_TRACE_STMT as c_uint {
-                            captured.push(sql.into_owned());
-                        } else if event == ffi::SQLITE_TRACE_ROW as c_uint
-                            && sql.contains("FROM wanted w JOIN execution_attempts")
-                        {
-                            let _ = FRAME_ROWS.try_with(|rows| {
-                                if let Ok(mut rows) = rows.try_borrow_mut() {
-                                    *rows += 1;
+                            let _ = REOPEN_PROFILE.try_with(|profile| {
+                                if let Ok(mut profile) = profile.try_borrow_mut() {
+                                    if let Some(profile) = profile.as_mut() {
+                                        profile.statement(&sql);
+                                    }
                                 }
                             });
+                            captured.push(sql.into_owned());
+                        } else if event == ffi::SQLITE_TRACE_ROW as c_uint {
+                            let _ = REOPEN_PROFILE.try_with(|profile| {
+                                if let Ok(mut profile) = profile.try_borrow_mut() {
+                                    if let Some(profile) = profile.as_mut() {
+                                        profile.row(&sql, statement.cast());
+                                    }
+                                }
+                            });
+                            if sql.contains("FROM wanted w JOIN execution_attempts") {
+                                let _ = FRAME_ROWS.try_with(|rows| {
+                                    if let Ok(mut rows) = rows.try_borrow_mut() {
+                                        *rows += 1;
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -345,9 +441,37 @@ fn full_2000_actual_qa_scope_has_bounded_reads_and_complete_qualification() {
     drop(db);
     drop(runtime);
     store.close().unwrap();
+    REOPEN_PROFILE.with(|profile| {
+        assert!(
+            profile
+                .borrow_mut()
+                .replace(ReopenProfile::default())
+                .is_none()
+        );
+    });
     let (reopened, _) = measured("reopen-2000", || {
         ProjectStore::open(&directory.path().join("project")).unwrap()
     });
+    let profile = REOPEN_PROFILE.with(|profile| profile.borrow_mut().take().unwrap());
+    assert_eq!(
+        profile.next,
+        REOPEN_WINDOWS.len(),
+        "all reopen windows must be observed"
+    );
+    assert!(profile.active.is_none());
+    println!(
+        "REVIEW_SCOPE_REOPEN_WINDOWS {}",
+        serde_json::json!(profile.completed)
+    );
+    for window in &profile.completed {
+        if window["name"] == "ledger-attempts" {
+            assert!(window["reconstructedFrames"].as_u64().unwrap() >= 2000);
+            assert!(window["reconstructedBytes"].as_u64().unwrap() >= input_bytes as u64);
+        } else {
+            assert_eq!(window["reconstructedFrames"], 0);
+            assert_eq!(window["reconstructedBytes"], 0);
+        }
+    }
     assert!(
         reopened
             .review_target(project, rows[1999].unit_id.unwrap(), "zh-CN")

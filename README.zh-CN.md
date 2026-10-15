@@ -150,6 +150,8 @@ Workers / Data Extensions / External Tools
 
 Apple Silicon macOS 上的原生译文 IPC 集成测试使用独立摘要固定的预构建 SMAPI 包及
 [已准备的桌面运行时](runtimes/javascript-host/README.md#opt-into-the-desktop-extension-bundle)。
+随附两包的固定归档、SDK 产物、离线准备和失败恢复见
+[固定扩展的离线发行准备](docs/plugin-distribution.zh-CN.md)；完整清洁系统发行验收仍须另行完成。
 将 `TSUMUGI_TEST_PLUGIN_PACKAGE` 指向该包目录，将 `TSUMUGI_TEST_PLUGIN_DIGEST` 设为已核验的完整摘要，然后运行：
 
 ```text

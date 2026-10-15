@@ -211,15 +211,43 @@ review it and explicitly discard it before retrying with a new destination.
 
 On an Apple silicon Mac, prepare the preceding output at the fixed path
 `apps/desktop/src-tauri/resources/javascript-runtime` in this checkout. Its
-parent must exist and the destination must be new. Also materialize each complete,
-prebuilt package from the fixed selection in
+parent must exist and the destination must be new. Prepare complete prebuilt
+packages from the fixed selection in
 [`bundled-plugins.macos-aarch64.json`](../../apps/desktop/src-tauri/bundled-plugins.macos-aarch64.json)
-at `apps/desktop/src-tauri/resources/bundled-plugins/<id>`. Use the public source
-repository and exact commit in that catalog; preserve all package files and
-executable flags. The current catalog selects the independent WebVTT and SMAPI
-packages with current source, mandatory review and build resources. SMAPI also
-includes its translation import resources and parser runtime. These fixed
-development candidates do not claim complete two-domain release acceptance.
+using the offline transport entry below. With Python 3.11+ on the builder, select
+the approved `webvtt.tar` and `stardew-smapi.tar` files in one existing directory,
+and an explicitly pinned public Host inspector built from this source tree:
+
+```sh
+cargo build --locked -p tsumugi-plugin-host --bin tsumugi-plugin-package
+python3 runtimes/javascript-host/scripts/prepare-desktop-plugins.py \
+  --artifacts /absolute/approved/plugin-candidates \
+  --inspector /absolute/project/target/debug/tsumugi-plugin-package \
+  --inspector-sha256 <reviewed-inspector-sha256> \
+  --output /absolute/project/apps/desktop/src-tauri/resources/bundled-plugins
+```
+
+The destination must be new; existing resources are never overwritten, including
+an empty directory created concurrently. This command downloads and builds
+nothing. It verifies source-owned archive SHA-256 pins, materializes bounded
+ordinary files into private staging, and runs only the captured, pinned inspector
+copy. The existing Rust Host supplies manifest validation and package digests;
+the preparer matches identities, SDK artifact pins, manifest bytes, counts and
+complete files/executable flags before atomic promotion. Links, traversal,
+aliases, duplicate/extra/missing files, changed inputs and inspection failures
+leave no new final resource directory. Later failures retain only this attempt's
+staging for review. No fallback selects an older package or another source.
+
+The catalog selects independent Process-2 WebVTT and SMAPI packages with their
+source, mandatory review/build resources, SDK helpers and licenses. SMAPI also
+includes its translation-import resources and parser runtime. Their archive
+transport hashes and Host package digests are different identities. The catalog
+records a fixed SDK artifact as well as its alpha version; an alpha version
+alone cannot identify a development contract snapshot. Its runtime profile and
+process protocol must match the captured bundled runtime. These fixed development
+candidates do not claim complete two-domain release acceptance. See
+[fixed offline extension preparation](../../docs/plugin-distribution.md) and
+[中文说明](../../docs/plugin-distribution.zh-CN.md) for recovery and evidence limits.
 
 These are explicit build inputs. The desktop build neither fetches a latest
 package nor falls back to embedded domain code. Before bundling, it captures

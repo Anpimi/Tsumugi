@@ -283,6 +283,18 @@ Unreleased changelogs preserve the compatibility and behavior changes. Earlier
 paragraphs retain intermediate development boundaries, rather than alternative
 current formats or migration paths.
 
+The optional desktop bundle now pins Process-2 package archives, their transport
+SHA-256 values, exact SDK artifact and bundled runtime profile. Its offline
+preparer consumes local prebuilt artifacts through the existing Host inspection
+owner, using private staging and atomic no-replace promotion. The fixed package
+set changes within the same undistributed application `0.2.0-alpha.1` / SDK and
+plugin `0.1.0-alpha.1` batch; no additional SemVer bump, dependency/lock change,
+project/settings/receipt migration or publication is performed. The required
+internal build metadata fields replace earlier development catalog shapes;
+rebuild the application with its current prepared resources. Both Unreleased
+changelogs describe the behavior. Build preparation does not establish actual
+Worker compatibility, user approval or clean-system release acceptance.
+
 The experimental SDK now defines bounded work-plan generation-service input,
 child-identity receipts and finite errors from one Rust source. The new service,
 input, receipt and error contract references each use schema/behavior 1/1.
@@ -954,7 +966,7 @@ application `0.2.0-alpha.1` batch. They change no SDK wire identity, Store layou
 current project schema or independent plugin version; there is no additional
 version bump or historical conversion. The current bundle catalog selects
 independent WebVTT and SMAPI development candidates with current source/review
-resources and their complete pinned SDK helpers. Updating this fixed set changes
+resources, source-context facts and their complete pinned SDK helpers. Updating this fixed set changes
 no application/SDK/plugin version, wire profile, Store layout or schema; it stays
 in the same undistributed batch and does not establish complete release acceptance.
 

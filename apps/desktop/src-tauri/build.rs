@@ -68,6 +68,7 @@ fn prepare_metadata() -> Result<(), Box<dyn std::error::Error>> {
 fn prepare_plugin_metadata() -> Result<(), Box<dyn std::error::Error>> {
     use std::{env, path::PathBuf};
     use tsumugi_plugin_host::PackageImage;
+    use tsumugi_plugin_sdk as sdk;
     println!("cargo:rerun-if-changed=plugin_bundle.rs");
     println!("cargo:rerun-if-changed=bundled-plugins.macos-aarch64.json");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_BUNDLED_PLUGINS");
@@ -91,6 +92,11 @@ fn prepare_plugin_metadata() -> Result<(), Box<dyn std::error::Error>> {
             if image.manifest().manifest().plugin != pin.plugin {
                 return Err("prepared plugin identity differs from source-owned pin".into());
             }
+            if image.manifest().manifest().components.iter().any(|component| {
+                !matches!(component.runtime, sdk::RuntimeKind::Data | sdk::RuntimeKind::JavaScript)
+            }) {
+                return Err("prepared plugin requires a different bundled runtime profile".into());
+            }
             let observed = PackageImage::inspect_directory(&directory, || true)?;
             if observed.package_digest != pin.package_digest {
                 return Err("prepared plugin changed during verification".into());
@@ -105,6 +111,8 @@ fn prepare_plugin_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let metadata = plugin_bundle::BundleMetadata {
             format_version: 1,
             platform: selection.platform,
+            runtime_profile: selection.runtime_profile,
+            process_protocol: selection.process_protocol,
             packages,
         };
         metadata.validate()?;

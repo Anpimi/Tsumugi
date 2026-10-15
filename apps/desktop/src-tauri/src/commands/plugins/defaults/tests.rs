@@ -33,7 +33,7 @@ fn bundled_selection_refuses_duplicates_paths_wrong_sdk_and_unpinned_provenance(
             .collect::<std::collections::BTreeSet<_>>(),
         ["stardew-smapi", "webvtt"].into_iter().collect()
     );
-    for mutation in 0..6 {
+    for mutation in 0..11 {
         let mut changed = selection.clone();
         match mutation {
             0 => changed.packages.push(changed.packages[0].clone()),
@@ -41,7 +41,12 @@ fn bundled_selection_refuses_duplicates_paths_wrong_sdk_and_unpinned_provenance(
             2 => changed.packages[0].sdk_version = "other".into(),
             3 => changed.packages[0].package_digest = "invalid".into(),
             4 => changed.packages[0].source_commit = "main".into(),
-            _ => changed.packages[0].source_repository = "file:///local".into(),
+            5 => changed.packages[0].source_repository = "file:///local".into(),
+            6 => changed.packages[0].archive_name = "../webvtt.tar".into(),
+            7 => changed.packages[0].archive_sha256 = "invalid".into(),
+            8 => changed.packages[0].sdk_artifact_sha256 = "invalid".into(),
+            9 => changed.process_protocol = sdk::PROCESS_PROTOCOL - 1,
+            _ => changed.packages[0].archive_name = "latest.tar".into(),
         }
         assert!(changed.validate().is_err());
     }

@@ -4,6 +4,8 @@
     "operatingSystem": "macos",
     "architecture": "aarch64"
   },
+  "runtimeProfile": "node-system-libraries-v1",
+  "processProtocol": 2,
   "packages": [
     {
       "id": "webvtt",
@@ -13,10 +15,13 @@
         "id": "webvtt",
         "version": "0.1.0-alpha.1"
       },
-      "packageDigest": "a08305eb934c9e9c3370d55d0a2863d3e9206b6cfea250a91058871d2bfdd5c2",
+      "packageDigest": "6f3cb25a38ee7cd9487a92b950947c8fa817b402caf62c49509a39825d14efab",
       "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "1dd02169b8ba5481b2dedf7f3477a7d0b0aa3cac",
-      "sdkVersion": "0.1.0-alpha.1"
+      "sourceCommit": "7e14b3a283bd9846510bebf7c8517babe814bdc6",
+      "sdkVersion": "0.1.0-alpha.1",
+      "sdkArtifactSha256": "18bafc93a84135fdd5b36987b8b1248dacba241140b7a1ad00045508fa937dac",
+      "archiveName": "webvtt.tar",
+      "archiveSha256": "d5ef39eb27062d67cbfd2f930b652ac552c4d54fe1fc1a47b881df80f43e8c36"
     },
     {
       "id": "stardew-smapi",
@@ -26,10 +31,13 @@
         "id": "stardew-smapi",
         "version": "0.1.0-alpha.1"
       },
-      "packageDigest": "f77f4b78f0b98a17f4085e9d434d9e896a750e6b5b101823a45562880c1e9012",
+      "packageDigest": "13682a57f0c90219e199490d652690697ab4f18aaaaace0fa0e8a96ec6b4bf44",
       "sourceRepository": "https://github.com/Anpimi/tsumugi-plugins",
-      "sourceCommit": "1dd02169b8ba5481b2dedf7f3477a7d0b0aa3cac",
-      "sdkVersion": "0.1.0-alpha.1"
+      "sourceCommit": "7e14b3a283bd9846510bebf7c8517babe814bdc6",
+      "sdkVersion": "0.1.0-alpha.1",
+      "sdkArtifactSha256": "18bafc93a84135fdd5b36987b8b1248dacba241140b7a1ad00045508fa937dac",
+      "archiveName": "stardew-smapi.tar",
+      "archiveSha256": "110a737f21ba896ed323c0546c1e06f030bd5d262221ac132fd41469b3646ab4"
     }
   ]
 }

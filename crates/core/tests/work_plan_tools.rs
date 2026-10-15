@@ -1201,6 +1201,29 @@ fn reopening_preserves_reservations_and_never_recreates_old_tool_authority() {
 }
 
 #[test]
+fn reopening_refuses_a_delegated_grant_without_its_original_attempt() {
+    let mut f = fixture(2);
+    let prepared = f.store.prepare_work_plan_agent_tool(&f.scope, &request(&f, vec![f.units[0]])).unwrap();
+    f.runtime.submit_work_plan_tool(&mut f.store, &prepared, &f.consent, ExecutionId::new()).unwrap();
+    let path = f.store.directory().to_owned();
+    drop(f.runtime);
+    drop(f.store);
+    ProjectStore::open(&path).unwrap().close().unwrap();
+    let database = path.join("project.sqlite3");
+    let connection = rusqlite::Connection::open(&database).unwrap();
+    assert_eq!(connection.execute(
+        "INSERT INTO plugin_execution_grants (grant_id,attempt_id,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,revoked,delegation)
+         SELECT ?1,?2,task_id,input_digest,generation,expires_at_ms,unsandboxed_execution,1,delegation
+         FROM plugin_execution_grants WHERE attempt_id=?3 AND delegation IS NOT NULL",
+        rusqlite::params![ExecutionId::new().to_string(), ExecutionId::new().to_string(), prepared.input().envelope().attempt_id.to_string()],
+    ).unwrap(), 1);
+    drop(connection);
+    let before = std::fs::read(&database).unwrap();
+    assert!(matches!(ProjectStore::open(&path), Err(tsumugi_core::PersistenceError::CorruptProject { .. })));
+    assert_eq!(std::fs::read(database).unwrap(), before);
+}
+
+#[test]
 fn unknown_tool_dispatch_keeps_original_reservation_and_cannot_replay() {
     let mut f = fixture(1);
     let request = request(&f, vec![f.units[0]]);

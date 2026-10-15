@@ -130,7 +130,10 @@ impl ApplicationPlugins {
             .as_ref()
             .ok_or_else(|| unavailable("plugin-defaults-unavailable"))?
             .view()?;
-        if metadata.platform != runtime.environment.platform {
+        if metadata.platform != runtime.environment.platform
+            || metadata.runtime_profile != runtime.environment.profile
+            || metadata.process_protocol != runtime.environment.process_protocol
+        {
             return Err(unavailable("plugin-defaults-unavailable"));
         }
         let root = resources

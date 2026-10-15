@@ -258,52 +258,58 @@ pub(super) fn validate(connection: &Connection) -> Result<(), ExecutionError> {
         if record.delegation.is_none() {
             not_delegated(connection, record.task_id)
                 .map_err(|_| failure(ErrorCode::CorruptLedger, "plugin-grant-delegation"))?;
+        } else {
+            let associated: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE attempt_id=?1)",
+                    [record.attempt_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(sql)?;
+            if !associated {
+                return Err(failure(
+                    ErrorCode::CorruptLedger,
+                    "plugin-grant-association",
+                ));
+            }
         }
-        let captured = connection
-            .query_row(
-                &format!(
-                    "SELECT {} FROM execution_attempts a WHERE a.attempt_id=?1",
-                    super::ledger::input_columns_sql()
-                ),
-                [record.attempt_id.to_string()],
-                |row| super::ledger::StoredInputRow::from_row(row, 0),
-            )
-            .optional()
-            .map_err(sql)?;
-        if let Some(stored) = captured {
-            let input = stored.restore(record.attempt_id)?;
-            check_record(&record, &input)?;
-            check_project(connection, &input)?;
-            if input.envelope().plugin.is_none() {
+    }
+    Ok(())
+}
+
+/// Reuse the original open-time input scan without restoring execution authority.
+/// Delegated grants still require their recorded tool association, and every
+/// saved result retains the strict integrity check used before scan sharing.
+pub(super) fn validate_associated_input(
+    connection: &Connection,
+    input: &FixedInput,
+) -> Result<(), ExecutionError> {
+    if let Some(record) = for_attempt(connection, input.envelope().attempt_id)? {
+        check_record(&record, input)?;
+        check_project(connection, input)?;
+        if input.envelope().plugin.is_none() {
+            return Err(failure(ErrorCode::CorruptLedger, "plugin-grant-input"));
+        }
+        match &record.delegation {
+            Some(delegation) => {
+                super::application::validate_tool_input(connection, input, delegation)?
+            }
+            None if input.envelope().automation.is_some() => {
                 return Err(failure(ErrorCode::CorruptLedger, "plugin-grant-input"));
             }
-            match &record.delegation {
-                Some(delegation) => {
-                    super::application::validate_tool_input(connection, &input, delegation)?
-                }
-                None if input.envelope().automation.is_some() => {
-                    return Err(failure(ErrorCode::CorruptLedger, "plugin-grant-input"));
-                }
-                None => {}
-            }
-            let mut results = connection
-                .prepare("SELECT result_id FROM execution_results WHERE attempt_id=?1")
-                .map_err(sql)?;
-            let ids = results
-                .query_map([record.attempt_id.to_string()], |row| {
-                    row.get::<_, String>(0)
-                })
-                .map_err(sql)?;
-            for id in ids {
-                let id = ExecutionId::parse(&id.map_err(sql)?)?;
-                // load_result also checks the immutable input/item/channel binding.
-                ledger::load_result(connection, &input, id)?;
-            }
-        } else if record.delegation.is_some() {
-            return Err(failure(
-                ErrorCode::CorruptLedger,
-                "plugin-grant-association",
-            ));
+            None => {}
+        }
+        let mut results = connection
+            .prepare("SELECT result_id FROM execution_results WHERE attempt_id=?1")
+            .map_err(sql)?;
+        let ids = results
+            .query_map([record.attempt_id.to_string()], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(sql)?;
+        for id in ids {
+            let id = ExecutionId::parse(&id.map_err(sql)?)?;
+            ledger::load_result(connection, input, id)?;
         }
     }
     Ok(())
